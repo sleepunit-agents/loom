@@ -199,19 +199,40 @@ export const outsideAccount = z.tuple([z.enum(['slack','discord']),z.string(),z.
 export function currentDecisionGuest(db:DataDatabase,agent:string,key:string):boolean {
   const account=parseOutsidePersonKey(key);
   if(!account||!stillKnown(db,agent,{kind:'outside',id:key}))return false;
-  return !db.select({member:bridgePeople.member}).from(bridgePeople).where(and(
+  const link=db.select({member:bridgePeople.member}).from(bridgePeople).where(and(
     eq(bridgePeople.platform,account.platform),eq(bridgePeople.workspace,account.workspace),eq(bridgePeople.user,account.user)
   )).get();
+  return !link||!inHousehold({kind:'member',id:link.member},sharedSharing(db));
+}
+/** Bind an unlinked one-to-one place to the provider account that actually
+ * delivered a DM there. A handoff into another person's DM cannot establish this. */
+function decisionAddress(db:DataDatabase,cv:Place,account:string){
+  const who=parseOutsidePersonKey(account),at=placeAddress(db,cv);
+  if(!who||!at?.direct||who.platform!==cv.venue||who.workspace!==at.workspace)return;
+  if(cv.place!==JSON.stringify([at.workspace,at.channel,at.thread,['member',null]]))return;
+  const participants=db.selectDistinct({user:bridgeIncoming.user}).from(bridgeIncoming).where(and(
+    eq(bridgeIncoming.conversation,cv.id),eq(bridgeIncoming.connection,at.connection),eq(bridgeIncoming.channel,at.channel),
+    at.thread===null?isNull(bridgeIncoming.thread):eq(bridgeIncoming.thread,at.thread),eq(bridgeIncoming.state,'delivered'),
+    eq(bridgeIncoming.isDm,true),eq(bridgeIncoming.groupDm,false),eq(bridgeIncoming.bot,false),eq(bridgeIncoming.webhook,false),isNull(bridgeIncoming.member)
+  )).limit(2).all();
+  return participants.length===1&&participants[0].user===who.user?at:undefined;
 }
 /** Check every decision included in the job, even when it also holds other mail. */
-export function decisionJobScope(db:DataDatabase,job:string){
-  const decisions=db.select({agent:inbox.agent,account:inbox.onWord,kind:inbox.onWordKind,sourceId:inbox.sourceId}).from(inbox)
-    .where(and(eq(inbox.job,job),eq(inbox.source,'answer'),eq(inbox.toKind,'agent'))).all()
+export function decisionJobScope(db:DataDatabase,job:string,send?:{conversation:string|null;incoming:string|null;connection:string;channel:string;thread:string|null}){
+  const decisions=db.select({conversation:conversations,account:inbox.onWord,kind:inbox.onWordKind,sourceId:inbox.sourceId}).from(inbox)
+    .leftJoin(conversations,eq(inbox.conversation,conversations.id)).where(and(eq(inbox.job,job),eq(inbox.source,'answer'),eq(inbox.toKind,'agent'))).all()
     .filter(item=>item.sourceId?.startsWith('guest-decision:'));
-  return {present:decisions.length>0,allowed:decisions.every(item=>item.agent&&item.kind==='outside'&&item.account&&currentDecisionGuest(db,item.agent,item.account))};
+  const allowed=decisions.every(({conversation:cv,kind,account})=>{
+    if(!cv||kind!=='outside'||!account||!currentDecisionGuest(db,cv.agent,account)||placeClosed(db,cv))return false;
+    const at=decisionAddress(db,cv,account);if(!at)return false;
+    if(!send)return true;
+    const origin=send.incoming?db.select({id:bridgeIncoming.conversation}).from(bridgeIncoming).where(eq(bridgeIncoming.id,send.incoming)).get()?.id:send.conversation;
+    return origin===cv.id&&at.connection===send.connection&&at.channel===send.channel&&at.thread===send.thread;
+  });
+  return {present:decisions.length>0,allowed};
 }
 /** A private bridge question can leave the source room only for the agent's current directors. */
-export function privateDecisionAccount(db:DataDatabase,work:{job:{id:string;agent:string;conversation:string|null};cv:{direct:boolean;member:string|null;venue:string;place:string}},q:{to:string;answers:string;refs?:string[];link?:string;waitsOnKind?:string}){
+export function privateDecisionAccount(db:DataDatabase,work:{job:{id:string;agent:string;conversation:string|null};cv:Place&{direct:boolean;member:string|null}},q:{to:string;answers:string;refs?:string[];link?:string;waitsOnKind?:string}){
   const {cv}=work;
   if(!cv.direct||cv.member||!['slack','discord'].includes(cv.venue))return;
   let place:unknown;
@@ -223,8 +244,7 @@ export function privateDecisionAccount(db:DataDatabase,work:{job:{id:string;agen
   if(word.woke!=='others')return;
   if(q.answers!=='yes-no'||q.refs?.length||q.link!==undefined||q.waitsOnKind!==undefined)return false;
   if(word.person?.kind!=='outside'||!currentDecisionGuest(db,work.job.agent,word.person.id)||!tellOwners(db,work.job.agent).includes(q.to))return false;
-  const account=parseOutsidePersonKey(word.person.id);
-  return account&&account.workspace===place[0]&&account.platform===cv.venue ? word.person.id : false;
+  return decisionAddress(db,cv,word.person.id)&&!placeClosed(db,cv) ? word.person.id : false;
 }
 export function askedOnWord(db: DataDatabase, work: { job: { id: string; agent: string; conversation: string | null } }, question?: { to: string; link?: string; waitsOnKind?: string }) {
   const word = jobWord(db, work.job);

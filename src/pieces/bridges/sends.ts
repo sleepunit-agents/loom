@@ -20,7 +20,7 @@ export interface SendTransport {
   /** Resolve the current connection. Suppress generated mentions in platform posts.
    * Throw BridgeReplyNotSent when refusing before any request is made. */
   post(connection: typeof bridgeConnections.$inferSelect, address: { channel: string; thread: string | null }, text: string, files?: readonly SendFile[], permitted?:()=>boolean): Promise<{ id: string }>;
-  jobAllowed?(job:string):boolean;
+  jobAllowed?(job:string,send:BridgeSend):boolean;
   progressAllowed?(job:string,send:BridgeSend,files:boolean):boolean;
   directAllowed?(job:string,target:DirectSendTarget,connection:string,channel:string):boolean;
 }
@@ -186,7 +186,7 @@ export class BridgeSends {
         if(authored||send.id.startsWith('dm:')){
           const permitted=()=>{
             const source=this.db.select().from(bridgeSendJobs).where(eq(bridgeSendJobs.send,send.id)).get();
-            if(!source||source.job!==authored?.job||this.transport.jobAllowed?.(source.job)===false)return false;
+            if(!source||source.job!==authored?.job||this.transport.jobAllowed?.(source.job,send)===false)return false;
             if(send.id.startsWith('dm:'))return send.thread===null&&source.directTarget?.channel===send.channel&&
               this.transport.directAllowed?.(source.job,source.directTarget,send.connection,send.channel)===true;
             return !source.directTarget&&(source.finalReply||this.transport.progressAllowed?.(source.job,send,files.length>0)===true);
