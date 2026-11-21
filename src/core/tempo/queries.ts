@@ -5,7 +5,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { triggerLog, triggers } from '../data/schema.js';
 import { dataValue } from '../data/subscriptions.js';
 import { sharedSharing } from '../../shared-sharing.js';
-import { isHouseholdOwner, rules, type Viewer } from '../../policy.js';
+import { directsAgent, isHouseholdOwner, rules, type Viewer } from '../../policy.js';
 import { sqlHolds } from '../../policy-sql.js';
 import type { DataDatabase } from '../data/database.js';
 import { householdTimezone } from '../data/household-settings.js';
@@ -35,6 +35,16 @@ export function tempoQueryFields(db: DataDatabase, viewer: Viewer, canReadProgra
    events: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLInt))) } },
    resolve: (_source: unknown, { agent, events }: { agent: string; events: number[] }) =>
      current() ? wakeDeliveries(db, viewer, agent, events, canReadProgram()) : [],
+ }, tempoDefaultAgent: { type: GraphQLString,
+   resolve: () => {
+     if (!current() || (viewer.kind !== 'agent' && viewer.kind !== 'member')) return null;
+     const sharing = sharedSharing(db);
+     if (viewer.kind === 'agent') return directsAgent(viewer, viewer.id, sharing) ? viewer.id : null;
+     const clocks = (sharing.agents ?? []).filter(agent => directsAgent(viewer, agent, sharing));
+     if (clocks.length <= 1) return clocks[0] ?? null;
+     const chosen = db.query.household.findFirst({ columns: { defaultAgent: true } }).sync()?.defaultAgent;
+     return chosen && clocks.includes(chosen) ? chosen : null;
+   },
  }, tempoTimezone: { type: GraphQLString,
    resolve: () => current() ? householdTimezone(db) : null,
  },

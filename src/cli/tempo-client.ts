@@ -63,7 +63,7 @@ function durationMs(duration: string) {
   return ms;
 }
 
-function wakeOptions(verb: 'at' | 'in', args: string[], agent: string) {
+function wakeOptions(verb: 'at' | 'in', args: string[]) {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: {
     prompt: { type: 'string', short: 'p' }, 'prompt-file': { type: 'string', short: 'f' },
     note: { type: 'string' }, model: { type: 'string' },
@@ -72,8 +72,8 @@ function wakeOptions(verb: 'at' | 'in', args: string[], agent: string) {
   if (!!instructions === !!file || (file && !laneFile(file))) throw Error();
   if (instructions && (!instructions.trim() || !values.note?.trim() ||
     (!/\s/.test(instructions.trim()) && /\/|\.md$/.test(instructions.trim())))) throw Error();
-  const input = { ownerKind: 'agent', owner: agent, sourceKind: 'time', lifespan: 'once', targetKind: 'inbox',
-    toKind: 'agent', to: agent, instructions, file, note: values.note || file,
+  const input = { ownerKind: 'agent', sourceKind: 'time', lifespan: 'once', targetKind: 'inbox',
+    toKind: 'agent', instructions, file, note: values.note || file,
     wantsModel: values.model, execution: instructions?.includes('<!-- house: local -->') ? 'host' : 'container' };
   if (verb === 'in') {
     const ms = durationMs(positionals.join(''));
@@ -154,21 +154,21 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
   else if (argv[0]?.startsWith('--agent=')) { agent = argv[0].slice('--agent='.length); argv = argv.slice(1); }
   const verb = argv[0];
   const changesClock = verb === 'pause' || verb === 'resume';
-  let cancel: { id: string; occurrence: { agent: string; at?: string } } | undefined;
+  let cancel: { id: string; at?: string } | undefined;
   let wake: ReturnType<typeof wakeOptions> | undefined;
   let options: ReturnType<typeof logOptions> | undefined;
   try {
-    if (!agent) throw Error();
+    if (agent === '') throw Error();
     if (verb === 'cancel') {
       if (argv.length !== 2) throw Error();
       const [encoded, at, extra] = argv[1].split('@');
       if (!encoded || extra !== undefined || (at !== undefined && !z.string().datetime().safeParse(at).success)) throw Error();
-      cancel = { id: decodeURIComponent(encoded), occurrence: { agent, at } };
-    } else if (verb === 'in' || verb === 'at') wake = wakeOptions(verb, argv.slice(1), agent);
+      cancel = { id: decodeURIComponent(encoded), at };
+    } else if (verb === 'in' || verb === 'at') wake = wakeOptions(verb, argv.slice(1));
     else if (verb === 'log') options = logOptions(argv.slice(1));
     else if ((verb !== 'list' && !changesClock) || argv.length !== 1) throw Error();
   } catch {
-    io.stderr('usage: wake --agent AGENT list | cancel WAKE | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
+    io.stderr('usage: wake [--agent AGENT] list | cancel WAKE | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
     return 2;
   }
   try {
@@ -196,8 +196,17 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
         await delay(100 * attempt);
       }
     };
+    if (!agent) {
+      const result = await post('/graphql', { query: '{tempoDefaultAgent}' });
+      const choice = z.object({ data: z.object({ tempoDefaultAgent: z.string().min(1).nullable() }) }).strict().parse(result);
+      if (!choice.data.tempoDefaultAgent) {
+        io.stderr('Choose a clock with --agent AGENT.\n');
+        return 2;
+      }
+      agent = choice.data.tempoDefaultAgent;
+    }
     if (cancel) {
-      const answer = await post('/api/tempo/stop', { id: randomUUID(), input: cancel });
+      const answer = await post('/api/tempo/stop', { id: randomUUID(), input: { id: cancel.id, occurrence: { agent, at: cancel.at } } });
       z.object({ ok: z.literal(true), value: z.object({ saved: z.literal(true) }) }).parse(answer);
       io.stdout('Cancelled ' + onOneLine(argv[1]) + '.\n');
       return 0;
@@ -221,7 +230,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
           return 2;
         }
       }
-      const result = await post('/api/tempo/set', { id: randomUUID(), input: { ...wake.input, times } });
+      const result = await post('/api/tempo/set', { id: randomUUID(), input: { ...wake.input, owner: agent, to: agent, times } });
       const { value } = z.object({ ok: z.literal(true), value: z.object({ id: z.string(), waits: z.string().optional() }) }).parse(result);
       io.stdout(onOneLine(value.waits ? 'Awaiting approval: ' + value.waits : encodeURIComponent(value.id) + ' will wake at ' + times) + '\n');
       return 0;

@@ -8,7 +8,7 @@ import { expect, it } from 'vitest';
 import { datedWake } from '../core/tempo/calendar.js';
 import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
-import { agents, agentPauses, inbox, members, memberAgents, tokens, triggerLog, triggers } from '../core/data/schema.js';
+import { agents, agentPauses, household, inbox, members, memberAgents, tokens, triggerLog, triggers } from '../core/data/schema.js';
 import { sharedRoot } from '../shared-root.js';
 import { runTempoClient } from './tempo-client.js';
 
@@ -140,6 +140,13 @@ it('replays creation and pause after lost responses and delivers once to the res
     expect(Date.parse(next!)).toBeGreaterThan(Date.parse(standing.nextDueAt!));
     expect(await runTempoClient(['cancel',occurrence], io, request)).toBe(1);
     expect(db.select().from(triggers).all().find(row => row.id === standing.id)?.nextDueAt).toBe(next);
+    const automatic = { ...io, env: { LOOM_URL: io.env.LOOM_URL, LOOM_TOKEN_FILE: file } };
+    const beforeDefault = db.select().from(triggers).all().length;
+    expect(await runTempoClient(['in','1h','-p','Work on it','--note','Auto'], automatic, request)).toBe(2);
+    expect(db.select().from(triggers).all()).toHaveLength(beforeDefault);
+    db.insert(household).values({defaultAgent:'birch'}).onConflictDoUpdate({target:household.singleton,set:{defaultAgent:'birch'}}).run();
+    expect(await runTempoClient(['in','1h','-p','Work on it','--note','Auto'], automatic, request)).toBe(0);
+    expect(db.select().from(triggers).all().find(row=>row.note==='Auto')).toMatchObject({owner:'birch',to:'birch'});
     const beforeHost = db.select().from(triggers).all().length;
     expect(await runTempoClient(['in','1h','-p','<!-- house: local --> do work','--note','Fixture'], io, request)).toBe(1);
     expect(db.select().from(triggers).all()).toHaveLength(beforeHost);
