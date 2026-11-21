@@ -11,7 +11,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { relaySignIn } from './account-signin-relay.js';
 import { RELAY_MS } from './account-signin-time.js';
 import { commandUsageProvider } from './worker-process.js';
-import { workerMachineReads, httpWorkerControl, workerSignIn, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth, reportWorkerAccountLogins, reportWorkerMachineReadings, WorkerWatchedThingLimit, type WorkerLoginCheck } from './worker-http.js';
+import { workerMachineReads, httpWorkerControl, workerSignIn, signInFailureLine, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth, reportWorkerAccountLogins, reportWorkerMachineReadings, WorkerWatchedThingLimit, type WorkerLoginCheck } from './worker-http.js';
 import { readLogin, watchesLogin } from './account-login-check.js';
 import { MACHINE_CHECK_MS } from './machine-reading-time.js';
 import { WATCHED_PATHS_MAX, WATCHED_THING_LIMIT_ERROR, machineReader, watchedPath } from './machine-check.js';
@@ -194,10 +194,10 @@ export async function workerProgram(input: {
     const reportHealth = async () => (input.health ?? reportWorkerHealth)({
       ...remote, facts: config.facts, slots: config.reportOnly ? 0 : slots,
     });
-    async function poll(intervalMs: number, failure: string, check: () => Promise<void>, pause = wait) {
+    async function poll(intervalMs: number, failure: string | ((error: unknown) => string), check: () => Promise<void>, pause = wait) {
       while (!abort.signal.aborted) {
         try { await check(); }
-        catch { if (!abort.signal.aborted) input.error(failure); }
+        catch (error) { if (!abort.signal.aborted) input.error(typeof failure === 'string' ? failure : failure(error)); }
         if (abort.signal.aborted) return;
         try { await pause(intervalMs, abort.signal); } catch { return; }
       }
@@ -334,7 +334,7 @@ export async function workerProgram(input: {
     // at the next interval; it never stops the worker.
     const signIn = config.accountSignIn;
     const remoteSignIn = signIn && (input.signInRemote ?? workerSignIn)(remote);
-    const signIns = signIn && remoteSignIn && poll(signIn.intervalMs ?? 10_000, 'Worker sign-in check unavailable\n', async () => {
+    const signIns = signIn && remoteSignIn && poll(signIn.intervalMs ?? 10_000, signInFailureLine, async () => {
       const request = await remoteSignIn.next();
       if (!request || abort.signal.aborted) return;
       const program = signIn.programs.find(entry => entry.provider === request.provider);

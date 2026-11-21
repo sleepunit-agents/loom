@@ -26,6 +26,7 @@ type Note = (id: string, waiting: boolean) => void;
 type Cards = {
   /** The agent's small face, beside the title. */
   screen?: ReactNode;
+  history?: ReactNode;
   /** A question where it was asked. */
   question?(id: string, note: Note): ReactNode;
   /** The conversation's questions that no message in the stream carries (`placed` are the ones that one does). */
@@ -179,6 +180,7 @@ function ThreadReader({ member, detail, actions, cards, navigation, readVisible 
         </div>
         {follow.unread > 0 && <div className="comms__jump"><Button onClick={follow.down}>{follow.unread} new {follow.unread === 1 ? 'message' : 'messages'}</Button></div>}
       </div>
+      {cards?.history}
       {cards?.waiting && <div className="comms__waiting">{cards.waiting(thread.conversation, placed, note)}</div>}
       {cards?.work && <div className="comms__work">{cards.work(detail.refs, thread.conversation)}</div>}
       <div className="comms__compose">

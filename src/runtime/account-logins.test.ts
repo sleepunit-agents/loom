@@ -79,6 +79,27 @@ it('tells the owner when a sign-in is about to end, and closes that when it is r
   expect(f.service.sweep()).toEqual([]);
 });
 
+it('updates a waiting countdown in place until expiry and leaves dismissed warnings alone', () => {
+  const f = fixture();
+  f.service.checked('loom', [{ ...claude, place:'host', state:'signed-in', expiresAt:f.at(2 * DAY) }]);
+  const [first] = f.service.sweep();
+  for (const [elapsed, words] of [[DAY,'ends in 1 day,'], [1,'ends within a day'], [DAY-1,'has ended']] as const) {
+    f.advance(elapsed); f.seen('loom');
+    const [current] = f.service.sweep();
+    expect(current).toMatchObject({id:first.id,at:first.at,state:'waiting',changedAt:f.now()});
+    expect(current.words).toContain(words);
+    expect(f.mail()).toEqual([current]);
+  }
+  f.advance(1000); f.seen('loom');
+  expect(f.service.sweep()[0].changedAt).not.toBe(f.now());
+  f.db.update(inbox).set({state:'done'}).where(eq(inbox.id,first.id)).run();
+  f.db.update(boxes).set({name:'Renamed'}).where(eq(boxes.id,'loom')).run();
+  const [archived] = f.service.sweep();
+  expect(archived.state).toBe('done');
+  expect(archived.words).not.toContain('Renamed');
+  expect(f.mail()).toEqual([archived]);
+});
+
 it('raises nothing for a machine that has stopped reporting, keeps what it last learned, and still speaks for the others', () => {
   const f = fixture();
   f.service.checked('one', [{ ...claude, place: 'containers', state: 'signed-out' }]);

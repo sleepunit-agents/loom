@@ -169,7 +169,7 @@ before it runs any step, and refuses one it does not recognise without writing t
 | Sign-in | `tokens`, `program_tokens`, `program_record_grants`, `program_operation_grants`, `sessions`, `signin_links`, `passkeys`, `notification_devices`, `notification_queue` |
 | Tasks | `tasks`, `task_links`, `task_comments`, `imported_task_sequence` |
 | Conversations | `conversations`, `conversation_people`, `turns`, `digests`, `digest_items`, `agent_status`, `conversation_days`, `findings`, `conversation_sessions`, `job_session_limits` |
-| Inbox and threads | `inbox`, `inbox_refs`, `inbox_reads`, `action_results`, `threads`, `messages`, `thread_refs`, `deleted_threads` |
+| Inbox and threads | `inbox`, `inbox_refs`, `inbox_reads`, `action_results`, `threads`, `messages`, `archived_questions`, `thread_refs`, `deleted_threads` |
 | Approvals | `approvals`, `approval_rules`, `approval_notices`, `approval_record` |
 | Tempo | `triggers`, `trigger_log`, `trigger_journals`, `trigger_acceptances`, `program_firings`, `trigger_edits`, `agent_pauses`, `tempo_settings` |
 | Changes | `changes`, `change_checks`, `change_people`, `change_tasks`, `change_sync`, `change_review_rounds` |

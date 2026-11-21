@@ -353,3 +353,23 @@ it('loads the mentioned pull-request card through current generated Changes visi
   const first=await read(); expect(first.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(first.data))).toEqual({changes:[{id,title:'Current PR',state:'open',draft:false,checks:'running',review:'required',waitingOn:'ci'}],conversationMadeChanges:[]});
   f.db.delete(memberAgents).run(); const revoked=await read(); expect(revoked.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(revoked.data))).toEqual({changes:[],conversationMadeChanges:[]});
 });
+
+it('reads archived metadata without ciphertext and rechecks thread visibility after decrypting the body', async () => {
+  const f=await fixture();
+  const {archivedQuestions}=await import('../data/schema.js');
+  f.db.insert(archivedQuestions).values({thread:f.thread.id,ref:'approval:a',approval:'a',
+    raisedAt:'2026-11-20T00:00:00Z',seenAt:'2026-11-14T00:00:00Z',keepUntil:'2026-11-16T00:00:00Z',
+    words:Buffer.from(JSON.stringify({text:'Fictional archive words'})),verdict:'denied'}).run();
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:commsQueryFields(f.service)})});
+  const ask=(fields:string)=>graphql({schema,source:'{commsArchivedQuestions(thread:"th:alice"){'+fields+'}}',contextValue:{viewer:alice}});
+  const opens=f.opens();f.statements.splice(0);
+  expect((await ask('ref verdict')).data).toEqual({commsArchivedQuestions:[{ref:'approval:a',verdict:'denied'}]});
+  expect(f.opens()).toBe(opens);
+  expect(f.statements.some(sql=>sql.includes('"words"'))).toBe(false);
+  f.onOpen(f.revoke);
+  const changed=await ask('body{text}');
+  expect(changed.data).toBeNull();
+  expect(changed.errors?.[0].message).toBe('Comms changed; retry the query');
+  expect(JSON.stringify(changed)).not.toContain('Fictional archive words');
+  expect((await ask('ref body{text}')).data).toEqual({commsArchivedQuestions:[]});
+});
