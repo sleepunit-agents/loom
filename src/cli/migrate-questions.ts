@@ -42,8 +42,8 @@ export async function migrateQuestions(args:string[],io:{stdout(text:string):voi
       if(existsSync(journal)){
         const fd=openSync(journal,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
         try {
-          const stat=fstatSync(fd),header=Buffer.alloc(28);
-          // PERSIST invalidates the entire 28-byte header after a successful commit.
+          const stat=fstatSync(fd),header=Buffer.alloc(Math.min(stat.size,28));
+          // PERSIST clears its 28-byte header on commit; journal_size_limit may truncate it further.
           if(!stat.isFile()||(stat.size && (readSync(fd,header)!==header.length||header.some(byte=>byte!==0))))
             throw Error('snapshot needs rollback recovery');
         } finally {closeSync(fd);}

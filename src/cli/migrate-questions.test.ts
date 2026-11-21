@@ -32,11 +32,12 @@ it('opens completed archive backups only while the destination is stopped', asyn
     const path = join(source, 'comms.db'), archive = new Database(path);
     try {
       archive.pragma('journal_mode = PERSIST');
+      archive.pragma('journal_size_limit = 8');
       archive.exec('create table comms_asks(thread, ref, approval, raised, seen, words, answer_json)');
       const at = new Date().toISOString();
       archive.prepare('insert into comms_asks(thread, ref, raised, seen) values (?, ?, ?, ?)').run(thread.id, 'old-ask', at, at);
     } finally { archive.close(); }
-    expect(readFileSync(path+'-journal').length).toBeGreaterThan(0);
+    expect(readFileSync(path+'-journal')).toEqual(Buffer.alloc(8));
     const coldJournal=readFileSync(path+'-journal');
     writeFileSync(path+'-journal',Buffer.alloc(28,1));
     expect(await run()).toBe(1);
@@ -47,6 +48,12 @@ it('opens completed archive backups only while the destination is stopped', asyn
     writeFileSync(path + '-wal', 'incomplete backup');
     expect(await run()).toBe(1);
     rmSync(path + '-wal');
+    const directory = new Database(join(source, 'household.db'));
+    try {
+      directory.prepare('update comms_threads set member=?').run('someone-else');
+      expect(await run()).toBe(1);
+      directory.prepare('update comms_threads set member=?').run(thread.member);
+    } finally { directory.close(); }
     expect(await run()).toBe(0);
     expect(stdout).toBe('Imported 1 of 1 archived questions.\n');
     expect(await run()).toBe(0);
