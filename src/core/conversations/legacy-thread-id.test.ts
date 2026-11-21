@@ -64,21 +64,26 @@ it('restores a job-backed private thread only under its recorded backing convers
   const destination=new Database(':memory:');
   const at='2026-11-20T00:00:00.000Z';
   try {
-    writer.exec(`CREATE TABLE comms_deleted(id);
+    writer.exec(`CREATE TABLE comms_deleted(id,conversation,agent,member,at);
+      INSERT INTO comms_deleted(id,conversation,agent,member,at) VALUES ('th:gone','cv-removed','fern','alex','${at}');
       CREATE TABLE comms_threads(id, conversation, member, agent, title, titled_by, channel, project, pinned, archived, opened, last, read_seq)`);
     writer.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
-      .run('th:oi7jknf4hi','cv-0b37adc83353','alex','fern','Garden job','agent',1,null,0,null,at,at,0);
+      .run('th:oi7jknf4hi','cv-0b37adc83353','alex','fern','Garden job','agent',1,null,0,null,at,at,7);
     const source=new Database(path,{readonly:true});
     try {
       const db=createDataSchema(destination);
       destination.prepare("INSERT INTO agents (id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('fern','','','','drop','dot')").run();
       destination.prepare("INSERT INTO members (id,role,joined_at) VALUES ('alex','member',?)").run(at);
       expect(()=>importThreads(source,db,()=>'cv-other')).toThrow(/backing conversation/);
+      expect(destination.prepare('SELECT count(*) AS n FROM deleted_threads').get()).toEqual({n:0});
       const recover=(agent:string,member:string,thread:string)=>{
         expect([agent,member,thread]).toEqual(['fern','alex','th:oi7jknf4hi']);
         return 'cv-0b37adc83353';
       };
-      expect(importThreads(source,db,recover).inserted).toBe(1);
+      expect(importThreads(source,db,recover)).toEqual({inserted:1,total:1,tombstones:1});
+      expect(destination.prepare('SELECT read_seq FROM threads').get()).toEqual({read_seq:7});
+      expect(destination.prepare('SELECT conversation FROM deleted_threads').all()).toEqual([{conversation:'cv-removed'}]);
+      for(const table of ['jobs','messages','inbox']) expect(destination.prepare('SELECT count(*) AS n FROM '+table).get()).toEqual({n:0});
       expect(importThreads(source,db,recover).inserted).toBe(0);
       const started='2026-11-18T00:00:00.000Z';
       destination.prepare('UPDATE conversations SET started_at=?,turn_count=3').run(started);

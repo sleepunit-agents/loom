@@ -5,10 +5,11 @@ import { z } from 'zod';
 import type { DataDatabase } from '../data/database.js';
 import { commsKeepDays } from '../data/comms-days.js';
 import { conversations, messages, threadRefs, threads } from '../data/schema.js';
-import { keepUntilFor, validKeepDays, wordsKept } from './retention.js';
+import { expireMessageWords } from './messages.js';
+import { ageCutoff, keepUntilFor, validKeepDays, wordsKept } from './retention.js';
 import type { WordsKey } from './words.js';
 
-import { legacyCommsRefs } from './legacy-comms-refs.js';
+import { legacyCommsRefs, validLegacyCommsRef } from './legacy-comms-refs.js';
 import { recordThreadRef } from './thread-ref-store.js';
 
 import { legacyCardSummary, legacyToolCard, legacyStepWords } from './legacy-tool-card.js';
@@ -156,7 +157,7 @@ async function importRows(input: HistoryInput, reasons: Database.Database | null
       for (const raw of household.prepare('SELECT thread,ref,seq,pos,at FROM comms_refs').iterate()) {
         if (deleted.has((raw as {thread:string}).thread)) continue;
         const row=reference.parse(raw), msg=parent.get(row.thread,row.seq) as {at:string}|undefined;
-        if (!msg || Date.parse(msg.at)!==Date.parse(row.at) || legacyCommsRefs(row.ref.replace(/^github:/,'')).at(0)!==row.ref)
+        if (!msg || Date.parse(msg.at)!==Date.parse(row.at) || !validLegacyCommsRef(row.ref))
           throw Error('Unrecognized archived thread reference');
         const refs=rebuilt.get(row.thread)??new Map<string,Mention>();
         if ((refs.get(row.ref)?.seq??0)<=row.seq) refs.set(row.ref,{seq:row.seq,pos:row.pos});
@@ -176,6 +177,8 @@ async function importRows(input: HistoryInput, reasons: Database.Database | null
         prior.set(ref,seq);
       }
     }
+    const finished=now();
+    expireMessageWords(db,finished,ageCutoff(finished,days));
     return {inserted,total};
   });
 }

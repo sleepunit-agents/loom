@@ -18,7 +18,7 @@ it('opens completed archive backups only while the destination is stopped', asyn
     await exampleHome(home);
     mkdirSync(source);
     copyFileSync(join(home, 'comms.key'), join(source, 'comms.key'));
-    writeFileSync(join(source, 'household.json'), '{}');
+    writeFileSync(join(source, 'household.json'), '{"github":null}');
     const target = new Database(join(home, 'app.db'), { readonly: true });
     let thread;
     try {

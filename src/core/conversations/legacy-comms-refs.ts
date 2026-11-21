@@ -14,3 +14,9 @@ export function legacyCommsRefs(words:string,github?:string):string[] {
   }
   return [...refs].filter(ref=>ref.length<=200);
 }
+
+/** The index contains canonical IDs, after bare repository names received their household owner. */
+export function validLegacyCommsRef(ref: string): boolean {
+  if (ref.startsWith('github:')) return /^github:[\w.-]+\/[\w.-]+#\d{1,10}$/.test(ref);
+  return legacyCommsRefs(ref)[0] === ref;
+}
