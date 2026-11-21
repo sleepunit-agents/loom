@@ -1,4 +1,6 @@
 /** Real Root and receiving SDK; all bodies/people/words are fictional. */
+import {recordAccountWindows} from './runtime/account-windows.js';
+import {accountUsageUnavailable} from './runtime/account-usage.js';
 import {afterEach,expect,it,vi} from 'vitest';
 import {fileURLToPath} from 'node:url';
 import {dirname} from 'node:path';
@@ -294,19 +296,31 @@ it.each(['success','failure','archive','transient','occupied','work-role','mixed
  const next=async(id:string,capable:boolean,runner=bodyCredentials.runner)=>root.http.request('/api/runtime/next',{method:'POST',headers:{authorization:'Bearer '+runner,'content-type':'application/json'},body:JSON.stringify({id,input:{execution:'container',...(capable&&{reviewResults:true}),slots:3}})});
  await next('advertise',true);
  if(mixed){
-  db.update(s.modelAccountWindows).set({usage:1}).where(eq(s.modelAccountWindows.account,'paid')).run();
+  const identity={account:'paid',owner:'alice',provider:'openai'};
+  const window={name:'week',usage:1,readAt:now(),resetsAt:new Date(f.clock.now()+86400000).toISOString(),durationMs:604800000};
+  recordAccountWindows(db,identity,[window],now());
   db.insert(s.modelAccountLogins).values({account:'paid',box:'box',harness:'codex',place:'containers',state:'signed-in',checkedAt:now(),since:now(),learnedFrom:'check'}).run();
   const unavailable=await f.call('handoffOptions',{},'exhausted');
   const details=(await unavailable.json()).value;
-  expect(details.codexUnavailableReason).toMatch(/signed-in account.*quota window/);
+  expect(details.codexUnavailableReason).toBe('An eligible worker reported a signed-in account. Its quota window leaves too little room to start this job.');
   expect(details.roles).toMatchObject([{id:'research',available:false,reason:details.codexUnavailableReason}]);
   for(const selector of [{role:'research'},{harness:'codex'}]){
    const blocked=await f.call('handoff',{...selector,label:request.label,words:request.words,clientId:request.clientId},'exhausted-'+Object.keys(selector)[0]);
    expect(blocked.status).toBe(503);
-   expect(await blocked.text()).toContain(details.codexUnavailableReason);
+   expect(await blocked.json()).toEqual({ok:false,code:'unavailable',message:details.codexUnavailableReason});
   }
   expect(db.select().from(s.conversations).where(eq(s.conversations.venue,'handoff')).all()).toHaveLength(0);
-  db.update(s.modelAccountWindows).set({usage:0.1}).where(eq(s.modelAccountWindows.account,'paid')).run();
+  accountUsageUnavailable(db,identity);
+  const failed=(await (await f.call('handoffOptions',{},'failed-read')).json()).value;
+  expect(failed.codexAvailable).toBe(false);
+  expect(failed).not.toHaveProperty('codexUnavailableReason');
+  expect(failed.roles[0]).not.toHaveProperty('reason');
+  for(const selector of [{role:'research'},{harness:'codex'}]){
+   const blocked=await f.call('handoff',{...request,role:undefined,harness:undefined,...selector},'failed-read-'+Object.keys(selector)[0]);
+   expect(blocked.status).toBe(503);
+   expect(await blocked.text()).not.toContain(details.codexUnavailableReason);
+  }
+  recordAccountWindows(db,identity,[{...window,usage:0.1}],now());
  }
  if(mode==='success'){
   const tools=bodyProgramTools({url:'https://loom.invalid',token:bodyCredentials.body,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>root.http.request(new Request(String(url),init)),onStop:()=>{},onStatus:()=>{}});

@@ -384,6 +384,8 @@ const upgrades: readonly (readonly string[])[] = [
    "ALTER TABLE triggers ADD COLUMN schedule_name text",
    "ALTER TABLE triggers ADD COLUMN schedule_removed_at text CONSTRAINT \"triggers_schedule_removed_at_utc\" CHECK(\"triggers\".\"schedule_removed_at\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"triggers\".\"schedule_removed_at\") = \"triggers\".\"schedule_removed_at\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"triggers\".\"schedule_removed_at\") = \"triggers\".\"schedule_removed_at\", 0)) CONSTRAINT \"triggers_removed_schedule_stopped\" CHECK(\"triggers\".\"schedule_removed_at\" is null or (\"triggers\".\"enabled\" = 0 and \"triggers\".\"state\" = 'stopped' and \"triggers\".\"next_due_at\" is null))",
    "CREATE UNIQUE INDEX triggers_clock_schedule_name ON triggers\n  (\"to\", coalesce(schedule_name, id)) WHERE schedule_removed_at IS NULL AND source_kind = 'time'\n  AND lifespan = 'until-stopped' AND target_kind = 'inbox' AND to_kind = 'agent';"],
+  // 31: earlier homes know the retained windows but not whether the last provider read succeeded.
+  ['ALTER TABLE model_accounts ADD COLUMN usage_read_succeeded integer DEFAULT false NOT NULL CONSTRAINT "model_accounts_usage_read_succeeded_boolean" CHECK("model_accounts"."usage_read_succeeded" in (0, 1))'],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

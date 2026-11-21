@@ -49,7 +49,7 @@ export class Dispatcher {
     const decision=decidePlacement(this.db,{agent,now:this.now(),roles:models,
       eligibleBoxes:this.reviewBoxes,needs:settings.gpu?['gpu']:[]});
     if (decision.placement) return {available:true};
-    return decision.decision.some(row=>row.reason===QUOTA_WAIT_REASON) ? {available:false,reason:QUOTA_WAIT_REASON} : {available:false};
+    return decision.quotaLimited ? {available:false,reason:QUOTA_WAIT_REASON} : {available:false};
   }
   private currentThread(job:Pick<Job,'id'|'agent'|'conversation'>){
     if(!job.conversation)return undefined;

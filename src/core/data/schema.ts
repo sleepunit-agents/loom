@@ -1190,7 +1190,9 @@ export const modelAccounts = sqliteTable('model_accounts', {
   usageReadAt: text('usage_read_at'),
   resetsAt: text('resets_at'),
   hasRoom: integer('has_room', { mode: 'boolean' }).notNull(),
+  usageReadSucceeded: integer('usage_read_succeeded', { mode: 'boolean' }).notNull().default(false),
 }, t => [
+  check('model_accounts_usage_read_succeeded_boolean', sql`${t.usageReadSucceeded} in (0, 1)`),
   check('model_accounts_usage_read_at_utc', utc(t.usageReadAt)),
   check('model_accounts_resets_at_utc', utc(t.resetsAt)),
   check('model_accounts_has_room_boolean', sql`${t.hasRoom} in (0, 1)`),

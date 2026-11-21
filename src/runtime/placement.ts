@@ -33,7 +33,7 @@ interface PlacementInput {
 
 export const QUOTA_WAIT_REASON='An eligible worker reported a signed-in account. Its quota window leaves too little room to start this job.';
 
-type Candidate = { box: string; reason: string } | { box: string; placement: Placement; missingPreferred: string[] };
+type Candidate = { box: string; reason: string; quotaLimited?: true } | { box: string; placement: Placement; missingPreferred: string[] };
 type Decision = { box: string; outcome: 'taken' | 'passed'; reason: string };
 
 /** Keep a claim explanation bounded even if every configured machine lacks a long list of facts. */
@@ -42,7 +42,7 @@ function describeFacts(facts: readonly string[]): string {
 }
 
 /** Decide once from the household as it stands. Agent order breaks ties in both preference groups. */
-export function decidePlacement(db: DataDatabase, input: PlacementInput): { placement?: Placement; decision: Decision[] } {
+export function decidePlacement(db: DataDatabase, input: PlacementInput): { placement?: Placement; decision: Decision[]; quotaLimited: boolean } {
   const now = Date.parse(input.now);
   if (!Number.isFinite(now)) throw new Error('Invalid placement time');
   // Whether a machine may be handed this agent's work is policy.ts's (machineMayHost), on the household as it is now.
@@ -89,7 +89,7 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
       for (const account of enabled) {
         const login = logins.find(row => row.account === account.id && row.box === id && row.harness === role.harness);
         if (!account.capacity.hasRoom) {
-          if (login?.state === 'signed-in' && Date.parse(login.checkedAt) <= now && (!login.expiresAt || Date.parse(login.expiresAt) > now)
+          if (account.usageReadSucceeded && login?.state === 'signed-in' && Date.parse(login.checkedAt) <= now && (!login.expiresAt || Date.parse(login.expiresAt) > now)
             && account.capacity.windows.some(window => window.estimatedUsage !== null && !window.hasRoom)) quotaLimited = true;
           continue;
         }
@@ -98,7 +98,7 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
           missingPreferred: (input.prefers ?? []).filter(fact => !meetsNeed(facts, fact)) };
       }
     }
-    if (quotaLimited) return { box: id, reason: QUOTA_WAIT_REASON };
+    if (quotaLimited) return { box: id, reason: QUOTA_WAIT_REASON, quotaLimited: true };
     return { box: id, reason: signedOut ? 'An account for an allowed model is signed out on this machine.' : 'No signed-in account with room for an allowed model.' };
   });
   const eligible = candidates.filter(candidate => 'placement' in candidate);
@@ -114,7 +114,7 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
       ? 'Another eligible machine meets every preference.' : "Another eligible machine comes first in the agent's order.";
     return { box, outcome: 'passed', reason: facts + order };
   });
-  return { placement: winner?.placement, decision };
+  return { placement: winner?.placement, decision, quotaLimited: !winner && candidates.some(candidate => 'quotaLimited' in candidate) };
 }
 
 export function selectPlacement(db: DataDatabase, input: PlacementInput): Placement | undefined {

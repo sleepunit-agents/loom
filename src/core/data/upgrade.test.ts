@@ -42,6 +42,19 @@ describe('upgrading a household database', () => {
     expect(old.pragma('foreign_key_check')).toEqual([]);
   });
 
+  it('preserves admission and leaves the last refresh outcome unknown for older accounts', () => {
+    const old = household(30);
+    old.prepare("INSERT INTO members (id, role, joined_at) VALUES ('sam', 'owner', ?)").run(at);
+    const add = old.prepare("INSERT INTO model_accounts (id,owner,provider,label,has_room) VALUES (?, 'sam', 'provider', 'Account', ?)");
+    add.run('available', 1);
+    add.run('blocked', 0);
+    upgradeDataSchema(old);
+    expect(old.prepare('SELECT id, has_room, usage_read_succeeded FROM model_accounts ORDER BY id').all()).toEqual([
+      {id:'available',has_room:1,usage_read_succeeded:0},
+      {id:'blocked',has_room:0,usage_read_succeeded:0},
+    ]);
+  });
+
   it('preserves schedule history and releases a removed name only on its own clock', () => {
     const old = household(29);
     for (const agent of ['fern','birch']) old.prepare(

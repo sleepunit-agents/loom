@@ -11,7 +11,7 @@ export function accountUsageUnavailable(db: DataDatabase, input: { account: stri
   const applied = db.transaction(() => {
     const account = db.select().from(modelAccounts).where(eq(modelAccounts.id, input.account)).get();
     if (!account || account.owner !== input.owner || account.provider !== input.provider) return false;
-    db.update(modelAccounts).set({ hasRoom: false }).where(eq(modelAccounts.id, input.account)).run();
+    db.update(modelAccounts).set({ hasRoom: false, usageReadSucceeded: false }).where(eq(modelAccounts.id, input.account)).run();
     return true;
   });
   if (applied && !db.$client.inTransaction) accountObservationCommitted(db, input.account);
