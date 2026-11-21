@@ -15,6 +15,10 @@ export function agentMemoryFiles(){
    const result=await command('memory/remember',{category:'reference',title:'Isolation sample',content:fact.content},fact.token);
    assert.equal(result.ids.length,1);
    fact.id=result.ids[0];
+   const path='isolation/sample';
+   await command('memory/noteWrite',{path,body:fact.content,lifespan:'keep'},fact.token);
+   fact.person=(await command('memory/personWrite',{slug:'file-sample',name:'Sample friend',summary:fact.content},fact.token)).ids[0];
+   fact.project=(await command('memory/projectWrite',{slug:'file-sample',name:'Sample project',summary:fact.content},fact.token)).ids[0];
   }
   await open(start+1000);
   const files=new Set();
@@ -36,15 +40,27 @@ export function agentMemoryFiles(){
     for(const fact of facts)assert.equal(bytes.includes(Buffer.from(fact.content)),false);
    }finally{db.close();}
   }
-  const query='query($fern:String!,$moss:String!){fern:memoryProjectMemory(id:$fern){content} moss:memoryProjectMemory(id:$moss){content}}';
-  const variables=Object.fromEntries(facts.map(fact=>[fact.agent,fact.id]));
-  const read=async token=>(await post('/graphql',{query,variables},200,token)).data;
-  const [fern,moss]=facts.map(fact=>({content:fact.content}));
-  assert.deepEqual(await read(facts[0].token),{fern,moss:null});
-  assert.deepEqual(await read(facts[1].token),{fern:null,moss});
+  const query=`query($agent:String!,$memory:String!,$person:String!,$project:String!){
+   memoryProjectMemory(id:$memory){content}
+   memoryNote(agent:$agent,path:"isolation/sample"){body}
+   memoryPerson(id:$person){card{summary}}
+   memoryProject(id:$project){card{summary}}
+  }`;
   const memberToken=member=>issue({kind:'owner',member,label:'File walkthrough '+member});
-  assert.deepEqual(await read(memberToken('alex')),{fern,moss});
-  assert.deepEqual(await read(memberToken('robin')),{fern:null,moss});
-  return {ok:true,reason:'Two agents wrote distinct facts into separate private files. After restart each read only its own fact. The owner read both, and the project colleague assigned to just one agent read only that agent’s fact.'};
+  const viewers=[
+   {token:facts[0].token,agents:['fern']},{token:facts[1].token,agents:['moss']},
+   {token:memberToken('alex'),agents:['fern','moss']},{token:memberToken('robin'),agents:['moss']}
+  ];
+  for(const {token,agents:visible} of viewers){
+   for(const {agent,id:memory,person,project,content} of facts){
+    const {data}=await post('/graphql',{query,variables:{agent,memory,person,project}},200,token);
+    const expected=visible.includes(agent);
+    assert.deepEqual(data,{
+     memoryProjectMemory:expected?{content}:null,memoryNote:expected?{body:content}:null,
+     memoryPerson:expected?{card:{summary:content}}:null,memoryProject:expected?{card:{summary:content}}:null,
+    },'Unexpected private data visibility for '+agent+' with access to '+visible.join(', '));
+   }
+  }
+  return {ok:true,reason:'After restart both facts lived in separate agent files. Each agent read its own fact, note, person card and project card. The household owner read both sets. A member sharing a project with both agents read only the set from the agent they own.'};
  });
 }
