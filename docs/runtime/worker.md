@@ -1764,6 +1764,53 @@ These venues do not create a Comms thread or message;
 Discord and Slack retain their guarded bridge reply path.
 
 
+### Delegate from a private Comms conversation
+
+When the owner asks a running Comms body to spawn a subagent **through Loom**,
+the body calls the `loom_command` MCP tool. Loom places the child on an eligible
+worker and supplies its job credentials. The calling body can use this path even
+when its own environment has no Codex executable. A harness-native subagent
+works inside the parent job and shares its account quota.
+
+First call `loom_command` with these arguments to discover the choices for the
+current conversation. The response lists assigned agents, configured work roles
+and their availability, and whether a Codex worker is available.
+
+```json
+{"operation":"conversation.handoffOptions","id":"discover-walkthrough","input":{}}
+```
+
+For example, if discovery lists an available role named `review`, submit the
+brief below. For an explicit request for Codex, replace `"role":"review"` with
+`"harness":"codex"`. Use a new client ID for each distinct brief. When retrying
+the same submission from the same job, reuse its IDs and input.
+
+```json
+{
+  "operation": "conversation.handoff",
+  "id": "submit-walkthrough",
+  "input": {
+    "role": "review",
+    "clientId": "review-walkthrough",
+    "label": "Review the walkthrough result",
+    "words": "The example walkthrough reported 49 passing tests and 311 unmeasured promises. Explain what the result establishes in one sentence."
+  }
+}
+```
+
+The response includes `value.conversation` and `value.item`. Use the **child
+conversation** from that response when checking progress from the originating
+thread. Substitute it for the placeholder below.
+
+```json
+{"operation":"conversation.handoffStatus","id":"check-walkthrough","input":{"conversation":"<child conversation>"}}
+```
+
+A null `jobState` means there is no job row yet. `resultDelivered` tells the
+parent whether Loom has returned a result, including a failure, to its thread.
+An immediate capacity refusal happens before a child is created. Discovery can
+supply a quota reason when a matching signed-in worker has reported exhaustion.
+
 A current native body can use `conversation.handoff` through `loom_command`
 with an assigned peer agent, stable client ID, short label and brief words.
 Root derives the parent job and member/project labels, checks the peer's current
@@ -1771,7 +1818,7 @@ assignment again after encryption and on replay, and reuses one canonical
 handoff conversation per peer/parent job. Its one Inbox item enters ordinary
 Tempo settling and job admission. No Comms thread is created.
 
-A body working for the member of a private Comms thread can request a fresh
+A body working on the owner’s word in a private Comms thread can request a fresh
 body of the same agent by passing `harness: "codex"`, `clientId`, `label`,
 and `words` to `conversation.handoff`. Include the repository, commit and
 assignment in the brief. Each client ID identifies a separate child. The
