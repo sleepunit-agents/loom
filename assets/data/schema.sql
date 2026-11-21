@@ -1370,6 +1370,29 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `archived_questions` (
+	`thread` text NOT NULL,
+	`source_member` text NOT NULL,
+	`source_agent` text NOT NULL,
+	`source_conversation` text NOT NULL,
+	`ref` text NOT NULL,
+	`approval` text,
+	`raised_at` text NOT NULL,
+	`seen_at` text NOT NULL,
+	`keep_until` text NOT NULL,
+	`words` blob,
+	`verdict` text,
+	`answered_by` text,
+	`answered_at` text,
+	PRIMARY KEY(`thread`, `ref`),
+	FOREIGN KEY (`thread`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "archived_questions_raised_utc" CHECK("archived_questions"."raised_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "archived_questions"."raised_at") = "archived_questions"."raised_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "archived_questions"."raised_at") = "archived_questions"."raised_at", 0)),
+	CONSTRAINT "archived_questions_seen_utc" CHECK("archived_questions"."seen_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "archived_questions"."seen_at") = "archived_questions"."seen_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "archived_questions"."seen_at") = "archived_questions"."seen_at", 0)),
+	CONSTRAINT "archived_questions_keep_utc" CHECK("archived_questions"."keep_until" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "archived_questions"."keep_until") = "archived_questions"."keep_until" or strftime('%Y-%m-%dT%H:%M:%fZ', "archived_questions"."keep_until") = "archived_questions"."keep_until", 0)),
+	CONSTRAINT "archived_questions_answered_utc" CHECK("archived_questions"."answered_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "archived_questions"."answered_at") = "archived_questions"."answered_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "archived_questions"."answered_at") = "archived_questions"."answered_at", 0))
+);
+
+CREATE INDEX `archived_questions_history` ON `archived_questions` (`thread`,`raised_at`,`ref`);
 CREATE TABLE `account_week_readings` (
 	`account` text NOT NULL,
 	`window` text NOT NULL,

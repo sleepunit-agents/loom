@@ -1,3 +1,4 @@
+import { expireArchivedQuestions } from './archived-question-store.js';
 import {isBridgeVenue} from './channel-target.js';
 import { ageCutoff, keepUntilFor, validKeepDays, wordsKept } from './retention.js';
 import {handoffExpiries} from './handoff-words.js';
@@ -281,6 +282,7 @@ export class CommsMessages {
     let expired=0;
     for(const item of privateInboxExpiries(this.db,days))if(item.until<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}
     expired+=expirePrivateBridgeWords(this.db,cutoff);
+    expired += expireArchivedQuestions(this.db,at,cutoff);
     // A kept harness session holds its conversation's words: it goes at the same keep time.
     expired+=expireConversationSessions(this.db,cutoff);
     for(const item of handoffExpiries(this.db,days))if(item.until<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}

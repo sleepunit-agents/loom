@@ -1,3 +1,4 @@
+import { archivedQuestionsField } from './archived-questions.js';
 import { readAll } from '../data/execution.js';
 import { readCommsFolders, readCommsThreads, readCommsRefs, readCommsPage, readCommsSet, type CommsReadSet } from '../data/comms-read.js';
 import { selectedQueryFields } from '../data/queries.js';
@@ -26,6 +27,9 @@ export class CommsQueries {
     const allowed = this.policy(viewer, getTableColumns(conversations));
     if (!is(allowed, SQL)) throw new Error('SQL conversation visibility required');
     return allowed;
+  }
+  archivedHistory() {
+    return archivedQuestionsField(this.db, this.key, viewer => this.allowed(viewer), this.now);
   }
   list(viewer: Viewer, input: { member?: string; agent?: string; archived?: boolean; search?: string; limit?: number; offset?: number } = {}) {
     const count = limit(input.limit ?? 50, 100), offset = input.offset ?? 0;
@@ -143,6 +147,7 @@ export function commsQueryFields(service: CommsQueries): GraphQLFieldConfigMap<u
     threads: { type: new GraphQLNonNull(GraphQLInt) }, archived: { type: new GraphQLNonNull(GraphQLInt) },
   } });
   return {
+    commsArchivedQuestions: service.archivedHistory(),
     homeComms: { type: home, resolve: (_row, _args, context) => service.home(context.viewer) },
     commsFolders: { type: new GraphQLNonNull(folders), resolve: (_row, _args, context) => service.folders(context.viewer) },
     commsThreads: { type: many(thread), args: { search: { type: GraphQLString }, member: { type: GraphQLString }, agent: { type: GraphQLString }, archived: { type: GraphQLBoolean }, limit: { type: GraphQLInt }, offset: { type: GraphQLInt } }, resolve: (_row, args, context) => service.list(context.viewer, args) },
