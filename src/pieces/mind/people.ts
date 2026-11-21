@@ -188,20 +188,33 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
     return [...sources].flatMap(([source,db])=>{try{return sourceIds(source,db);}catch{return [];}});
   }
   let closed=false;
+  // Each connection is read-only. SQLite changes its data_version when another connection commits.
+  // Keep only the next timestamp, never the underlying cards or evidence.
+  const deadlines=new WeakMap<Database,{version:number;measuredAt:number;next:number}>();
   function nextDeadline():number|undefined {
     if(closed)return;
     const now=options.now();let next=Infinity;
-    const add=(at:number)=>{if(Number.isFinite(at)&&at>now)next=Math.min(next,at);};
     for(const db of sources.values()){
+      let version:number|undefined;
+      try{if(db.readonly&&!db.inTransaction)version=db.pragma('data_version',{simple:true}) as number;}catch{/* Try reading both sources below. */}
+      const cached=deadlines.get(db);
+      if(cached&&cached.version===version&&cached.measuredAt<=now&&now<cached.next){
+        next=Math.min(next,cached.next);continue;
+      }
+      let sourceNext=Infinity,complete=true;
+      const add=(at:number)=>{if(Number.isFinite(at)&&at>now)sourceNext=Math.min(sourceNext,at);};
       try{if(has(db,'people'))for(const raw of db.prepare('SELECT card_json FROM people WHERE archived_at IS NULL').iterate()){
         try{const card=JSON.parse((raw as {card_json:string}).card_json) as PersonCard;
           for(const field of Object.values(card.where??{}))add((freshUntil(field)??NaN)+1);
         }catch{/* Malformed cards remain explicit read errors, not timer inputs. */}
-      }}catch{/* A failed source is reported by its reader. */}
+      }}catch{complete=false;}
       try{if(has(db,'memories'))for(const raw of db.prepare("SELECT expires_at,metadata FROM memories WHERE archived=0 AND category IN ('user','feedback') AND expires_at IS NOT NULL").iterate()){
         const row=raw as {expires_at:string;metadata:string|null};
         try{if(typeof JSON.parse(row.metadata??'{}').person==='string')add(Date.parse(row.expires_at));}catch{/* Invalid metadata has no person link. */}
-      }}catch{/* A failed evidence source is reported by its reader. */}
+      }}catch{complete=false;}
+      if(complete&&version!==undefined)deadlines.set(db,{version,measuredAt:now,next:sourceNext});
+      else deadlines.delete(db);
+      next=Math.min(next,sourceNext);
     }
     return next===Infinity?undefined:next;
   }
