@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
+import { createDataSchema } from '../data/database.js';
+import { importThreads } from './import-threads.js';
 import { deletedThreadLookup } from './legacy-thread-id.js';
 
 it('matches the original creator and requires one recorded parent for an old thread deletion', () => {
@@ -27,6 +29,30 @@ it('matches the original creator and requires one recorded parent for an old thr
   } finally {
     source.close();
     writer.close();
+    rmSync(dir,{recursive:true,force:true});
+  }
+});
+
+
+it('releases the archive connection when a deletion cannot be resolved before live threads are read', () => {
+  const dir=mkdtempSync(join(tmpdir(),'unresolved-thread-'));
+  const path=join(dir,'household.db');
+  const writer=new Database(path);
+  const destination=new Database(':memory:');
+  try {
+    writer.exec(`CREATE TABLE comms_deleted(id,at,member,agent);
+      INSERT INTO comms_deleted VALUES ('th:gone','2026-11-20T00:00:00Z','alex','fern');
+      CREATE TABLE comms_threads(id)`);
+    const source=new Database(path,{readonly:true});
+    try {
+      const db=createDataSchema(destination);
+      expect(()=>importThreads(source,db,()=>undefined)).toThrow(/no unique backing conversation/);
+    } finally {
+      source.close();
+    }
+  } finally {
+    writer.close();
+    destination.close();
     rmSync(dir,{recursive:true,force:true});
   }
 });

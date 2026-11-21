@@ -22,11 +22,11 @@ const sourceThread = z.object({
 
 export function importThreads(source:Database.Database, db:DataDatabase, recover:(agent:string,member:string,thread:string)=>string|undefined) {
   if (!source.readonly) throw Error('Expected a read-only household snapshot');
-  const gone = source.prepare('SELECT * FROM comms_deleted ORDER BY id').iterate();
-  const rows = source.prepare('SELECT * FROM comms_threads ORDER BY id').iterate();
+  const gone = source.prepare('SELECT * FROM comms_deleted ORDER BY id');
+  const rows = source.prepare('SELECT * FROM comms_threads ORDER BY id');
   return db.transaction(() => {
     let inserted = 0, total = 0, tombstones = 0;
-    for (const raw of gone) {
+    for (const raw of gone.iterate()) {
       const result = deletedThread.safeParse(raw);
       if (!result.success) throw new UnresolvedArchiveThread('A deleted thread needs its original conversation identity before import.');
       const {agent,member,id,at}=result.data;
@@ -43,7 +43,7 @@ export function importThreads(source:Database.Database, db:DataDatabase, recover
         tombstones++;
       }
     }
-    for (const raw of rows) {
+    for (const raw of rows.iterate()) {
       const row = sourceThread.parse(raw);
       total++;
       // The v1 writer assigned this ID to ordinary private threads. Spawned threads
