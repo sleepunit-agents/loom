@@ -49,7 +49,11 @@
     {
       "id": "memory-007",
       "promise": "A memory belongs to one agent. The agent, its owners and household owners see it.",
-      "source": "docs/how-it-works/site/memory.html#con-h"
+      "source": "docs/how-it-works/site/memory.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "agentMemoryFiles"
+      }
     },
     {
       "id": "memory-008",
@@ -97,7 +101,11 @@
     {
       "id": "memory-015",
       "promise": "a Memories, notes and cards. The agent itself, the agent's owners, and household owners. Being on a project together does not open an agent's memories or notes.",
-      "source": "docs/how-it-works/site/memory.html#see-h"
+      "source": "docs/how-it-works/site/memory.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "agentMemoryFiles"
+      }
     },
     {
       "id": "memory-016",
