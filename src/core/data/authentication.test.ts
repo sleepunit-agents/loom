@@ -230,4 +230,7 @@ it('prepares the repeated credential reads once per database and rechecks a roll
     throw Error('Roll back this fixture write');
   })).toThrow('Roll back this fixture write');
   expect(session()?.viewer.id).toBe('sam');
+  other.db.delete(sessions).run();
+  expect(currentSession(other.db, hash(cookie), Date.parse(at))).toBeUndefined();
+  expect(session()?.viewer.id).toBe('sam');
 });
