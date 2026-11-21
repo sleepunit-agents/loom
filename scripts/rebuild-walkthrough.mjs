@@ -272,7 +272,7 @@ export async function* walkthroughSteps(output) {
    const {agentToolsEvidence}=await import('./rebuild-agent-tools.mjs');
    Object.assign(report.actions,await agentToolsEvidence());
   } catch(error) {
-   for(const name of ['namedNotes','namedKnowledge'])report.actions[name]={ok:false,error:String(error)};
+   for(const name of ['namedNotes','namedKnowledge','sharedKnowledgeAudience'])report.actions[name]={ok:false,error:String(error)};
   }
   save();yield {phase:'named-agent-tools',actions:safeReport(report.actions)};
   phase='note lifetimes';

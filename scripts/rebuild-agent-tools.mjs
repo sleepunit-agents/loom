@@ -4,7 +4,7 @@ import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/st
 import {withFictionalMemoryHome} from './rebuild-memory-home.mjs';
 
 export async function agentToolsEvidence(){
- return withFictionalMemoryHome(async ({connectAgent})=>{
+ return withFictionalMemoryHome(async ({connectAgent,issue,post,command})=>{
   const client=new Client({name:'fictional-agent',version:'1'});
   const {url,token}=connectAgent();
   try{
@@ -36,6 +36,25 @@ export async function agentToolsEvidence(){
     const page=await call('knowledge_read',{slug});assert.ok(page.includes(title)&&page.includes(body));
     actions.namedKnowledge={ok:true,reason:'The agent created two distinct pages, found the matching page by its text, and read its title and body by slug.'};
    }catch(error){actions.namedKnowledge={ok:false,error:String(error)};}
+   try{
+    const owner=issue({kind:'owner',member:'alex',label:'Fictional Knowledge owner'});
+    const member=issue({kind:'owner',member:'robin',label:'Fictional non-owner Knowledge reader'});
+    const agent=issue({kind:'agent',agent:'moss',label:'Fictional second terminal'});
+    const title='Fictional shared seed inventory',domain='fixture',body='Six seed packets.';
+    const {slug}=await command('mind/knowledgeAdd',{title,domain,body,source:''},owner);
+    const read=async token=>(await post('/graphql',{query:'query($slug:String!){memoryKnowledgePage(slug:$slug){body}}',variables:{slug}},200,token)).data.memoryKnowledgePage;
+    assert.deepEqual(await read(agent),{body});
+    const finding='One more seed packet.';
+    const revised=body+'\n\n'+finding;
+    await command('mind/knowledgeAppend',{slug,body:finding},agent);
+    assert.deepEqual(await read(owner),{body:revised});
+    assert.ok((await call('knowledge_read',{slug})).includes(revised));
+    assert.equal(await read(member),null);
+    const refused=await post('/api/mind/knowledgeAppend',{id:crypto.randomUUID(),input:{slug,body:'Fictional refused edit'}},403,member);
+    assert.equal(refused.ok,false);
+    assert.deepEqual(await read(owner),{body:revised});
+    actions.sharedKnowledgeAudience={ok:true,reason:'A household owner created the page, an agent terminal read it and appended a finding, and a second terminal and the owner read the revision. A non-owner member could neither read nor edit it.'};
+   }catch(error){actions.sharedKnowledgeAudience={ok:false,error:String(error)};}
    return actions;
   }finally{await client.close();}
  });

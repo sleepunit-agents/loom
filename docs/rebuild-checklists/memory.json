@@ -118,7 +118,11 @@
     {
       "id": "memory-016",
       "promise": "b Knowledge. Knowledge pages are shared by the household. Household owners and household agents can read and write them, including agents in terminal sessions without a job. Non-owner members cannot.",
-      "source": "docs/how-it-works/site/memory.html#see-h"
+      "source": "docs/how-it-works/site/memory.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "sharedKnowledgeAudience"
+      }
     },
     {
       "id": "memory-017",
