@@ -1,3 +1,4 @@
+import {NativeSelect} from '../../kit/native-select';
 import {useDeadline} from '../comms/use-deadline';
 import {useState} from 'react';
 import {useDataQuery} from '../../data/graphql';
@@ -24,9 +25,9 @@ export function WeeklyUsage({accountId}:{accountId?:string}){
   const accounts = selected.map(account=>({...account,weeklyUsage:account.weeklyUsage?.filter(week=>Date.parse(week.resetsAt)>now) ?? []})).filter(account=>account.weeklyUsage.length);
   if(!accounts.length) return <p>No current weekly reading is available.</p>;
   return <div className="grid gap-3">
-    <label>Group by <select value={dimension} onChange={event=>setDimension(event.target.value as Dimension)}>
+    <label>Group by <NativeSelect value={dimension} onChange={event=>setDimension(event.target.value as Dimension)}>
       <option value="agents">Agent</option><option value="triggers">Trigger</option><option value="conversations">Conversation</option>
-    </select></label>
+    </NativeSelect></label>
     <p>Each percentage is a share of that subscription’s weekly allowance. Loom estimates shares from changes in provider readings and token counts for overlapping jobs.</p>
     {accounts.map(account=>account.weeklyUsage!.map(week=><section key={JSON.stringify([account.id,week.window])}>
       <h4>{account.label} · {week.window} · {percent.format(week.usage)} used</h4>
