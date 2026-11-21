@@ -62,6 +62,13 @@ function snapshotBytes(root: string): unknown {
   }));
   return walk(root);
 }
+it('keeps the original Attention importer when a rebuilt Notes alias shares its database', async()=>{
+  const f = await fixture(), snapshot = join(f.dir,'rebuilt');
+  symlinkSync('memories.db',join(f.old,'agents/art/notes.db'));
+  await createSnapshot(f.old,snapshot,undefined,{},true);
+  expect(prepareMigrationPlan(snapshot).plan.importers.attention).toEqual(f.plan.importers.attention);
+});
+
 it('derives six explicit inputs and private audiences from old-format fixtures without any snapshot writes', async () => {
   const f = await fixture(), before = snapshotBytes(f.root);
   const { plan, missing, blocked } = prepareMigrationPlan(f.root);

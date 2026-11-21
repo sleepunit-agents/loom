@@ -103,7 +103,7 @@ function identityPage(path: string): boolean {
 export const noteAttachmentPath = (path: string): boolean =>
   /^agents\/[^/]+\/note-files\/([a-f0-9]{2})\/\1[a-f0-9]{62}$/.test(path);
 
-function householdMemoryFile(path: string): boolean {
+export function householdMemoryFile(path: string): boolean {
   return identityPage(path) || noteAttachmentPath(path) || /^commons\/(knowledge|people)\.db$/.test(path) ||
     /^agents\/[^/]+\/notes\.db$/.test(path);
 }

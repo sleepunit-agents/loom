@@ -532,6 +532,12 @@ test('captures authored memory pages and byte-exact SQLite attachments for a reb
   for (const name of databases) expect(manifest.files.find(f=>f.path==='home/'+name)?.kind).toBe('sqlite');
   expect(()=>prepareMigrationPlan(to)).not.toThrow();
   expect(manifest.followed).toContainEqual({path:'agents/fern/IDENTITY.md', realPath:'agents/fern/roles/garden.md'});
+  const shared = join(home,'commons/people.db');
+  rmSync(shared); symlinkSync('../agents/fern/notes.db',shared);
+  const escaped = join(root,'commons-escaped');
+  await expect(createSnapshot(home,escaped,undefined,{},true)).rejects.toThrow(/within their owner/);
+  expect(existsSync(escaped)).toBe(false);
+  rmSync(shared); symlinkSync('people.db.retired',shared);
   rmSync(join(agent, 'IDENTITY.md')); symlinkSync('../../comms.key', join(agent,'IDENTITY.md'));
   await expect(createSnapshot(home,join(root,'refused'),undefined,{},true)).rejects.toThrow(/identity pages/);
   mkdirSync(join(home,'agents','other')); writeFileSync(join(home,'agents/other/IDENTITY.md'),'Other');
