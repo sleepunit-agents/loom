@@ -171,8 +171,6 @@ before it runs any step, and refuses one it does not recognise without writing t
 | Tasks | `tasks`, `task_links`, `task_comments`, `imported_task_sequence` |
 | Conversations | `conversations`, `conversation_people`, `turns`, `digests`, `digest_items`, `agent_status`, `conversation_days`, `findings`, `conversation_sessions` |
 | Inbox and threads | `inbox`, `inbox_refs`, `inbox_reads`, `action_results`, `threads`, `messages`, `archived_questions`, `thread_refs`, `deleted_threads` |
-
-The offline Comms importer uses a temporary SQLite table named `reasons` to hold sealed delivery reasons during validation. Closing that import releases the temporary database.
 | Approvals | `approvals`, `approval_rules`, `approval_notices`, `approval_record` |
 | Tempo | `triggers`, `trigger_log`, `trigger_journals`, `trigger_acceptances`, `program_firings`, `trigger_edits`, `agent_pauses`, `tempo_settings` |
 | Changes | `changes`, `change_checks`, `change_people`, `change_tasks`, `change_sync`, `change_review_rounds` |
@@ -183,6 +181,8 @@ The offline Comms importer uses a temporary SQLite table named `reasons` to hold
 | Secrets | `secrets`, `secret_grants`, `secret_requests`, `secret_rules`, `secret_rule_agents`, `secret_uses`, `secret_changes`, `secret_write_journal` |
 | Measuring | `timing_days`, `measuring_settings` |
 | Bookkeeping | `migrations` (the schema number), `operation_results` (retry receipts) |
+
+The offline Comms importer uses a temporary SQLite table named `reasons` to hold sealed delivery reasons during validation. Closing that import releases the temporary database.
 
 ### `agents/<agent>/memories.db`: one per agent
 
