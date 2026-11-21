@@ -9,9 +9,9 @@ import { dataDatabase, dataSchemaNumber, recogniseDataSchema } from '../core/dat
 import { privateBytes } from '../pieces/secrets/local-holder.js';
 import { readKey, wordsKey } from '../pieces/comms/crypto.js';
 import { importArchivedQuestions } from '../core/conversations/archived-question-store.js';
-
-const usage='loom migrate archived-questions --source STOPPED_ARCHIVE --home PREPARED_HOME';
-export async function migrateQuestions(args:string[],io:{stdout(text:string):void;stderr(text:string):void}) {
+import { importThreads, UnresolvedArchiveThread } from '../core/conversations/import-threads.js';
+export async function migrateComms(phase:'archived-questions'|'comms-threads', args:string[],io:{stdout(text:string):void;stderr(text:string):void}) {
+  const usage=`loom migrate ${phase} --source STOPPED_ARCHIVE --home PREPARED_HOME`;
   let source:string,home:string;
   try{
     const {values}=parseArgs({args,strict:true,allowPositionals:false,options:{source:{type:'string'},home:{type:'string'}}});
@@ -25,11 +25,6 @@ export async function migrateQuestions(args:string[],io:{stdout(text:string):voi
     const program=z.object({database:z.string(),commsKey:z.string()}).parse(JSON.parse(privateBytes(join(home,'program.json')).toString()));
     const target=realpathSync(program.database);
     if(dirname(target)!==home)throw Error('use a staged database in its own home');
-    const sourceConfig=z.object({comms_days:z.number().int().min(1).max(14).default(14)}).parse(JSON.parse(
-      // The archive is a stopped v1 household; its ordinary household.json need not be mode 0600.
-      readFileSync(join(source,'household.json'),'utf8')));
-    const identity=readKey(program.commsKey);
-    if(identity!==readKey(join(source,'comms.key')))throw Error('the prepared home needs its original Comms key');
     const tmp=mkdtempSync(join(tmpdir(),'loom-question-archive-'));clean.push(()=>rmSync(tmp,{recursive:true,force:true}));
     const copySnapshot=(name:string)=>{
       const file=join(source,name),copy=join(tmp,name);
@@ -39,14 +34,25 @@ export async function migrateQuestions(args:string[],io:{stdout(text:string):voi
       copyFileSync(file,copy,constants.COPYFILE_EXCL);
       const db=new Database(copy,{readonly:true,fileMustExist:true});clean.push(()=>{db.close();});return db;
     };
-    const archive=copySnapshot('comms.db'),household=copySnapshot('household.db');
+    const household=copySnapshot('household.db');
     const client=new Database(target,{fileMustExist:true});clean.push(()=>{client.close();});
     if(recogniseDataSchema(client)!==dataSchemaNumber)throw Error('upgrade the staged database first');
     client.pragma('foreign_keys = ON');
+    if(phase==='comms-threads'){
+      const result=importThreads(household,dataDatabase(client));
+      io.stdout(`Imported ${result.inserted} of ${result.total} Comms threads (new deletion records: ${result.tombstones}).\n`);return 0;
+    }
+    const sourceConfig=z.object({comms_days:z.number().int().min(1).max(14).default(14)}).parse(JSON.parse(
+      // The archive is a stopped v1 household; its ordinary household.json need not be mode 0600.
+      readFileSync(join(source,'household.json'),'utf8')));
+    const identity=readKey(program.commsKey);
+    if(identity!==readKey(join(source,'comms.key')))throw Error('the prepared home needs its original Comms key');
+    const archive=copySnapshot('comms.db');
     const result=await importArchivedQuestions({archive,household,destination:dataDatabase(client),key:wordsKey(identity),
       sourceDays:sourceConfig.comms_days,now:()=>new Date().toISOString()});
     io.stdout(`Imported ${result.inserted} of ${result.total} archived questions.\n`);return 0;
-  }catch{
-    io.stderr('Could not import archived questions. Check that the archive contains completed SQLite backups, the prepared home is stopped and current, and the key and thread identities match.\n');return 1;
+  }catch(error){
+    if(error instanceof UnresolvedArchiveThread){io.stderr(error.message+'\n');return 1;}
+    io.stderr(`Could not import ${phase==='comms-threads'?'Comms threads':'archived questions'}. Check that the archive contains completed SQLite backups, the prepared home is stopped and current, and the key and thread identities match.\n`);return 1;
   }finally{for(const close of clean.reverse())await close();}
 }
