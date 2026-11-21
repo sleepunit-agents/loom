@@ -3,6 +3,8 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {eq,and} from 'drizzle-orm';
 import {bodyFixture,bodyCredentials as raw,credentialHash as hash} from '../test/fixtures/conversation-body.js';
 import {bodyConversationClient,bodyMailContext} from './runtime/conversation-client.js';
+import {Jobs} from './runtime/jobs.js';
+import {SILENCE_MS, REPORT_MS} from './runtime/silence.js';
 import {bodyProgram} from './runtime/body-program.js';
 import * as s from './core/data/schema.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
@@ -28,6 +30,40 @@ it('gives a different fresh body the retained dialogue and follow-up without a s
  expect(await bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fictional/claude',cwd:'/fictional'}),stdin:async()=>Buffer.from(JSON.stringify({job,build:'fixture',bootstrap:{origin:'https://loom.invalid',job:'fresh-job',token}})),env:{},signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>f.root.http.request(new Request(url,init)),startup:async()=>{},native,error:()=>{}})).toBe(0);
  expect(native).toHaveBeenCalledOnce();expect(f.db.select().from(s.messages).all().slice(0,2)).toEqual(beforeMessages.slice(0,2));
  for(const table of [s.inbox,s.jobs,s.operationResults])for(const words of ['PRIOR PERSON DIALOGUE','PRIOR AGENT REPLY'])expect(JSON.stringify(f.db.select().from(table).all())).not.toContain(words);
+});
+it('recovers accepted private mail on a second worker and fences the former body before and after the reply',async()=>{
+ const f=await fixture(),runtime=f.root.services.runtime;
+ const now=()=>new Date(f.clock.now()).toISOString();
+ const jobs=new Jobs(f.db,now);
+ runtime.start();
+ const [box]=f.db.select().from(s.boxes).all();
+ f.db.insert(s.boxes).values({...box,id:'second-box',name:'Second box'}).run();
+ // The worker accepted the follow-up and then vanished before recording an answer.
+ await f.client.takeAndAccept(async item=>{expect(item.words).toBe('Do that again');});
+ f.clock.advance(SILENCE_MS + 2 * REPORT_MS);
+ const replacement=f.db.select().from(s.jobs).where(eq(s.jobs.retryOf,'job')).get()!;
+ expect(replacement.state).toBe('queued');
+ expect(jobs.claim(replacement.id,'second-box')).toBeUndefined();
+ f.clock.advance(Date.parse(replacement.retryAt!)-f.clock.now());
+ expect(jobs.claim(replacement.id,'second-box')?.box).toBe('second-box');
+ jobs.started(replacement.id,'second-box','fixture-build');
+ const token='second_'+'d'.repeat(64);
+ f.db.insert(s.tokens).values({fingerprint:hash(token),label:'Second worker body',kind:'agent',agent:'art',job:replacement.id,createdAt:now()}).run();
+ const next=sdk(f,token,replacement.id);
+ await expect(f.client.reply({clientId:'late',words:'Stale answer',model:'fixture'})).rejects.toThrow();
+ const inputs:string[]=[];
+ await next.takeAndAccept(async item=>{
+  inputs.push(item.words!);
+  expect(item.history.map(line=>line.words)).toEqual(['PRIOR PERSON DIALOGUE','PRIOR AGENT REPLY']);
+ });
+ expect(inputs).toEqual(['Do that again']);
+ await next.reply({clientId:'completed',words:'Second worker answer',model:'fixture'});
+ // A second loss after the durable reply, before the worker's final receipt, must not run the input again.
+ f.clock.advance(SILENCE_MS + 2 * REPORT_MS);
+ expect(f.db.select().from(s.jobs).where(eq(s.jobs.retryOf,replacement.id)).all()).toEqual([]);
+ expect(f.db.select().from(s.messages).where(eq(s.messages.thread,f.thread.id)).all().map(row=>row.clientId))
+  .toEqual(['prior','job:prior-answer','followup',replacement.id+':completed']);
+ await expect(next.reply({clientId:'too-late',words:'Duplicate',model:'fixture'})).rejects.toThrow();
 });
 it('restricts history to this conversation and excludes the current batch and unavailable old words',async()=>{
  const f=await fixture(),other=f.root.services.comms!.threads.open({member:'bob',agent:'mark',title:'Other'});
