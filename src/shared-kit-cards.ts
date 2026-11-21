@@ -7,7 +7,7 @@ import { OperationError } from './core/operations/index.js';
 import { outsidePersonKey } from './pieces/bridges/keys.js';
 import { hasControlCharacter } from './core/line-name.js';
 import { kitTools } from './runtime/kit-manifest.js';
-import { OUTSIDE_PEOPLE_MAX, outsideTier } from './shared-agent-body-policy.js';
+import { OUTSIDE_PEOPLE_MAX, outsideTier, setOutsidePersonTier } from './shared-agent-body-policy.js';
 import { householdId, projectId } from './slug.js';
 
 const addressPart = z.string().min(1).max(200).refine(s => s.trim() === s && !hasControlCharacter(s));
@@ -100,7 +100,7 @@ function rows(db:DataDatabase,value:Change) {
     const roster=project?{project:projectState(db,project)??null,grants:projectKitDefinitions(db,project),
       on:!!db.select({project:projectOutsidePeople.project}).from(projectOutsidePeople).where(rosterWhere(p,project)).get()}:{};
     return {state:{agentLive:live(db,agents,agent),linked:link(db,p),tier:current?.tier??null,full,...roster,...(!current?{returning:returningKits(db,agent,p)}:{})},apply(){
-      db.insert(agentPeople).values({agent,person,tier}).onConflictDoUpdate({target:[agentPeople.agent,agentPeople.person],set:{tier}}).run();
+      setOutsidePersonTier(db,agent,person,tier);
       if(project)db.insert(projectOutsidePeople).values({project,...p}).onConflictDoNothing().run();
     }};
   }

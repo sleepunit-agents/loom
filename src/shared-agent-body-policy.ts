@@ -24,6 +24,10 @@ export function readAgentBodyPolicy(db:DataDatabase,agent:string):BodyPolicy{
  const order=(a:unknown,b:unknown)=>JSON.stringify(a)<JSON.stringify(b)?-1:1;
  return{agent,people:people.sort(order),deniedTools:deniedTools.sort(order)};
 }
+export function setOutsidePersonTier(db:DataDatabase,agent:string,person:string,tier:z.infer<typeof outsideTier>){
+ db.insert(agentPeople).values({agent,person,tier}).onConflictDoUpdate({target:[agentPeople.agent,agentPeople.person],set:{tier}}).run();
+}
+
 export function saveAgentBodyPolicy(db:DataDatabase,input:BodyPolicy){
  if(!db.select({id:agents.id}).from(agents).where(eq(agents.id,input.agent)).get())throw new OperationError('invalid','Unknown agent');
  db.delete(agentPeople).where(eq(agentPeople.agent,input.agent)).run();
