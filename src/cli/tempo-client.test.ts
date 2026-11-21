@@ -187,6 +187,7 @@ it('lists named household lanes across pages and returns stored UTF-8 instructio
     db.insert(agents).values({id,about:'',markFg:'#fff',markBg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
   }
   db.insert(members).values({ id:'director', role:'owner', joinedAt:at }).run();
+  db.insert(memberAgents).values({member:'director',agent:'fern'}).run();
   db.insert(tokens).values([
     {fingerprint:createHash('sha256').update(owner).digest('hex'),kind:'owner',label:'fixture',member:'director',createdAt:at},
     {fingerprint:createHash('sha256').update(agent).digest('hex'),kind:'agent',label:'agent fixture',agent:'fern',createdAt:at},
@@ -200,12 +201,14 @@ it('lists named household lanes across pages and returns stored UTF-8 instructio
   db.insert(triggers).values({...lane,id:'off',enabled:false,state:'stopped'}).run();
   const app = sharedRoot({db,clock,originAllowed:()=>true});
   try {
+    const direct: typeof fetch = (url,init)=>Promise.resolve(app.http.request(String(url),init));
+    let transport = direct;
     const run = async (credential:string, ...args:string[]) => {
       writeFileSync(file,credential,{mode:0o600});
       let out = '', err = '';
       const code = await runTempoClient(args, {env:{LOOM_URL:'http://localhost',LOOM_TOKEN_FILE:file},
         stdin:Readable.from([]),stdinIsTTY:false,stdout:s=>{out+=s;},stderr:s=>{err+=s;}},
-        (url,init)=>Promise.resolve(app.http.request(String(url),init)));
+        transport);
       return {code,out,err};
     };
     const listed = await run(owner,'lane','list');
@@ -219,6 +222,42 @@ it('lists named household lanes across pages and returns stored UTF-8 instructio
     expect(await run(agent,'lane','text','lane-102')).toMatchObject({code:0,out:words});
     expect(await run(agent,'--agent=birch','lane','text','other')).toMatchObject({code:1,out:''});
     expect(await run(agent,'lane','text','private-token')).toMatchObject({code:1,out:''});
+    const source = join(folder,'routine.md');
+    const update = '\uFEFFEdited instructions 🎛️\r\n\n';
+    writeFileSync(source,update);
+    const attempts: string[] = [];
+    transport = async (url,init) => {
+      const response = await direct(url,init);
+      if (new URL(String(url)).pathname === '/api/tempo/edit') {
+        attempts.push(String(init?.body));
+        if (attempts.length === 1) {
+          expect(response.status,await response.text()).toBe(200);
+          throw Error('Lost acknowledgement');
+        }
+      }
+      return response;
+    };
+    const applied = await run(owner,'lane','set','lane-102','-f',source);
+    expect(applied.code,applied.err).toBe(0);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toBe(attempts[1]);
+    expect(await run(owner,'lane','text','lane-102')).toMatchObject({code:0,out:update});
+    expect(db.select().from(triggers).all().find(row=>row.id==='lane-102')).toMatchObject({times:'03:13',to:'fern',note:'Watch',enabled:true});
+    const firstEdit = JSON.parse(attempts[0]);
+    const denied = await app.http.request('/api/tempo/edit',{method:'POST',headers:{
+      'content-type':'application/json',authorization:'Bearer '+agent,
+    },body:JSON.stringify({id:randomUUID(),input:firstEdit.input})});
+    expect(denied.status).toBe(403);
+    expect(await run(agent,'lane','set','lane-102','-p','Another edit')).toMatchObject({code:1,out:''});
+    transport = async (url,init) => {
+      if (new URL(String(url)).pathname === '/api/tempo/edit') {
+        app.services.tempo.triggers.edit('lane-102',{instructions:'Concurrent text'},{kind:'member',id:'director'});
+      }
+      return direct(url,init);
+    };
+    expect(await run(owner,'lane','set','lane-102','-p','Stale update')).toMatchObject({code:1,out:'',err:expect.stringContaining('changed')});
+    expect(await run(owner,'lane','text','lane-102')).toMatchObject({code:0,out:'Concurrent text\n'});
+
   } finally {
     await app.close(); sql.close(); rmSync(folder,{recursive:true,force:true});
   }

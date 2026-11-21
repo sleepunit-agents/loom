@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { and, asc, eq, getTableColumns, gt, isNotNull, ne, or, sql } from 'drizzle-orm';
-import type { Viewer } from '../../policy.js';
-import { sqlVisibility } from '../../policy-sql.js';
+import { rules, type Viewer } from '../../policy.js';
+import { sqlHolds, sqlVisibility } from '../../policy-sql.js';
 import type { DataDatabase } from '../data/database.js';
 import { triggers } from '../data/schema.js';
 
@@ -19,11 +19,14 @@ export function clockLanes(db: DataDatabase, viewer: Viewer, after: string) {
 }
 
 export function clockLaneText(db: DataDatabase, viewer: Viewer, id: string) {
-  const row = db.select({ text: triggers.instructions, file: triggers.file }).from(triggers)
+  const row = db.select({ text: triggers.instructions, file: triggers.file, agent: triggers.to, project: triggers.project, member: triggers.member, conversation: triggers.conversation }).from(triggers)
     .where(and(visibleLane(viewer), eq(triggers.id, id), viewer.kind === 'agent' ? eq(triggers.to, viewer.id) : undefined)).get();
   if (!row) return null;
   // A file reference has no stored copy of its words.
   if (row.file) return { file: row.file };
   const text = row.text!;
-  return { text, digest: createHash('sha256').update(text).digest('hex') };
+  const digest = createHash('sha256').update(text).digest('hex');
+  const revision = viewer.kind === 'member' && sqlHolds(db, rules.householdOwner, viewer)
+    ? createHash('sha256').update(JSON.stringify([id, digest, row.agent, row.project, row.member, row.conversation])).digest('hex') : null;
+  return { text, digest, revision };
 }

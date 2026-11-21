@@ -2,6 +2,10 @@
  * provenance come from composition; no service name or request field grants
  * authority here. The shared writer must call tempo.committed() after commit.
  */
+import { clockLaneText } from './lanes.js';
+import { rules } from '../../policy.js';
+import { sqlHolds } from '../../policy-sql.js';
+import { SHA256_HEX } from '../sha256-hex.js';
 import {createHash} from 'node:crypto';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
@@ -88,9 +92,13 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       ctx.changed('triggers', input.id); return { saved: true };
     },
   }));
-  operations.register(operation({ ...common, name: 'tempo.edit', input: triggerEdit.extend({ id: z.string().min(1), execution: z.enum(['container', 'host']).optional() }).strict(), output: z.object({ saved: z.boolean(), waits }).strict(),
-    may: (viewer, input) => (viewer.kind === 'member' || viewer.kind === 'agent') && triggerAccess(viewer, input.id, 'edit'),
-    run(ctx, { id: target, execution, ...change }) {
+  operations.register(operation({ ...common, name: 'tempo.edit', input: triggerEdit.extend({ laneRevision: z.string().regex(SHA256_HEX).optional(), id: z.string().min(1), execution: z.enum(['container', 'host']).optional() }).strict(), output: z.object({ saved: z.boolean(), waits }).strict(),
+    may: (viewer, input) => (viewer.kind === 'member' || viewer.kind === 'agent') && (!input.laneRevision || (viewer.kind === 'member' && sqlHolds(db, rules.householdOwner, viewer))) && triggerAccess(viewer, input.id, 'edit'),
+    run(ctx, { id: target, execution, laneRevision, ...change }) {
+      if (laneRevision) {
+        const lane = clockLaneText(db, ctx.viewer, target);
+        if (lane?.revision !== laneRevision) throw new OperationError('conflict', 'The stored lane changed; read it again');
+      }
       if (execution === 'host') throw new OperationError('denied', HOST_SCHEDULE_REFUSAL);
       if (ctx.viewer.kind !== 'member' && ctx.viewer.kind !== 'agent') throw new Error('Only a person or an agent edits a trigger');
       const held = options.heldRefusal?.(ctx.viewer, 'edit'); if (held) throw new OperationError('denied', held);

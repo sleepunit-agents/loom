@@ -1,3 +1,7 @@
+import { constants } from 'node:fs';
+import { open } from 'node:fs/promises';
+import { DOOR_REQUEST_BYTES } from '../core/data/door-limit.js';
+import { MESSAGE_WORDS_MAX } from '../core/conversations/words.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { datedWake, HH_MM } from '../core/tempo/calendar.js';
@@ -52,18 +56,38 @@ const lanePage = z.object({ data: z.object({ tempoLanes: z.array(z.object({
   file: z.string().nullable(), characters: z.number().int(),
 })) }) }).strict();
 const laneText = z.object({ data: z.object({ tempoLaneText: z.union([
-  z.object({ text: z.string(), digest: z.string() }), z.object({ file: z.string() }),
+  z.object({ text: z.string(), digest: z.string(), revision: z.string().nullable() }), z.object({ file: z.string() }),
 ]).nullable() }) }).strict();
 
-async function readLane(read: Read, name?: string): Promise<string> {
-  if (name !== undefined) {
-    const answer = await read('query($id:String!){tempoLaneText(id:$id)}', { id: name });
-    const row = laneText.parse(answer).data.tempoLaneText;
-    if (!row) throw new DoorRefusal('No readable stored lane with that name.');
-    if ('file' in row) throw new DoorRefusal('This lane reads its instructions at firing from ' + onOneLine(row.file) + '.');
-    if (createHash('sha256').update(row.text).digest('hex') !== row.digest) throw new DoorRefusal('Could not return the exact lane text.');
-    return row.text.endsWith('\n') ? row.text : row.text + '\n';
-  }
+async function laneFileText(path: string) {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    const before = await handle.stat({bigint:true});
+    if (!before.isFile() || before.size > DOOR_REQUEST_BYTES) throw new DoorRefusal('Choose a regular lane file within the request size limit.');
+    const bytes = Buffer.alloc(Number(before.size) + 1);
+    let used = 0;
+    while (used < bytes.length) {
+      const {bytesRead} = await handle.read(bytes, used, bytes.length - used);
+      if (!bytesRead) break;
+      used += bytesRead;
+    }
+    const after = await handle.stat({bigint:true});
+    if (used !== Number(before.size) || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs)
+      throw new DoorRefusal('The lane file changed while being read.');
+    return new TextDecoder('utf-8', {fatal:true, ignoreBOM:true}).decode(bytes.subarray(0,used));
+  } finally { await handle.close(); }
+}
+
+async function storedLane(read: Read, name: string) {
+  const answer = await read('query($id:String!){tempoLaneText(id:$id)}', { id: name });
+  const row = laneText.parse(answer).data.tempoLaneText;
+  if (!row) throw new DoorRefusal('No readable stored lane with that name.');
+  if ('file' in row) throw new DoorRefusal('This lane reads its instructions at firing from ' + onOneLine(row.file) + '.');
+  if (createHash('sha256').update(row.text).digest('hex') !== row.digest) throw new DoorRefusal('Could not return the exact lane text.');
+  return row;
+}
+
+async function listLanes(read: Read): Promise<string> {
   const lines: string[] = [];
   let after = '';
   for (;;) {
@@ -187,13 +211,20 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
   else if (argv[0]?.startsWith('--agent=')) { agent = argv[0].slice('--agent='.length); argv = argv.slice(1); }
   const verb = argv[0];
   const changesClock = verb === 'pause' || verb === 'resume';
+  let laneUpdate: { name: string; file?: string; words?: string } | undefined;
   let cancel: { id: string; at?: string } | undefined;
   let wake: ReturnType<typeof wakeOptions> | undefined;
   let options: ReturnType<typeof logOptions> | undefined;
   try {
     if (agent === '') throw Error();
     if (verb === 'lane') {
-      if (!(argv[1] === 'list' && argv.length === 2 || argv[1] === 'text' && argv.length === 3 && argv[2])) throw Error();
+      if (argv[1] === 'set') {
+        const {values, positionals} = parseArgs({args:argv.slice(2), allowPositionals:true, options:{
+          'prompt-file':{type:'string',short:'f'}, prompt:{type:'string',short:'p'},
+        }});
+        if (positionals.length !== 1 || !positionals[0] || !!values['prompt-file'] === !!values.prompt) throw Error();
+        laneUpdate = { name: decodeURIComponent(positionals[0]), file: values['prompt-file'], words: values.prompt };
+      } else if (!(argv[1] === 'list' && argv.length === 2 || argv[1] === 'text' && argv.length === 3 && argv[2])) throw Error();
     } else if (verb === 'cancel') {
       if (argv.length !== 2) throw Error();
       const [encoded, at, extra] = argv[1].split('@');
@@ -203,7 +234,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     else if (verb === 'log') options = logOptions(argv.slice(1));
     else if ((verb !== 'list' && !changesClock) || argv.length !== 1) throw Error();
   } catch {
-    io.stderr('usage: wake [--agent AGENT] lane list | lane text NAME | list | cancel WAKE | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
+    io.stderr('usage: wake [--agent AGENT] lane list | lane text NAME | lane set NAME (-f FILE | -p WORDS) | list | cancel WAKE | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
     return 2;
   }
   try {
@@ -226,6 +257,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
         }
         await response.body?.cancel();
         if (response.status === 401) throw new DoorRefusal('Loom rejected the credential.');
+        if (laneUpdate && response.status === 409) throw new DoorRefusal('The lane changed during the update. Read its current text before retrying.');
         if (response.status === 403) throw new DoorRefusal('Loom denied this clock request.');
         if (response.status !== 503 || attempt >= 3) throw Error();
         await delay(100 * attempt);
@@ -233,7 +265,24 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     };
     const read: Read = (query, variables) => post('/graphql', { query, variables });
     if (verb === 'lane') {
-      io.stdout(await readLane(read, argv[1] === 'text' ? decodeURIComponent(argv[2]) : undefined));
+      if (argv[1] === 'list') io.stdout(await listLanes(read));
+      else {
+        const name = laneUpdate?.name ?? decodeURIComponent(argv[2]);
+        const row = await storedLane(read, name);
+        if (!laneUpdate) io.stdout(row.text.endsWith('\n') ? row.text : row.text + '\n');
+        else {
+          if (!row.revision) throw new DoorRefusal('A household owner updates stored lanes.');
+          const words = laneUpdate.file
+            ? await laneFileText(laneUpdate.file) : laneUpdate.words!;
+          if (!words.trim() || words.includes('\0') || words.length > MESSAGE_WORDS_MAX)
+            throw new DoorRefusal('The lane needs nonempty UTF-8 instructions within the message limit.');
+          if (parseRedactedJSON(JSON.stringify(words), token) !== words) throw new DoorRefusal('The lane text contains a credential.');
+          const answer = await post('/api/tempo/edit', { id:randomUUID(), input:{id:name, instructions:words, laneRevision:row.revision} });
+          const { value } = z.object({ok:z.literal(true),value:z.object({saved:z.boolean(),waits:z.string().optional()})}).parse(answer);
+          if (!value.saved) throw new DoorRefusal(onOneLine(value.waits || 'The lane edit is awaiting approval.'));
+          io.stdout('Updated ' + onOneLine(name) + '.\n');
+        }
+      }
       return 0;
     }
     if (!agent) {
@@ -301,6 +350,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     return 0;
   } catch (error) {
     if (error instanceof DoorRefusal) io.stderr(error.message + '\n');
+    else if (laneUpdate) io.stderr('Could not confirm the stored lane update.\n');
     else if (verb === 'lane') io.stderr('Could not read the household lane.\n');
     else if (cancel) io.stderr('Could not confirm cancellation. Run wake list for the current occurrence.\n');
     else if (wake) io.stderr('Could not confirm the scheduled wake.\n');
