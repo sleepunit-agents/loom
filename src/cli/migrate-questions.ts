@@ -8,11 +8,12 @@ import { ownHome } from '../core/daemon-home.js';
 import { dataDatabase, dataSchemaNumber, recogniseDataSchema } from '../core/data/database.js';
 import { privateBytes } from '../pieces/secrets/local-holder.js';
 import { readKey, wordsKey } from '../pieces/comms/crypto.js';
+import { importTextHistory } from '../core/conversations/import-text-history.js';
 import { importArchivedQuestions } from '../core/conversations/archived-question-store.js';
 import { householdId } from '../slug.js';
 import { legacyThreadLookup } from '../core/conversations/legacy-thread-id.js';
 import { importThreads, UnresolvedArchiveThread } from '../core/conversations/import-threads.js';
-export async function migrateComms(phase:'archived-questions'|'comms-threads', args:string[],io:{stdout(text:string):void;stderr(text:string):void}) {
+export async function migrateComms(phase:'archived-questions'|'comms-threads'|'comms-text', args:string[],io:{stdout(text:string):void;stderr(text:string):void}) {
   const usage=`loom migrate ${phase} --source STOPPED_ARCHIVE --home PREPARED_HOME`;
   let source:string,home:string;
   try{
@@ -53,11 +54,12 @@ export async function migrateComms(phase:'archived-questions'|'comms-threads', a
     const identity=readKey(program.commsKey);
     if(identity!==readKey(join(source,'comms.key')))throw Error('the prepared home needs its original Comms key');
     const archive=copySnapshot('comms.db');
-    const result=await importArchivedQuestions({archive,household,destination:dataDatabase(client),key:wordsKey(identity),
-      sourceDays:sourceConfig.comms_days,now:()=>new Date().toISOString()});
-    io.stdout(`Imported ${result.inserted} of ${result.total} archived questions.\n`);return 0;
+    const input={archive,household,destination:dataDatabase(client),key:wordsKey(identity),
+      sourceDays:sourceConfig.comms_days,now:()=>new Date().toISOString()};
+    const result=phase==='comms-text'?await importTextHistory(input):await importArchivedQuestions(input);
+    io.stdout(`Imported ${result.inserted} of ${result.total} ${phase==='comms-text'?'Comms text messages':'archived questions'}.\n`);return 0;
   }catch(error){
     if(error instanceof UnresolvedArchiveThread){io.stderr(error.message+'\n');return 1;}
-    io.stderr(`Could not import ${phase==='comms-threads'?'Comms threads':'archived questions'}. Check that the archive contains completed SQLite backups, the prepared home is stopped and current, and the key and thread identities match.\n`);return 1;
+    io.stderr(`Could not import ${phase==='comms-threads'?'Comms threads':phase==='comms-text'?'Comms text history':'archived questions'}. Check that the archive contains completed SQLite backups, the prepared home is stopped and current, and the key and thread identities match.\n`);return 1;
   }finally{for(const close of clean.reverse())await close();}
 }
