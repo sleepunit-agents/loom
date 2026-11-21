@@ -55,7 +55,11 @@
     {
       "id": "memory-009",
       "promise": "Activity lists the tasks and pull requests each conversation touched.",
-      "source": "docs/how-it-works/site/memory.html#con-h"
+      "source": "docs/how-it-works/site/memory.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "activityWorkLinks"
+      }
     },
     {
       "id": "memory-010",

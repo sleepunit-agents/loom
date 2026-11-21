@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
-import { agents, members, projects, projectMembers, conversations, digestItems } from '../../core/data/schema.js';
+import { agents, members, projects, projectMembers, conversations, digestItems, changes, changeTasks } from '../../core/data/schema.js';
 import { Conversations } from '../../core/conversations/index.js';
 import type { Sharing, Viewer } from '../../policy.js';
 import { sharedActivityConversations } from './activity-conversations.js';
@@ -129,4 +129,24 @@ it('reads only the requested agent and visible episode links in one statement at
  expect(f.reader.conversations!(teammate,'other',ids)).toEqual([]);
  f.db.delete(projectMembers).run();
  expect(f.reader.conversations!(teammate,'fiction',ids)).toEqual([]);
+});
+
+it('opens tasks sourced from this conversation and only their visible pull requests, before a digest exists', () => {
+ const f=fixture(), service=taskService(f.db);
+ const cv=f.service.open({agent:'fiction',venue:'loom',place:'pond',label:'Restore the pump',project:'pond'});
+ const task=service.create({title:'Fit the replacement',goal:'Restore water',why:'Garden',project:'pond',
+  source:{kind:'conversation',id:cv.id},owner:{kind:'member',id:'owner'}},{kind:'member',id:'owner'});
+ const at='2026-11-14T18:00:00.000Z';
+ for(const [index,project] of ['pond',null].entries()){
+  const id='github:garden/pump#'+(index+1);
+  f.db.insert(changes).values({id,repository:'garden/pump',number:index+1,title:id,body:'',url:'https://github.com/garden/pump/pull/'+(index+1),
+   state:'open',draft:false,authorLogin:'gardener',project,branch:'pump',headCommit:'old-head',baseBranch:'next',checks:'passing',review:'approved',
+   mergeable:'yes',waitingOn:'done',openedAt:at,updatedAt:at}).run();
+  f.db.insert(changeTasks).values({change:id,task:task.id}).run();
+ }
+ const read=()=>f.reader.read(teammate,'fiction','conversation',cv.id)?.linkedWork;
+ expect(read()).toEqual({tasks:[{label:task.title,href:'/p/tasks-preview/task/'+task.id}],
+  prs:[{label:'github:garden/pump#1',href:'https://github.com/garden/pump/pull/1'}]});
+ service.edit(task.id,{project:null},{kind:'member',id:'owner'});
+ expect(read()).toEqual({tasks:[],prs:[]});
 });
