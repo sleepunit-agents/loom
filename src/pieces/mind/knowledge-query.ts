@@ -8,7 +8,7 @@ import {
  GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap,
 } from 'graphql/index.js';
 import { maySee, type Sharing, type Viewer } from '../../core/index.js';
-import { knowledgeView, knowledgeAccess, retiredKnowledgePages, knowledgeSchedule, RECENT_DAYS } from './knowledge.js';
+import { knowledgeCheckRevision, knowledgeView, knowledgeAccess, retiredKnowledgePages, knowledgeSchedule, RECENT_DAYS } from './knowledge.js';
 import {knowledgeSweep} from './knowledge-sweep.js';
 import type {SweepPart} from '../../core/tempo/sweep.js';
 import {MAX_REVISIONS} from '../../backends/cards.js';
@@ -61,8 +61,9 @@ export function knowledgeQueryFields(options: { path?:string; timezone?():string
   try{return knowledgeView(db,options.now(),slug,slug!==undefined);}
   catch{throw new GraphQLError('Knowledge is unavailable');}
  };
- const page = new GraphQLObjectType< {slug:string; archiveCandidate?:boolean},MemoryQueryContext>({ name:'MemoryKnowledgePage', fields:{
+ const page = new GraphQLObjectType< {slug:string; body:string; freshness_anchor?:string|null; archiveCandidate?:boolean},MemoryQueryContext>({ name:'MemoryKnowledgePage', fields:{
   ...summaryFields,body:requiredText,sourcing:text,
+  checkRevision:{...requiredText,resolve:knowledgeCheckRevision},
   sources:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(citation)))},
   citedBy:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(reference)))},
   checks:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(check))),resolve:(source,_args,context)=>{

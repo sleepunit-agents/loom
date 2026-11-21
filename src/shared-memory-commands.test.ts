@@ -518,7 +518,17 @@ it('checks a Knowledge page without changing its words unless a note is given, a
  move('2026-11-18T18:00:00Z');const noted=await mind('knowledgeVerify',{slug:'plain-fact',note:'  Checked against the fictional manual.  '},'verify-note');expect(noted.result.value).toMatchObject({noted:true});
  expect(state()).toEqual({body:page.body+'\n\n## Verification — 2026-11-18\n\nChecked against the fictional manual.',updated:'2026-11-18T18:00:00.000Z',verified_at:'2026-11-18T18:00:00.000Z',freshness_anchor:'as of v2.0',sla_class:'software',revisions:1,checks:4});
  for(const bad of [{note:'   '},{note:'n'.repeat(4001)},{freshnessAnchor:'a'.repeat(201)}])expect((await mind('knowledgeVerify',{slug:'plain-fact',...bad},'verify-bad-'+Object.keys(bad)[0]+String(Object.values(bad)[0]).length)).status).toBe(400);
- expect(state().checks).toBe(4);
+ const revision=async()=>((await f.query('{memoryKnowledgePage(slug:"plain-fact"){checkRevision}}',raw.agent)).memoryKnowledgePage as {checkRevision:string}).checkRevision;
+ const expectedRevision=await revision();
+ expect(expectedRevision).toMatch(/^[0-9a-f]{64}$/);
+ expect((await mind('knowledgeVerify',{slug:'plain-fact',expectedRevision,freshnessAnchor:'v3.0'},'guarded-check')).status).toBe(200);
+ // The first write changed the anchor; a replay of that write still returns its receipt.
+ expect((await mind('knowledgeVerify',{slug:'plain-fact',expectedRevision,freshnessAnchor:'v3.0'},'guarded-check')).status).toBe(200);
+ expect((await mind('knowledgeRecheck',{slug:'plain-fact',expectedRevision},'obsolete-anchor')).status).toBe(409);
+ const newer=await revision();
+ expect((await mind('knowledgeAppend',{slug:'plain-fact',body:'Concurrent correction.'},'concurrent-correction')).status).toBe(200);
+ expect((await mind('knowledgeVerify',{slug:'plain-fact',expectedRevision:newer},'obsolete-body')).status).toBe(409);
+ expect(state().checks).toBe(5);
 });
 it('answers a recall on a fresh home with nothing, before any memory has been written',async()=>{
  const f=await fixture();expect(f.source.prepare("SELECT 1 FROM sqlite_schema WHERE name IN ('memories','vec_memories')").get()).toBeUndefined();
