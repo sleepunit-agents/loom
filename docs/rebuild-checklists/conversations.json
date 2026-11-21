@@ -34,7 +34,11 @@
     {
       "id": "conversations-004",
       "promise": "One job at a time At most one job works in a conversation.",
-      "source": "docs/how-it-works/site/conversations.html"
+      "source": "docs/how-it-works/site/conversations.html",
+      "probe": {
+        "kind": "action",
+        "action": "conversationSingleJob"
+      }
     },
     {
       "id": "conversations-005",
@@ -71,7 +75,11 @@
     {
       "id": "conversations-008",
       "promise": "A trigger from Tempo drops an item in the agent's inbox, such as a lane that runs every night.",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "conversationTempoDelivery"
+      }
     },
     {
       "id": "conversations-009",

@@ -9,7 +9,7 @@ class ObservedMailFailure extends Error {}
 const check=(yes,message)=>{if(!yes)throw new ObservedMailFailure(message);};
 export async function* conversationMailSteps({page,app,clock,example,out,open}){
  const pending=()=>({inconclusive:true,reason:'The real conversation-mail observation did not complete.'});
- const evidence={privateConversationBatch:pending(),nativeHandoff:pending(),conversationInboxIngress:pending(),privateConversationQuestion:pending()};
+ const evidence={privateConversationBatch:pending(),conversationSingleJob:pending(),nativeHandoff:pending(),conversationInboxIngress:pending(),conversationTempoDelivery:pending(),privateConversationQuestion:pending()};
  const db=app.services.comms.db,write=fn=>app.writes.run(fn).value,current=[],clients=[];let stage='privateConversationBatch';
  const now=()=>new Date(clock.now()).toISOString();
  const owner=async(name,input)=>{
@@ -31,9 +31,15 @@ export async function* conversationMailSteps({page,app,clock,example,out,open}){
   return {id,client,call};
  };
  try{
-  const opened=await owner('comms.open',{thread:'th:walkthrough-mail-'+randomUUID(),agent:'fern'}),parentCv=app.services.conversations.conversation(opened.conversation),parent=await body(parentCv);
+  const opened=await owner('comms.open',{thread:'th:walkthrough-mail-'+randomUUID(),agent:'fern'}),parentCv=app.services.conversations.conversation(opened.conversation);
   check(parentCv.member==='alex'&&parentCv.project===null,'The actual Comms conversation is not the intended private projectless context');
   const commsWords='Fictitious private Comms batch message';await owner('comms.send',{thread:opened.thread,clientId:randomUUID(),words:commsWords});
+  const settleParent=()=>clock.advance(app.services.tempo.volume.timings({kind:'agent',id:parentCv.agent}).settleSeconds*1000);
+  const parentJobs=()=>db.select({id:jobs.id,state:jobs.state}).from(jobs).where(eq(jobs.conversation,parentCv.id)).all();
+  settleParent();
+  const queued=parentJobs();
+  check(queued.length===1&&queued[0].state==='queued','The first settled message did not admit one job');
+  const parent=await body(parentCv);
   const actor={kind:'agent',id:'fern'},task=write(()=>{
    const t=app.services.tasks.create({title:'Fictitious private batch task',goal:'Exercise real source-owned delivery.',why:'A project task can be discussed privately.',owner:actor,project:'garden',source:{kind:'conversation',id:parentCv.id}},actor);
    app.services.tasks.ask(t.id,{to:{kind:'member',id:'alex'},ask:'Inspect the fictitious batch task?',ifYes:'Fern inspects it.',ifNo:'Fern waits.',answers:'yes-no'},actor);return t;
@@ -42,11 +48,15 @@ export async function* conversationMailSteps({page,app,clock,example,out,open}){
   check(!!tq,'The real task producer did not create a question');await owner('tasks.command',{action:'answer',id:task.id,question:tq.id,answer:'yes'});
   const approval=write(()=>app.services.approvals.request({kind:'command',target:'fictional:private-batch',what:'Fictitious private batch permission',why:'Exercise real approval reply delivery.',agent:'fern',askedFrom:parentCv.id,actingFor:'alex',conversation:parentCv.id,project:'garden',member:'alex',ask:'Allow the fictitious batch inspection?',ifYes:'Fern inspects it.',ifNo:'Fern waits.'}));
   await owner('approvals.answer',{id:approval.id,answer:'allow'});
+  settleParent();
+  const after=parentJobs();
+  check(parent.id===queued[0].id&&after.length===1&&after[0].id===parent.id&&after[0].state==='running','New task and approval mail admitted another job while this conversation was running');
   const batch=[];await parent.client.takeAndAccept(async item=>{batch.push({id:item.id,source:item.source,seq:item.seq});if(item.source==='thread')check(item.words===commsWords,'The Comms words did not reach their current private body');else check(item.words?.includes('fictitious'),'The work-source answer words were unavailable');});
   // Mail is settled once it is dealt with, not when it is received.
   await parent.client.settle();
   check(batch.length===3&&batch.map(i=>i.source).join(',')==='thread,answer,answer'&&batch.every((i,n)=>n===0||i.seq>batch[n-1].seq),'Private body did not take Comms/task/approval inputs once in sequence');
   check(batch.every(i=>{const row=db.select().from(inbox).where(eq(inbox.id,i.id)).get();return row.state==='done'&&row.member===parentCv.member&&row.project===parentCv.project&&row.agent===parentCv.agent;}),'A source reply did not keep the private conversation labels or acceptance');
+  evidence.conversationSingleJob={ok:true,reason:'The first settled message admitted one queued job. While its body ran, task and approval answers settled in the same conversation. The original job remained its only job and accepted all three items.',job:parent.id,deliveries:batch.length};
   evidence.privateConversationBatch={ok:true,reason:'A current private body accepted and confirmed its real Comms, task-answer and approval-answer batch in sequence with canonical private labels.',sources:batch.map(i=>i.source),currentJobFixtures:true,providerStarted:false};
   stage='nativeHandoff';
   const brief='Compare the fictitious replacement pumps',handoff=await parent.call('conversation.handoff',{agent:'moss',clientId:'walkthrough-delegation',label:'Fictitious pump comparison',words:brief}),childCv=app.services.conversations.conversation(handoff.conversation);
@@ -57,7 +67,15 @@ export async function* conversationMailSteps({page,app,clock,example,out,open}){
   stage='conversationInboxIngress';
   const wakeWords='Inspect the fictitious source-driven garden path',trigger=await owner('tempo.set',{ownerKind:'household',sourceKind:'time',times:now(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'moss',instructions:wakeWords,note:'Fictitious conversation-mail wake'});clock.advance(0);
   const wake=db.$client.prepare("SELECT inbox.* FROM inbox JOIN inbox_refs ON inbox_refs.item=inbox.id WHERE source='trigger' AND inbox_refs.ref=?").get(trigger.id);check(!!wake?.conversation,'The real time trigger did not name its conversation');
-  const wakeBody=await body(app.services.conversations.conversation(wake.conversation));let wakeTaken=0;await wakeBody.client.takeAndAccept(async item=>{check(item.id===wake.id&&item.source==='trigger'&&item.words===wakeWords,'The real wake did not use the same receiving Inbox client');wakeTaken++;});await wakeBody.client.settle();check(wakeTaken===1,'The real wake did not arrive once');
+  stage='conversationTempoDelivery';
+  const wakeConversation=app.services.conversations.conversation(wake.conversation);
+  check(wake.to_kind==='agent'&&wake.to==='moss'&&wakeConversation.agent==='moss'&&wakeConversation.venue==='wake'&&wakeConversation.place===trigger.id,'The scheduled item did not address Moss in the conversation for this trigger');
+  const settle=app.services.tempo.volume.timings({kind:'agent',id:wake.to}).settleSeconds;
+  clock.advance(settle*1000);
+  const admitted=db.select().from(jobs).where(eq(jobs.conversation,wake.conversation)).all();
+  check(admitted.length===1&&admitted[0].state==='queued'&&admitted[0].agent===wake.to&&db.select().from(inbox).where(eq(inbox.id,wake.id)).get()?.job===admitted[0].id,'Settled trigger mail did not admit exactly one job for its recipient and conversation');
+  const wakeBody=await body(wakeConversation);let wakeTaken=0;await wakeBody.client.takeAndAccept(async item=>{check(item.id===wake.id&&item.source==='trigger'&&item.words===wakeWords,'The real wake did not use the same receiving Inbox client');wakeTaken++;});await wakeBody.client.settle();check(wakeTaken===1,'The real wake did not arrive once');
+  evidence.conversationTempoDelivery={ok:true,reason:'The household scheduled a real Tempo firing for Moss. It created an agent Inbox item in the conversation for that trigger, and Moss’s receiving client accepted the item once.',trigger:trigger.id,conversation:wake.conversation,item:wake.id,recipient:wake.to,queuedJob:admitted[0].id};
   evidence.conversationInboxIngress={ok:true,reason:'Actual Comms, time-trigger and native-handoff producers each delivered through the same current-body Inbox SDK.',sources:['thread','trigger','handoff'],currentJobFixtures:true,providerStarted:false};
   yield {phase:'conversation-mail',actions:evidence};
   stage='privateConversationQuestion';
