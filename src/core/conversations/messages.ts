@@ -286,7 +286,8 @@ export class CommsMessages {
     // A kept harness session holds its conversation's words: it goes at the same keep time.
     expired+=expireConversationSessions(this.db,cutoff);
     for(const item of handoffExpiries(this.db,days))if(item.until<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}
-    return expired+expireMessageWords(this.db,at,cutoff);
+    return expired+this.db.update(messages).set({ words: null }).where(and(isNotNull(messages.words),
+      or(sql`julianday(${messages.keepUntil}) <= julianday(${at})`, sql`julianday(${messages.at}) <= julianday(${cutoff})`))).returning({ seq: messages.seq }).all().length;
   }
 
   /** Remove private words and references; retain Inbox outcome metadata and a
@@ -308,9 +309,4 @@ export class CommsMessages {
       this.db.delete(threads).where(eq(threads.id, threadId)).run();
     });
   }
-}
-
-export function expireMessageWords(db: DataDatabase, at: string, cutoff: string): number {
-    return db.update(messages).set({ words: null }).where(and(isNotNull(messages.words),
-      or(sql`julianday(${messages.keepUntil}) <= julianday(${at})`, sql`julianday(${messages.at}) <= julianday(${cutoff})`))).run().changes;
 }
