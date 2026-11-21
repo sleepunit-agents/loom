@@ -143,43 +143,44 @@ async function importRows(input: HistoryInput, reasons: Database.Database | null
       }
       total++;
     }
-    if(input.kind==='cards' || input.kind==='notices')return {inserted,total};
-    // The old durable index also contains references to erased words. Overlay its
-    // saved positions after removing reconstructed mentions whose bodies expired.
-    for (const [thread,refs] of rebuilt) for (const [ref,{seq}] of refs) {
-      const msg=db.select({present:sql<number>`${messages.words} IS NOT NULL`}).from(messages)
-        .where(and(eq(messages.thread,thread),eq(messages.seq,seq))).get();
-      if (!msg?.present) refs.delete(ref);
-    }
-    if (hasIndex) {
-      const reference=z.object({thread:id,ref:id.max(200),seq:z.number().int().positive(),pos:z.number().int().nonnegative(),at:z.iso.datetime({offset:true})});
-      const parent=archive.prepare("SELECT at FROM comms_messages WHERE thread=? AND seq=? AND kind IN ('message','reply')");
-      for (const raw of household.prepare('SELECT thread,ref,seq,pos,at FROM comms_refs').iterate()) {
-        if (deleted.has((raw as {thread:string}).thread)) continue;
-        const row=reference.parse(raw), msg=parent.get(row.thread,row.seq) as {at:string}|undefined;
-        if (!msg || Date.parse(msg.at)!==Date.parse(row.at) || !validLegacyCommsRef(row.ref))
-          throw Error('Unrecognized archived thread reference');
-        const refs=rebuilt.get(row.thread)??new Map<string,Mention>();
-        if ((refs.get(row.ref)?.seq??0)<=row.seq) refs.set(row.ref,{seq:row.seq,pos:row.pos});
-        rebuilt.set(row.thread,refs);
+    if (input.kind!=='cards' && input.kind!=='notices') {
+      // The old durable index also contains references to erased words. Overlay its
+      // saved positions after removing reconstructed mentions whose bodies expired.
+      for (const [thread,refs] of rebuilt) for (const [ref,{seq}] of refs) {
+        const msg=db.select({present:sql<number>`${messages.words} IS NOT NULL`}).from(messages)
+          .where(and(eq(messages.thread,thread),eq(messages.seq,seq))).get();
+        if (!msg?.present) refs.delete(ref);
       }
-    }
-    if (complete) for (const thread of oldThreads.keys()) if (!rebuilt.has(thread)) rebuilt.set(thread,new Map());
-    for (const [thread,refs] of rebuilt) {
-      const prior=new Map(db.select().from(threadRefs).where(eq(threadRefs.thread,thread)).all().map(r=>[r.ref,r.messageSeq]));
-      const newest=[...refs].sort(([,a],[,b])=>b.seq-a.seq || b.pos-a.pos).slice(0,200);
-      if (complete) {
-        const expected=new Map(newest.map(([ref,mention])=>[ref,mention.seq]));
-        for (const [ref,seq] of prior) if (expected.get(ref)!==seq) throw Error('Conflicting staged thread reference');
+      if (hasIndex) {
+        const reference=z.object({thread:id,ref:id.max(200),seq:z.number().int().positive(),pos:z.number().int().nonnegative(),at:z.iso.datetime({offset:true})});
+        const parent=archive.prepare("SELECT at FROM comms_messages WHERE thread=? AND seq=? AND kind IN ('message','reply')");
+        for (const raw of household.prepare('SELECT thread,ref,seq,pos,at FROM comms_refs').iterate()) {
+          if (deleted.has((raw as {thread:string}).thread)) continue;
+          const row=reference.parse(raw), msg=parent.get(row.thread,row.seq) as {at:string}|undefined;
+          if (!msg || Date.parse(msg.at)!==Date.parse(row.at) || !validLegacyCommsRef(row.ref))
+            throw Error('Unrecognized archived thread reference');
+          const refs=rebuilt.get(row.thread)??new Map<string,Mention>();
+          if ((refs.get(row.ref)?.seq??0)<=row.seq) refs.set(row.ref,{seq:row.seq,pos:row.pos});
+          rebuilt.set(row.thread,refs);
+        }
       }
-      for (const [ref,{seq}] of newest) {
-        const existing=prior.get(ref);
-        if (existing===seq) continue;
-        if (complete && existing!==undefined) throw Error('Conflicting staged thread reference');
-        // On retry the last known mention may already have lost its words.
-        if ((existing!==undefined && existing>seq) || (existing===undefined && prior.size>=200)) continue;
-        recordThreadRef(db,thread,ref,seq);
-        prior.set(ref,seq);
+      if (complete) for (const thread of oldThreads.keys()) if (!rebuilt.has(thread)) rebuilt.set(thread,new Map());
+      for (const [thread,refs] of rebuilt) {
+        const prior=new Map(db.select().from(threadRefs).where(eq(threadRefs.thread,thread)).all().map(r=>[r.ref,r.messageSeq]));
+        const newest=[...refs].sort(([,a],[,b])=>b.seq-a.seq || b.pos-a.pos).slice(0,200);
+        if (complete) {
+          const expected=new Map(newest.map(([ref,mention])=>[ref,mention.seq]));
+          for (const [ref,seq] of prior) if (expected.get(ref)!==seq) throw Error('Conflicting staged thread reference');
+        }
+        for (const [ref,{seq}] of newest) {
+          const existing=prior.get(ref);
+          if (existing===seq) continue;
+          if (complete && existing!==undefined) throw Error('Conflicting staged thread reference');
+          // On retry the last known mention may already have lost its words.
+          if ((existing!==undefined && existing>seq) || (existing===undefined && prior.size>=200)) continue;
+          recordThreadRef(db,thread,ref,seq);
+          prior.set(ref,seq);
+        }
       }
     }
     const finished=now();
