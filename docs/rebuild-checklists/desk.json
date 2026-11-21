@@ -7,7 +7,11 @@
     {
       "id": "desk-001",
       "promise": "The desk is loom on a desktop screen. App tiles side by side, the agents on a rail, a ticker along the top and a dock along the bottom.",
-      "source": "docs/how-it-works/site/desk.html"
+      "source": "docs/how-it-works/site/desk.html",
+      "probe": {
+        "kind": "action",
+        "action": "deskShell"
+      }
     },
     {
       "id": "desk-002",

@@ -87,6 +87,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  });
  it('measures desk launcher and tile controls',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('desk');
+  expect(step.value.actions.deskShell,JSON.stringify(step.value.actions.deskShell)).toMatchObject({ok:true});
   for(const name of ['deskLauncher','deskGeometry','deskLayout']){
 
    const result=step.value.actions?.[name];expect(typeof result?.ok).toBe('boolean');
