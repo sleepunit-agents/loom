@@ -240,6 +240,22 @@ it('gives a body told another agent\'s name nothing of that agent\'s: the door a
  const marks=new ProjectsStore({dbPath:join(b.home,'agents','mark','memories.db')});try{expect(marks.rows(false)).toHaveLength(1);expect(JSON.stringify(marks.read('fictional-mark-shed'))).toContain('MARK_SECRET_PROJECT');}finally{marks.close();}
 });
 
+it('identifies the scheduled instant and job of one accepted journal delivery', async () => {
+ const b = await body(), {db,root,clock} = b.fixture;
+ const due = new Date(clock.now()+1000).toISOString();
+ const t = root.services.tempo.triggers.set({ownerKind:'agent', owner:'art', project:'pond',sourceKind:'time',times:due,
+   lifespan:'until-stopped', targetKind:'inbox',toKind:'agent',to:'art',note:'Verify',instructions:'Verify'});
+ clock.advance(1000);
+ const item = db.select().from(schema.inbox).where(eq(schema.inbox.sourceId,t.id+':time:'+due)).get()!;
+ db.update(schema.jobs).set({conversation:item.conversation,member:null}).where(eq(schema.jobs.id,'job')).run();
+ db.update(schema.inbox).set({state:'taken',job:'job',takenVolume:'full'}).where(eq(schema.inbox.id,item.id)).run();
+ const read = (id:string) => b.call('loom_command',{operation:'tempo.readJournal',input:{item:id},id:'read-'+id});
+ expect((await read(item.id)).text).toContain('denied');
+ expect((await b.fixture.call('accept',{items:[item.id]},'accept-time')).status).toBe(200);
+ expect(JSON.parse((await read(item.id)).text).value.firing).toEqual({job:'job',item:item.id,scheduledAt:due});
+ expect((await read('another-delivery')).text).toContain('denied');
+});
+
 it('carries a journal between actual trigger deliveries and confines body commands to the accepted wake', async () => {
  const b = await body(), {db,root,clock} = b.fixture;
  const engine = root.services.tempo.triggers;
@@ -277,6 +293,7 @@ it('carries a journal between actual trigger deliveries and confines body comman
  expect(JSON.parse((await carry()).text).value).toBeNull();
  expect((await b.fixture.call('accept',{items:[second.id]},'accept-second')).status).toBe(200);
  expect(JSON.parse((await carry()).text).value).toBe('Count each source once.');
+ expect(JSON.parse((await cmd('tempo.readJournal',{item:second.id},'event-firing')).text).value.firing).toEqual({job:'job',item:second.id,scheduledAt:null});
  expect(db.select().from(schema.inbox).where(eq(schema.inbox.conversation,first.conversation!)).all()).toHaveLength(2);
  expect((await read()).text).toContain('page 2');
  const late = await root.http.request('/api/tempo/readJournal', {method:'POST', headers:{
