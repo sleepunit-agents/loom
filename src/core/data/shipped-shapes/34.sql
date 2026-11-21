@@ -1386,6 +1386,9 @@ CREATE TABLE `job_session_limits` (
 
 CREATE TABLE `archived_questions` (
 	`thread` text NOT NULL,
+	`source_member` text NOT NULL,
+	`source_agent` text NOT NULL,
+	`source_conversation` text NOT NULL,
 	`ref` text NOT NULL,
 	`approval` text,
 	`raised_at` text NOT NULL,
