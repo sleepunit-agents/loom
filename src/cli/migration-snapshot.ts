@@ -36,6 +36,30 @@ const refusal = (path: string, rule: string): never => { throw new SnapshotFailu
 function guarded<T>(path: string, rule: string, fn: () => T): T {
   try { return fn(); } catch (error) { if (error instanceof SnapshotFailure) throw error; return refusal(path, rule); }
 }
+/** A retired WAL database in a sealed directory cannot create read-coordination
+ * files. Only a checkpointed main file with no sidecars may take this path. */
+async function backupDatabase(source: string, temporary: string): Promise<void> {
+  const sealed = () => (lstatSync(source).mode & 0o222) === 0 &&
+    (lstatSync(dirname(source)).mode & 0o222) === 0 &&
+    ['-wal','-shm','-journal'].every(suffix => !lstatSync(source + suffix, {throwIfNoEntry:false}));
+  if (!sealed()) {
+    const db = new Database(source, { readonly: true, fileMustExist: true });
+    try { await db.backup(temporary); } finally { db.close(); }
+    return;
+  }
+  const image = temporary + '.source';
+  try {
+    copyMigrationFile(source, image);
+    if (!sealed() || fileDigest(source).sha256 !== fileDigest(image).sha256 || !sealed()) {
+      throw Error('Retired database changed during capture');
+    }
+    const db = new Database(image, {fileMustExist:true});
+    try {
+      if (db.pragma('integrity_check', {simple:true}) !== 'ok') throw Error('Invalid retired database');
+      await db.backup(temporary);
+    } finally { db.close(); }
+  } finally { rmSync(image, {force:true}); }
+}
 export function canonicalSnapshotPath(path: string): string {
   if (existsSync(path)) return realpathSync(path);
   return join(canonicalSnapshotPath(dirname(path)), basename(path));
@@ -254,16 +278,12 @@ export async function createSnapshot(from: string, to: string, tasks?: string, r
         }
         else if (previous) copyMigrationFile(previous, output);
         else if (sqlite) {
-          const db = new Database(file.source, { readonly: true, fileMustExist: true });
-          // Linux descriptor-relative path keeps the backup in our reserved inode
-          // even if a path ancestor is replaced while better-sqlite3 awaits I/O.
+          // Keep both the private input and output within the reserved snapshot.
           const temporary = `/proc/self/fd/${rootFd}/.backup-${randomUUID()}`;
-          try {
-            await db.backup(temporary);
-            checkTarget();
-            destinationPath(output);
-            renameSync(temporary, output);
-          } finally { db.close(); }
+          await backupDatabase(file.source, temporary);
+          checkTarget();
+          destinationPath(output);
+          renameSync(temporary, output);
           checkTarget();
           destinationPath(output);
           const out = openSync(output, 'r');

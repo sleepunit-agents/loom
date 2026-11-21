@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, renameSync, statSync, symlinkSync, writeFileSync, existsSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, renameSync, statSync, symlinkSync, writeFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -509,4 +509,24 @@ test('captures authored memory pages and byte-exact SQLite attachments for a reb
   expect(manifest.followed).toContainEqual({path:'agents/fern/IDENTITY.md', realPath:'agents/fern/roles/garden.md'});
   rmSync(join(agent, 'IDENTITY.md')); symlinkSync('../../comms.key', join(agent,'IDENTITY.md'));
   await expect(createSnapshot(home,join(root,'refused'),undefined,{},true)).rejects.toThrow(/identity pages/);
+});
+
+test('captures a retired checkpointed WAL task store inside a read-only directory', async () => {
+  const { root, home, to } = fixture();
+  const dir = join(root,'retired');
+  mkdirSync(dir);
+  const path = join(dir,'store.db'), db = new Database(path);
+  db.pragma('journal_mode=WAL');
+  db.exec("CREATE TABLE tasks(id TEXT); INSERT INTO tasks VALUES ('t-1')");
+  db.close();
+  const original = readFileSync(path);
+  chmodSync(path,0o444); chmodSync(dir,0o555);
+  try {
+    await createSnapshot(home,to,path);
+    const copy = new Database(join(to,'tasks/store.db'),{readonly:true});
+    try { expect(copy.prepare('SELECT id FROM tasks').pluck().all()).toEqual(['t-1']); }
+    finally { copy.close(); }
+    expect(readdirSync(dir)).toEqual(['store.db']);
+    expect(readFileSync(path)).toEqual(original);
+  } finally { chmodSync(dir,0o700); }
 });
