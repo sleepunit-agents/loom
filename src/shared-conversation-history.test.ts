@@ -311,13 +311,16 @@ it('hands a private Comms checkpoint to the replacement body after a loss and ke
    if(continuing){
     expect(options?.resume).toBe(session);
     expect(context).toContain('Continue');expect(context).not.toContain('First private input');expect(context).not.toContain('Recorded reply');
-    expect(readFileSync(path,'utf8')).toBe('fictional first turn');
+    expect(context).not.toContain('Intermediate update');
+    expect(readFileSync(path,'utf8')).toBe('First private input\nIntermediate update\nRecorded reply');
    }else{
     expect(options?.resume).toBeUndefined();
     expect(context).toContain('First private input');
+    const progress=await f.call('message',{kind:'progress',clientId:'4e2fc1ce-9538-4dd0-8ea4-49e716aa8d4c',words:'Intermediate update'},'first-update',token);
+    expect(await progress.json()).toMatchObject({ok:true,value:{saved:true}});
     mkdirSync(join(place,'projects','-house'),{recursive:true});
    }
-   writeFileSync(path,continuing?'fictional second turn':'fictional first turn');
+   writeFileSync(path,continuing?'fictional second turn':'First private input\nIntermediate update\nRecorded reply');
    return {text:continuing?'Continued reply':'Recorded reply',model:'fixture',actions:[],session};
   });
   const exit=await bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fixture/claude',cwd:'/fixture'}),
@@ -346,6 +349,7 @@ it('hands a private Comms checkpoint to the replacement body after a loss and ke
  const token='body_'+'d'.repeat(64);
  f.db.insert(s.tokens).values({fingerprint:hash(token),label:'Replacement',kind:'agent',agent:'art',job:retry.id,createdAt:now()}).run();
  expect((await f.call('session',{retention:true},'read',raw.body)).status).toBeGreaterThanOrEqual(400);
+ expect((await f.call('session',{},'legacy-read',token)).status).toBe(403);
  const restored=await f.call('session',{retention:true},'restore',token);
  expect(await restored.json()).toMatchObject({ok:true,value:{session:{session,keepUntil:expiry}}});
  await run(retry.id,'backup',token,true);

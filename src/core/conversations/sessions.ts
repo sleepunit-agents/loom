@@ -25,9 +25,9 @@
  * and will be behind the conversation as soon as the body answers. A session too large to keep is not
  * kept and removes the one before it for the same reason.
  */
-import { and, eq, inArray, notInArray, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, notInArray, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { conversationSessions, deletedThreads, jobSessionLimits } from '../data/schema.js';
+import { conversationSessions, deletedThreads, jobSessionLimits, turns } from '../data/schema.js';
 import { commsKeepDays } from '../data/comms-days.js';
 import { ageCutoff, ageLimit, keepUntilFor, wordsDeadline } from './retention.js';
 import { SESSION_BYTES, SESSION_ID, modelFamily } from './session-limit.js';
@@ -35,7 +35,7 @@ import type { WordsKey } from './words.js';
 
 export interface KeptSession { session: string; files: string }
 /** What `open` hands back: the session, when it was started (the row's `started_at`) and when it was last saved. */
-export type OpenedSession = KeptSession & { startedAt: string; lastSavedAt: string; covered?: string[] };
+export type OpenedSession = KeptSession & { startedAt: string; lastSavedAt: string; ciphertext: Buffer; throughReply?: number; covered?: string[] };
 /** A session sealed and ready to store: made outside the transaction that stores it. */
 export interface SealedSession { conversation: string; harness: string; session: string; sealed: Buffer | null; bytes: number; since?: string; keepUntil?: string; scope?:string }
 
@@ -78,9 +78,12 @@ export class ConversationSessions {
     const first = input.since && Date.parse(input.since) < Date.parse(preparedAt) ? input.since : preparedAt;
     const fixed = keepUntilFor(first, days);
     const keepUntil = input.keepUntil === undefined || Date.parse(fixed) <= Date.parse(input.keepUntil) ? fixed : input.keepUntil;
+    const lastReply = this.db.select({seq: turns.seq}).from(turns)
+      .where(and(eq(turns.conversation, input.conversation), eq(turns.kind, 'reply')))
+      .orderBy(desc(turns.seq)).limit(1).get();
     return { conversation: input.conversation, harness: input.harness, session: input.session, bytes, ...(input.since ? { since: input.since } : {}), scope:input.scope, keepUntil,
       // When it was last saved is sealed with it: the row's own time is when the session was started.
-      sealed: keep ? await this.key.seal(JSON.stringify({ model: input.model, files: input.files, at: this.now(), scope:input.scope, covered:input.covered })) : null };
+      sealed: keep ? await this.key.seal(JSON.stringify({ model: input.model, files: input.files, at: preparedAt, throughReply: lastReply?.seq ?? 0, scope:input.scope, covered:input.covered })) : null };
   }
 
   /** Replace the conversation's session for this harness, or remove it when there is nothing to keep. */
@@ -125,13 +128,13 @@ export class ConversationSessions {
     const row = this.kept(conversation, harness);
     if (!row) return null;
     try {
-      const value = JSON.parse(await this.key.open(row.files)) as { scope?: unknown; model?: unknown; files?: unknown; at?: unknown; covered?: string[] };
+      const value = JSON.parse(await this.key.open(row.files)) as { scope?: unknown; model?: unknown; files?: unknown; at?: unknown; throughReply?: number; covered?: string[] };
       if (value.scope !== scope || typeof value.model !== 'string' || typeof value.files !== 'string' || typeof value.at !== 'string' || !Number.isFinite(Date.parse(value.at))
         || modelFamily(value.model) !== modelFamily(model)) return null;
       // Opening can yield while the thread is deleted, the session is replaced, or its words expire.
       const current = this.kept(conversation, harness);
       if (!current || current.startedAt !== row.startedAt || current.session !== row.session || !current.files.equals(row.files)) return null;
-      return { session: row.session, files: value.files, startedAt: row.startedAt, lastSavedAt: value.at, ...(value.covered ? {covered:value.covered} : {}) };
+      return { session: row.session, files: value.files, startedAt: row.startedAt, lastSavedAt: value.at, ciphertext: row.files, throughReply: value.throughReply, ...(value.covered ? {covered:value.covered} : {}) };
     } catch { return null; }
   }
 

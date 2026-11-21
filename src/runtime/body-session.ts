@@ -65,7 +65,9 @@ export function unpackSession(layout: Layout, root: string, pack: string, sessio
 
 export interface BodySessions {
   /** Puts the kept session back and answers its id, or nothing: the body then starts fresh. */
-  take(): Promise<string | undefined>;
+  take(now?: () => number): Promise<string | undefined>;
+  /** Absolute deadline of the files put back by take. */
+  readonly keepUntil?: string;
   /** A coordinator predating keyed history accepts the original take and save shapes only. */
   historyKeys?: boolean;
   /** Hashes of the bridge records already represented in the restored harness session. */
@@ -93,7 +95,8 @@ export function bodySessions(client: Client, harness: string, env: Env, place: s
   return {
     get historyKeys(){return historyKeys;},
     get covered(){return covered;},
-    async take() {
+    get keepUntil(){return inheritedEnd;},
+    async take(now = Date.now) {
       let reply;
       try {
         reply = await client.command('conversation.session', {historyKeys:true,retention:true}, randomUUID());
@@ -109,7 +112,7 @@ export function bodySessions(client: Client, harness: string, env: Env, place: s
       if (!reply.ok) return undefined;
       try {
         const kept = z.object({ session: z.object({ session: z.string().regex(SESSION_ID), files: z.string(), since:z.iso.datetime({offset:true}).optional(), keepUntil:z.iso.datetime({offset:true}).optional(), covered:z.array(z.hash('sha256')).max(SESSION_HISTORY_KEYS).optional() }).strict().nullable() }).strict().parse(reply.value).session;
-        if (kept) { unpackSession(layout, root, kept.files, kept.session); covered=kept.covered;inheritedStart=kept.since;inheritedEnd=kept.keepUntil;return restored = kept.session; }
+        if (kept && (!kept.keepUntil || now() < Date.parse(kept.keepUntil))) { unpackSession(layout, root, kept.files, kept.session); covered=kept.covered;inheritedStart=kept.since;inheritedEnd=kept.keepUntil;return restored = kept.session; }
       } catch { /* handed something this body cannot use */ }
       // Handed nothing it can continue: whatever loom keeps is of no use to this body and will be behind the
       // conversation once it answers. Say so now, so that it is removed (core/conversations/sessions.ts).

@@ -143,7 +143,8 @@ export async function bodyProgram(input: {
       sessionClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal:jobSignal,onJobEnded,fetch:input.fetch,clock:input.clock});
       keeper=input.sessions??(input.native?undefined:bodySessions(sessionClient,job.harness,input.env));
     }
-    let resume=await keeper?.take();
+    const now=()=>input.clock?.now() ?? Date.now();
+    let resume=await keeper?.take(now);
     if(signal.aborted)throw new Error();
     // Keys identify individual posts even when two replies have identical text and timestamps.
     const keyOf=(id:string)=>createHash('sha256').update(id).digest('hex');
@@ -171,10 +172,10 @@ export async function bodyProgram(input: {
       }
       if(claimed&&item.fromKind==='unknown'&&!claimed.includes(item.id))lateStranger=true;
       // The oldest word handed in that will be erased: a session started from them is counted from then.
-      for(const deadline of [item.keepUntil,item.questionKeepUntil,...item.history.map(line=>line.keepUntil)]) {
+      for(const deadline of [item.words!==null?item.keepUntil:null,item.questionKeepUntil,...item.history.map(line=>line.keepUntil)]) {
         if(deadline && (!earliestExpiry || Date.parse(deadline)<Date.parse(earliestExpiry))) earliestExpiry=deadline;
       }
-      if(item.keepUntil && (!oldestErased || Date.parse(item.at)<Date.parse(oldestErased))) oldestErased=item.at;
+      if(item.words!==null && item.keepUntil && (!oldestErased || Date.parse(item.at)<Date.parse(oldestErased))) oldestErased=item.at;
       for(const line of item.history)if(line.keepUntil!==null&&(oldestErased===undefined||Date.parse(line.at)<Date.parse(oldestErased)))oldestErased=line.at;
       if(job.venue==='loom' && item.source==='thread' && item.words!==null)seen.add(keyOf(threadInputKey(item.id)));
       if(job.venue==='loom' && item.source==='handoff' && item.words!==null){
@@ -321,11 +322,24 @@ export async function bodyProgram(input: {
     const room=policy&&job.run&&policy!==job.run.policy?{...job,run:{...job.run,policy}}:job;
     const harnessStarted=performance.now();
     try {
+      // Setup may cross a deadline after the coordinator delivered these words. The retry
+      // takes its mail again from the coordinator, which can omit the expired inputs.
+      const checkMail = () => {
+        if (earliestExpiry && now() >= Date.parse(earliestExpiry)) { exit=BODY_EXIT.mail; throw new Error('Accepted mail expired'); }
+      };
+      checkMail();
+      if (resume && keeper?.keepUntil && now() >= Date.parse(keeper.keepUntil)) {
+        keeper.discard();
+        resume=undefined;
+        covered.clear();
+      }
       if(!keeper)answer = await native(room, context.join('\n\n'), signal);
       else try { answer = await native(room, (resume?continued:context).join('\n\n'), signal, resume?{resume}:{}); }
       catch (error) {
         // The harness could not continue the session and did nothing: the same work, afresh, with the history.
-        if(!(error instanceof HarnessResumeUnavailable)||!afresh||signal.aborted)throw error;
+        if(!(error instanceof HarnessResumeUnavailable)||!resume||!afresh||signal.aborted)throw error;
+        if (keeper.keepUntil && now() >= Date.parse(keeper.keepUntil)) keeper.discard();
+        checkMail();
         answer = await afresh(room, context.join('\n\n'), signal, {});covered.clear();
       }
       // No secret this body was handed is said in its answer: one it used, or one it was started with.

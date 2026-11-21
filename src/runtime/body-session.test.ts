@@ -138,8 +138,14 @@ it('takes the kept session from loom, hands back the one the run left, and leave
   const client = { command: async (operation: string, input: unknown) => { calls.push([operation, input]);
     return operation === 'conversation.session' ? { ok: true as const, value: { session: { session, files: kept, since, keepUntil } } } : { ok: true as const, value: { saved: true } }; } };
   const keeper = keep(client, { base, root })!;
-  expect(await keeper.take()).toBe(session);
+  expect(await keeper.take(()=>Date.parse(since))).toBe(session);
+  expect(keeper.keepUntil).toBe(keepUntil);
   expect(existsSync(join(root, 'projects', '-house', `${session}.jsonl`))).toBe(true);
+  const lateBase = fresh(), lateRoot = join(lateBase, '.claude');
+  mkdirSync(lateRoot);
+  const late = keep({command:async()=>({ok:true,value:{session:{session,files:kept,since,keepUntil}}})},{base:lateBase,root:lateRoot})!;
+  expect(await late.take(()=>Date.parse(keepUntil))).toBeUndefined();
+  expect(readdirSync(lateRoot)).toEqual([]);
   // The run went on in the same session and added to it.
   writeFileSync(join(root, 'projects', '-house', `${session}.jsonl`), '{"type":"user"}\n{"type":"assistant"}\n{"type":"user"}\n');
   await keeper.save(session,'2026-11-20T09:30:00.000Z',[],'2026-11-21T10:00:00.000Z');

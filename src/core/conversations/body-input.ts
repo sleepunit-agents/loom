@@ -15,9 +15,9 @@ import type { Authentication } from '../live/index.js';
 import { failure } from '../operations/index.js';
 import type { DataWrites } from '../data/writes.js';
 import { guardedResponse } from '../data/guarded-response.js';
-import { inbox, inboxRefs, messages, threads } from '../data/schema.js';
+import { bridgeIncoming, inbox, inboxRefs, messages, threads } from '../data/schema.js';
 import {constrainJobSession} from './sessions.js';
-import { wordsDeadline } from './retention.js';
+import { ageLimit, wordsDeadline } from './retention.js';
 import type { CommsMessages } from './messages.js';
 import { ConversationMail } from './mail.js';
 import type { conversationBodyScope } from './body-scope.js';
@@ -40,7 +40,7 @@ export async function takeBodyInput(options:{request:Request;service:CommsMessag
  const active=()=>{
   if(!options.admitted()||!auth.valid()||!options.admitted())return false;
   const current=options.scope(auth.viewer);
-  return options.admitted()&&mailAccess()&&!!current&&current.job.id===before.job.id&&['id','agent','project','member','venue','place'].every(key=>current.cv[key as keyof typeof current.cv]===before.cv[key as keyof typeof before.cv]);
+  return options.admitted()&&mailAccess()&&!!current&&current.job.id===before.job.id&&['id','agent','project','member','venue','place','direct'].every(key=>current.cv[key as keyof typeof current.cv]===before.cv[key as keyof typeof before.cv]);
  };
  try {
   const {db}=options.service,mail=new ConversationMail(options.service),cvs=options.service.threads.conversations;
@@ -60,6 +60,13 @@ export async function takeBodyInput(options:{request:Request;service:CommsMessag
   const committed=options.writes.run(()=>{
    const deliveries=prepared();
    const refs=deliveries.length?db.select().from(inboxRefs).where(inArray(inboxRefs.item,deliveries.map(row=>row.item.id))).all():[];
+   const privateBridge=(before.cv.member!==null||before.cv.direct)&&(before.cv.venue==='slack'||before.cv.venue==='discord');
+   const received=new Map<string,number>();
+   if(privateBridge && refs.length){
+    const arrivals=db.select({id:bridgeIncoming.id,at:bridgeIncoming.receivedAt}).from(bridgeIncoming)
+     .where(and(eq(bridgeIncoming.conversation,before.cv.id),eq(bridgeIncoming.state,'delivered'),inArray(bridgeIncoming.id,refs.map(ref=>ref.ref)))).all();
+    for(const row of arrivals)received.set(row.id,Date.parse(row.at));
+   }
    const days=commsKeepDays(db);
    let until=Infinity, since=Infinity;
    const items=deliveries.map(({item,words,answerContext,history})=>{
@@ -67,7 +74,17 @@ export async function takeBodyInput(options:{request:Request;service:CommsMessag
      if(item.source==='discord'&&words!==null)words=discordBodyWords(words);
      if(history)history=history.map(line=>({...line,words:discordBodyWords(line.words)}));
     }
+    const itemRefs=refs.filter(ref=>ref.item===item.id).map(ref=>ref.ref);
     let keepUntil:string|null=null,verdict:string|null=null;
+    if(privateBridge && item.source===before.cv.venue && words!==null){
+     // A held DM can be received before its Inbox copy is created. The transcript
+     // contains the same words, so it inherits the earlier of those two limits.
+     const first=Math.min(Date.parse(item.at),...itemRefs.map(ref=>received.get(ref)??Infinity));
+     const deadline=ageLimit(first,days);
+     if(deadline>options.now()){
+      since=Math.min(since,first);until=Math.min(until,deadline);keepUntil=new Date(deadline).toISOString();
+     }else words=null;
+    }
     if(item.thread&&item.messageSeq!==null){
      const message=db.select().from(messages).where(and(eq(messages.thread,item.thread),eq(messages.seq,item.messageSeq),eq(messages.inboxItem,item.id))).get();
      if(!message)throw Error('Mail reference changed');verdict=message.verdict;
@@ -81,7 +98,7 @@ export async function takeBodyInput(options:{request:Request;service:CommsMessag
     if(keepUntil!==null)since=Math.min(since,Date.parse(item.at));
     if(answerContext){since=Math.min(since,Date.parse(answerContext.at));if(!Number.isFinite(answerContext.until))throw Error('Question context needs its deadline');until=Math.min(until,answerContext.until);}
     for(const line of history??[])if(line.keepUntil!==null){until=Math.min(until,Date.parse(line.keepUntil));since=Math.min(since,Date.parse(line.at));}
-    return {...(history?.length?{history}:{}),...(answerContext?{question:answerContext.question,questionKeepUntil:new Date(answerContext.until).toISOString()}:{}),id:item.id,seq:item.seq,source:item.source,sourceId:item.sourceId,fromKind:item.fromKind,fromId:item.fromId,at:item.at,words,keepUntil,verdict,refs:refs.filter(ref=>ref.item===item.id).map(ref=>ref.ref)};
+    return {...(history?.length?{history}:{}),...(answerContext?{question:answerContext.question,questionKeepUntil:new Date(answerContext.until).toISOString()}:{}),id:item.id,seq:item.seq,source:item.source,sourceId:item.sourceId,fromKind:item.fromKind,fromId:item.fromId,at:item.at,words,keepUntil,verdict,refs:itemRefs};
    });
    if(Number.isFinite(until))constrainJobSession(db,before.job.id,since,until);
    return {items,until};
