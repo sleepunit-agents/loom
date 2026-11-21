@@ -1,4 +1,4 @@
-import {afterEach,expect,it,vi} from 'vitest';
+import {afterEach,expect,it} from 'vitest';
 import {eq} from 'drizzle-orm';
 import {bodyFixture,bodyCredentials as raw} from '../test/fixtures/conversation-body.js';
 import {changes,projectMembers,tasks} from './core/data/schema.js';
@@ -28,24 +28,23 @@ it.each(['house/loom#1','https://github.com/house/loom/pull/1'])('reads PRs file
 });
 
 it('bounds the actual Comms source read at two and ten cited changes',async()=>{
- const f=await bodyFixture(clean),at=new Date(f.clock.now()).toISOString(),actor={kind:'agent' as const,id:'art'},service=f.root.services.tasks;
+ let reads=0;
+ const f=await bodyFixture(clean,{verbose:sql=>{if(/^select|^with/i.test(sql.trim()))reads++;}}),at=new Date(f.clock.now()).toISOString(),actor={kind:'agent' as const,id:'art'},service=f.root.services.tasks;
  const source=service.create({title:'Source work',goal:'Work',why:'Needed',owner:actor,project:'pond',source:{kind:'conversation',id:f.thread.conversation}},actor);
  const request=()=>f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+raw.member},body:JSON.stringify({query:sourceQuery,variables:{conversation:f.thread.conversation,offset:0}})});
- const prepared=vi.spyOn(f.db.$client,'prepare');let small=0;
- try{
-  for(let n=0;n<10;n++){
+ let small=0;
+ for(let n=0;n<10;n++){
    const id='github:house/loom#'+(n+1);
    f.db.insert(changes).values({id,repository:'house/loom',number:n+1,title:'Change '+n,body:'',url:'',state:'open',draft:false,authorLogin:'someone',project:'pond',branch:'work',headCommit:'a'.repeat(40),baseBranch:'next',checks:'passing',review:'approved',mergeable:'yes',waitingOn:'author',openedAt:at,updatedAt:at}).run();
    service.comment(source.id,'Filed '+id,actor);
    if(n===1||n===9){
     // Exclude one-time installed-service catalogue initialization from row growth.
     if(n===1)await (await request()).json();
-    prepared.mockClear();const response=await request();const result=await response.json();
+    reads=0;const response=await request();const result=await response.json();
     expect(result.errors).toBeUndefined();expect(result.data.conversationMadeChanges).toHaveLength(n+1);
-    const count=prepared.mock.calls.filter(([query])=>/^select|^with/i.test(query.trim())).length;
-    if(n===1)small=count;else expect(count).toBe(small);
+    if(n===1)small=reads;else expect(reads).toBe(small);
    }
   }
-  expect(small).toBe(37);
- }finally{prepared.mockRestore();}
+ // The same 48 reads execute on the baseline and with the credential statements prepared.
+ expect(small).toBe(48);
 });

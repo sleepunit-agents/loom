@@ -1,9 +1,9 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from './database.js';
-import { currentSession, dataAuthentication, presentedCredential, sessionEnds } from './authentication.js';
+import { currentSession, machineCurrent, dataAuthentication, presentedCredential, sessionEnds } from './authentication.js';
 import { dataHttp } from './http.js';
 import { agents, boxes, jobs, members, programTokens, tokens, sessions, terminalCredentials } from './schema.js';
 import { readHouseholdSetup } from './household-read.js';
@@ -208,4 +208,29 @@ it('makes a machine-bound terminal credential the agent at that machine owner\'s
   // A binding somebody else made for sam, or one made before the maker was recorded, is not the agent at sam's terminal.
   ends(() => db.update(terminalCredentials).set({ issuedBy: 'lee' }).run(), () => db.update(terminalCredentials).set({ issuedBy: 'sam' }).run());
   ends(() => db.update(terminalCredentials).set({ issuedBy: null }).run(), () => db.update(terminalCredentials).set({ issuedBy: 'sam' }).run());
+});
+
+it('prepares the repeated credential reads once per database and rechecks a rolled-back revocation', () => {
+  const first = fixture(), other = fixture();
+  first.db.insert(boxes).values({ id: 'box', owner: 'sam', name: 'Worker', sameMachineAsLoom: false, hostsAny: true, reportOnly: false, alwaysOn: false, enrolledAt: at }).run();
+  const prepare = vi.spyOn(first.client, 'prepare');
+  const session = () => currentSession(first.db, hash(cookie), Date.parse(at));
+  for (let i = 0; i < 5; i++) {
+    expect(session()?.viewer.id).toBe('sam');
+    expect(machineCurrent(first.db, 'box')).toBe(true);
+    expect(machineCurrent(other.db, 'box')).toBe(false);
+  }
+  for (const table of ['tokens', 'sessions', 'boxes']) {
+    expect(prepare.mock.calls.filter(([query]) => query.includes('from "' + table + '"'))).toHaveLength(1);
+  }
+  expect(() => first.db.transaction(() => {
+    first.db.update(tokens).set({ revokedAt: at }).run();
+    expect(session()).toBeUndefined();
+    expect(currentSession(other.db, hash(cookie), Date.parse(at))?.viewer.id).toBe('sam');
+    throw Error('Roll back this fixture write');
+  })).toThrow('Roll back this fixture write');
+  expect(session()?.viewer.id).toBe('sam');
+  other.db.delete(sessions).run();
+  expect(currentSession(other.db, hash(cookie), Date.parse(at))).toBeUndefined();
+  expect(session()?.viewer.id).toBe('sam');
 });
