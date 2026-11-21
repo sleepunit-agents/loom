@@ -394,6 +394,10 @@ const upgrades: readonly (readonly string[])[] = [
    'ALTER TABLE deleted_threads ADD COLUMN source_agent text',
    'ALTER TABLE deleted_threads ADD COLUMN source_channel integer',
    'ALTER TABLE threads ADD COLUMN source_channel integer'],
+  // 34: private v1 card details expire with the message.
+  ['ALTER TABLE messages ADD COLUMN archived_step_meta text',
+    `ALTER TABLE messages ADD COLUMN archived_step_words blob CONSTRAINT "messages_step_words_kept" CHECK("messages"."archived_step_words" is null or ("messages"."kind" = 'card' and "messages"."words" is not null))`,
+    'ALTER TABLE messages ADD COLUMN archived_notice text'],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;
