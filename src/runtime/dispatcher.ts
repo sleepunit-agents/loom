@@ -16,7 +16,7 @@ import type { DataDatabase } from '../core/data/database.js';
 import { agentModels, agentRunSettings, agentHousePorts, boxes, programFirings, changes, changeReviewRounds, jobNeeds, jobs, inbox, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
 import { Jobs, workingIn, type Job } from './jobs.js';
 import { Machines } from './machines.js';
-import { decidePlacement, type ModelRole } from './placement.js';
+import { QUOTA_WAIT_REASON, decidePlacement, type ModelRole } from './placement.js';
 import type { WorkerRunPolicy } from './worker.js';
 import type { WorkerExitBy } from './job-exit.js';
 import { SILENCE_MS } from './silence.js';
@@ -40,13 +40,16 @@ export class Dispatcher {
   availableWorkRoles(agent:string,id?:string) {
     return this.workRoles.filter(role=>role.agent===agent && (id===undefined || role.id===id)).map(role=>({
       id:role.id,description:role.description,revision:roleRevision(role),
-      available:this.canStartReview(agent,eligibleModels(role,this.roles(),this.nativeHarnesses)),
+      ...this.reviewAvailability(agent,eligibleModels(role,this.roles(),this.nativeHarnesses)),
     }));
   }
-  canStartReview(agent:string, models=this.roles().filter(role=>role.harness==='codex')) {
+  reviewAvailability(agent:string, models=this.roles().filter(role=>role.harness==='codex')) {
     const settings=this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,agent)).get();
-    return !!settings && !!decidePlacement(this.db,{agent,now:this.now(),roles:models,
-      eligibleBoxes:this.reviewBoxes,needs:settings.gpu?['gpu']:[]}).placement;
+    if (!settings) return {available:false};
+    const decision=decidePlacement(this.db,{agent,now:this.now(),roles:models,
+      eligibleBoxes:this.reviewBoxes,needs:settings.gpu?['gpu']:[]});
+    if (decision.placement) return {available:true};
+    return decision.decision.some(row=>row.reason===QUOTA_WAIT_REASON) ? {available:false,reason:QUOTA_WAIT_REASON} : {available:false};
   }
   private currentThread(job:Pick<Job,'id'|'agent'|'conversation'>){
     if(!job.conversation)return undefined;

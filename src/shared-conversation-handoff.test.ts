@@ -295,9 +295,16 @@ it.each(['success','failure','archive','transient','occupied','work-role','mixed
  await next('advertise',true);
  if(mixed){
   db.update(s.modelAccountWindows).set({usage:1}).where(eq(s.modelAccountWindows.account,'paid')).run();
+  db.insert(s.modelAccountLogins).values({account:'paid',box:'box',harness:'codex',place:'containers',state:'signed-in',checkedAt:now(),since:now(),learnedFrom:'check'}).run();
   const unavailable=await f.call('handoffOptions',{},'exhausted');
-  expect((await unavailable.json()).value.roles).toMatchObject([{id:'research',available:false}]);
-  expect((await f.call('handoff',request,'exhausted-launch')).status).toBe(503);
+  const details=(await unavailable.json()).value;
+  expect(details.codexUnavailableReason).toMatch(/signed-in account.*quota window/);
+  expect(details.roles).toMatchObject([{id:'research',available:false,reason:details.codexUnavailableReason}]);
+  for(const selector of [{role:'research'},{harness:'codex'}]){
+   const blocked=await f.call('handoff',{...selector,label:request.label,words:request.words,clientId:request.clientId},'exhausted-'+Object.keys(selector)[0]);
+   expect(blocked.status).toBe(503);
+   expect(await blocked.text()).toContain(details.codexUnavailableReason);
+  }
   expect(db.select().from(s.conversations).where(eq(s.conversations.venue,'handoff')).all()).toHaveLength(0);
   db.update(s.modelAccountWindows).set({usage:0.1}).where(eq(s.modelAccountWindows.account,'paid')).run();
  }

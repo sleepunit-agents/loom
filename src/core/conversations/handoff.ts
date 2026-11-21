@@ -29,8 +29,8 @@ export interface HandoffToSelf{
  /** The person the sending job is working on the word of, if one can be named: a brief to another agent
   * carries it, so the job it starts counts that person as in the room and is never the agent's own work. */
  ownerWork?(work:{job:{id:string;agent:string;conversation:string|null}}):boolean;
- codexAvailable?(agent:string):boolean;
- workRoles?(agent:string,id?:string):readonly {id:string;description:string;revision:string;available:boolean}[];
+ codexAvailability?(agent:string):{available:boolean;reason?:string};
+ workRoles?(agent:string,id?:string):readonly {id:string;description:string;revision:string;available:boolean;reason?:string}[];
  word(work:{job:{id:string;agent:string;conversation:string|null}}):OnWord|undefined;
  /** Why this job hands nothing on at all, to its own body elsewhere or to a peer agent, or nothing. */
  hop(work:{job:{id:string;agent:string;conversation:string|null}}):string|undefined;
@@ -68,15 +68,16 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
  };
  operations.register(operation({name:'conversation.handoffOptions',write:false,doors:['http'],
   input:z.object({}).strict().describe('List assigned peers, enabled work roles and current worker availability.'),
-  output:z.object({agents:z.array(z.string()),codexAvailable:z.boolean(),roles:z.array(z.object({id:z.string(),description:z.string(),available:z.boolean()})).optional()}).strict(),
+  output:z.object({agents:z.array(z.string()),codexAvailable:z.boolean(),codexUnavailableReason:z.string().optional(),roles:z.array(z.object({id:z.string(),description:z.string(),available:z.boolean(),reason:z.string().optional()})).optional()}).strict(),
   may(viewer){const work=current(viewer);return !!work && ownerThread(work);},
   run(ctx){
    const work=requireCurrent(ctx.viewer);
    if(!work.cv.member || !ownerThread(work))throw new OperationError('denied','Private owner conversation required');
    const assigned=db.select({agent:memberAgents.agent}).from(memberAgents).where(eq(memberAgents.member,work.cv.member)).all();
    const agents=assigned.map(row=>row.agent).filter(agent=>peerAllowed(work,agent)).sort();
-   const roles=self?.workRoles?.(work.cv.agent).map(({id,description,available})=>({id,description,available}))??[];
-   return {agents,...(roles.length?{roles}:{}),codexAvailable:self?.codexAvailable?.(work.cv.agent)===true};
+   const roles=self?.workRoles?.(work.cv.agent).map(({id,description,available,reason})=>({id,description,available,...(reason?{reason}:{})}))??[];
+   const codex=self?.codexAvailability?.(work.cv.agent);
+   return {agents,...(roles.length?{roles}:{}),codexAvailable:codex?.available===true,...(codex?.reason?{codexUnavailableReason:codex.reason}:{})};
   },
  }));
  operations.register(operation({name:'conversation.handoffStatus',write:false,doors:['http'],
@@ -165,10 +166,13 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
     if(start<=Date.parse(now) || start>=handoffDeadline({at:now,words:prepared as string},commsKeepDays(db)))
       throw new OperationError('invalid','Choose a future time before the private brief expires');
    }
-   if(!input.notBefore && input.harness && !self?.codexAvailable?.(recipient))throw new OperationError('unavailable','No eligible Codex worker with a signed-in account and free capacity is available for this job.');
+   if(!input.notBefore && input.harness){
+    const codex=self?.codexAvailability?.(recipient);
+    if(!codex?.available)throw new OperationError('unavailable',codex?.reason??'No eligible Codex worker with a signed-in account and free capacity is available for this job.');
+   }
    const role=input.role?self?.workRoles?.(recipient,input.role)[0]:undefined;
    if(input.role && !role)throw new OperationError('invalid','Unknown work role for this agent');
-   if(role && !input.notBefore && !role.available)throw new OperationError('unavailable','No eligible worker is available for this work role');
+   if(role && !input.notBefore && !role.available)throw new OperationError('unavailable',role.reason??'No eligible worker is available for this work role');
    const place=delegated?reviewPlace(parent,input.clientId,role):job.id;
    const target=cvs.open({agent:recipient,venue:'handoff',place,label:input.label,project:cv.project,member:cv.member,direct:cv.direct,handoffNotBefore:input.notBefore});
    if(target.handoffNotBefore!==(input.notBefore??null)||target.project!==cv.project||target.member!==cv.member||target.direct!==cv.direct)throw new OperationError('conflict','Handoff scope changed');

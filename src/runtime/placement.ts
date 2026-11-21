@@ -31,6 +31,8 @@ interface PlacementInput {
   cannotRun?: (harness: string) => boolean;
 }
 
+export const QUOTA_WAIT_REASON='An eligible worker reported a signed-in account. Its quota window leaves too little room to start this job.';
+
 type Candidate = { box: string; reason: string } | { box: string; placement: Placement; missingPreferred: string[] };
 type Decision = { box: string; outcome: 'taken' | 'passed'; reason: string };
 
@@ -51,10 +53,11 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
     .filter(row => !input.wants || row.model === input.wants || input.roles.some(role => role.model === row.model && role.tag === input.wants));
   // A removed member's account pays for nothing, like their machine runs nothing.
   const accounts = input.programBoxes ? [] : db.select().from(modelAccounts).orderBy(asc(modelAccounts.id)).all()
-    .filter(account => namesCurrent('member', account.owner, sharing) && currentAccountCapacity(db, account.id, input.now).hasRoom);
+    .filter(account => namesCurrent('member', account.owner, sharing))
+    .map(account => ({ ...account, capacity:currentAccountCapacity(db, account.id, input.now) }));
   const signedIn = input.programBoxes ? [] : db.select().from(modelAccountBoxes).all();
-  // An account enabled on a machine whose houses were last found signed out of it (account-logins.ts).
-  const gone = input.programBoxes ? [] : db.select().from(modelAccountLogins).where(and(eq(modelAccountLogins.place, 'containers'), eq(modelAccountLogins.state, 'signed-out'))).all();
+  // Host and container logins can differ. Placement uses only reports from the houses.
+  const logins = input.programBoxes ? [] : db.select().from(modelAccountLogins).where(eq(modelAccountLogins.place, 'containers')).all();
   const roles = models.flatMap(model => {
     const role = input.roles.find(role => role.model === model.model);
     return role && !input.cannotRun?.(role.harness) ? [role] : [];
@@ -80,13 +83,22 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
       missingPreferred: (input.prefers ?? []).filter(fact => !meetsNeed(facts, fact)) };
     if (!roles.length) return { box: id, reason: 'No allowed model and harness can run this job.' };
     let signedOut = false;
+    let quotaLimited = false;
     for (const role of roles) {
       const enabled = accounts.filter(account => account.provider === role.provider && signedIn.some(binding => binding.account === account.id && binding.box === id));
-      const account = enabled.find(account => !gone.some(login => login.account === account.id && login.box === id && login.harness === role.harness));
-      if (!account && enabled.length) signedOut = true;
-      if (account) return { box: id, placement: { box: id, model: role.model, account: account.id, harness: role.harness },
-        missingPreferred: (input.prefers ?? []).filter(fact => !meetsNeed(facts, fact)) };
+      for (const account of enabled) {
+        const login = logins.find(row => row.account === account.id && row.box === id && row.harness === role.harness);
+        if (!account.capacity.hasRoom) {
+          if (login?.state === 'signed-in' && Date.parse(login.checkedAt) <= now && (!login.expiresAt || Date.parse(login.expiresAt) > now)
+            && account.capacity.windows.some(window => window.estimatedUsage !== null && !window.hasRoom)) quotaLimited = true;
+          continue;
+        }
+        if (login?.state === 'signed-out') { signedOut = true; continue; }
+        return { box: id, placement: { box: id, model: role.model, account: account.id, harness: role.harness },
+          missingPreferred: (input.prefers ?? []).filter(fact => !meetsNeed(facts, fact)) };
+      }
     }
+    if (quotaLimited) return { box: id, reason: QUOTA_WAIT_REASON };
     return { box: id, reason: signedOut ? 'An account for an allowed model is signed out on this machine.' : 'No signed-in account with room for an allowed model.' };
   });
   const eligible = candidates.filter(candidate => 'placement' in candidate);
