@@ -33,6 +33,7 @@ jobs:
       - name: Sign in and visit every launcher app
         env:
           TZ: America/Chicago
+          LOOM_BROWSER_TESTS: 'on'
         run: |
           set -euo pipefail
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
