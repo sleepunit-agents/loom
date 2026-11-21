@@ -561,3 +561,24 @@ it.each([false,true])('uses the room policy when a house shell requests note fil
    expect(code).toBe(0);expect(responseStatus).toBe(denied?403:200);expect(rootReads).toBe(denied?0:1);
  }finally{harness.mockRestore();}
 });
+
+it.each(['slack','discord'] as const)('executes a private decision at guest reach in %s and settles after the reply',async venue=>{
+ const f=fixture(),value=JSON.parse(f.input.toString());
+ Object.assign(value.job,{venue,thread:null});
+ value.job.run.policy={people:[{kind:'outside',person:JSON.stringify([venue,'workspace','guest']),tier:2}],deniedTools:[],word:'others'};
+ f.native.mockResolvedValue({text:'The quote is ready.',model:'observed',actions:[]});
+ const code=await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value)),fetch:async(url,init)=>{
+  const response=await f.options.fetch(url,init);if(!String(url).endsWith('/take'))return response;
+  const batch=await response.json();
+  Object.assign(batch.value.items[0],{source:'answer',sourceId:'guest-decision:in-fixture',fromKind:'agent',fromId:'art',words:'Owner decision for digest dg-fixture revision 1: yes.',
+   question:{words:'Prepare a quote?',ifYes:'Prepare the quote.',ifNo:'Wait.',why:null,link:null},questionKeepUntil:'2099-01-01T00:00:00.000Z'});
+  return Response.json(batch);
+ }});
+ expect(code).toBe(0);
+ expect(f.native).toHaveBeenCalledTimes(1);
+ expect(f.native.mock.calls[0][1]).toContain('Prepare the quote.');
+ const reply=f.calls.findIndex(c=>c.path==='reply');
+ expect(reply).toBeGreaterThan(-1);
+ expect(f.calls[reply].body.input).toMatchObject({text:'The quote is ready.'});
+ expect(f.calls.findIndex(c=>c.path==='confirm')).toBeGreaterThan(reply);
+});

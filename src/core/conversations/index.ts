@@ -266,6 +266,20 @@ export class Conversations {
     });
   }
 
+  /** Commit the source digest and its privately addressed, sealed question together. */
+  guestDecisionDigest(input:DigestInput,director:string,account:string,words:string){
+    return this.db.transaction(()=>{
+      const cv=this.conversation(input.conversation);
+      const digest=this.digest({...input,question:undefined});
+      const place=JSON.stringify(['guest-decision',director]);
+      const owner=this.open({venue:'wake',agent:cv.agent,member:director,place,label:'Private decisions',direct:true});
+      if(owner.member!==director||owner.project||!owner.direct)throw Error('Private decision destination changed');
+      const item=this.send({conversation:owner.id,toKind:'person',to:director,source:'thread',sourceId:'guest-decision:'+digest.id+':'+digest.revision,fromKind:'agent',fromId:cv.agent,words,answers:'yes-no',onWordKind:'outside',onWord:account});
+      this.turn({conversation:cv.id,kind:'note',fromKind:'agent',fromId:cv.agent,run:input.run});
+      return this.db.update(digests).set({inboxItem:item.id}).where(eq(digests.id,digest.id)).returning().get()!;
+    });
+  }
+
   digest(input: DigestInput, questionItem?: string): typeof digests.$inferSelect {
     if (input.summary.length > 600) throw new Error('Digest summary exceeds 600 characters');
     return this.db.transaction(() => {

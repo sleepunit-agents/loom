@@ -20,6 +20,7 @@ export interface SendTransport {
   /** Resolve the current connection. Suppress generated mentions in platform posts.
    * Throw BridgeReplyNotSent when refusing before any request is made. */
   post(connection: typeof bridgeConnections.$inferSelect, address: { channel: string; thread: string | null }, text: string, files?: readonly SendFile[], permitted?:()=>boolean): Promise<{ id: string }>;
+  jobAllowed?(job:string,send:BridgeSend):boolean;
   progressAllowed?(job:string,send:BridgeSend,files:boolean):boolean;
   directAllowed?(job:string,target:DirectSendTarget,connection:string,channel:string):boolean;
 }
@@ -89,7 +90,7 @@ export class BridgeSends {
    * and is made in a conversation (`at`), whose place the caller read (shared-place-mail.ts, placeAddress).
    * `stopped` is loom's own line after a stop word (STOPPED_LINE): the one post made to a message that
    * was not delivered, addressed like any other to where that message was said. */
-  queue(input: { id: string; text: string; author?: { job:string; intermediate:boolean; directTarget?:DirectSendTarget & {channel:string} }; held?: boolean; stopped?: boolean; files?: readonly SendFile[] } & ({ incoming: string; at?: undefined } | { incoming?: undefined; at: { conversation: string; connection: string; channel: string; thread: string | null } })): BridgeSend {
+  queue(input: { id: string; text: string; author?: { job:string; intermediate:boolean; guestDecision?:boolean; directTarget?:DirectSendTarget & {channel:string} }; held?: boolean; stopped?: boolean; files?: readonly SendFile[] } & ({ incoming: string; at?: undefined } | { incoming?: undefined; at: { conversation: string; connection: string; channel: string; thread: string | null } })): BridgeSend {
     if (this.closed) throw new Error('Bridge sends closed');
     if (!input.id.trim() || !input.text.trim()) throw new BridgeQueueRefusal('Reply needs an id and text');
     const queued: (typeof bridgeSendFiles.$inferInsert)[] = [];
@@ -121,7 +122,7 @@ export class BridgeSends {
         connection: incoming.connection, channel: incoming.channel, thread: incoming.thread, conversation: input.at?.conversation ?? null,
         text: input.text, state: input.held ? 'held' : 'pending', createdAt: this.now(),
       }).returning().get();
-      if (input.author?.intermediate) tx.insert(bridgeSendJobs).values({send:row.id,job:input.author.job,directTarget:input.author.directTarget}).run();
+      if (input.author?.intermediate||input.author?.guestDecision) tx.insert(bridgeSendJobs).values({send:row.id,job:input.author.job,finalReply:!input.author.intermediate,directTarget:input.author.directTarget}).run();
       if (queued.length) tx.insert(bridgeSendFiles).values(queued).run();
       return row;
     }));
@@ -182,10 +183,10 @@ export class BridgeSends {
         const last = files.length > 0 && part++ === parts - 1;
         const address = { channel: send.channel, thread: send.thread };
         const authored=this.db.select().from(bridgeSendJobs).where(eq(bridgeSendJobs.send,send.id)).get();
-        if(authored&&!authored.finalReply||send.id.startsWith('dm:')){
+        if(authored||send.id.startsWith('dm:')){
           const permitted=()=>{
             const source=this.db.select().from(bridgeSendJobs).where(eq(bridgeSendJobs.send,send.id)).get();
-            if(!source||source.job!==authored?.job)return false;
+            if(!source||source.job!==authored?.job||this.transport.jobAllowed?.(source.job,send)===false)return false;
             if(send.id.startsWith('dm:'))return send.thread===null&&source.directTarget?.channel===send.channel&&
               this.transport.directAllowed?.(source.job,source.directTarget,send.connection,send.channel)===true;
             return !source.directTarget&&(source.finalReply||this.transport.progressAllowed?.(source.job,send,files.length>0)===true);
