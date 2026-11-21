@@ -6,12 +6,12 @@ import type { InboxItem } from '../inbox-view/model';
 type Asked = { query: string; variables: Record<string, unknown>; options?: { keep?: boolean; pause?: boolean } };
 // `item` is the state of the open item's own reading; `hold` makes the list answer as the data hook does while
 // the next folder, search or page loads (the last answer again, marked settling); `stray` answers with another item.
-const f = vi.hoisted(() => ({ approvals: [] as unknown[], owner: false, status: 'live', item: 'live', hold: false, stray: undefined as unknown, last: undefined as unknown, data: {} as Record<string, unknown>, requests: [] as Asked[], call: vi.fn(), read: vi.fn(), records: vi.fn() }));
+const f = vi.hoisted(() => ({ titles: [] as { approval: string; title: string }[], approvals: [] as unknown[], owner: false, status: 'live', item: 'live', hold: false, stray: undefined as unknown, last: undefined as unknown, data: {} as Record<string, unknown>, requests: [] as Asked[], call: vi.fn(), read: vi.fn(), records: vi.fn() }));
 vi.mock('../../data/graphql', () => ({ useDataQuery(query: string, variables: Record<string, unknown>, options?: Asked['options']) {
   // The household's zone, for the times the Inbox says (data/zone.ts): not one of the Inbox's own requests.
   if (query.includes('query DeskTime')) return { status: 'live', data: { deskTime: { at: 0, timezone: 'America/Chicago' } } };
   // The approvals an approval item's card is read from (data/work-views.ts): not one of the Inbox's own requests either.
-  if (query.includes('query InboxProposalTitles')) return {status:'live', data:{inboxProposalTitles:f.owner?[{approval:'a-grant',title:'Let Gage Taylor (Slack) use Art’s pond-et-livonia kit'}]:[]}};
+  if (query.includes('query InboxProposalTitles')) return {status:'live', data:{inboxProposalTitles:f.owner?f.titles:[]}};
   if (query.includes('query ApprovalsView')) return { status: 'live', data: { approvals: f.approvals, approvalRules: [], approvalNotices: [], approvalRecord: [] } };
   if (/query (WorkAnswerOwner|WorkViewer)/.test(query)) return { status: 'live', data: { workAnswerOwner: f.owner, workChangesRefresh: false, members: [], homeComms: null } };
   if (!variables) return { status: 'loading' };
@@ -32,7 +32,7 @@ vi.mock('../../kit', () => Object.fromEntries(['Split','Row','NoteRow','Empty','
 import InboxApp from './index';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
-afterEach(async () => { f.approvals = []; f.owner = false; await act(async () => tree?.unmount()); vi.useRealTimers(); f.requests = []; f.call.mockReset(); f.read.mockReset(); f.records.mockReset(); vi.unstubAllGlobals(); });
+afterEach(async () => { f.approvals = []; f.titles = []; f.owner = false; await act(async () => tree?.unmount()); vi.useRealTimers(); f.requests = []; f.call.mockReset(); f.read.mockReset(); f.records.mockReset(); vi.unstubAllGlobals(); });
 function row(extra: Partial<InboxItem> = {}): InboxItem {
   return { id: 'in-1', canAnswer: true, source: 'thread', agent: 'art', at: '2026-11-14T18:00:00.000Z', state: 'waiting', volume: 'full', answers: 'yes-no', refs: [], read: false, body: { words: 'Buy the pump?', ifYes: 'Order it', ifNo: 'Skip it' }, ...extra };
 }
@@ -235,27 +235,30 @@ it('keeps the folders, counts, rows, search and pager in place while another fol
   expect(tree.root.findAllByType('Row')).toHaveLength(0); expect(text()).not.toContain('Question'); expect(tree.root.findByType('Search').props.disabled).toBe(true);
 });
 
-it('says an approval item as its card says it: the plain sentence in the row and the title, and the card itself in the reader', async () => {
-  const account = { platform: 'slack', workspace: 'T02AYL3QM', user: 'U07V8CZUC1J' }, after = { agent: 'art', grant: true, kit: 'pond-et-livonia', to: account };
-  const raw = 'Grant art kit pond-et-livonia to slack user U07V8CZUC1J in T02AYL3QM?';
-  const item = row({ source: 'approval', waitsOnKind: 'approval', waitsOnId: 'a-grant', canAnswer: false, body: { words: raw, why: 'Restore the recorded Pond field scope.', ifYes: 'Grant it.', ifNo: 'Keep the current access.' } });
+const account = { platform: 'slack', workspace: 'TWORK', user: 'UROBIN' };
+it.each([
+  {change:'kitGrant', after:{agent:'art',grant:true,kit:'field',to:account}, raw:'Grant art kit field to slack user UROBIN in TWORK?', title:'Let robin (Slack) use Art’s field kit'},
+  {change:'colleague', after:{agent:'art',...account,tier:2,project:'pond'}, raw:'Place slack user UROBIN in TWORK?', title:'Set robin (Slack) to tier 2 with Art and add them to the Pond kit roster'},
+])('uses the owner-visible $change title in the Inbox row, heading and inline card', async ({change, after, raw, title}) => {
+  const id = 'a-' + change;
+  const item = row({ source:'approval', waitsOnKind:'approval', waitsOnId:id, canAnswer:false, body:{words:raw} });
   setup(item);
   f.owner = true;
-  f.approvals = [{ id: 'a-grant', kind: 'setting', operation: 'household.change', target: 'household:kitGrant:art/pond-et-livonia ' + JSON.stringify(account), what: 'kitGrant art/pond-et-livonia ' + JSON.stringify(account) + ': ' + JSON.stringify(after),
-    changeSummary: 'kitGrant art/pond-et-livonia ' + JSON.stringify(account) + ': ' + JSON.stringify(after), ask: raw, ifYes: 'Grant it.', ifNo: 'Keep the current access.', why: 'Restore the recorded Pond field scope.', agent: 'art', project: null, member: null, conversation: null,
-    state: 'pending', details: JSON.stringify({ change: 'kitGrant', after, seal: { nonce: 'n', digest: 'd' } }), askedAt: item.at, decidedBy: null, expiresAt: null }];
-  f.records.mockReturnValue({ status: 'loading', records: [] });
-  await act(async () => { tree = create(h(InboxApp, { path: '/p/inbox-preview/ask/in-1' })); });
-  const sentence = 'Let Gage Taylor (Slack) use Art’s pond-et-livonia kit';
-  expect(tree.root.findByType('Row' as never).props.title).toBe(sentence);
-  expect(tree.root.findAllByType('Title' as never)[0].props.children).toBe(sentence);
-  expect(tree.root.findAllByType('strong').some((node: {props:{children:unknown}}) => node.props.children === sentence)).toBe(true);
-  const words = JSON.stringify(tree.toJSON());
-  expect(words).not.toContain('U07V8CZUC1J');
-  expect(words).not.toContain('When Art works on that account’s word in an eligible conversation.');
-  expect(words).not.toContain('Grant art kit'); expect(words).not.toContain('{\\"');
+  f.titles = [{approval:id, title}];
+  const summary = change + ' ' + JSON.stringify(after);
+  f.approvals = [{id,kind:'setting',operation:'household.change',target:'household:'+change,what:summary,changeSummary:summary,
+    ask:raw,ifYes:'Apply the change.',ifNo:'Keep the current access.',why:'Review the field access.',agent:'art',project:null,member:null,conversation:null,
+    state:'pending',details:JSON.stringify({change,after,seal:{nonce:'n',digest:'d'}}),askedAt:item.at,decidedBy:null,expiresAt:null}];
+  f.records.mockReturnValue({ status:'loading',records:[] });
+  await act(async () => { tree = create(h(InboxApp, { path:'/p/inbox-preview/ask/in-1' })); });
+  expect(tree.root.findByType('Row' as never).props.title).toBe(title);
+  expect(tree.root.findAllByType('Title' as never)[0].props.children).toBe(title);
+  expect(tree.root.findAllByType('strong').some((node: {props:{children:unknown}}) => node.props.children === title)).toBe(true);
+  expect(text()).not.toContain('UROBIN');
+  expect(text()).not.toContain('When Art works on that account’s word in an eligible conversation.');
+  expect(text()).not.toContain(raw);
   // An approval the reader may not see leaves the item in the words stored with it.
   f.approvals = [];
-  await act(async () => { tree.update(h(InboxApp, { path: '/p/inbox-preview/ask/in-1' })); });
+  await act(async () => { tree.update(h(InboxApp, { path:'/p/inbox-preview/ask/in-1' })); });
   expect(tree.root.findByType('Row' as never).props.title).toBe(raw);
 });

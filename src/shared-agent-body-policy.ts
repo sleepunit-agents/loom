@@ -9,9 +9,11 @@ import { OperationError } from './core/operations/index.js';
 import { outsidePersonKey } from './pieces/bridges/keys.js';
 import { hasControlCharacter } from './core/line-name.js';
 const text=(max:number)=>z.string().min(1).max(max).refine(value=>value.trim().length>0).refine(value=>!hasControlCharacter(value));
-const outsidePerson=z.object({platform:z.enum(bridgeConnections.platform.enumValues),workspace:text(200),user:text(200),tier:z.union([z.literal(1),z.literal(2),z.literal(3)])}).strict();
+export const OUTSIDE_PEOPLE_MAX = 128;
+export const outsideTier = z.union([z.literal(1),z.literal(2),z.literal(3)]);
+const outsidePerson=z.object({platform:z.enum(bridgeConnections.platform.enumValues),workspace:text(200),user:text(200),tier:outsideTier}).strict();
 const key=(person:z.infer<typeof outsidePerson>)=>outsidePersonKey(person.platform,person.workspace,person.user);
-export const agentBodyPolicyInput=z.object({agent:text(200),people:z.array(outsidePerson).max(128).refine(values=>new Set(values.map(key)).size===values.length),
+export const agentBodyPolicyInput=z.object({agent:text(200),people:z.array(outsidePerson).max(OUTSIDE_PEOPLE_MAX).refine(values=>new Set(values.map(key)).size===values.length),
    deniedTools:z.array(z.object({pattern:text(512).refine(value=>!value.trimStart().startsWith('-')),guestsOnly:z.boolean()}).strict()).max(128).refine(values=>new Set(values.map(value=>JSON.stringify([value.pattern,value.guestsOnly]))).size===values.length),
   }).strict();
 type BodyPolicy=z.infer<typeof agentBodyPolicyInput>;

@@ -214,21 +214,23 @@ const plain=(value:Proposal,context:CardContext)=>proposalCard(value.change,valu
  *  - `placeSchedule`: a repeating schedule somebody who is not an owner asked for in a shared place. The owner
  *    ruled that such a request is asked of an owner; a rule for settings is not an owner reading this
  *    person's words and times. */
-export const alwaysAsks:ReadonlySet<string>=new Set<keyof typeof kinds>(['rule','projectJoin','projectMerge','placeSchedule','kit','kitGrant','projectOutsidePerson']);
+export const alwaysAsks:ReadonlySet<string>=new Set<keyof typeof kinds>(['rule','projectJoin','projectMerge','placeSchedule','kit','kitGrant','projectOutsidePerson','colleague']);
 // A kit change that cannot be made, said to the owner with what would fix it (shared-kit-cards.ts, kitRefusal).
-type KitProposal=Extract<Proposal,{change:'kit'|'kitGrant'|'projectOutsidePerson'}>;
+type KitProposal=Extract<Proposal,{change:'kit'|'kitGrant'|'projectOutsidePerson'|'colleague'}>;
 const kitBlocked=(value:KitProposal,refused:KitRefusal,names?:CardNames):string=>{
  const cap=(id:string)=>id?id[0]!.toUpperCase()+id.slice(1):id;
- const account=value.change==='projectOutsidePerson'?value.input:value.change==='kitGrant'&&'user' in value.input.to?value.input.to:undefined;
+ const account=value.change==='colleague'||value.change==='projectOutsidePerson'?value.input:value.change==='kitGrant'&&'user' in value.input.to?value.input.to:undefined;
  const who=account?names?.person(account.platform,account.workspace,account.user)?.name??'this account':'';
  const agent='agent' in value.input?cap(value.input.agent):'';
  // Restoring a target or changing a link changes who or what the card affects, so it needs a fresh card.
  const again=' Deny this card, and ask for it again once that is done.';
  switch(refused.cause){
   case 'agent':return 'This cannot be allowed: '+agent+' is not an agent in the household now. The agent would have to be restored first.'+again;
-  case 'project':return 'This cannot be allowed: the project '+(value.change==='projectOutsidePerson'?value.input.project:value.change==='kitGrant'&&'project' in value.input.to?value.input.to.project:'')+' is not in use (it is retired, removed, or was never made). It would have to be revived or restored first.'+again;
+  case 'project':return 'This cannot be allowed: the project '+(value.change==='colleague'||value.change==='projectOutsidePerson'?value.input.project:value.change==='kitGrant'&&'project' in value.input.to?value.input.to.project:'')+' is not in use (it is retired, removed, or was never made). It would have to be revived or restored first.'+again;
   case 'member':return 'This cannot be allowed: '+(value.change==='kitGrant'&&'member' in value.input.to?cap(value.input.to.member):'that person')+' is not a member of the household now. They would have to be restored first.'+again;
-  case 'linked':return 'This cannot be allowed: this account is linked to the household member '+refused.member+'. Deny this card, and ask for '+(value.change==='projectOutsidePerson'?refused.member+' to be put on the project as a member':'the kit to be granted to the member '+refused.member)+' instead.';
+  case 'full':return 'The agent has reached its outside contact limit. An owner can update its outside contacts before asking again.';
+  case 'linked':if(value.change==='colleague')return 'This Slack account belongs to the household member '+refused.member+'. Outside contact tiers apply only to unlinked accounts.';
+   return 'This cannot be allowed: this account is linked to the household member '+refused.member+'. Deny this card, and ask for '+(value.change==='projectOutsidePerson'?refused.member+' to be put on the project as a member':'the kit to be granted to the member '+refused.member)+' instead.';
   case 'unplaced':return 'This cannot be allowed yet: '+(value.change==='projectOutsidePerson'?'no agent in the household knows ':agent+' does not know ')+who+' as an outside contact. An owner can add the account to the outside people '+(value.change==='projectOutsidePerson'?'an agent can talk to':agent+' can talk to')+', then deny this card and ask for a fresh one.';
   case 'no-kit':return 'This cannot be allowed: '+agent+' has no kit called '+('kit' in value.input?value.input.kit:'')+'. The kit would have to be defined first.'+again;
   case 'same':return 'This cannot be allowed: it is already so, and nothing would change. Deny it.';
@@ -454,6 +456,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
      const machines=new Map(machineIds.length?db.select({id:boxes.id,name:boxes.name}).from(boxes)
       .where(inArray(boxes.id,[...new Set(machineIds)])).all().map(row=>[row.id,row.name]):[]);
      const context:CardContext={
+      ...(value.change==='colleague'?{name:(id:string)=>id.charAt(0).toUpperCase()+id.slice(1)}:{}),
       ...(was!==undefined?{before:{value:was}}:{}),
       ...(value.change==='member'&&value.input.fullOwner?{allAgents:db.select({id:agents.id}).from(agents).orderBy(asc(agents.id)).all().map(row=>row.id)}:{}),...(names?{names}:{}),
       projectName:id=>db.select({name:projectRows.name}).from(projectRows).where(eq(projectRows.id,id)).get()?.name,
@@ -470,6 +473,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    let was: unknown;
    switch(value.change) {
     case 'kitGrant': platform='platform' in value.input.to ? value.input.to.platform : undefined; break;
+    case 'colleague':
     case 'projectOutsidePerson': platform=value.input.platform; break;
     case 'placeSchedule': platform=value.input.asker.kind==='outside' ? parseOutsidePersonKey(value.input.asker.id)?.platform : undefined; break;
     case 'bridge':
@@ -496,7 +500,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    // agent onto a project (policy.ts, rule `asksToJoin`).
    const agent=(viewer:Viewer,input:z.infer<typeof asked>)=>kitChange(input)&&householdOwner(db,viewer)?true:input.change==='projectJoin'
     ?holds(policyRules.asksToJoin,viewer,{agent:input.input.agent},sharedSharing(db))
-    :holds(policyRules.agentItself,viewer,{agent:viewer.id},sharedSharing(db));
+    :(input.change!=='colleague'||input.input.agent===viewer.id)&&holds(policyRules.agentItself,viewer,{agent:viewer.id},sharedSharing(db));
    operations.register({name:'household.propose',write:true,recheckPolicy:true,doors:['http'],
     input:asked,output:z.object({id:z.string(),state:z.string()}).strict(),may:agent,
     run(ctx,raw){

@@ -608,6 +608,11 @@ export type Woke = 'own' | 'owners' | 'others';
 export function loomToolsOnly(woke: Woke): boolean {
   return woke === 'others';
 }
+/** The outside tiers eligible for an agent-initiated direct message. Its sending job,
+ * directory address and bridge connection still need to qualify at dispatch. */
+export function outsideTierMayReceiveDirect(tier: number | undefined): boolean {
+  return tier === 2 || tier === 3;
+}
 /** A person mail is sent on the word of: a household member, or an outside account by the key loom knows it by. */
 export type OnWord = { kind: 'member' | 'outside'; id: string };
 /** Who asked for a trigger that names a conversation: such a person, or the agent itself. */

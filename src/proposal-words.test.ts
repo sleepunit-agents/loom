@@ -13,6 +13,7 @@ const kinds: Record<string, Array<[input: unknown, title: string, facts?: string
     [{ agent: 'art', kit: 'pond-et-livonia', to: gage, grant: false }, 'Stop letting the Slack account U07V8CZUC1J (workspace T02AYL3QM) use Art’s pond-et-livonia kit'],
     [{ agent: 'art', kit: 'tools', to: { member: 'gage' }, grant: true }, 'Let Gage (a household member) use Art’s tools kit', ['Applies: When Art works for Gage.']],
     [{ agent: 'art', kit: 'tools', to: { project: 'pond' }, grant: false }, 'Stop letting everyone on the project pond use Art’s tools kit']],
+  colleague: [[{agent:'art',platform:'slack',workspace:'TWORK',user:'UROBIN',tier:2,project:'pond'},'Set the Slack account UROBIN (workspace TWORK) to tier 2 with Art and include them on the pond kit roster',['Interaction tier: Tier 2','Project kit roster: pond','Account id: UROBIN']]],
   projectOutsidePerson: [[{ project: 'pond', ...gage, on: true }, 'Add the Slack account U07V8CZUC1J (workspace T02AYL3QM) to the project pond'],
     [{ project: 'pond', ...gage, on: false }, 'Remove the Slack account U07V8CZUC1J (workspace T02AYL3QM) from the project pond']],
   project: [[{ id: 'pond', name: 'Pond', members: ['sam', 'lee'], agents: ['art'], repositories: ['github:house/pond'] }, 'Set up the project Pond', ['Members: Sam, Lee', 'Agents: Art', 'Repositories: github:house/pond']]],
