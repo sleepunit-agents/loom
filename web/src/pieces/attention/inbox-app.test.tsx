@@ -262,3 +262,25 @@ it.each([
   await act(async () => { tree.update(h(InboxApp, { path:'/p/inbox-preview/ask/in-1' })); });
   expect(tree.root.findByType('Row' as never).props.title).toBe(raw);
 });
+
+it('keeps a linked private question and its explanation above the approval controls, and keeps the words of a decision notice',async()=>{
+  const id='a-linked', title='Let Robin use the field kit', question='Should the night shift wait?', why='The day shift is still on site.';
+  const linked=row({source:'thread',sourceId:'message-1',waitsOnKind:'approval',waitsOnId:id,canAnswer:false,body:{words:question,why,ifYes:'Hold the night shift.'}});
+  const notice=row({id:'in-notice',source:'approval',sourceId:id+':tell:allow',answers:null,refs:[id],body:{words:'Access was allowed following the shift handover.'}});
+  setup(linked,[linked,notice]);
+  f.owner=true;f.titles=[{approval:id,title}];
+  f.approvals=[{id,kind:'setting',operation:'household.change',target:'household:kitGrant',what:'Kit grant',ask:title,ifYes:'Grant access.',ifNo:'Keep current access.',
+    why:'Field support',agent:'art',state:'pending',details:JSON.stringify({change:'kitGrant',after:{agent:'art',kit:'field',to:account,grant:true}}),askedAt:linked.at}];
+  f.records.mockReturnValue({status:'loading',records:[]});
+  await act(async()=>{tree=create(h(InboxApp,{path:'/p/inbox-preview/ask/in-1'}));});
+  expect(tree.root.findAllByType('Row').map(r=>r.props.title)).toContain(question);
+  expect(tree.root.findAllByType('Title')[0].props.children).toBe(question);
+  expect(text()).toContain(why);
+  expect(text()).toContain('Hold the night shift.');
+  expect(tree.root.findAllByType('strong').some(r=>r.props.children===title)).toBe(true);
+  expect(button('Allow')).toBeDefined();
+  setup(notice);
+  await act(async()=>{tree.update(h(InboxApp,{path:'/p/inbox-preview/ask/in-notice'}));});
+  expect(tree.root.findAllByType('Title')[0].props.children).toBe(notice.body!.words);
+  expect(button('Allow')).toBeUndefined();
+});

@@ -63,3 +63,16 @@ it('shows a neutral approval while its title loads, then the authorized Slack na
  expect(text()).toContain(title);
  expect(text()).not.toContain('TFIXTURE');
 });
+
+it('keeps a private thread question that waits on a named approval in the desk preview', async () => {
+ vi.useFakeTimers();vi.setSystemTime(0);
+ f.snapshot={...preview,data:{...preview.data,inboxItems:[{...row,source:'thread',waitsOnKind:'approval',waitsOnId:'a-fixture'}]}};
+ f.titles={status:'live',data:{inboxProposalTitles:[{approval:'a-fixture',title:'Let Robin use the kit'}]}};
+ await act(async()=>{tree=create(h(WaitingRow,{go:vi.fn()}));});
+ const text=()=>JSON.stringify(tree!.toJSON());
+ expect(text()).toContain('Private question');
+ expect(text()).not.toContain('Let Robin use the kit');
+ await act(async()=>{await vi.advanceTimersByTimeAsync(50);});
+ expect(text()).not.toContain('Private question');
+ expect(text()).not.toContain('Let Robin use the kit');
+});

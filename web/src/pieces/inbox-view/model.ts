@@ -23,6 +23,11 @@ export interface InboxActions {
   /** Where a reference (a task or approval id) opens, when the app knows; undefined leaves it a plain chip. */
   openRef?(ref: string): (() => void) | undefined;
 }
+// An approval request owns its question. A thread can ask a different question about
+// that same approval, and a decision notice reports the answer in its own words.
+export function approvalRequestId(item: InboxItem): string | undefined {
+  return item.source === 'approval' && item.waitsOnKind === 'approval' ? item.waitsOnId ?? undefined : undefined;
+}
 export function managed(item: InboxItem): boolean {
   return !!item.waitsOnKind || ['task', 'approval', 'secret-request'].includes(item.source);
 }

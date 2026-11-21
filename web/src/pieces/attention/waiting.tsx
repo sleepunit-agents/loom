@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useDataQuery, type DataQuerySnapshot } from '../../data/graphql';
 import { Button, Loading, Row } from '../../kit';
-import type { InboxItem } from '../inbox-view/model';
+import { approvalRequestId, type InboxItem } from '../inbox-view/model';
 import { retainedInboxItem, useInboxProposalTitles } from './inbox-query';
 
 export const deskWaitingCountsQuery = `query DeskWaitingCounts {
@@ -56,11 +56,10 @@ export function waitingPreview(query:DataQuerySnapshot<WaitingPreviewData>,now:n
 /** Resolve only the approvals whose retained bodies are on screen. While names load,
  * the preview can still open the approval without flashing its stored account identifiers. */
 function useWaitingWording(items: InboxItem[]) {
-  const approval = (item: InboxItem) => item.body && item.waitsOnKind === 'approval' ? item.waitsOnId : null;
-  const ids = [...new Set(items.flatMap(item => { const id = approval(item); return id ? [id] : []; }))];
+  const ids = [...new Set(items.flatMap(item => { const id = item.body && approvalRequestId(item); return id ? [id] : []; }))];
   const {ready, named} = useInboxProposalTitles(ids);
   return useMemo(() => items.map(item => {
-    const id = approval(item);
+    const id = approvalRequestId(item);
     if (!id || !item.body) return item;
     const words = named.get(id) ?? (ready ? item.body.words : 'Review approval');
     return {...item, body:{...item.body, words}};
