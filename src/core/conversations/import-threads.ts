@@ -13,7 +13,7 @@ export class UnresolvedArchiveThread extends Error {}
 
 const id = z.string().min(1);
 const time = z.iso.datetime({offset:true}).transform(value => new Date(value).toISOString());
-const deletedThread = z.object({id, conversation:id.nullish(), agent:id, member:id, at:time});
+const deletedThread = z.object({id, conversation:id.nullish(), agent:id, member:id, channel:z.number().int().positive().optional(), at:time});
 const sourceThread = z.object({
   id, conversation:id, agent:id, member:id, project:id.nullable(), title:z.string().nullable(),
   titled_by:z.enum(['member','agent']).nullable(), channel:z.number().int().positive(),
@@ -35,11 +35,11 @@ export function importThreads(source:Database.Database, db:DataDatabase, recover
       const {agent,member,id,at}=result.data;
       const conversation=result.data.conversation ?? recover(agent,member,id);
       if (!conversation) throw new UnresolvedArchiveThread('A deleted thread has no unique backing conversation in its agent archive.');
-      const row={id,at,conversation};
+      const row={id,at,conversation,sourceMember:member,sourceAgent:agent,sourceChannel:result.data.channel??null};
       if (db.select({id:threads.id}).from(threads).where(eq(threads.id,row.id)).get())
         throw Error('Archive deletion conflicts with a staged live thread');
       const prior = db.select().from(deletedThreads).where(eq(deletedThreads.id,row.id)).get();
-      if (prior && (prior.conversation!==row.conversation || prior.at!==row.at))
+      if (prior && (prior.conversation!==row.conversation || prior.at!==row.at || prior.sourceMember!==member || prior.sourceAgent!==agent || prior.sourceChannel!==row.sourceChannel))
         throw Error('Staged thread deletion differs from archive');
       if (!prior) {
         recordThreadDeletion(db,row);

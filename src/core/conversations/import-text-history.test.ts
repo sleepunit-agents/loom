@@ -60,6 +60,13 @@ it('validates scope before opening an envelope, rolls back conflicts and keeps p
     expect(client.prepare("SELECT message_seq FROM thread_refs WHERE ref='github:t-123/tools#7'").get()).toEqual({message_seq:1});
     expect(client.prepare("SELECT message_seq FROM thread_refs WHERE ref='t-123'").get()).toEqual({message_seq:1});
 
+    writer.exec("CREATE TABLE comms_meta(key); INSERT INTO comms_meta(key) VALUES('refs_backfilled')");
+    await expect(run()).rejects.toThrow(/Conflicting staged thread reference/);
+    client.exec('DELETE FROM thread_refs');
+    await run();
+    expect(client.prepare('SELECT count(*) AS n FROM thread_refs').get()).toEqual({n:2});
+    for (const table of ['jobs','inbox','bridge_sends']) expect(client.prepare('SELECT count(*) AS n FROM '+table).get()).toEqual({n:0});
+
     expect(client.prepare('SELECT seq,words FROM messages ORDER BY seq').all()).toEqual([{seq:1,words:null},{seq:3,words:null}]);
   } finally {
     client.close();archive.close();writer.close();rmSync(dir,{recursive:true,force:true});

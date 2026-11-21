@@ -5,8 +5,7 @@ import { z } from 'zod';
 import type { DataDatabase } from '../data/database.js';
 import { commsKeepDays } from '../data/comms-days.js';
 import { conversations, messages, threadRefs, threads } from '../data/schema.js';
-import { expireMessageWords } from './messages.js';
-import { ageCutoff, keepUntilFor, validKeepDays, wordsKept } from './retention.js';
+import { wordsDeadline, keepUntilFor, validKeepDays, wordsKept } from './retention.js';
 import type { WordsKey } from './words.js';
 
 import { legacyCommsRefs, validLegacyCommsRef } from './legacy-comms-refs.js';
@@ -115,7 +114,7 @@ async function importRows(input: HistoryInput, reasons: Database.Database | null
   return db.transaction(()=>{
     const days=commsKeepDays(db),at=now();
     const staged=readScopes();
-    let total=0, inserted=0;
+    let total=0, inserted=0, firstDeadline=Infinity;
     for (const raw of text.iterate()) {
       if (deleted.has((raw as {thread:string}).thread)) continue;
       const row=oldText.parse(raw);
@@ -124,6 +123,7 @@ async function importRows(input: HistoryInput, reasons: Database.Database | null
       const notice = row.kind === 'error' ? legacyNotice(row.card_json ?? 'null').info : null;
       const reason = notice ? findReason!.get(row.thread,row.seq) as {words:Buffer}|undefined : undefined;
       const words=kept(row,initialDays,inspected)&&kept(row,days,at)?(reason?.words ?? row.text):null;
+      if (words) firstDeadline=Math.min(firstDeadline,wordsDeadline({at:row.at,keepUntil},days));
       const delivery=row.delivered===1?'delivered':row.delivered===0?'failed':row.kind==='message'?'sending':null;
       const card=row.kind==='card'?legacyToolCard.parse(JSON.parse(row.card_json??'null')):null;
       const extra=words&&card?row.step??null:null;
@@ -164,9 +164,14 @@ async function importRows(input: HistoryInput, reasons: Database.Database | null
         rebuilt.set(row.thread,refs);
       }
     }
+    if (complete) for (const thread of oldThreads.keys()) if (!rebuilt.has(thread)) rebuilt.set(thread,new Map());
     for (const [thread,refs] of rebuilt) {
       const prior=new Map(db.select().from(threadRefs).where(eq(threadRefs.thread,thread)).all().map(r=>[r.ref,r.messageSeq]));
       const newest=[...refs].sort(([,a],[,b])=>b.seq-a.seq || b.pos-a.pos).slice(0,200);
+      if (complete) {
+        const expected=new Map(newest.map(([ref,mention])=>[ref,mention.seq]));
+        for (const [ref,seq] of prior) if (expected.get(ref)!==seq) throw Error('Conflicting staged thread reference');
+      }
       for (const [ref,{seq}] of newest) {
         const existing=prior.get(ref);
         if (existing===seq) continue;
@@ -178,7 +183,12 @@ async function importRows(input: HistoryInput, reasons: Database.Database | null
       }
     }
     const finished=now();
-    expireMessageWords(db,finished,ageCutoff(finished,days));
+    if (firstDeadline<=Date.parse(finished)) for (const raw of text.iterate()) {
+      if (deleted.has((raw as {thread:string}).thread)) continue;
+      const row=oldText.parse(raw);
+      if (!kept(row,days,finished)) db.update(messages).set({words:null,archivedStepWords:null}).where(
+        and(eq(messages.thread,row.thread),eq(messages.seq,row.seq))).run();
+    }
     return {inserted,total};
   });
 }

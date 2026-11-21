@@ -568,7 +568,7 @@ it('starts upgraded households with no machine readings and the default lines fo
 });
 
 it('keeps an archived question and its sealed words intact through the checkpoint upgrade', () => {
-  const old = household(32);
+  const old = household(33);
   old.exec(`INSERT INTO members (id, role, joined_at) VALUES ('sam', 'member', '${at}');
     INSERT INTO agents (id, about, mark_bg, mark_fg, face_shape, face_eyes) VALUES ('art', '', '', '', 'pebble', 'dot');
     INSERT INTO conversations (id, agent, member, venue, place, label, direct, started_at, last_at, turn_count)

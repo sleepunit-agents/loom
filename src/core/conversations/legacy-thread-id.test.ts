@@ -64,8 +64,8 @@ it('restores a job-backed private thread only under its recorded backing convers
   const destination=new Database(':memory:');
   const at='2026-11-20T00:00:00.000Z';
   try {
-    writer.exec(`CREATE TABLE comms_deleted(id,conversation,agent,member,at);
-      INSERT INTO comms_deleted(id,conversation,agent,member,at) VALUES ('th:gone','cv-removed','fern','alex','${at}');
+    writer.exec(`CREATE TABLE comms_deleted(id,conversation,agent,member,channel,at);
+      INSERT INTO comms_deleted(id,conversation,agent,member,channel,at) VALUES ('th:gone','cv-removed','fern','alex',4,'${at}');
       CREATE TABLE comms_threads(id, conversation, member, agent, title, titled_by, channel, project, pinned, archived, opened, last, read_seq)`);
     writer.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
       .run('th:oi7jknf4hi','cv-0b37adc83353','alex','fern','Garden job','agent',1,null,0,null,at,at,7);
@@ -82,7 +82,7 @@ it('restores a job-backed private thread only under its recorded backing convers
       };
       expect(importThreads(source,db,recover)).toEqual({inserted:1,total:1,tombstones:1});
       expect(destination.prepare('SELECT read_seq FROM threads').get()).toEqual({read_seq:7});
-      expect(destination.prepare('SELECT conversation FROM deleted_threads').all()).toEqual([{conversation:'cv-removed'}]);
+      expect(destination.prepare('SELECT conversation,source_member,source_agent,source_channel FROM deleted_threads').all()).toEqual([{conversation:'cv-removed',source_member:'alex',source_agent:'fern',source_channel:4}]);
       for(const table of ['jobs','messages','inbox']) expect(destination.prepare('SELECT count(*) AS n FROM '+table).get()).toEqual({n:0});
       expect(importThreads(source,db,recover).inserted).toBe(0);
       const started='2026-11-18T00:00:00.000Z';
@@ -94,6 +94,8 @@ it('restores a job-backed private thread only under its recorded backing convers
       expect(importThreads(source,db,recover,recorded).inserted).toBe(0);
       destination.prepare('UPDATE conversations SET started_at=?').run('2026-11-15T00:00:00.000Z');
       expect(()=>importThreads(source,db,recover,recorded)).toThrow(/differs/);
+      writer.exec("UPDATE comms_deleted SET member='other'");
+      expect(()=>importThreads(source,db,recover)).toThrow(/deletion differs/);
       expect(destination.prepare('SELECT id,member,venue,place FROM conversations').all()).toEqual([
         {id:'cv-0b37adc83353',member:'alex',venue:'loom',place:'th:oi7jknf4hi'},
       ]);

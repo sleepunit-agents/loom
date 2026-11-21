@@ -648,6 +648,9 @@ export const deletedThreads = sqliteTable('deleted_threads', {
   id: text('id').primaryKey().notNull(),
   conversation: text('conversation').notNull(),
   at: text('at').notNull(),
+  sourceMember: text('source_member'),
+  sourceAgent: text('source_agent'),
+  sourceChannel: integer('source_channel'),
 }, t => [
   check('deleted_threads_at_utc', utc(t.at)),
 ]);

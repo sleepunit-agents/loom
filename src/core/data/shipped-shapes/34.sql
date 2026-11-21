@@ -566,12 +566,9 @@ CREATE TABLE `messages` (
 	`tool` text,
 	`card_state` text,
 	`client_id` text,
-	`archived_step_meta` text,
-	`archived_step_words` blob,
 	PRIMARY KEY(`thread`, `seq`),
 	FOREIGN KEY (`thread`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`inbox_item`) REFERENCES `inbox`(`id`) ON UPDATE no action ON DELETE no action,
-	CONSTRAINT "messages_step_words_kept" CHECK("messages"."archived_step_words" is null or ("messages"."kind" = 'card' and "messages"."words" is not null)),
 	CONSTRAINT "messages_at_utc" CHECK("messages"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "messages"."at") = "messages"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "messages"."at") = "messages"."at", 0)),
 	CONSTRAINT "messages_keep_until_utc" CHECK("messages"."keep_until" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "messages"."keep_until") = "messages"."keep_until" or strftime('%Y-%m-%dT%H:%M:%fZ', "messages"."keep_until") = "messages"."keep_until", 0)),
 	CONSTRAINT "messages_kind_choice" CHECK("messages"."kind" in ('message', 'reply', 'card', 'ask', 'answer', 'notice')),
@@ -595,6 +592,9 @@ CREATE TABLE `deleted_threads` (
 	`id` text PRIMARY KEY NOT NULL,
 	`conversation` text NOT NULL,
 	`at` text NOT NULL,
+	`source_member` text,
+	`source_agent` text,
+	`source_channel` integer,
 	CONSTRAINT "deleted_threads_at_utc" CHECK("deleted_threads"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "deleted_threads"."at") = "deleted_threads"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "deleted_threads"."at") = "deleted_threads"."at", 0))
 );
 

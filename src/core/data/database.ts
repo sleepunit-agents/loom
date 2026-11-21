@@ -389,7 +389,11 @@ const upgrades: readonly (readonly string[])[] = [
   // 32: archived questions remain on their original thread without creating actionable inbox records.
   ["CREATE TABLE `archived_questions` (\n\t`thread` text NOT NULL,\n\t`source_member` text NOT NULL,\n\t`source_agent` text NOT NULL,\n\t`source_conversation` text NOT NULL,\n\t`ref` text NOT NULL,\n\t`approval` text,\n\t`raised_at` text NOT NULL,\n\t`seen_at` text NOT NULL,\n\t`keep_until` text NOT NULL,\n\t`words` blob,\n\t`verdict` text,\n\t`answered_by` text,\n\t`answered_at` text,\n\tPRIMARY KEY(`thread`, `ref`),\n\tFOREIGN KEY (`thread`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade,\n\tCONSTRAINT \"archived_questions_raised_utc\" CHECK(\"archived_questions\".\"raised_at\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"archived_questions\".\"raised_at\") = \"archived_questions\".\"raised_at\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"archived_questions\".\"raised_at\") = \"archived_questions\".\"raised_at\", 0)),\n\tCONSTRAINT \"archived_questions_seen_utc\" CHECK(\"archived_questions\".\"seen_at\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"archived_questions\".\"seen_at\") = \"archived_questions\".\"seen_at\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"archived_questions\".\"seen_at\") = \"archived_questions\".\"seen_at\", 0)),\n\tCONSTRAINT \"archived_questions_keep_utc\" CHECK(\"archived_questions\".\"keep_until\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"archived_questions\".\"keep_until\") = \"archived_questions\".\"keep_until\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"archived_questions\".\"keep_until\") = \"archived_questions\".\"keep_until\", 0)),\n\tCONSTRAINT \"archived_questions_answered_utc\" CHECK(\"archived_questions\".\"answered_at\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"archived_questions\".\"answered_at\") = \"archived_questions\".\"answered_at\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"archived_questions\".\"answered_at\") = \"archived_questions\".\"answered_at\", 0))\n)",
    "CREATE INDEX `archived_questions_history` ON `archived_questions` (`thread`,`raised_at`,`ref`)"],
-  // 33: pre-upgrade bridge sessions may include private handoffs whose deadlines were never recorded.
+  // 33: a v1 tombstone also records the original reader, agent and channel number.
+  ['ALTER TABLE deleted_threads ADD COLUMN source_member text',
+   'ALTER TABLE deleted_threads ADD COLUMN source_agent text',
+   'ALTER TABLE deleted_threads ADD COLUMN source_channel integer'],
+  // 34: pre-upgrade bridge sessions may include private handoffs whose deadlines were never recorded.
   ['ALTER TABLE conversation_sessions ADD COLUMN keep_until text',
     "DELETE FROM conversation_sessions WHERE conversation IN (SELECT id FROM conversations WHERE venue IN ('slack','discord'))",
     "UPDATE conversation_sessions SET keep_until = strftime('%Y-%m-%dT%H:%M:%fZ', started_at, '+' || coalesce((select comms_days from household limit 1), 14) || ' days')",
@@ -399,7 +403,7 @@ const upgrades: readonly (readonly string[])[] = [
       SELECT jobs.id,jobs.queued_at,jobs.queued_at,1 FROM jobs JOIN conversations ON conversations.id=jobs.conversation
       WHERE jobs.state='running' AND (conversations.venue IN ('slack','discord')
         OR (conversations.venue='loom' AND conversations.member IS NOT NULL))`],
-  // 34: extra v1 tool-card words have exactly the parent message's lifetime.
+  // 35: extra v1 tool-card words have exactly the parent message's lifetime.
   ['ALTER TABLE messages ADD COLUMN archived_step_meta text',
     `ALTER TABLE messages ADD COLUMN archived_step_words blob CONSTRAINT "messages_step_words_kept" CHECK("messages"."archived_step_words" is null or ("messages"."kind" = 'card' and "messages"."words" is not null))`],
   ['ALTER TABLE messages ADD COLUMN archived_notice text'],

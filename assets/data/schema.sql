@@ -596,6 +596,9 @@ CREATE TABLE `deleted_threads` (
 	`id` text PRIMARY KEY NOT NULL,
 	`conversation` text NOT NULL,
 	`at` text NOT NULL,
+	`source_member` text,
+	`source_agent` text,
+	`source_channel` integer,
 	CONSTRAINT "deleted_threads_at_utc" CHECK("deleted_threads"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "deleted_threads"."at") = "deleted_threads"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "deleted_threads"."at") = "deleted_threads"."at", 0))
 );
 
