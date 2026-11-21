@@ -9,6 +9,8 @@ import { dataDatabase, dataSchemaNumber, recogniseDataSchema } from '../core/dat
 import { privateBytes } from '../pieces/secrets/local-holder.js';
 import { readKey, wordsKey } from '../pieces/comms/crypto.js';
 import { importArchivedQuestions } from '../core/conversations/archived-question-store.js';
+import { householdId } from '../slug.js';
+import { deletedThreadLookup } from '../core/conversations/legacy-thread-id.js';
 import { importThreads, UnresolvedArchiveThread } from '../core/conversations/import-threads.js';
 export async function migrateComms(phase:'archived-questions'|'comms-threads', args:string[],io:{stdout(text:string):void;stderr(text:string):void}) {
   const usage=`loom migrate ${phase} --source STOPPED_ARCHIVE --home PREPARED_HOME`;
@@ -27,7 +29,8 @@ export async function migrateComms(phase:'archived-questions'|'comms-threads', a
     if(dirname(target)!==home)throw Error('use a staged database in its own home');
     const tmp=mkdtempSync(join(tmpdir(),'loom-question-archive-'));clean.push(()=>rmSync(tmp,{recursive:true,force:true}));
     const copySnapshot=(name:string)=>{
-      const file=join(source,name),copy=join(tmp,name);
+      const file=join(source,name),copy=join(tmp,String(clean.length)+'.db');
+      if(realpathSync(file)!==file)throw Error('source snapshot path must be a regular archive path');
       if(!lstatSync(file).isFile()||realpathSync(file)===target)throw Error('source must be a separate snapshot');
       // This phase consumes completed SQLite backups. A nonempty journal means the snapshot step is incomplete.
       for(const suffix of ['-wal','-journal'])if(existsSync(file+suffix)&&lstatSync(file+suffix).size)throw Error('snapshot needs its journal');
@@ -39,7 +42,9 @@ export async function migrateComms(phase:'archived-questions'|'comms-threads', a
     if(recogniseDataSchema(client)!==dataSchemaNumber)throw Error('upgrade the staged database first');
     client.pragma('foreign_keys = ON');
     if(phase==='comms-threads'){
-      const result=importThreads(household,dataDatabase(client));
+      const recover=deletedThreadLookup(agent=>copySnapshot(join('agents',householdId.parse(agent),'memories.db')),
+        ()=>privateBytes(join(source,'comms.salt'),32));
+      const result=importThreads(household,dataDatabase(client),recover);
       io.stdout(`Imported ${result.inserted} of ${result.total} Comms threads (new deletion records: ${result.tombstones}).\n`);return 0;
     }
     const sourceConfig=z.object({comms_days:z.number().int().min(1).max(14).default(14)}).parse(JSON.parse(

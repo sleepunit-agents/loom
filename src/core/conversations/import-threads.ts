@@ -1,5 +1,5 @@
 /** Restore the live thread directory from a stopped archive. This phase never schedules work. */
-import { createHash } from 'node:crypto';
+import { legacyConversationId } from './legacy-thread-id.js';
 import type Database from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
@@ -12,7 +12,7 @@ export class UnresolvedArchiveThread extends Error {}
 
 const id = z.string().min(1);
 const time = z.iso.datetime({offset:true}).transform(value => new Date(value).toISOString());
-const deletedThread = z.object({id, conversation:id, at:time});
+const deletedThread = z.object({id, conversation:id.nullish(), agent:id, member:id, at:time});
 const sourceThread = z.object({
   id, conversation:id, agent:id, member:id, project:id.nullable(), title:z.string().nullable(),
   titled_by:z.enum(['member','agent']).nullable(), channel:z.number().int().positive(),
@@ -20,7 +20,7 @@ const sourceThread = z.object({
   read_seq:z.number().int().nonnegative(),
 });
 
-export function importThreads(source:Database.Database, db:DataDatabase) {
+export function importThreads(source:Database.Database, db:DataDatabase, recover:(agent:string,member:string,thread:string)=>string|undefined) {
   if (!source.readonly) throw Error('Expected a read-only household snapshot');
   const gone = source.prepare('SELECT * FROM comms_deleted ORDER BY id').iterate();
   const rows = source.prepare('SELECT * FROM comms_threads ORDER BY id').iterate();
@@ -29,7 +29,10 @@ export function importThreads(source:Database.Database, db:DataDatabase) {
     for (const raw of gone) {
       const result = deletedThread.safeParse(raw);
       if (!result.success) throw new UnresolvedArchiveThread('A deleted thread needs its original conversation identity before import.');
-      const row = result.data;
+      const {agent,member,id,at}=result.data;
+      const conversation=result.data.conversation ?? recover(agent,member,id);
+      if (!conversation) throw new UnresolvedArchiveThread('A deleted thread has no unique backing conversation in its agent archive.');
+      const row={id,at,conversation};
       if (db.select({id:threads.id}).from(threads).where(eq(threads.id,row.id)).get())
         throw Error('Archive deletion conflicts with a staged live thread');
       const prior = db.select().from(deletedThreads).where(eq(deletedThreads.id,row.id)).get();
@@ -45,8 +48,7 @@ export function importThreads(source:Database.Database, db:DataDatabase) {
       total++;
       // The v1 writer assigned this ID to ordinary private threads. Spawned threads
       // replaced it with the backing job conversation, which needs its own mapping.
-      const digest = createHash('sha256').update([row.agent,'loom',row.id].join('\0')).digest('hex').slice(0,12);
-      if (row.conversation !== `cv-${digest}`)
+      if (row.conversation !== legacyConversationId(row.agent,'loom',row.id))
         throw new UnresolvedArchiveThread('A thread needs its original backing conversation mapped before import.');
       if (db.select({id:deletedThreads.id}).from(deletedThreads).where(eq(deletedThreads.id,row.id)).get())
         throw Error('Cannot restore a deleted thread');
