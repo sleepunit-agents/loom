@@ -1,5 +1,6 @@
 /** Trusted provider adapter seam. Provider calls happen outside transactions;
  * only validated observations enter the shared account/window rows. */
+import {DAY_MS} from '../core/day.js';
 import { accountCompletion, accountObservationCommitted } from './account-completion.js';
 import { eq, lte } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
@@ -47,7 +48,7 @@ function recordSummary(db: DataDatabase, input: {
 }
 
 function recordWeekReadings(db: DataDatabase, account: string, windows: readonly QuotaWindow[], now: string) {
-  const at = Date.parse(now), week = 7 * 86_400_000;
+  const at = Date.parse(now), week = 7 * DAY_MS;
   db.delete(accountWeekReadings).where(lte(accountWeekReadings.resetsAt, new Date(at).toISOString())).run();
   for (const row of windows) {
     if (row.durationMs !== week || row.usage === null || !row.readAt || !row.resetsAt) continue;

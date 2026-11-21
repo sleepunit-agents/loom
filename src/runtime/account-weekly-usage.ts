@@ -1,3 +1,4 @@
+import {DAY_MS} from '../core/day.js';
 import {and, asc, eq, lte, sql} from 'drizzle-orm';
 import type {DataDatabase} from '../core/data/database.js';
 import {accountWeekReadings, jobs, jobUsage} from '../core/data/schema.js';
@@ -8,7 +9,7 @@ import type {QuotaWindow} from './quota.js';
  * The caller must project these weights through the viewer's current job visibility
  * before returning groups. An inaccessible job's weight belongs in unattributed. */
 export function accountWeeklyUsage(db:DataDatabase, account:string, window:QuotaWindow, now:string) {
-  if (window.durationMs !== 7 * 86_400_000 || !window.readAt || !window.resetsAt || window.usage === null) return null;
+  if (window.durationMs !== 7 * DAY_MS || !window.readAt || !window.resetsAt || window.usage === null) return null;
   const end = Date.parse(window.readAt), reset = Date.parse(window.resetsAt), at = Date.parse(now);
   if (!(end <= at && at < reset && end >= reset - window.durationMs)) return null;
   const stored = db.select({at:accountWeekReadings.readAt,usage:accountWeekReadings.usage})
