@@ -182,6 +182,8 @@ before it runs any step, and refuses one it does not recognise without writing t
 | Measuring | `timing_days`, `measuring_settings` |
 | Bookkeeping | `migrations` (the schema number), `operation_results` (retry receipts) |
 
+The offline Comms importer uses a temporary SQLite table named `reasons` to hold sealed delivery reasons during validation. Closing that import releases the temporary database.
+
 ### `agents/<agent>/memories.db`: one per agent
 
 | Tables | Made by |
