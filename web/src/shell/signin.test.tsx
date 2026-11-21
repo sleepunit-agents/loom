@@ -1,7 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { createElement as h } from 'react';
+import { createElement as h, useContext } from 'react';
 // @ts-expect-error Renderer has no bundled declarations.
 import { act, create } from 'react-test-renderer';
+import { DeskMember } from '../signin/desk-member';
 import Signin, { greetingAt } from './signin';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
@@ -28,11 +29,12 @@ function environment(page:{look?:string;mode?:string;kept?:Record<string,string>
 it('gates the desk until the session arrives, then leaves account actions to Your account',async()=>{
   const {append,fetch}=environment();let finish!:(value:unknown)=>void;
   fetch.mockReturnValue(new Promise(resolve=>{finish=resolve;}));
-  await act(async()=>{tree=create(h(Signin,null,h('section',{'aria-label':'Desk'},'Desk content')));});
+  const Desk=()=>h('section',{'aria-label':'Desk'},useContext(DeskMember));
+  await act(async()=>{tree=create(h(Signin,null,h(Desk)));});
   expect(tree.root.findAllByType('section')).toHaveLength(0);
   expect(JSON.stringify(tree.toJSON())).toContain('Connecting to loom');
   await act(async()=>finish({ok:true,json:async()=>({viewer:{id:'jonathan'},csrf:'fixture-csrf'})}));
-  expect(tree.root.findByType('section').props['aria-label']).toBe('Desk');
+  expect(tree.root.findByType('section').children).toEqual(['jonathan']);
   expect(tree.root.findAllByType('button')).toHaveLength(0);
   expect(append).toHaveBeenCalledWith({name:'loom-csrf',content:'fixture-csrf'});
   expect(fetch).toHaveBeenCalledExactlyOnceWith('/auth/session',expect.objectContaining({signal:expect.any(AbortSignal)}));
