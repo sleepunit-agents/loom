@@ -1,13 +1,15 @@
+import { pendingThreadDeletions } from './archive-deletions.js';
 import type Database from 'better-sqlite3';
 import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../data/database.js';
 import { commsKeepDays } from '../data/comms-days.js';
 import { conversations, messages, threadRefs, threads } from '../data/schema.js';
-import { keepUntilFor, validKeepDays, wordsKept } from './retention.js';
+import { expireMessageWords } from './messages.js';
+import { ageCutoff, keepUntilFor, validKeepDays, wordsKept } from './retention.js';
 import type { WordsKey } from './words.js';
 
-import { legacyCommsRefs } from './legacy-comms-refs.js';
+import { legacyCommsRefs, validLegacyCommsRef } from './legacy-comms-refs.js';
 import { recordThreadRef } from './thread-ref-store.js';
 
 const id=z.string().min(1);
@@ -26,6 +28,7 @@ export async function importTextHistory(input:{
 }) {
   const {archive,household,destination:db,key,sourceDays,now}=input;
   if (!archive.readonly || !household.readonly || !validKeepDays(sourceDays)) throw Error('Invalid Comms archive');
+  const deleted=pendingThreadDeletions(household, db);
   const oldThreads=new Map(household.prepare('SELECT id,conversation,agent,member,project FROM comms_threads').all()
     .map(raw=>{const row=oldThread.parse(raw);return [row.id,row] as const;}));
   const text=archive.prepare("SELECT thread,seq,kind,sender,id,at,run,text,delivered FROM comms_messages WHERE kind IN ('message','reply') ORDER BY thread,seq");
@@ -54,6 +57,7 @@ export async function importTextHistory(input:{
   // The CLI holds the home lock and owns this private read-only snapshot throughout
   // both passes. Validate retained envelopes without buffering household history.
   for (const raw of text.iterate()) {
+    if (deleted.has((raw as {thread:string}).thread)) continue;
     const row=oldText.parse(raw);
     checkScope(row,initialScopes);
     if (row.text && kept(row,initialDays,inspected)) {
@@ -74,6 +78,7 @@ export async function importTextHistory(input:{
     const staged=readScopes();
     let total=0, inserted=0;
     for (const raw of text.iterate()) {
+      if (deleted.has((raw as {thread:string}).thread)) continue;
       const row=oldText.parse(raw);
       checkScope(row,staged);
       const keepUntil=keepUntilFor(row.at,sourceDays);
@@ -105,8 +110,9 @@ export async function importTextHistory(input:{
       const reference=z.object({thread:id,ref:id.max(200),seq:z.number().int().positive(),pos:z.number().int().nonnegative(),at:z.iso.datetime({offset:true})});
       const parent=archive.prepare("SELECT at FROM comms_messages WHERE thread=? AND seq=? AND kind IN ('message','reply')");
       for (const raw of household.prepare('SELECT thread,ref,seq,pos,at FROM comms_refs').iterate()) {
+        if (deleted.has((raw as {thread:string}).thread)) continue;
         const row=reference.parse(raw), msg=parent.get(row.thread,row.seq) as {at:string}|undefined;
-        if (!msg || Date.parse(msg.at)!==Date.parse(row.at) || legacyCommsRefs(row.ref.replace(/^github:/,'')).at(0)!==row.ref)
+        if (!msg || Date.parse(msg.at)!==Date.parse(row.at) || !validLegacyCommsRef(row.ref))
           throw Error('Unrecognized archived thread reference');
         const refs=rebuilt.get(row.thread)??new Map<string,Mention>();
         if ((refs.get(row.ref)?.seq??0)<=row.seq) refs.set(row.ref,{seq:row.seq,pos:row.pos});
@@ -126,6 +132,8 @@ export async function importTextHistory(input:{
         prior.set(ref,seq);
       }
     }
+    const finished=now();
+    expireMessageWords(db,finished,ageCutoff(finished,days));
     return {inserted,total};
   });
 }

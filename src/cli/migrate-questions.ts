@@ -59,14 +59,14 @@ export async function migrateComms(phase:'archived-questions'|'comms-threads'|'c
       const result=importThreads(household,dataDatabase(client),recover);
       io.stdout(`Imported ${result.inserted} of ${result.total} Comms threads (new deletion records: ${result.tombstones}).\n`);return 0;
     }
-    const sourceConfig=z.object({github:z.string().regex(/^[a-z0-9](?:-?[a-z0-9]){0,38}$/i).optional(),comms_days:z.number().int().min(1).max(COMMS_DAYS_MAX).default(14)}).parse(JSON.parse(
+    const sourceConfig=z.object({github:z.unknown().optional(),comms_days:z.number().int().min(1).max(COMMS_DAYS_MAX).default(14)}).parse(JSON.parse(
       // The archive is a stopped v1 household; its ordinary household.json need not be mode 0600.
       readFileSync(join(source,'household.json'),'utf8')));
     const identity=readKey(program.commsKey);
     if(identity!==readKey(join(source,'comms.key')))throw Error('the prepared home needs its original Comms key');
     const archive=copySnapshot('comms.db');
     const input={archive,household,destination:dataDatabase(client),key:wordsKey(identity),
-      sourceDays:sourceConfig.comms_days,github:sourceConfig.github,now:()=>new Date().toISOString()};
+      sourceDays:sourceConfig.comms_days,github:phase==='comms-text'?z.string().regex(/^[a-z0-9](?:-?[a-z0-9]){0,38}$/i).nullish().parse(sourceConfig.github)??undefined:undefined,now:()=>new Date().toISOString()};
     const result=phase==='comms-text'?await importTextHistory(input):await importArchivedQuestions(input);
     io.stdout(`Imported ${result.inserted} of ${result.total} ${phase==='comms-text'?'Comms text messages':'archived questions'}.\n`);return 0;
   }catch(error){
