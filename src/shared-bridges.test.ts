@@ -1,3 +1,4 @@
+import {bodyProgram} from './runtime/body-program.js';
 import {BridgeReceiver} from './pieces/bridges/receiver.js';
 import {reviewPlace} from './core/conversations/review-place.js';
 import {reviewReply} from './pieces/bridges/sends.js';
@@ -2142,7 +2143,17 @@ it.each([['slack','yes'],['slack','no'],['discord','yes'],['discord','no']] as c
  f.db.delete(agentPeople).where(eq(agentPeople.person,guest)).run();
  expect((await f.call('bridges','reply',reply)).status).toBe(403);
  f.db.insert(agentPeople).values({agent:'art',person:guest,tier:2}).run();
- expect((await f.call('bridges','reply',reply)).status).toBe(200);
+ const workerToken='body_'+'e'.repeat(64),jobId=next.job!.id;
+ f.db.insert(tokens).values({fingerprint:createHash('sha256').update(workerToken).digest('hex'),label:'Decision worker',kind:'agent',agent:'art',job:jobId,createdAt:new Date(f.clock.now()).toISOString()}).run();
+ const native=vi.fn(async()=>({text:reply.text,model:'fixture',actions:[]}));
+ const job={id:jobId,agent:'art',box:'box',conversation,venue:platform,thread:null,model:'requested',account:'fixture',harness:'claude',brief:'',house:{repository:'r',file:'f',branch:'next'},
+  run:{nestedContainers:false,gpu:false,ports:[],policy:jobRoom(f.db,next.job!)}};
+ const code=await bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fixture/claude',cwd:'/house'}),
+  stdin:async()=>Buffer.from(JSON.stringify({job,build:'image',bootstrap:{origin:'https://loom.example',job:jobId,token:workerToken}})),
+  env:{ACCOUNT_PROFILE:'/fixture'},signal:new AbortController().signal,clock:f.clock,fetch:(url,init)=>f.root.http.request(String(url),init),
+  schedule:{every:()=>()=>{}},native,loadMemory:async()=>null,loadBrief:async()=>null,error:()=>{}});
+ expect(code).toBe(0);
+ expect(native).toHaveBeenCalledTimes(1);
  expect(f.db.select().from(bridgeSends).all()).toMatchObject([{channel:'DGUEST',conversation,text:reply.text}]);
  expect(f.root.services.conversations.item(returned[0].id).state).toBe('done');
 });
