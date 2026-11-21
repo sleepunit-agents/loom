@@ -11,7 +11,7 @@
  *
  * A machine that has stopped reporting raises nothing here. Its sign-ins keep what was last learned, and
  * the machine being away is its own notice (Machines.sweep) for the machines marked always on. */
-import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { boxes, inbox, modelAccountBoxes, modelAccountLogins, modelAccounts } from '../core/data/schema.js';
 import { Conversations, lateMailWaits } from '../core/conversations/index.js';
@@ -67,13 +67,6 @@ export class AccountLogins {
     }
   }
 
-  // Keep the completed occasion on its original Inbox item. The same end date may return
-  // without any intervening sign-out, including after the owner dismissed the first warning.
-  private retireEnding(id: string): void {
-    this.db.update(inbox).set({ sourceId: sql`${id} || ':' || ${inbox.id}` })
-      .where(and(eq(inbox.source, 'notice'), eq(inbox.sourceId, id))).run();
-  }
-
   private write(key: Key, next: Pick<Login, 'state' | 'expiresAt' | 'learnedFrom' | 'why'>, at: string): Login {
     const before = this.db.select().from(modelAccountLogins).where(where(key)).get();
     const since = before && before.state === next.state ? before.since : at;
@@ -84,7 +77,7 @@ export class AccountLogins {
     if (before) this.settle(before, after, at);
     // A newly observed end starts a new occasion even if an older release left
     // an acknowledged notice for that same end under the destination key.
-    if (after.expiresAt !== null && after.expiresAt !== before?.expiresAt) this.retireEnding(endingId(after));
+    if (after.expiresAt !== null && after.expiresAt !== before?.expiresAt) new Conversations(this.db, () => at, lateMailWaits).retireNotice(endingId(after));
     return after;
   }
 
@@ -174,7 +167,7 @@ export class AccountLogins {
         const words = `The ${account.label} sign-in on ${box.name} (${placeWords(login)}) ${when}, on ${login.expiresAt!.slice(0, 10)}.`;
         const notice = send(row, id, words);
         if (notice.state !== 'resolved' || notice.resolution !== RENEWED) return [notice];
-        this.retireEnding(id);
+        notices.retireNotice(id);
         return [send(row, id, words)];
       });
     }, { behavior: 'immediate' });

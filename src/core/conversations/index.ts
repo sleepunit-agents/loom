@@ -5,7 +5,7 @@ import {privateInboxEnvelope,isPrivateInboxQuestion} from './private-inbox-words
 import { inboxContentChanged, type Recipient } from '../tempo/volume.js';
 import { acceptAnswer } from './answer-rule.js';
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, inArray, isNotNull, max, ne, or, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, max, ne, or, sql, type SQL } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { conversations, conversationPeople, turns, inbox, inboxRefs, inboxReads, digests, digestItems, jobs } from '../data/schema.js';
 import { conversationId } from '../../slug.js';
@@ -235,6 +235,12 @@ export class Conversations {
   /** Close what a producer sent under its own source id (a secret request, a notice), for one recipient or for all. */
   resolveSource(source: Item['source'], sourceId: string, reason: string, to?: Recipient): Item[] {
     return this.close(and(eq(inbox.source, source), eq(inbox.sourceId, sourceId), to && and(eq(inbox.toKind, to.kind), eq(inbox.to, to.id))), reason);
+  }
+
+  /** Keep a completed notice in history and release its source key for a new occurrence. */
+  retireNotice(sourceId: string): void {
+    this.db.update(inbox).set({ sourceId: sql`${sourceId} || ':' || ${inbox.id}` })
+      .where(and(eq(inbox.source, 'notice'), eq(inbox.sourceId, sourceId), inArray(inbox.state, ['done', 'resolved']))).run();
   }
 
   /** Close one item by its id, if it still waits. */
