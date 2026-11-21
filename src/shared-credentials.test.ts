@@ -18,8 +18,8 @@ afterEach(async () => { try { for (const close of cleanup.splice(0).reverse()) a
 const raw = { member: 'a'.repeat(64), runner: 'b'.repeat(64), body: 'c'.repeat(64), agent: 'd'.repeat(64), cookie: 'e'.repeat(64), bodyCookie: 'f'.repeat(64), runnerCookie: '1'.repeat(64) };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const request = (headers: Record<string,string>) => new Request('http://loom', { headers });
-function fixture(prepare?: () => Promise<unknown>, publicOrigin?:string) {
-  const client = new Database(':memory:'); cleanup.push(() => { client.close(); });
+function fixture(prepare?: () => Promise<unknown>, publicOrigin?:string, verbose?: (sql:string)=>void) {
+  const client = new Database(':memory:', { verbose }); cleanup.push(() => { client.close(); });
   const clock = new FakeClock(), at = new Date(clock.now()).toISOString(), db = createDataSchema(client, () => new Date(clock.now()).toISOString());
   db.insert(members).values({ id: 'sam', role: 'owner', joinedAt: at }).run();
   db.insert(agents).values({ id: 'art', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
@@ -134,16 +134,19 @@ it('uses the same exact body binding on a real socket and closes it on job withd
   expect((await ended)[0]).toBe(4403); expect((await f.read()).status).toBe(401);
 });
 it('fences retained credential proof and new authentication before any SQL after close', async () => {
-  const f = fixture();
+  const executed = vi.fn();
+  const f = fixture(undefined, undefined, executed);
   const body = f.root.credentials.authenticate(request({ authorization: 'Bearer '+raw.body }))!;
   const browser = f.root.credentials.authenticate(request({ cookie: 'loom_ui='+raw.cookie }))!;
   const runner = f.root.credentials.authenticate(request({ authorization: 'Bearer '+raw.runner }))!;
   await f.root.close();
+  executed.mockClear();
   const sql = vi.spyOn(f.client, 'prepare');
   expect(body.valid()).toBe(false); expect(f.root.credentials.body(body.viewer)).toBeUndefined();
   expect(f.root.credentials.runner(runner.viewer)).toBeUndefined(); expect(f.root.credentials.browser(browser.viewer)).toBeUndefined();
   expect(f.root.credentials.authenticate(request({ authorization: 'Bearer '+raw.body }))).toBeUndefined();
   expect(sql).not.toHaveBeenCalled();
+  expect(executed).not.toHaveBeenCalled();
 });
 it.each([['starting','running']] as const)('keeps the same scoped request admitted across the normal %s to %s state change', async (before, after) => {
   let began!: () => void, release!: () => void;
