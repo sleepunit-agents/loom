@@ -128,7 +128,11 @@
     {
       "id": "data-019",
       "promise": "operation_results The result of each recent write, kept 30 days, so a retry after a dropped connection returns the same answer and nothing happens twice.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "action",
+        "action": "dataWriteReceipt"
+      }
     },
     {
       "id": "data-020",
