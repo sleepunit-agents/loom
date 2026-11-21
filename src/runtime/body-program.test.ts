@@ -164,6 +164,22 @@ it.each(['fresh','continued'])('tells a %s Discord body where this conversation 
  }})).toBe(0);
  expect(f.native.mock.calls[0][1]).toContain('Current conversation: Discord direct message with Jonathan. This is your location for this turn');
 });
+it('saves bridge history with its receipt deadline when the provider posted it long before delivery',async()=>{
+ const f=fixture(), value=JSON.parse(f.input.toString()), clock=new FakeClock();
+ Object.assign(value.job,{venue:'slack',thread:null});
+ const deadline=new Date(clock.now()+86400000).toISOString();
+ const since=new Date(clock.now()).toISOString(), save=vi.fn(async()=>{});
+ const sessions={take:async()=>undefined,save,discard:()=>{}};
+ f.native.mockResolvedValue({text:'Answer',model:'observed',actions:[],session:'abcd-1234'});
+ expect(await bodyProgram({...f.options,clock,sessions,stdin:async()=>Buffer.from(JSON.stringify(value)),fetch:async(url,init)=>{
+  const response=await f.options.fetch(url,init);if(!String(url).endsWith('/take'))return response;
+  const batch=await response.json();
+  Object.assign(batch.value.items[0],{source:'slack',refs:['bi:first'],at:since,keepUntil:deadline,
+   history:[{seq:1,kind:'message',sender:'sender',at:'2020-01-01T00:00:00.000Z',words:'Earlier post',keepUntil:deadline}]});
+  return Response.json(batch);
+ }})).toBe(0);
+ expect(save).toHaveBeenCalledWith('abcd-1234',since,expect.any(Array),deadline);
+});
 it.each(['checkpoint','mail'])('rechecks the %s deadline after startup and before launching the harness', async expiring => {
   const f=fixture(), value=JSON.parse(f.input.toString()), clock=new FakeClock();
   value.job.venue='loom';

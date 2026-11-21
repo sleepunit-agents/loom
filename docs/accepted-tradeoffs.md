@@ -1122,8 +1122,8 @@ presence implementation here. See `src/pieces/bridges/presence.ts`.
   no erase time, and do not move the start, however old the history handed in. So no erasable word in a
   session outlives its keep time, and a room's session is counted from its first save.
 - In private Comms, Loom binds a checkpoint to the thread, member, agent and project. A direct bridge
-  conversation also binds its venue and place. After an upgrade from schema 29, a direct bridge worker
-  starts from the retained messages once because older checkpoints lack this binding. Loom records
+  conversation also binds its venue and place. After an upgrade from schema 29, each bridge worker
+  starts from retained messages on its first turn because older checkpoints lack trusted input deadlines. Loom records
   delivered input deadlines itself, passes them to the next worker and tightens active job limits when
   the household shortens retention. The replacement checks the deadline again before launching its harness.
 - Starts fresh instead, with the kept history ("what was said", `bridge-history.ts`): no session kept; a

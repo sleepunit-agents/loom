@@ -524,7 +524,7 @@ it('starts upgraded households with no machine readings and the default lines fo
  expect(()=>db.prepare("insert into box_readings(box,kind,thing,generation,level,read_at) values('nobody','memory','','first','ok',?)").run(at)).toThrow(/FOREIGN KEY/);
 });
 
-it('pins the existing household checkpoint deadline during upgrade and preserves the packed bytes',()=>{
+it('retires legacy bridge checkpoints from completed jobs whose private input bounds were never recorded',()=>{
   const old=household(29);
   old.prepare("INSERT INTO household (comms_days) VALUES (2)").run();
   old.exec("INSERT INTO agents (id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('agent','','','','drop','dot')");
@@ -532,9 +532,12 @@ it('pins the existing household checkpoint deadline during upgrade and preserves
   const files=Buffer.from('fictional sealed checkpoint');
   old.prepare('INSERT INTO conversation_sessions (conversation,harness,session,files,bytes,started_at) VALUES (?,?,?,?,?,?)')
     .run('room','claude','abcd-1234',files,files.length,at);
+  old.prepare("INSERT INTO jobs (id,agent,conversation,title,state,brief,model,started_by_kind,started_by,house_repository,house_file,house_branch,queued_at) VALUES ('finished','agent','room','fixture','done','','fixture','agent','agent','repo','','main',?)").run(at);
+  old.prepare('INSERT INTO inbox (id,to_kind,"to",conversation,source,from_kind,from_id,at,changed_at,state) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run('old-handoff','agent','agent','room','handoff','agent','agent','2026-11-12T00:00:00.000Z',at,'done');
   upgradeDataSchema(old,()=>at);
-  expect(old.prepare('SELECT files,started_at,keep_until FROM conversation_sessions').get())
-    .toEqual({files,started_at:at,keep_until:'2026-11-17T00:00:00.000Z'});
+  expect(old.prepare('SELECT files FROM conversation_sessions').get()).toBeUndefined();
+  expect(old.prepare("SELECT state FROM jobs WHERE id='finished'").get()).toEqual({state:'done'});
 });
 
 it('fences pre-upgrade workers with unrecorded inputs until their jobs end', () => {

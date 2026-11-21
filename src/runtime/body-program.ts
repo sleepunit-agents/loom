@@ -176,7 +176,9 @@ export async function bodyProgram(input: {
         if(deadline && (!earliestExpiry || Date.parse(deadline)<Date.parse(earliestExpiry))) earliestExpiry=deadline;
       }
       if(item.words!==null && item.keepUntil && (!oldestErased || Date.parse(item.at)<Date.parse(oldestErased))) oldestErased=item.at;
-      for(const line of item.history)if(line.keepUntil!==null&&(oldestErased===undefined||Date.parse(line.at)<Date.parse(oldestErased)))oldestErased=line.at;
+      // A bridge history timestamp is the provider's display time. Loom recorded
+      // the local receipt time during take and supplied its absolute deadline.
+      if(!bridge)for(const line of item.history)if(line.keepUntil!==null&&(oldestErased===undefined||Date.parse(line.at)<Date.parse(oldestErased)))oldestErased=line.at;
       if(job.venue==='loom' && item.source==='thread' && item.words!==null)seen.add(keyOf(threadInputKey(item.id)));
       if(job.venue==='loom' && item.source==='handoff' && item.words!==null){
         context.push('Your delegated worker returned the following result. Continue the originating request using the findings.');

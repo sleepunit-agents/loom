@@ -64,7 +64,7 @@ export function inheritJobSessionLimit(db:DataDatabase, job:string, conversation
  * Keep this refusal on the job until it ends, including across later takes and coordinator restarts. */
 export function invalidateRefiledJobSessions(db: DataDatabase, project: string) {
   const running = db.select({
-    job: jobs.id, since: jobs.queuedAt, keepUntil: jobs.queuedAt, invalidated: sql<boolean>`1`,
+    job: jobs.id, since: jobs.queuedAt, keepUntil: jobs.queuedAt, invalidated: sql<boolean>`1`.as('invalidated'),
   }).from(jobs).innerJoin(conversations, eq(jobs.conversation, conversations.id)).where(and(
     eq(jobs.project, project), eq(jobs.state, 'running'),
     or(and(eq(conversations.venue, 'loom'), sql`${conversations.member} is not null`),

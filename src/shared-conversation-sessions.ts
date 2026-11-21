@@ -5,6 +5,7 @@
  * A conversation has one unended job at a time (the schema's index, and Jobs.admission), and both doors
  * ask for the body of that job, so two bodies cannot each resume and save the same session. */
 import { createHash } from 'node:crypto';
+import { bridgeSessionPostKeys } from './core/conversations/bridge-history.js';
 import { threadReplyKey } from './core/conversations/history-limit.js';
 import { and, desc, eq, gt, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -96,14 +97,15 @@ export function registerConversationSessions(operations: Operations, db: DataDat
       if (!mine) return undefined;
       if (input.session === null) return { ...mine, session: '', sealed: null, bytes: 0 };
       let covered = input.covered;
-      if (mine.thread && covered) {
-        // A private harness can post several replies through house send before its final answer.
-        // Its transcript already contains every one of those committed tool calls.
-        const replies = db.select({seq: messages.seq}).from(messages).where(and(
+      if (covered) {
+        // A harness can post progress before its final answer. Its transcript already
+        // contains those tool calls, including a bridge post still in the provider queue.
+        const replies = mine.thread ? db.select({seq: messages.seq}).from(messages).where(and(
           eq(messages.thread, mine.thread), eq(messages.run, mine.job),
           eq(messages.kind, 'reply'), eq(messages.sender, mine.agent),
-        )).orderBy(desc(messages.seq)).limit(SESSION_HISTORY_KEYS).all().reverse();
-        const own = new Set(replies.map(row => createHash('sha256').update(threadReplyKey(row.seq)).digest('hex')));
+        )).orderBy(desc(messages.seq)).limit(SESSION_HISTORY_KEYS).all().reverse().map(row => threadReplyKey(row.seq))
+          : bridgeSessionPostKeys(db, mine.conversation, mine.job, SESSION_HISTORY_KEYS);
+        const own = new Set(replies.map(key => createHash('sha256').update(key).digest('hex')));
         covered = [...covered.filter(key => !own.has(key)), ...own].slice(-SESSION_HISTORY_KEYS);
       }
       return sessions.seal({ ...mine, session: input.session, files: input.files!, keepUntil:input.keepUntil, covered, ...(input.since ? { since: input.since } : {}) });
