@@ -261,6 +261,14 @@ export async function* walkthroughSteps(output) {
    report.actions.knowledgeDue=await dueKnowledgeDelivery();
   } catch(error) { report.actions.knowledgeDue={ok:false,error:String(error)}; }
   save();yield {phase:'knowledge-due',actions:safeReport(report.actions)};
+  phase='named agent tools';
+  try {
+   const {agentToolsEvidence}=await import('./rebuild-agent-tools.mjs');
+   Object.assign(report.actions,await agentToolsEvidence());
+  } catch(error) {
+   for(const name of ['namedNotes','namedKnowledge'])report.actions[name]={ok:false,error:String(error)};
+  }
+  save();yield {phase:'named-agent-tools',actions:safeReport(report.actions)};
   phase='note lifetimes';
   try {
    const {noteLifetimeEvidence}=await import('./rebuild-note-lifetimes.mjs');

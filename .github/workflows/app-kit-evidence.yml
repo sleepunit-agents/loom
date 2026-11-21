@@ -32,6 +32,8 @@ jobs:
     # Browser tests are off while the web app waits its turn (Jonathan, 2026-11-16). Set the repository
     # variable LOOM_BROWSER_TESTS to 'on' to bring them back.
     if: vars.LOOM_BROWSER_TESTS == 'on'
+    env:
+      LOOM_BROWSER_TESTS: ${{ vars.LOOM_BROWSER_TESTS }}
     # Browser work runs in CI, never on loom's machine.
     runs-on: ubuntu-latest
     strategy:
