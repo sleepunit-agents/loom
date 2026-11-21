@@ -27,7 +27,7 @@
  */
 import { and, desc, eq, inArray, notInArray, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { conversations, conversationSessions, deletedThreads, jobs, jobSessionLimits, turns } from '../data/schema.js';
+import { bridgeConnections, conversations, conversationSessions, deletedThreads, jobs, jobSessionLimits, turns } from '../data/schema.js';
 import { commsKeepDays } from '../data/comms-days.js';
 import { ageCutoff, ageLimit, keepUntilFor, wordsDeadline } from './retention.js';
 import { SESSION_BYTES, SESSION_ID, modelFamily } from './session-limit.js';
@@ -68,7 +68,7 @@ export function invalidateRefiledJobSessions(db: DataDatabase, project: string) 
   }).from(jobs).innerJoin(conversations, eq(jobs.conversation, conversations.id)).where(and(
     eq(jobs.project, project), eq(jobs.state, 'running'),
     or(and(eq(conversations.venue, 'loom'), sql`${conversations.member} is not null`),
-       and(inArray(conversations.venue, ['discord', 'slack']), or(eq(conversations.direct, true), sql`${conversations.member} is not null`))),
+       and(inArray(conversations.venue, bridgeConnections.platform.enumValues), or(eq(conversations.direct, true), sql`${conversations.member} is not null`))),
   ));
   db.insert(jobSessionLimits).select(running).onConflictDoUpdate({
     target: jobSessionLimits.job, set: {invalidated: true},
