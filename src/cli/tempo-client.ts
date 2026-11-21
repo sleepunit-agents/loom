@@ -22,16 +22,41 @@ const pending = z.object({
 });
 const reply = z.object({ data: z.object({ tempoTimezone: z.string(), triggers: z.array(pending) }) });
 // Select through the daemon's visibility rules first. The agent argument selects a clock.
-function triggersQuery(pendingOnly: boolean) {
-  const enabled = pendingOnly ? 'enabled:{eq:true},' : '';
-  const fields = pendingOnly ? 'id nextDueAt sourceKind lifespan note state watches' : 'id';
+function triggersQuery(view: 'pending' | 'history' | 'schedules') {
+  const pendingOnly = view === 'pending';
+  const filter = view === 'schedules' ? 'sourceKind:{eq:"time"},lifespan:{eq:"until-stopped"},targetKind:{eq:inbox},'
+    : pendingOnly ? 'enabled:{eq:true},' : '';
+  const fields = pendingOnly ? 'id nextDueAt sourceKind lifespan note state watches' : view === 'schedules' ? 'id times days nextDueAt note state' : 'id';
   return `query WakeTriggers($agent:String!, $after:String!, $limit:Int!) {
     tempoTimezone
     triggers(where:{OR:[
-      {${enabled}id:{gt:$after},toKind:{eq:agent},to:{eq:$agent}},
-      {${enabled}id:{gt:$after},toKind:{isNull:true},ownerKind:{eq:agent},owner:{eq:$agent}}
+      {${filter}id:{gt:$after},toKind:{eq:agent},to:{eq:$agent}},
+      {${filter}id:{gt:$after},toKind:{isNull:true},ownerKind:{eq:agent},owner:{eq:$agent}}
     ]},orderBy:{id:{direction:asc,priority:0}},limit:$limit) { ${fields} }
   }`;
+}
+
+const schedulePage = z.object({ data: z.object({ tempoTimezone: z.string(), triggers: z.array(z.object({
+  id: z.string(), times: z.string(), days: z.string().nullable(), nextDueAt: z.string().datetime().nullable(),
+  note: z.string(), state: z.string(),
+})) }) }).strict();
+
+async function listSchedules(read: Read, agent: string) {
+  const lines: string[] = [];
+  let after = '';
+  for (;;) {
+    const { data } = schedulePage.parse(await read(triggersQuery('schedules'), { agent, after, limit: pageSize }));
+    const format = householdTime(data.tempoTimezone);
+    for (const row of data.triggers) {
+      if (row.id <= after) throw Error();
+      after = row.id;
+      const when = (row.days || 'daily') + ' ' + row.times;
+      const next = row.nextDueAt ? format.format(new Date(row.nextDueAt)) : '(none armed)';
+      lines.push(onOneLine(encodeURIComponent(row.id) + '  ' + when + '  next ' + next + '  [' + row.state + ']  ' + row.note));
+    }
+    if (data.triggers.length < pageSize) break;
+  }
+  return (lines.join('\n') || onOneLine(agent) + ' has no schedules') + '\n';
 }
 
 const idsReply = z.object({
@@ -152,7 +177,7 @@ async function readLog(read: Read, agent: string, options: ReturnType<typeof log
   const matches: { seq: number; line: string }[] = [];
   let after = '';
   for (;;) {
-    const { data } = idsReply.parse(await read(triggersQuery(false), { agent, after, limit: pageSize }));
+    const { data } = idsReply.parse(await read(triggersQuery('history'), { agent, after, limit: pageSize }));
     const ids = data.triggers.map(row => row.id);
     if (!ids.length) break;
     const format = householdTime(data.tempoTimezone);
@@ -225,6 +250,8 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
         if (positionals.length !== 1 || !positionals[0] || !!values['prompt-file'] === !!values.prompt) throw Error();
         laneUpdate = { name: decodeURIComponent(positionals[0]), file: values['prompt-file'], words: values.prompt };
       } else if (!(argv[1] === 'list' && argv.length === 2 || argv[1] === 'text' && argv.length === 3 && argv[2])) throw Error();
+    } else if (verb === 'schedule') {
+      if (argv[1] !== 'list' || argv.length !== 2) throw Error();
     } else if (verb === 'cancel') {
       if (argv.length !== 2) throw Error();
       const [encoded, at, extra] = argv[1].split('@');
@@ -234,7 +261,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     else if (verb === 'log') options = logOptions(argv.slice(1));
     else if ((verb !== 'list' && !changesClock) || argv.length !== 1) throw Error();
   } catch {
-    io.stderr('usage: wake [--agent AGENT] lane list | lane text NAME | lane set NAME (-f FILE | -p WORDS) | list | cancel WAKE | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
+    io.stderr('usage: wake [--agent AGENT] lane list | lane text NAME | lane set NAME (-f FILE | -p WORDS) | schedule list | list | cancel WAKE | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
     return 2;
   }
   try {
@@ -294,6 +321,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
       }
       agent = choice.data.tempoDefaultAgent;
     }
+    if (verb === 'schedule') { io.stdout(await listSchedules(read, agent)); return 0; }
     if (cancel) {
       const answer = await post('/api/tempo/stop', { id: randomUUID(), input: { id: cancel.id, occurrence: { agent, at: cancel.at } } });
       z.object({ ok: z.literal(true), value: z.object({ saved: z.literal(true) }) }).parse(answer);
@@ -327,7 +355,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     const rows: z.infer<typeof pending>[] = [];
     let after = '', timezone: string;
     do {
-      const result = reply.strict().parse(await read(triggersQuery(true), { agent, after, limit: pageSize })).data;
+      const result = reply.strict().parse(await read(triggersQuery('pending'), { agent, after, limit: pageSize })).data;
       timezone = result.tempoTimezone;
       for (const row of result.triggers) {
         if (row.id <= after) throw Error();
@@ -352,6 +380,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     if (error instanceof DoorRefusal) io.stderr(error.message + '\n');
     else if (laneUpdate) io.stderr('Could not confirm the stored lane update.\n');
     else if (verb === 'lane') io.stderr('Could not read the household lane.\n');
+    else if (verb === 'schedule') io.stderr('Could not read recurring schedules from Loom.\n');
     else if (cancel) io.stderr('Could not confirm cancellation. Run wake list for the current occurrence.\n');
     else if (wake) io.stderr('Could not confirm the scheduled wake.\n');
     else if (changesClock) io.stderr('Could not confirm the request to ' + verb + ' the clock.\n');

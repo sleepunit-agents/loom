@@ -46,6 +46,17 @@ it('finds earlier matching history of a stopped wake across pages, with the agen
     out = '';
     expect(await runTempoClient(['list'], io, request)).toBe(0);
     expect(out).toBe('No pending wakes.\n');
+    out = '';
+    expect(await runTempoClient(['schedule', 'list'], io, request), err).toBe(0);
+    expect(out).toBe('fern has no schedules\n');
+    for (const agent of ['fern', 'birch']) {
+      db.insert(triggers).values({ id: 'weekly-' + agent, ownerKind: 'agent', owner: agent, sourceKind: 'time',
+        times: '05:17', days: 'sun', lifespan: 'until-stopped', targetKind: 'inbox', toKind: 'agent', to: agent,
+        enabled: false, state: 'stopped', createdAt: at, changedAt: at, note: 'Review' }).run();
+    }
+    out = '';
+    expect(await runTempoClient(['schedule', 'list'], io, request), err).toBe(0);
+    expect(out).toBe('weekly-fern  sun 05:17  next (none armed)  [stopped]  Review\n');
     const result = await app.http.request('/api/tempo/set', { method: 'POST',
       headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
       body: JSON.stringify({ id: 'request', input: { id: 'scheduled', ownerKind: 'household', sourceKind: 'time',
