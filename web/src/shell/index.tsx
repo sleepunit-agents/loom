@@ -17,7 +17,7 @@ import { oneWindowKept } from '../look';
 import { recency, useShortcuts } from './shortcuts';
 import Switcher from './switcher';
 import { WindowLoad } from './loading';
-import { WindowExits } from './window-motion';
+import { useDeparture, useDockRestore } from './window-motion';
 export interface RegisteredApp extends AppRegistration { icon: string; Screen: LazyExoticComponent<ComponentType<{ path?: string; go?: (path: string) => void; active?: boolean; visible?: boolean }>> }
 /** The shell only consumes registrations. Home and agent rail will register alongside other apps. */
 class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -41,6 +41,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   else if (preferences.status === 'denied') lastOneWindow.current = false;
   const oneWindow = lastOneWindow.current;
   const ground = useRef<HTMLDivElement>(null);
+  const depart = useDeparture(ground, (id, minimize) => router.remove(id, minimize));
   const [area,setArea] = useState<Rect>({x:0,y:0,w:innerWidth-48,h:innerHeight-130});
   const [width,setWidth] = useState(innerWidth);
   const phone = width < 1024;
@@ -74,6 +75,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   const [landed,setLanded] = useState<{id:string}>();
   const presented = presentedTiles(route,phone||oneWindow);
   const boxes = layout(router.asTiles(presented),workArea,width).apps;
+  useDockRestore(ground, boxes, phone, route.tiles);
   const open = (id: string, tap = false) => {
     buzz(haptics,tap);
     const gone = router.open(id,phone ? undefined : workArea,phone ? 1920 : width,undefined,oneWindow);
@@ -104,8 +106,8 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
       else if(!e.shiftKey&&key==='arrowright'&&tile.at<tile.trail.length-1) router.travel(tile.id,1);
       else if(!phone&&e.shiftKey&&(e.code==='KeyF'||key==='f')) router.maximize(tile.id);
       else if(e.shiftKey&&key==='enter') router.big(tile.id);
-      else if(e.shiftKey&&key==='m') router.remove(tile.id,true);
-      else if(e.shiftKey&&key==='w') router.remove(tile.id);
+      else if(e.shiftKey&&key==='m') depart(tile.id,true);
+      else if(e.shiftKey&&key==='w') depart(tile.id);
       else if(e.shiftKey&&(e.code==='Comma'||e.code==='Period')){const n=visible.findIndex(t=>t.id===tile.id);const other=visible[n+(e.code==='Comma'?-1:1)];if(other)router.swap(tile.id,other.id);}
       else if(e.shiftKey&&key.startsWith('arrow')) {
         const here=boxes[tile.id];const cx=here.x+here.w/2,cy=here.y+here.h/2;
@@ -140,19 +142,18 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
         const box = boxes[tile.id];
         return <section key={tile.id} className="next-tile" data-tint={tintOf(app.title)} data-tile={shown?tile.id:undefined} hidden={!shown} tabIndex={-1} data-focused={route.focused === tile.id || undefined} aria-label={`${app.title} tile`}
           style={!shown?{display:'none'}:phone?undefined:{left:box.x,top:box.y,width:box.w,height:box.h}} onFocusCapture={e => { if(e.target!==e.currentTarget) carets.current.set(tile.id,e.target as HTMLElement); if(route.focused!==tile.id) router.focus(tile.id); }} onPointerDown={() => { if(route.focused!==tile.id) router.focus(tile.id); }}>
-          <header className="next-strip" draggable={!phone} onDragStart={()=>{drag.current=tile.id;}} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(drag.current)router.swap(drag.current,tile.id);drag.current=undefined;}} onDoubleClick={e=>{if(!(e.target as HTMLElement).closest('button'))router.remove(tile.id,true);}} onContextMenu={e=>{e.preventDefault();setMenu({x:e.clientX,y:e.clientY,title:app.title,back:e.currentTarget,items:[{id:'min',label:'Minimize',run:()=>router.remove(tile.id,true)},...(!phone?[{id:'maximize',label:isMaximized?'Restore size':'Maximize',run:()=>router.maximize(tile.id)}]:[]),...(visible[0]?.id!==tile.id?[{id:'big',label:'Make this the big one',run:()=>router.big(tile.id)}]:[]),{id:'close',label:'Close',run:()=>router.remove(tile.id)}]});}}>
+          <header className="next-strip" draggable={!phone} onDragStart={()=>{drag.current=tile.id;}} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(drag.current)router.swap(drag.current,tile.id);drag.current=undefined;}} onDoubleClick={e=>{if(!(e.target as HTMLElement).closest('button'))depart(tile.id,true);}} onContextMenu={e=>{e.preventDefault();setMenu({x:e.clientX,y:e.clientY,title:app.title,back:e.currentTarget,items:[{id:'min',label:'Minimize',run:()=>depart(tile.id,true)},...(!phone?[{id:'maximize',label:isMaximized?'Restore size':'Maximize',run:()=>router.maximize(tile.id)}]:[]),...(visible[0]?.id!==tile.id?[{id:'big',label:'Make this the big one',run:()=>router.big(tile.id)}]:[]),{id:'close',label:'Close',run:()=>depart(tile.id)}]});}}>
             <button className="next-app-key" aria-label={`Go to ${app.title}`} onClick={() => router.go(tile.id,app.path)}><AppIcon app={app.id} name={app.icon} size="sm" house={24} /></button>
-            <Button variant="ghost" size="sm" onClick={() => router.go(tile.id,app.path)} className="next-strip-title" onDoubleClick={() => router.remove(tile.id,true)}>{app.title}</Button>
+            <Button variant="ghost" size="sm" onClick={() => router.go(tile.id,app.path)} className="next-strip-title" onDoubleClick={() => depart(tile.id,true)}>{app.title}</Button>
             <span className="next-spacer" />
             {/* The three window controls, drawn as the how-it-works site draws them: a square, a line, a cross. */}
             {!phone && <button type="button" className="next-win" data-act={isMaximized?'restore':'maximize'} aria-label={`${isMaximized?'Restore':'Maximize'} ${app.title}`} title={isMaximized?'Restore size':'Maximize'} onClick={() => router.maximize(tile.id)}><i aria-hidden="true" /></button>}
-            <button type="button" className="next-win" data-act="dock" aria-label={`Minimize ${app.title}`} title="Send to the dock" onClick={() => router.remove(tile.id,true)}><i aria-hidden="true" /></button>
-            <button type="button" className="next-win" data-act="close" aria-label={`Close ${app.title}`} title="Close" onClick={() => router.remove(tile.id)}><i aria-hidden="true" /></button>
+            <button type="button" className="next-win" data-act="dock" aria-label={`Minimize ${app.title}`} title="Send to the dock" onClick={() => depart(tile.id,true)}><i aria-hidden="true" /></button>
+            <button type="button" className="next-win" data-act="close" aria-label={`Close ${app.title}`} title="Close" onClick={() => depart(tile.id)}><i aria-hidden="true" /></button>
           </header>
           <WindowLoad app={app.id} icon={app.icon} title={app.title} visible={shown}><Screen app={app} tile={tile} router={router} visible={shown} active={shown && route.focused === tile.id} /></WindowLoad>
         </section>;
       })}
-      <WindowExits boxes={boxes} phone={phone} tiles={route.tiles} maximized={route.maximized} />
     </div>
     {!phone&&Signals&&<Signals onAttention={setAttention} go={path=>{const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}}/>}
     <Launcher apps={apps} open={launcher&&!keys.switching} onOpenChange={setLauncher} launch={open} />
@@ -163,7 +164,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
       onPointerEnter={()=>{if(hiding.modes.dock==='auto')hiding.show('dock',true);}} onPointerLeave={e=>{if(hiding.modes.dock==='auto'&&e.pointerType==='mouse'&&!menu)hiding.show('dock',false);}}
       onContextMenu={e=>{if(!phone&&(!(e.target as Element).closest('button')||(e.target as Element).closest('button[aria-label="Home"],button[aria-label="All apps"]')))setMenu(hiding.menu('dock',e));}}><Dock variant="shelf" className="next-dock" aria-label="Dock" itemSize={44} magnification={1.25} value={route.focused??'home'} items={[
       {value:'home',label:'Home',tint:'pink',icon:<><AppIcon app="home" name="home" /><HapticLabel on={haptics}/></>,onSelect:()=>{buzz(haptics,true);router.home();}},
-      ...apps.filter(app=>app.id!=='home-preview').map(app=>({value:app.id,label:app.title,name:`Open ${app.title}`,tint:tintOf(app.title),icon:<><AppIcon app={app.id} name={app.icon} /><HapticLabel on={haptics}/></>,open:route.tiles.some(t=>t.id===app.id),onSelect:()=>{if(route.focused===app.id){buzz(haptics,true);router.remove(app.id,true);}else open(app.id,true);}})),
+      ...apps.filter(app=>app.id!=='home-preview').map(app=>({value:app.id,label:app.title,name:`Open ${app.title}`,tint:tintOf(app.title),icon:<><AppIcon app={app.id} name={app.icon} /><HapticLabel on={haptics}/></>,open:route.tiles.some(t=>t.id===app.id),onSelect:()=>{if(route.focused===app.id){buzz(haptics,true);depart(app.id,true);}else open(app.id,true);}})),
       {value:'launcher',label:'All apps',tint:'olive',divider:true,icon:<><AppIcon app="launcher" name="grid-2x2" /><HapticLabel on={haptics}/></>,onSelect:()=>{buzz(haptics,true);setLauncher(true);}},
     ]} /></div>
     {menu&&<ContextMenu at={menu} close={()=>setMenu(undefined)} />}
