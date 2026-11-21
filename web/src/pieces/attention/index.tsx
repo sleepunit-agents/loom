@@ -4,13 +4,11 @@ import { approvalTitle } from '../approval-view/model';
 import { useReadingVisible } from '../../data/visibility';
 import { memberOperation } from '../../data/operation';
 import { useEffect, useMemo, useState } from 'react';
-import { useDataQuery } from '../../data/graphql';
 import { useAnswered } from '../../data/graphql/selection';
 import { InboxView, type InboxActions } from '../inbox-view';
 import { useHouseholdZone } from '../../data/zone';
-import { answerInboxItem, inboxSelection, useInboxSelection, useInboxItem, inboxPageSize, inboxSourcePath, inboxRefPath, retainedInboxItem } from './inbox-query';
+import { answerInboxItem, inboxSelection, useInboxSelection, useInboxItem, inboxPageSize, inboxSourcePath, inboxRefPath, retainedInboxItem, useInboxProposalTitles } from './inbox-query';
 export { stamp } from './time';
-const titlesQuery = 'query InboxProposalTitles($ids:[String!]!) { inboxProposalTitles(ids:$ids) { approval title } }';
 const inboxBase = '/p/inbox-preview';
 export default function InboxApp({ path: shellPath, go, visible = true }: { path?: string; go?: (path: string) => void; visible?: boolean } = {}) {
   const readingVisible = useReadingVisible(visible);
@@ -63,8 +61,7 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
 
   const ids = [...new Set([...(data?.items.slice(0,inboxPageSize) ?? []), ...(current ? [current] : [])]
     .map(cardOf).filter(card => card?.operation === 'household.change').map(card => card!.id))];
-  const titles = useDataQuery<{inboxProposalTitles: {approval: string; title: string}[]}>(titlesQuery, {ids}, {pause: !ids.length});
-  const named = new Map(titles.status === 'live' ? titles.data?.inboxProposalTitles.map(row => [row.approval,row.title]) : []);
+  const {named} = useInboxProposalTitles(ids);
 
   const actions: InboxActions | undefined = live ? {
     volume: current?.canSetVolume ? (id, volume) => mutate('inbox.volume', { item: id, volume }) : undefined,

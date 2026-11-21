@@ -2,8 +2,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createElement as h, useSyncExternalStore } from 'react';
 // @ts-expect-error Existing renderer dependency has no bundled declarations.
 import { act, create } from 'react-test-renderer';
-const f=vi.hoisted(()=>({snapshot:{} as any,listeners:new Set<()=>void>()}));
-vi.mock('../../data/graphql',()=>({useDataQuery:()=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshot)}));
+const f=vi.hoisted(()=>({snapshot:{} as any,titles:{status:'loading'} as any,listeners:new Set<()=>void>()}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(document:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>document.includes('InboxProposalTitles')?f.titles:f.snapshot)}));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
 import { waitingCounts, waitingPreview, WaitingRow, deskWaitingCountsQuery } from './waiting';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
@@ -47,4 +47,19 @@ it('does not mark a preview read or submit an answer',async()=>{
  await act(async()=>{tree=create(h(WaitingRow,{go:vi.fn()}));});
  expect(tree!.root.findAllByType('form')).toHaveLength(0);
  expect(tree!.root.findAllByType('textarea')).toHaveLength(0);
+});
+
+
+it('shows a neutral approval while its title loads, then the authorized Slack name in the desk preview',async()=>{
+ const raw='Set Slack user UFIXTURE in TFIXTURE to tier 2';
+ const title='Set Robin (Slack) to tier 2 with Art';
+ f.snapshot={...preview,data:{...preview.data,inboxItems:[{...row,thread:null,source:'approval',waitsOnKind:'approval',waitsOnId:'a-fixture',body:{words:raw}}]}};
+ f.titles={status:'loading'};
+ await act(async()=>{tree=create(h(WaitingRow,{go:vi.fn()}));});
+ const text=()=>JSON.stringify(tree!.toJSON());
+ expect(text()).toContain('Review approval');
+ expect(text()).not.toContain('UFIXTURE');
+ await act(async()=>{f.titles={status:'live',data:{inboxProposalTitles:[{approval:'a-fixture',title}]}};for(const notify of f.listeners)notify();});
+ expect(text()).toContain(title);
+ expect(text()).not.toContain('TFIXTURE');
 });
