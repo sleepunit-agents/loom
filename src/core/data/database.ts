@@ -392,7 +392,8 @@ const upgrades: readonly (readonly string[])[] = [
   // 33: a v1 tombstone also records the original reader, agent and channel number.
   ['ALTER TABLE deleted_threads ADD COLUMN source_member text',
    'ALTER TABLE deleted_threads ADD COLUMN source_agent text',
-   'ALTER TABLE deleted_threads ADD COLUMN source_channel integer'],
+   'ALTER TABLE deleted_threads ADD COLUMN source_channel integer',
+   'ALTER TABLE threads ADD COLUMN source_channel integer'],
   // 34: pre-upgrade bridge sessions may include private handoffs whose deadlines were never recorded.
   ['ALTER TABLE conversation_sessions ADD COLUMN keep_until text',
     "DELETE FROM conversation_sessions WHERE conversation IN (SELECT id FROM conversations WHERE venue IN ('slack','discord'))",
