@@ -2085,6 +2085,7 @@ it.each([['slack','yes'],['slack','no'],['discord','yes'],['discord','no']] as c
  const scheduler = runnable(f);
  const question = {to:'owner', answers:'yes-no', words:'May I prepare a quote?', ifYes:'Prepare a quote.', ifNo:'Wait.'};
  const file = (q:Record<string,unknown>) => f.call('conversation','digest',{summary:'Asked for a quote decision.',question:q});
+ f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();
  for(const extra of [{answers:'words'},{to:'stranger'},{refs:['private-ref']},{link:'https://example.invalid'},{waitsOnKind:'task',waitsOnId:'t-fixture'}]){
   expect((await file({...question,...extra})).status).toBe(403);
  }
@@ -2108,6 +2109,7 @@ it.each([['slack','yes'],['slack','no'],['discord','yes'],['discord','no']] as c
  expect(f.root.services.conversations.item(prior.body.value.item).state).toBe('resolved');
  expect((await f.call('inbox','answer',{...answer,item:prior.body.value.item},token.owner)).status).not.toBe(200);
  f.db.insert(members).values({id:'new-director',role:'member',joinedAt:new Date(f.clock.now()).toISOString()}).run();
+ f.db.delete(memberAgents).where(eq(memberAgents.member,'owner')).run();
  f.db.insert(memberAgents).values({member:'new-director',agent:'art'}).run();
  expect((await f.call('inbox','answer',answer,token.owner)).status).toBe(403);
  f.db.delete(memberAgents).where(eq(memberAgents.member,'new-director')).run();
@@ -2140,8 +2142,13 @@ it.each([['slack','yes'],['slack','no'],['discord','yes'],['discord','no']] as c
  expect(JSON.stringify(payload)).not.toContain(answer.words);
  expect(f.db.select().from(bridgeSends).all()).toHaveLength(0);
  const reply = {id:randomUUID(),text:'I received the decision.',model:'fixture'};
+ // An already held provider message must not authorize sending the stale decision.
+ const sourceMail=mail.find(row=>row.source===platform)!;
+ f.db.update(inbox).set({job:next.job!.id}).where(eq(inbox.id,sourceMail.id)).run();
  f.db.delete(agentPeople).where(eq(agentPeople.person,guest)).run();
+ expect((await f.call('bridges','reply',{...reply,incoming:incoming.id})).status).toBe(403);
  expect((await f.call('bridges','reply',reply)).status).toBe(403);
+ f.db.update(inbox).set({job:sourceMail.job}).where(eq(inbox.id,sourceMail.id)).run();
  f.db.insert(agentPeople).values({agent:'art',person:guest,tier:2}).run();
  const workerToken='body_'+'e'.repeat(64),jobId=next.job!.id;
  f.db.insert(tokens).values({fingerprint:createHash('sha256').update(workerToken).digest('hex'),label:'Decision worker',kind:'agent',agent:'art',job:jobId,createdAt:new Date(f.clock.now()).toISOString()}).run();

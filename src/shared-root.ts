@@ -102,7 +102,7 @@ import { conversationBodyScope } from './core/conversations/body-scope.js';
 import { addressee, holds, mayRunPrivateWork, rules as policyRules, type Viewer } from './policy.js';
 import { canReadSharedConversation, currentMember, sharedSharing } from './shared-sharing.js';
 import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
-import { HELD_REFUSALS, currentDecisionGuest, privateDecisionAccount, askedOnWord, heldRefusal, jobHeld, jobRoom, jobWord, outsideAccount, kitRoom, selfHandoff, writtenOnWord } from './shared-place-mail.js';
+import { HELD_REFUSALS, decisionJobScope, currentDecisionGuest, privateDecisionAccount, askedOnWord, heldRefusal, jobHeld, jobRoom, jobWord, outsideAccount, kitRoom, selfHandoff, writtenOnWord } from './shared-place-mail.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
 import { Conversations, lateMailWaits } from './core/conversations/index.js';
@@ -349,7 +349,7 @@ export function sharedRoot(options: {
   if(values)cancelSecretRecovery=clock.at(clock.now(),recoverSecrets);
   startupCleanups.push(()=>{cancelSecretRecovery?.();values?.close();});
   const direct=directTargets(db,(viewer,person,platform)=>memory.people.outsideAccount(viewer,person,platform));
-  const bridgeDaemon=options.bridges&&new SharedBridges({...options.bridges,directAllowed:direct.allowed,progressAllowed:direct.progressAllowed,db,clock,writes:data.writes,changed:data.changed,
+  const bridgeDaemon=options.bridges&&new SharedBridges({...options.bridges,jobAllowed:job=>decisionJobScope(db,job).allowed,directAllowed:direct.allowed,progressAllowed:direct.progressAllowed,db,clock,writes:data.writes,changed:data.changed,
     inboxCommitted:ids=>{tempo?.capacityChanged();options.bridges?.inboxCommitted?.(ids);},
     // The stop word ends a job through the runtime's own Stop, and is announced as any ended job is.
     stopJob:(job,member)=>{new Jobs(db,now).stop(job,member,'stop');},

@@ -203,16 +203,28 @@ export function currentDecisionGuest(db:DataDatabase,agent:string,key:string):bo
     eq(bridgePeople.platform,account.platform),eq(bridgePeople.workspace,account.workspace),eq(bridgePeople.user,account.user)
   )).get();
 }
+/** Check every decision included in the job, even when it also holds other mail. */
+export function decisionJobScope(db:DataDatabase,job:string){
+  const decisions=db.select({agent:inbox.agent,account:inbox.onWord,kind:inbox.onWordKind,sourceId:inbox.sourceId}).from(inbox)
+    .where(and(eq(inbox.job,job),eq(inbox.source,'answer'),eq(inbox.toKind,'agent'))).all()
+    .filter(item=>item.sourceId?.startsWith('guest-decision:'));
+  return {present:decisions.length>0,allowed:decisions.every(item=>item.agent&&item.kind==='outside'&&item.account&&currentDecisionGuest(db,item.agent,item.account))};
+}
 /** A private bridge question can leave the source room only for the agent's current directors. */
 export function privateDecisionAccount(db:DataDatabase,work:{job:{id:string;agent:string;conversation:string|null};cv:{direct:boolean;member:string|null;venue:string;place:string}},q:{to:string;answers:string;refs?:string[];link?:string;waitsOnKind?:string}){
   const {cv}=work;
-  if(!cv.direct||cv.member||!['slack','discord'].includes(cv.venue)||q.answers!=='yes-no'||q.refs?.length||q.link!==undefined||q.waitsOnKind!==undefined)return;
+  if(!cv.direct||cv.member||!['slack','discord'].includes(cv.venue))return;
+  let place:unknown;
+  try{place=JSON.parse(cv.place);}catch{return false;}
+  if(!Array.isArray(place)||place.length!==4||!Array.isArray(place[3]))return false;
+  if(place[3].length===1&&place[3][0]==='group')return;
+  if(place[3].length!==2||place[3][0]!=='member'||place[3][1]!==null)return false;
   const word=jobWord(db,work.job);
-  if(word.woke!=='others'||word.person?.kind!=='outside'||!currentDecisionGuest(db,work.job.agent,word.person.id)||!tellOwners(db,work.job.agent).includes(q.to))return;
-  try{
-    const account=outsideAccount.parse(JSON.parse(word.person.id)),place:unknown=JSON.parse(cv.place);
-    if(Array.isArray(place)&&place.length===4&&place[0]===account[1]&&cv.venue===account[0]&&Array.isArray(place[3])&&place[3].length===2&&place[3][0]==='member'&&place[3][1]===null)return word.person.id;
-  }catch{/* Unknown legacy addresses cannot route a private decision. */}
+  if(word.woke!=='others')return;
+  if(q.answers!=='yes-no'||q.refs?.length||q.link!==undefined||q.waitsOnKind!==undefined)return false;
+  if(word.person?.kind!=='outside'||!currentDecisionGuest(db,work.job.agent,word.person.id)||!tellOwners(db,work.job.agent).includes(q.to))return false;
+  const account=parseOutsidePersonKey(word.person.id);
+  return account&&account.workspace===place[0]&&account.platform===cv.venue ? word.person.id : false;
 }
 export function askedOnWord(db: DataDatabase, work: { job: { id: string; agent: string; conversation: string | null } }, question?: { to: string; link?: string; waitsOnKind?: string }) {
   const word = jobWord(db, work.job);
