@@ -80,7 +80,11 @@
     {
       "id": "inbox-010",
       "promise": "A trigger that fires drops an item in the recipient's inbox.",
-      "source": "docs/how-it-works/site/inbox.html#con-h"
+      "source": "docs/how-it-works/site/inbox.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "scheduledInbox"
+      }
     },
     {
       "id": "inbox-011",

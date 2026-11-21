@@ -148,6 +148,8 @@ it('starts silence reconciliation while open and refuses the lost body old runni
   expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()?.state).toBe('lost');
   expect(f.ended).toHaveBeenCalledWith(queued.id); expect(f.errors).not.toHaveBeenCalled();
   expect((await f.call('started', start, 'started-before-loss')).status).toBe(403);
+  expect((await f.call('finish', {job:queued.id,exitCode:0,logTail:''}, 'late-finish')).status).toBe(403);
+  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()?.state).toBe('lost');
   await f.root.close(); f.client.close(); f.clock.advance(150_000); expect(f.errors).not.toHaveBeenCalled();
 });
 it('cannot restore a stopped body with its previously successful running receipt', async () => {

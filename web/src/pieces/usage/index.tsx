@@ -4,14 +4,14 @@ import './usage.css';
 import {useDataQuery} from '../../data/graphql';
 
 export const conversationsQuery = `query UsageConversations($from:String!, $to:String!) {
-  jobUsageRollup(from:$from,to:$to,groupBy:"conversation"){key title totalTokens jobCount retryCount}
+  jobUsageRollup(from:$from,to:$to,groupBy:"conversation"){key title totalTokens jobCount retryCount largestContext jobsWithLargestContext}
 }`;
 export const jobsQuery = `query UsageJobs($from:String!, $to:String!, $conversation:String) {
   conversationJobUsage(from:$from,to:$to,conversation:$conversation){id title runKind linkedWakeJob state observations usage{
     harness model source tokensIn tokensOut cacheRead cacheWritten modelCalls toolCalls tools{name count} firstContext largestContext wallMs
   }}
 }`;
-interface Group {key:string|null; title:string|null; totalTokens:number|null; jobCount:number; retryCount:number}
+interface Group {key:string|null; title:string|null; totalTokens:number|null; jobCount:number; retryCount:number; largestContext:number|null; jobsWithLargestContext:number}
 const metrics = {
   tokensIn:'Input tokens',tokensOut:'Output tokens',cacheRead:'Cache read',cacheWritten:'Cache written',
   modelCalls:'Model calls',toolCalls:'Tool calls',firstContext:'First-call context',largestContext:'Largest context',wallMs:'Wall time (ms)',
@@ -52,11 +52,11 @@ function Conversations({range}:{range:Range}) {
   if(status!=='live'||!data)return status==='loading'?<Loading label="Loading conversations…" />:<Error text="Conversation usage unavailable." />;
   if(!data.jobUsageRollup.length)return <Empty title="No jobs in this period." />;
   const groups=[...data.jobUsageRollup].sort((a,b)=>(b.totalTokens??-1)-(a.totalTokens??-1)||(a.key??'').localeCompare(b.key??''));
-  return <table className="usage-groups" aria-label="Conversation usage" aria-busy={settling||undefined}><thead><tr><th scope="col">Conversation</th><th scope="col">Reported tokens</th><th scope="col">Jobs</th><th scope="col">Retries</th></tr></thead>
+  return <table className="usage-groups" aria-label="Conversation usage" aria-busy={settling||undefined}><thead><tr><th scope="col">Conversation</th><th scope="col">Reported tokens</th><th scope="col">Peak context (tokens)</th><th scope="col">Jobs</th><th scope="col">Retries</th></tr></thead>
     <tbody>{groups.map(g=><Fragment key={JSON.stringify(g.key)}><tr><th scope="row"><LinkButton aria-expanded={open===g.key}
       onClick={()=>setOpen(open===g.key?undefined:g.key)}>{g.title||g.key||'Jobs without a conversation'}</LinkButton></th>
-      <td>{format(g.totalTokens)}</td><td>{format(g.jobCount)}</td><td>{format(g.retryCount)}</td></tr>
-      {open===g.key&&<tr><td colSpan={4}><Jobs conversation={g.key} range={range}/></td></tr>}
+      <td>{format(g.totalTokens)}</td><td>{format(g.largestContext)}<br/><small>{format(g.jobsWithLargestContext)} of {format(g.jobCount)} measured</small></td><td>{format(g.jobCount)}</td><td>{format(g.retryCount)}</td></tr>
+      {open===g.key&&<tr><td colSpan={5}><Jobs conversation={g.key} range={range}/></td></tr>}
     </Fragment>)}</tbody></table>;
 }
 function localDay(offset:number) {

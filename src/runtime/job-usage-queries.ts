@@ -20,7 +20,7 @@ const recordType = new GraphQLObjectType({name:'JobUsageRecord',fields:{
   usage:{type:usageType}, observations:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString)))},
 }});
 const groupType = new GraphQLObjectType({name:'JobUsageGroup',fields:{
-  key:text,title:text,jobCount:counter,retryCount:counter,totalTokens:counter,...counters,largestContext:counter,
+  key:text,title:text,jobCount:counter,retryCount:counter,totalTokens:counter,...counters,largestContext:counter,jobsWithLargestContext:counter,
 }});
 
 type Range = {from?:string|null;to?:string|null;conversation?:string|null};
@@ -303,6 +303,7 @@ function rollup(s:JobSummaries,args:Range & {groupBy:string}) {
     },null);
     return {key,title:args.groupBy === 'conversation' ? group[0].label ?? key : key,
       jobCount:group.length,retryCount:group.filter(row=>row.retryOf !== null).length,...sums,largestContext,
+      jobsWithLargestContext:group.filter(row=>row.usage?.largestContext != null).length,
       totalTokens:plus(sums.tokensIn,sums.tokensOut)};
   });
 }

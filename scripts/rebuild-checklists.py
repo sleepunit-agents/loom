@@ -43,7 +43,8 @@ ui={
  'secrets':[('Settings','Secrets live in Settings with requests and grants.',['Secrets','Requests','Grants'])],
 }
 # These source promises already have behavior probes; regeneration must keep them.
-action_promises={('tasks','Lets a person or an agent claim work, comment on it, close it, and hand it back or reopen it.'):'taskLifecycle'}
+action_promises={('inbox',"A trigger that fires drops an item in the recipient's inbox."):'scheduledInbox',
+ ('tasks','Lets a person or an agent claim work, comment on it, close it, and hand it back or reopen it.'):'taskLifecycle'}
 out=ROOT/'docs/rebuild-checklists'
 if not args.check: out.mkdir(exist_ok=True)
 # Pages put to the owner and not yet approved: on the site for reading, and no part of what the rebuild is measured against.

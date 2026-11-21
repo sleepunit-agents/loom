@@ -1,3 +1,4 @@
+import {conversationTitle} from '../../data/conversation-title';
 import {useState} from 'react';
 import {useDataQuery} from '../../data/graphql';
 import {Button,Empty,Error,Loading} from '../../kit';
@@ -26,7 +27,7 @@ export function ConversationActivity({conversation}:{conversation:string}){
  const steps=activity?.turnsByConversation??[];
  const timezone=result.status==='live'?result.data?.deskTime?.timezone:undefined;
  return <article className="flex h-full min-h-0 flex-col">
-  <header className="grid gap-2 border-b p-4"><h1>Conversation activity</h1>{activity&&<p>{activity.label}</p>}
+  <header className="grid gap-2 border-b p-4"><h1>Conversation activity</h1>{activity&&<p>{conversationTitle(activity)}</p>}
    {receipt&&<p>Your message at {fullTime(receipt.receivedAt,timezone)} · {receipt.acceptedAt
     ? receipt.agent+' received it at '+fullTime(receipt.acceptedAt,timezone) : 'No body acknowledgment recorded'}
     {' · '}{receipt.replied?'Reply sent':'No sent reply recorded'}</p>}</header>

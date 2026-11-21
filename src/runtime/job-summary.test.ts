@@ -110,10 +110,10 @@ it('reads historical usage and counts only visible jobs over a half-open queue-t
     jobUsage(id:"private"){id}
     old:jobUsage(id:"old"){usage{source tokensIn firstContext tools{name}} observations}
     retry:jobUsage(id:"retry"){observations}
-    jobUsageRollup(from:"2026-11-14T00:00:00Z",to:"2026-11-15T00:00:00Z",groupBy:"day"){key jobCount retryCount totalTokens}
+    jobUsageRollup(from:"2026-11-14T00:00:00Z",to:"2026-11-15T00:00:00Z",groupBy:"day"){key jobCount retryCount totalTokens largestContext jobsWithLargestContext}
   }`});
   expect(result).toEqual({data:{jobUsage:null,old:{usage:{source:'none',tokensIn:null,firstContext:null,tools:null},observations:[]},
-    retry:{observations:['This job was a retry.']},jobUsageRollup:[{key:'2026-11-14',jobCount:2,retryCount:1,totalTokens:null}]}});
+    retry:{observations:['This job was a retry.']},jobUsageRollup:[{key:'2026-11-14',jobCount:2,retryCount:1,totalTokens:null,largestContext:null,jobsWithLargestContext:0}]}});
 });
 
 it('counts complete firings in a reused wake conversation, with all retries and earlier history outside the window',async()=>{
@@ -182,12 +182,12 @@ it('groups terminal main and subagent usage under their visible parent conversat
   f.add('child','done',{title:'Inspect parser',member:'owner',startedByKind:'terminal'});
   f.db.insert(terminalSessions).values({job:'main',sessionId:'s',machine:'attic',agent:'art',member:'owner',harness:'claude',cwd:'/work'}).run();
   f.db.insert(terminalRuns).values([{job:'main',parent:'main',runId:'main',revision:1},{job:'child',parent:'main',runId:'sub1',revision:1}]).run();
-  for(const [id,n] of [['main',4],['child',7]] as const) f.db.insert(jobUsage).values({job:id,source:'report',tokensIn:n,tokensOut:0}).run();
+  for(const [id,n] of [['main',4],['child',7]] as const) f.db.insert(jobUsage).values({job:id,source:'report',tokensIn:n,tokensOut:0,largestContext:id==='main'?0:null}).run();
   const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:jobSummaryFields(f.summaries)})});
-  const query='{conversationJobUsage(conversation:"cv"){id title runKind usage{totalTokens}} jobUsageRollup(from:"2026-11-14T00:00:00Z",to:"2026-11-15T00:00:00Z",groupBy:"conversation"){key totalTokens}}';
+  const query='{conversationJobUsage(conversation:"cv"){id title runKind usage{totalTokens}} jobUsageRollup(from:"2026-11-14T00:00:00Z",to:"2026-11-15T00:00:00Z",groupBy:"conversation"){key totalTokens largestContext jobsWithLargestContext jobCount}}';
   expect(await graphql({schema,source:query})).toEqual({data:{conversationJobUsage:[
     {id:'main',title:'main',runKind:'main',usage:{totalTokens:4}},
-    {id:'child',title:'Inspect parser',runKind:'subagent',usage:{totalTokens:7}}],jobUsageRollup:[{key:'cv',totalTokens:11}]}});
+    {id:'child',title:'Inspect parser',runKind:'subagent',usage:{totalTokens:7}}],jobUsageRollup:[{key:'cv',totalTokens:11,largestContext:0,jobsWithLargestContext:1,jobCount:2}]}});
   f.policy({jobs:fields=>sql`${fields.id} != 'main'`});
   expect((await graphql({schema,source:query})).data?.jobUsageRollup).toEqual([]);
 });

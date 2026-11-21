@@ -9,11 +9,12 @@ vi.mock('../../data/graphql',()=>({useDataQuery:feed}));
 it('orders conversations by reported tokens and opens the selected jobs in the same range',async()=>{
   feed.mockImplementation((query:string)=>({status:'live',data:query.includes('conversationJobUsage')?
     {conversationJobUsage:[{id:'j-one',title:'Inspect parser',runKind:'subagent',observations:['Large context with no tool calls.'],usage:{source:'report',model:'test-model',toolCalls:0,tools:[],tokensIn:null}}]}:
-    {jobUsageRollup:[{key:'small',title:'Small',totalTokens:1,jobCount:1,retryCount:0},{key:'large',title:'Large',totalTokens:999,jobCount:1,retryCount:0}]}}));
+    {jobUsageRollup:[{key:'small',title:'Small',totalTokens:1,jobCount:1,retryCount:0,largestContext:null,jobsWithLargestContext:0},{key:'large',title:'Large',totalTokens:999,jobCount:2,retryCount:0,largestContext:812,jobsWithLargestContext:1}]}}));
   let tree!:ReturnType<typeof create>;
   await act(async()=>{tree=create(h(Usage));});
   try {
     const buttons=tree.root.findAllByType('button');
+    expect(tree.root.findAllByType('small').map(node=>node.children.join(''))).toEqual(['1 of 2 measured','0 of 1 measured']);
     expect(buttons.map(b=>b.props.children)).toEqual(['Large','Small']);
     await act(async()=>buttons[0].props.onClick());
     expect(JSON.stringify(tree.toJSON())).toContain('Large context with no tool calls.');
@@ -41,7 +42,7 @@ it('keeps the table and the opened conversation on screen while another date ran
   // As the data hook answers: with `keep`, the last answer again, marked settling; without it, loading.
   feed.mockImplementation((query:string,_variables:unknown,options?:{keep?:boolean})=>changing&&!options?.keep?{status:'loading'}:{status:'live',settling:changing||undefined,data:query.includes('conversationJobUsage')?
     {conversationJobUsage:[{id:'j-one',title:'Inspect parser',runKind:'main',observations:[],usage:null}]}:
-    {jobUsageRollup:[{key:'large',title:'Large',totalTokens:999,jobCount:1,retryCount:0}]}});
+    {jobUsageRollup:[{key:'large',title:'Large',totalTokens:999,jobCount:2,retryCount:0,largestContext:812,jobsWithLargestContext:1}]}});
   let tree!:ReturnType<typeof create>;
   await act(async()=>{tree=create(h(Usage));});
   try {

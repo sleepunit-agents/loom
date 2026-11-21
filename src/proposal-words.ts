@@ -492,10 +492,19 @@ function bridge(input: Rec, context: CardContext, name: (id: unknown) => string,
       const bot = (row: Rec) => {
         const user = str(row.botUser), platform = str(row.platform), workspace = str(row.workspace);
         const resolved = names?.person(platform, workspace, user);
+        if (names && platform === 'slack') return resolved ? resolved.name + ' (Slack)' : 'An unnamed Slack account';
         return resolved ? resolved.name + ' (' + user + ' in ' + workspace + ')' : names
           ? 'A ' + platformWord(platform) + ' account loom has no name for (' + user + ' in ' + workspace + ')' : user;
       };
       const sameWorkspace = was?.platform === input.platform && was?.workspace === input.workspace;
+      const sameBot = sameWorkspace && was?.botUser === input.botUser;
+      const slackBot = names && input.platform === 'slack';
+      const oldBot = was && bot(was), newBot = bot(input);
+      const replacement = slackBot && !sameBot && oldBot === newBot
+        ? (newBot === 'An unnamed Slack account' ? 'Another unnamed Slack account' : 'Another account with the same name') : newBot;
+      const botIdentity = (row: Rec) => str(row.botUser) + ' in ' + str(row.workspace);
+      const botDetails: CardFact[] = slackBot ? [{ label: 'Bot account identifiers', small: true,
+        value: was && !sameBot ? botIdentity(was) + ' → ' + botIdentity(input) : botIdentity(input) }] : [];
       const channels = (row: Rec, key: string) => {
         const ids = strings(row[key]);
         return displayList(ids.slice(0, ITEM_LIMIT).map(id => {
@@ -506,13 +515,13 @@ function bridge(input: Rec, context: CardContext, name: (id: unknown) => string,
       const filter = (label: string, key: string): ChangeRow => sameValue(was?.[key], input[key]) && was
         ? [label, '', '', true] : [label, was && channels(was, key), channels(input, key), false];
       const told = changes(before, [['Agent', was && name(was.agent), name(input.agent)], ['Platform', was && platformWord(str(was.platform)), platform], ['Workspace', was && workspaceWords(names, str(was.platform), str(was.workspace)), place().value, sameWorkspace],
-        ['Bot account', was && bot(was), bot(input), sameWorkspace && was?.botUser === input.botUser], ['Secret holding its token', was && str(was.tokenSecret), str(input.tokenSecret)],
+        ['Bot account', oldBot, replacement, sameBot], ['Secret holding its token', was && str(was.tokenSecret), str(input.tokenSecret)],
         ['Secret holding its app token', was && (str(was.appSecret) || 'None'), str(input.appSecret) || 'None'], ['Switched on', was && yes(was.enabled), yes(input.enabled)],
         filter('Listens only in', 'only'), filter('Ignores', 'ignore')]);
       const only = was && !told.nothing && told.facts.length === 1 && told.facts[0]!.label === 'Switched on';
       return { title: only ? (input.enabled ? 'Switch on ' : 'Switch off ') + owns(name(input.agent)) + ' ' + platform + ' connection (' + str(input.id) + ')'
         : isNew ? 'Connect ' + name(input.agent) + ' to ' + platform + ' (connection ' + str(input.id) + ')' : (was ? 'Change ' : 'Set up ') + owns(name(input.agent)) + ' ' + platform + ' connection (' + str(input.id) + ')', ...told, facts: [...told.facts, ...(!told.facts.some(fact => fact.label === 'Workspace') ? [place()] : []),
-          ...(!told.facts.some(fact => fact.label === 'Bot account') ? [{ label: 'Bot account', value: bot(input) }] : [])] };
+          ...(!told.facts.some(fact => fact.label === 'Bot account') ? [{ label: 'Bot account', value: newBot }] : []), ...botDetails] };
     }
     case 'disconnect': {
       const same = !!was && was.enabled === false;
