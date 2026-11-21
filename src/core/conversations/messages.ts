@@ -12,7 +12,7 @@ import type { WordsKey } from './words.js';
 import { refsIn } from './refs.js';
 import { Threads } from './threads.js';
 import { expirePrivateBridgeWords } from './private-bridge-words.js';
-import { expireConversationSessions } from './sessions.js';
+import { eraseConversationSessions, expireConversationSessions } from './sessions.js';
 import { acceptAnswer, type Answer } from './answer-rule.js';
 import { lateMailWaits, type DigestInput, type LateJoins } from './index.js';
 import { commsKeepDays } from '../data/comms-days.js';
@@ -271,13 +271,18 @@ export class CommsMessages {
    * tombstone so delayed retries cannot recreate the conversation's thread. */
   delete(threadId: string): void {
     this.db.transaction(() => {
-      if (this.db.select().from(deletedThreads).where(eq(deletedThreads.id, threadId)).get()) return;
+      const prior = this.db.select().from(deletedThreads).where(eq(deletedThreads.id, threadId)).get();
+      if (prior) {
+        eraseConversationSessions(this.db, prior.conversation);
+        return;
+      }
       const { thread } = this.context(threadId), at = this.now();
       this.db.insert(deletedThreads).values({ id: threadId, conversation: thread.conversation, at }).run();
       this.db.delete(inboxRefs).where(inArray(inboxRefs.item, this.db.select({ id: inbox.id }).from(inbox).where(eq(inbox.thread, threadId)))).run();
       this.db.update(inbox).set({ thread: null, messageSeq: null,
         state: sql`case when ${inbox.state} in ('waiting', 'taken') then 'resolved' else ${inbox.state} end`,
         resolution: 'Thread deleted', changedAt: at }).where(eq(inbox.thread, threadId)).run();
+      eraseConversationSessions(this.db, thread.conversation);
       this.db.delete(threads).where(eq(threads.id, threadId)).run();
     });
   }

@@ -25,9 +25,9 @@
  * and will be behind the conversation as soon as the body answers. A session too large to keep is not
  * kept and removes the one before it for the same reason.
  */
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, notInArray, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { conversationSessions } from '../data/schema.js';
+import { conversationSessions, deletedThreads } from '../data/schema.js';
 import { commsKeepDays } from '../data/comms-days.js';
 import { ageCutoff } from './retention.js';
 import { SESSION_BYTES, SESSION_ID, modelFamily } from './session-limit.js';
@@ -56,23 +56,29 @@ export class ConversationSessions {
 
   /** Replace the conversation's session for this harness, or remove it when there is nothing to keep. */
   store(sealed: SealedSession): boolean {
-    const where = and(eq(conversationSessions.conversation, sealed.conversation), eq(conversationSessions.harness, sealed.harness));
-    if (!sealed.sealed) { this.db.delete(conversationSessions).where(where).run(); return false; }
-    // The count of its keep time starts at the oldest erasable word the session can hold: the start of the
-    // session kept here, if one is still within the keep time (this save continues or replaces it); the
-    // oldest such word its body was handed (`since`); and otherwise now. Whichever is earliest.
-    const now = this.now(), times = [this.kept(sealed.conversation, sealed.harness)?.startedAt, sealed.since, now].filter((at): at is string => !!at && Number.isFinite(Date.parse(at)) && Date.parse(at) <= Date.parse(now));
-    const startedAt = times.reduce((oldest, at) => Date.parse(at) < Date.parse(oldest) ? at : oldest);
-    // Already past the keep time by that count: there is nothing it may be kept for.
-    if (Date.parse(startedAt) <= Date.parse(ageCutoff(now, commsKeepDays(this.db)))) { this.db.delete(conversationSessions).where(where).run(); return false; }
-    const row = { conversation: sealed.conversation, harness: sealed.harness, session: sealed.session, files: sealed.sealed, bytes: sealed.bytes, startedAt };
-    this.db.insert(conversationSessions).values(row).onConflictDoUpdate({ target: [conversationSessions.conversation, conversationSessions.harness], set: row }).run();
-    return true;
+    return this.db.transaction(() => {
+      // Sealing happens outside the write transaction. Deletion may have committed in the meantime.
+      if (this.db.select({id:deletedThreads.id}).from(deletedThreads)
+        .where(eq(deletedThreads.conversation,sealed.conversation)).limit(1).get()) return false;
+      const where = and(eq(conversationSessions.conversation, sealed.conversation), eq(conversationSessions.harness, sealed.harness));
+      if (!sealed.sealed) { this.db.delete(conversationSessions).where(where).run(); return false; }
+      // The count of its keep time starts at the oldest erasable word the session can hold: the start of the
+      // session kept here, if one is still within the keep time (this save continues or replaces it); the
+      // oldest such word its body was handed (`since`); and otherwise now. Whichever is earliest.
+      const now = this.now(), times = [this.kept(sealed.conversation, sealed.harness)?.startedAt, sealed.since, now].filter((at): at is string => !!at && Number.isFinite(Date.parse(at)) && Date.parse(at) <= Date.parse(now));
+      const startedAt = times.reduce((oldest, at) => Date.parse(at) < Date.parse(oldest) ? at : oldest);
+      // Already past the keep time by that count: there is nothing it may be kept for.
+      if (Date.parse(startedAt) <= Date.parse(ageCutoff(now, commsKeepDays(this.db)))) { this.db.delete(conversationSessions).where(where).run(); return false; }
+      const row = { conversation: sealed.conversation, harness: sealed.harness, session: sealed.session, files: sealed.sealed, bytes: sealed.bytes, startedAt };
+      this.db.insert(conversationSessions).values(row).onConflictDoUpdate({ target: [conversationSessions.conversation, conversationSessions.harness], set: row }).run();
+      return true;
+    }, { behavior: 'immediate' });
   }
 
   /** The stored row if the keep time has not passed since its session was started, as it is: opening it is `open`. */
   kept(conversation: string, harness: string): typeof conversationSessions.$inferSelect | undefined {
-    const row = this.db.select().from(conversationSessions).where(and(eq(conversationSessions.conversation, conversation), eq(conversationSessions.harness, harness))).get();
+    const row = this.db.select().from(conversationSessions).where(and(eq(conversationSessions.conversation, conversation), eq(conversationSessions.harness, harness),
+      notInArray(conversationSessions.conversation,this.db.select({conversation:deletedThreads.conversation}).from(deletedThreads)))).get();
     return row && Date.parse(row.startedAt) > Date.parse(ageCutoff(this.now(), commsKeepDays(this.db))) ? row : undefined;
   }
 
@@ -84,16 +90,28 @@ export class ConversationSessions {
       const value = JSON.parse(await this.key.open(row.files)) as { model?: unknown; files?: unknown; at?: unknown; covered?: string[] };
       if (typeof value.model !== 'string' || typeof value.files !== 'string' || typeof value.at !== 'string' || !Number.isFinite(Date.parse(value.at))
         || modelFamily(value.model) !== modelFamily(model)) return null;
+      // Opening can yield while the thread is deleted, the session is replaced, or its words expire.
+      const current = this.kept(conversation, harness);
+      if (!current || current.startedAt !== row.startedAt || current.session !== row.session || !current.files.equals(row.files)) return null;
       return { session: row.session, files: value.files, startedAt: row.startedAt, lastSavedAt: value.at, ...(value.covered ? {covered:value.covered} : {}) };
     } catch { return null; }
   }
 
 }
 
+/** Erase every harness checkpoint with the thread in the caller's deletion transaction. */
+export function eraseConversationSessions(db: DataDatabase, conversation: string): void {
+  db.delete(conversationSessions).where(eq(conversationSessions.conversation, conversation)).run();
+}
+
 /** Remove every session started at or before `cutoff`: the sweep that erases words at the keep time calls
  * this with the same cutoff (messages.ts, expire). Returns how many went. */
 export function expireConversationSessions(db: DataDatabase, cutoff: string): number {
-  return db.delete(conversationSessions).where(sql`julianday(${conversationSessions.startedAt}) <= julianday(${cutoff})`).run().changes;
+  const removed = db.select({conversation: deletedThreads.conversation}).from(deletedThreads);
+  return db.delete(conversationSessions).where(or(
+    sql`julianday(${conversationSessions.startedAt}) <= julianday(${cutoff})`,
+    inArray(conversationSessions.conversation, removed),
+  )).run().changes;
 }
 /** When the oldest kept session was started, for the sweep's schedule (lifetime.ts). */
 export function oldestConversationSession(db: DataDatabase): number | undefined {
