@@ -1,8 +1,9 @@
 /** Tempo authority at the outside door. Services themselves remain trusted.
  * Every decision here is a rule from policy.ts, read for one trigger, recipient or record. */
 import {conversationQuestionPolicy} from './shared-conversation-questions.js';
+import { parkedSource, parkedDestination } from './core/tempo/parked.js';
 import { eq } from 'drizzle-orm';
-import { addressee, holds, inHousehold, maySetTrigger, mayStartTrigger, rules, tableRules, triggerAsSet, type Viewer } from './policy.js';
+import { addressee, holds, inHousehold, maySetTrigger, mayStartTrigger, rules, tableRules, triggerAsSet, triggerWorksFor, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
 import { triggers, approvals, changes, conversations, inbox, jobs, secretRequests } from './core/data/schema.js';
@@ -57,7 +58,15 @@ export function tempoCommandAllowed(db: DataDatabase, viewer: Viewer, access: Te
       return !!stored && holds(rules.trigger, viewer, stored, sharing) && (access.action === 'stop' || mayStartTrigger(viewer, stored, sharing));
     }
     // Judged as it will be recorded: see recordedTrigger.
-    case 'set': return sourceAllowed(access.trigger.sourceKind, access.trigger.watches) && maySetTrigger(viewer, triggerAsSet(viewer, access.trigger, sharing), sharing);
+    case 'set': {
+      const t = triggerAsSet(viewer, access.trigger, sharing);
+      const park = parkedSource(t.watches);
+      if (park) return t.sourceKind === 'answer' && t.toKind === 'agent' && !!t.to
+        && sourceAllowed('answer', (park.approval ? 'approval:' : 'secret-request:') + park.id)
+        && maySetTrigger(viewer, t, sharing)
+        && parkedDestination(db, park, {agent:t.to, member:triggerWorksFor(t, sharing), project:t.project, conversation:t.conversation});
+      return sourceAllowed(t.sourceKind, t.watches) && maySetTrigger(viewer, t, sharing);
+    }
   }
 }
 

@@ -1,11 +1,38 @@
 import { eq } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { approvals, secretRequests, secretGrants } from '../data/schema.js';
+import { approvals, conversations, jobs, secretRequests, secretGrants } from '../data/schema.js';
 
 /** Parked continuations have their own watch names. Ordinary answer watches deliver their original words. */
 export function parkedSource(watch: string | null | undefined) {
   const match = /^(park-approval|park-secret):([A-Za-z0-9_-]{1,200})$/.exec(watch ?? '');
   return match ? { approval:match[1] === 'park-approval', id:match[2] } : undefined;
+}
+
+type Destination = { agent: string; project?: string | null; member?: string | null; conversation?: string | null };
+
+/** Check the actual audience again before delivery. An unlabelled wake is agent-wide.
+ * A request attached to a job inherits that job's conversation and private labels. */
+export function parkedDestination(db: DataDatabase, source: NonNullable<ReturnType<typeof parkedSource>>, dest: Destination) {
+  const scope = source.approval
+    ? db.select({agent:approvals.agent, member:approvals.member, project:approvals.project, conversation:approvals.conversation})
+        .from(approvals).where(eq(approvals.id, source.id)).get()
+    : db.select({agent:secretRequests.agent, conversation:secretRequests.conversation, job:secretRequests.job})
+        .from(secretRequests).where(eq(secretRequests.id, source.id)).get();
+  if (!scope || scope.agent !== dest.agent) return false;
+  const job = 'job' in scope && scope.job ? db.select({agent:jobs.agent, conversation:jobs.conversation, project:jobs.project, member:jobs.member})
+    .from(jobs).where(eq(jobs.id, scope.job)).get() : undefined;
+  if ('job' in scope && scope.job && (!job || job.agent !== dest.agent)) return false;
+  const conversation = scope.conversation ?? job?.conversation ?? null;
+  if (conversation !== (dest.conversation ?? null) || (job?.conversation && job.conversation !== conversation)) return false;
+  const cv = conversation ? db.select({agent:conversations.agent, member:conversations.member, project:conversations.project})
+    .from(conversations).where(eq(conversations.id, conversation)).get() : undefined;
+  if (conversation && (!cv || cv.agent !== dest.agent)) return false;
+  if (cv && ((dest.project && dest.project !== cv.project) || (dest.member && dest.member !== cv.member))) return false;
+  const member = cv ? cv.member : dest.member ?? null;
+  const project = cv ? cv.project : dest.project ?? null;
+  const labels = 'member' in scope ? scope : job;
+  if (labels?.member && labels.member !== member || labels?.project && labels.project !== project) return false;
+  return !!conversation || ((labels?.member ?? null) === member && (labels?.project ?? null) === project);
 }
 
 export function parkedVerdict(db: DataDatabase, source: NonNullable<ReturnType<typeof parkedSource>>, now: number) {

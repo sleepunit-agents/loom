@@ -163,6 +163,25 @@ function scheduleOptions(args: string[]) {
     wantsModel:values.model || null, execution:instructions?.includes('<!-- house: local -->') ? 'host' : 'container' } };
 }
 
+function parkOptions(args: string[]) {
+  const {values} = parseArgs({args, options:{
+    on:{type:'string'}, prompt:{type:'string',short:'p'}, 'prompt-file':{type:'string',short:'f'},
+    note:{type:'string'}, model:{type:'string'}, project:{type:'string'}, conversation:{type:'string'},
+  }});
+  const source = values.on?.match(/^(?:(approval|secret-request):([A-Za-z0-9_-]{1,200})|([aq]-[A-Za-z0-9_-]{1,198}))$/);
+  if (!source) throw Error();
+  const id = source[2] ?? source[3];
+  const approval = source[1] ? source[1] === 'approval' : id.startsWith('a-');
+  const instructions = values.prompt, file = values['prompt-file'];
+  if (!!instructions === !!file || (instructions && !instructions.trim()) || (file && !laneFile(file))) throw Error();
+  const note = values.note || file;
+  if (!note?.trim()) throw Error();
+  return {ownerKind:'agent',sourceKind:'answer',lifespan:'once',targetKind:'inbox',toKind:'agent',
+    watches:(approval ? 'park-approval:' : 'park-secret:') + id, instructions, file, note,
+    project:values.project, conversation:values.conversation, wantsModel:values.model,
+    execution:instructions?.includes('<!-- house: local -->') ? 'host' : 'container'};
+}
+
 function wakeOptions(verb: 'at' | 'in', args: string[]) {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: {
     prompt: { type: 'string', short: 'p' }, 'prompt-file': { type: 'string', short: 'f' },
@@ -259,6 +278,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
   let scheduleAction: 'run' | 'rm' | 'set' | undefined;
   let scheduleName: string | undefined;
   let cancel: { id: string; at?: string } | undefined;
+  let park: ReturnType<typeof parkOptions> | undefined;
   let wake: ReturnType<typeof wakeOptions> | undefined;
   let options: ReturnType<typeof logOptions> | undefined;
   try {
@@ -284,11 +304,12 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
       const [encoded, at, extra] = argv[1].split('@');
       if (!encoded || extra !== undefined || (at !== undefined && !z.string().datetime().safeParse(at).success)) throw Error();
       cancel = { id: decodeURIComponent(encoded), at };
-    } else if (verb === 'in' || verb === 'at') wake = wakeOptions(verb, argv.slice(1));
+    } else if (verb === 'park') park = parkOptions(argv.slice(1));
+    else if (verb === 'in' || verb === 'at') wake = wakeOptions(verb, argv.slice(1));
     else if (verb === 'log') options = logOptions(argv.slice(1));
     else if ((verb !== 'list' && !changesClock) || argv.length !== 1) throw Error();
   } catch {
-    io.stderr('usage: wake [--agent AGENT] lane list | lane text NAME | lane set NAME (-f FILE | -p WORDS) | schedule list | schedule set NAME --at HH:MM (-p WORDS | -f REPO_FILE) [--days DAYS] [--note NOTE] [--model MODEL] | schedule run NAME | schedule rm NAME | list | cancel WAKE | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
+    io.stderr('usage: wake [--agent AGENT] lane list | lane text NAME | lane set NAME (-f FILE | -p WORDS) | schedule list | schedule set NAME --at HH:MM (-p WORDS | -f REPO_FILE) [--days DAYS] [--note NOTE] [--model MODEL] | schedule run NAME | schedule rm NAME | list | cancel WAKE | park --on REQUEST (-p WORDS --note PURPOSE | -f REPO_FILE) | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
     return 2;
   }
   try {
@@ -392,6 +413,12 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
       io.stdout((verb === 'pause' ? 'Paused ' : 'Resumed ') + onOneLine(agent) + "'s clock.\n");
       return 0;
     }
+    if (park) {
+      const result = await post('/api/tempo/set', {id:randomUUID(), input:{...park, owner:agent, to:agent}});
+      const {value} = z.object({ok:z.literal(true),value:z.object({id:z.string(),waits:z.string().optional()})}).parse(result);
+      io.stdout(onOneLine(value.waits ? 'Awaiting approval: ' + value.waits : 'Parked ' + encodeURIComponent(value.id) + ' on ' + park.watches.slice(park.watches.indexOf(':') + 1) + '.') + '\n');
+      return 0;
+    }
     if (wake) {
       let times = wake.times;
       if (times === undefined) {
@@ -426,7 +453,9 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     rows.sort((a, b) => (a.nextDueAt ?? '~').localeCompare(b.nextDueAt ?? '~') || a.id.localeCompare(b.id));
     const now = Date.now();
     for (const row of rows) {
-      const when = row.nextDueAt ? format.format(new Date(row.nextDueAt)) + '  (in ' + remaining(row.nextDueAt, now) + ')'
+      const parked = row.sourceKind === 'answer' && row.watches?.match(/^park-(?:approval|secret):(.+)$/);
+      const when = parked && row.nextDueAt ? 'waiting for ' + parked[1] + ' until ' + format.format(new Date(row.nextDueAt))
+        : row.nextDueAt ? format.format(new Date(row.nextDueAt)) + '  (in ' + remaining(row.nextDueAt, now) + ')'
         : row.watches ? 'waiting for ' + row.watches : 'no due time';
       const key = encodeURIComponent(row.id) + (row.lifespan !== 'once' && row.nextDueAt ? '@' + row.nextDueAt : '');
       const line = `${key}  ${when}  [${row.state}]  ${row.note}`;
@@ -441,6 +470,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     else if (scheduleAction) io.stderr('Could not confirm the schedule request. Check wake log before retrying.\n');
     else if (verb === 'schedule') io.stderr('Could not read recurring schedules from Loom.\n');
     else if (cancel) io.stderr('Could not confirm cancellation. Run wake list for the current occurrence.\n');
+    else if (park) io.stderr('Could not confirm the parked wait. Check wake list before retrying.\n');
     else if (wake) io.stderr('Could not confirm the scheduled wake.\n');
     else if (changesClock) io.stderr('Could not confirm the request to ' + verb + ' the clock.\n');
     else io.stderr('Could not read ' + (verb === 'log' ? 'wake history' : 'pending wakes') + ' from Loom.\n');

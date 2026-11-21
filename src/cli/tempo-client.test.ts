@@ -8,7 +8,7 @@ import { expect, it } from 'vitest';
 import { datedWake } from '../core/tempo/calendar.js';
 import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
-import { agents, agentPauses, household, inbox, members, memberAgents, tokens, triggerLog, triggers } from '../core/data/schema.js';
+import { approvals, agents, agentPauses, household, inbox, members, memberAgents, tokens, triggerLog, triggers } from '../core/data/schema.js';
 import { sharedRoot } from '../shared-root.js';
 import { runTempoClient } from './tempo-client.js';
 
@@ -120,6 +120,23 @@ it('finds earlier matching history of a stopped wake across pages, with the agen
     expect(await runTempoClient(['log', '--grep', 'delivered'], io, request)).toBe(0);
     expect(out.trim().split('\n')).toHaveLength(1);
     expect(out).toMatch(/fired \| scheduled .* → delivered cv-[\w-]+/);
+    for (const id of ['a-report','a-restricted']) db.insert(approvals).values({
+      id,agent:'fern',kind:'command',target:'fixture',what:'Fixture',why:'Private reason',askedFrom:'fixture',actingFor:'fern',
+      state:'pending',minutes:5,ask:'Fixture',ifYes:'Yes',ifNo:'No',details:'Private details',askedAt:at,
+    }).run();
+    const park = (id:string) => ['park','--on',id,'-p','Check the result','--note','Follow up'];
+    expect(await runTempoClient(['--agent','birch',...park('a-report')], io, request)).toBe(1);
+    expect(await runTempoClient(park('a-report'), io, request),err).toBe(0);
+    expect(await runTempoClient(park('a-restricted'), io, request),err).toBe(0);
+    out = '';
+    expect(await runTempoClient(['list'], io, request),err).toBe(0);
+    expect(out).toContain('waiting for a-report until ');
+    app.writes.run(() => {
+      sql.prepare("UPDATE approvals SET state='denied', decided_at=? WHERE id='a-report'").run(at);
+      sql.prepare("UPDATE approvals SET member='owner', state='denied', decided_at=? WHERE id='a-restricted'").run(at);
+    });
+    const resumed = db.select().from(inbox).all().filter(row => row.sourceId?.endsWith(':park:resume'));
+    expect(resumed.map(row => [row.to,row.words])).toEqual([['fern','Request a-report is denied.\n\nCheck the result']]);
   } finally {
     await app.close();
     sql.close();
@@ -184,7 +201,7 @@ it('replays creation and pause after lost responses and delivers once to the res
     expect(recipients()).toEqual([{ to: 'fern' }]);
     expect(paused()).toEqual([{ agent: 'birch' }]);
     expect(output).toContain("Resumed fern's clock.");
-    expect(await runTempoClient(['at','tomorrow','9:30','-f','routines/check.md'], io, loseScheduleReply)).toBe(0);
+    expect(await runTempoClient(['at','tomorrow','9:30','-f','routines/check.md'], io, request)).toBe(0);
     expect(db.select().from(triggers).all().at(-1)).toMatchObject({ file:'routines/check.md', note:'routines/check.md', instructions:null });
     const fileWake = db.select().from(triggers).all().find(row => row.file === 'routines/check.md')!;
     expect(await runTempoClient(['--agent=birch','cancel',fileWake.id], io, request)).toBe(1);
