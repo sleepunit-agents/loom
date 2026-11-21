@@ -514,6 +514,7 @@ it('writes the number of a named limit in that limit\'s home and nowhere else', 
       'src/runtime/docker-engine.ts': 'the size of one answer from the container engine',
       'src/runtime/worker-process.ts': 'how much a usage reader may print' } },
     { value: LOG_TAIL_MAX, homes: { 'src/runtime/log-tail.ts': 'LOG_TAIL_MAX', 'src/runtime/fixed-program.ts': 'PROGRAM_OUTPUT_BYTES', 'src/core/tempo/journal.ts': 'TRIGGER_JOURNAL_BYTES' }, others: {
+      'src/portrait-png.ts': 'the longest permitted image dimension in pixels before decoding a portrait',
       'src/pieces/secrets/holder-store.ts': 'the longest header of a stored, encrypted value',
       'src/pieces/bridges/slack-socket.ts': 'the size of one answer from Slack when a socket is opened' } },
     { value: MESSAGE_WORDS_MAX, homes: { 'src/core/conversations/words.ts': 'MESSAGE_WORDS_MAX' }, others: {
