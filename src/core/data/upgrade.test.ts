@@ -134,7 +134,7 @@ describe('upgrading a household database', () => {
       .map(table => old.prepare(`SELECT * FROM ${table}`).all());
     const before = privateHistory();
     upgradeDataSchema(old);
-    expect(privateHistory()).toEqual([before[0].map(row=>({...row as object,handoff_not_before:null})), ...before.slice(1)]);
+    expect(privateHistory()).toEqual([before[0].map(row=>({...row as object,handoff_not_before:null})), before[1].map(row=>({...row as object,source_channel:null})), ...before.slice(2)]);
     expect(old.pragma('foreign_key_check')).toEqual([]);
     expect(() => old.prepare("DELETE FROM conversations WHERE id = 'cv'").run()).toThrow('FOREIGN KEY');
   });
