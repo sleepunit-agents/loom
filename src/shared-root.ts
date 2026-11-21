@@ -569,6 +569,8 @@ export function sharedRoot(options: {
   if(comms)for(const row of recentReviewEnds(comms.service))deliverReview(row.id);
   if (!options.deferRuntimeStart) runtime.start();
   if(bridgeDaemon)void bridgeDaemon.ready().catch(()=>{try{options.reportError(new Error('Bridge processing unavailable'));}catch{}});
+  // A shutdown may have landed between a committed enqueue and its post-commit flush.
+  pushes.flush();
   return {
     measuring: measuringReady,
     ready: measuringReady!.then(() => undefined),
