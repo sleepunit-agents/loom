@@ -5,11 +5,11 @@ import {privateInboxExpiries} from './private-inbox-words.js';
 import {oldestPrivateBridgeWords} from './private-bridge-words.js';
 import {oldestConversationSession} from './sessions.js';
 /** One owned timer for ciphertext retention and daily wordless-history rollup. */
-import { isNotNull } from 'drizzle-orm';
+import { isNotNull, min } from 'drizzle-orm';
 import type { Clock } from '../clock.js';
 import type { DataDatabase } from '../data/database.js';
 import type { DataWrites } from '../data/writes.js';
-import { messages } from '../data/schema.js';
+import { archivedQuestions, messages } from '../data/schema.js';
 import type { CommsMessages } from './messages.js';
 import { ConversationHistory } from './history.js';
 import { commsKeepDays } from '../data/comms-days.js';
@@ -31,6 +31,9 @@ export function conversationLifetime(db: DataDatabase, clock: Clock, service: Co
       if (Number.isFinite(householdEnd)) next = Math.min(next, householdEnd);
       if (Number.isFinite(storedEnd)) next = Math.min(next, storedEnd);
     }
+    const archived = db.select({seen:min(archivedQuestions.seenAt),until:min(archivedQuestions.keepUntil)})
+      .from(archivedQuestions).where(isNotNull(archivedQuestions.words)).get();
+    if (archived?.seen && archived.until) next = Math.min(next, ageLimit(Date.parse(archived.seen),days), Date.parse(archived.until));
     for(const item of handoffExpiries(db,days))next=Math.min(next,item.until);
     for(const item of privateInboxExpiries(db,days))next=Math.min(next,item.until);
     const bridgeWords=oldestPrivateBridgeWords(db);if(bridgeWords!==undefined)next=Math.min(next,ageLimit(bridgeWords,days));

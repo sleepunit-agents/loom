@@ -2315,7 +2315,25 @@ export const triggerAcceptances = sqliteTable('trigger_acceptances', {
   job: text('job').notNull().references(() => jobs.id, { onDelete: 'cascade' }),
 });
 
+/** A card that a member saw on an old thread. It carries history only and cannot be answered. */
+export const archivedQuestions = sqliteTable('archived_questions', {
+  thread: text('thread').notNull().references(() => threads.id, {onDelete:'cascade'}),
+  ref: text('ref').notNull(),
+  approval: text('approval'),
+  raisedAt: text('raised_at').notNull(),
+  seenAt: text('seen_at').notNull(),
+  keepUntil: text('keep_until').notNull(),
+  words: blob('words', {mode:'buffer'}),
+  verdict: text('verdict'),
+  answeredBy: text('answered_by'),
+  answeredAt: text('answered_at'),
+}, t => [primaryKey({columns:[t.thread,t.ref]}),
+  check('archived_questions_raised_utc',utc(t.raisedAt)), check('archived_questions_seen_utc',utc(t.seenAt)),
+  check('archived_questions_keep_utc',utc(t.keepUntil)), check('archived_questions_answered_utc',utc(t.answeredAt)),
+  index('archived_questions_history').on(t.thread,t.raisedAt,t.ref)]);
+
 export const plumbing = {
+  archivedQuestions,
   accountWeekReadings,
   changeReviewRounds,
   importedTaskSequence,

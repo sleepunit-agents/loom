@@ -1,3 +1,4 @@
+import { archivedQuestionFields, type ArchivedQuestion } from './archived-questions';
 import type { QuerySelection } from '../../data/graphql/selection';
 import type { CommsMessage, CommsThread } from '../comms-view/model';
 export const threadFields = 'id conversation venue title agent project member pinned archivedAt lastAt readSeq working stopRequested';
@@ -12,7 +13,7 @@ export interface CommsReading {
   folders: { threads: number; archived: number }; threads: CommsThread[];
 }
 export interface CommsThreadReading {
-  thread: CommsThread | null;
+  archivedQuestions: ArchivedQuestion[]; thread: CommsThread | null;
   messages: CommsMessage[]; refs: { ref: string; messageSeq: number }[];
 }
 export function commsSelection(archived: boolean, search: string, offset: number): QuerySelection<CommsReading> {
@@ -25,15 +26,16 @@ export function commsSelection(archived: boolean, search: string, offset: number
 }
 /** The open thread, alone: its row, a page of its messages and what they mention. Opening a thread or paging its
  * messages changes this request and nothing the list of threads reads. */
-export const commsThreadQuery = `query CommsThread($id:String!,$before:Int){
+export const commsThreadQuery = `query CommsThread($id:String!,$before:Int,$earlier:Boolean!){
+ commsArchivedQuestions(thread:$id,limit:51) @skip(if:$earlier){${archivedQuestionFields}}
  commsThread(id:$id){${threadFields}}
  commsMessages(thread:$id,beforeSeq:$before,limit:51){${messageFields}}
  commsRefs(thread:$id){ref messageSeq}
 }`;
 export function commsThreadSelection(id: string, before?: number): QuerySelection<CommsThreadReading> {
-  return { query: commsThreadQuery, variables: { id, before: before ?? null }, decode(data) {
+  return { query: commsThreadQuery, variables: { id, before: before ?? null, earlier: before !== undefined }, decode(data) {
     if (!Array.isArray(data.commsMessages) || !Array.isArray(data.commsRefs)) throw Error('Invalid Comms thread');
-    return { thread: data.commsThread as CommsThread | null ?? null, messages: data.commsMessages as CommsMessage[], refs: data.commsRefs as CommsThreadReading['refs'] };
+    return { archivedQuestions: (data.commsArchivedQuestions ?? []) as ArchivedQuestion[], thread: data.commsThread as CommsThread | null ?? null, messages: data.commsMessages as CommsMessage[], refs: data.commsRefs as CommsThreadReading['refs'] };
   } };
 }
 /** Withhold private wording without waiting for a live refresh at the deadline. */
