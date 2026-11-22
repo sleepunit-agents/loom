@@ -480,6 +480,20 @@ it('reads only the open card, keeps the dangerous confirmation available, and re
  expect(request).toHaveBeenCalledTimes(4);
 });
 
+it('shows the selected Inbox grant blocker before opening its exact details',async()=>{
+ fixture();feed.owner=true;
+ const row=feed.approvals.approvals[0];
+ Object.assign(row,{operation:'household.change'});
+ const value={summary:'',problem:null,blocked:'This cannot be allowed yet: Fern does not know this account as an outside contact.',
+  card:{title:'Review kit access',facts:[{label:'Account ID',value:'PRIVATE-ACCOUNT-ID'}],exact:'PRIVATE-EXACT',nothing:false}};
+ const request=vi.fn(async()=>Response.json({ok:true,value}));vi.stubGlobal('fetch',request);
+ await draw(h(LiveApprovalCard,{id:row.id,showBlocker:true}));
+ expect(words()).toContain('does not know this account as an outside contact');
+ expect(words()).not.toContain('PRIVATE-ACCOUNT-ID');
+ await act(async()=>tree.root.findAllByType('Button').find(button=>button.props.children==='Details').props.onClick());
+ expect(words()).toContain('PRIVATE-ACCOUNT-ID');
+ expect(request).toHaveBeenCalledTimes(1);
+});
 it('requests details for only the opened card in a conversation with ten household approvals', async () => {
  fixture();feed.owner=true;
  feed.approvals.approvals=Array.from({length:10},(_,i)=>({...feed.approvals.approvals[0],id:'a-'+i,operation:'household.change',
