@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > (2026-04-23) and this release ship together as `0.5.0`.
 
 ## [Unreleased]
+- The Comms portrait signals and animates when a new reply arrives in the open thread. Reopening older replies stays quiet.
 - New workers can request admission with a matching code. An owner can admit a report-only machine or block it from the Inbox.
 - Explain unavailable kits in job briefs and give household owners one actionable notice per cause. Name outside askers in owner questions and tell guest jobs to ask only for owner decisions.
 

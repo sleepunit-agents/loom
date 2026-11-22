@@ -25,7 +25,7 @@ type Navigation = { archived: boolean; search: string; offset: number; hasNext: 
 type Note = (id: string, waiting: boolean) => void;
 type Cards = {
   /** The agent's small face, beside the title. */
-  screen?: ReactNode;
+  screen?(waitingOnMember:boolean): ReactNode;
   history?: ReactNode;
   /** A question where it was asked. */
   question?(id: string, note: Note): ReactNode;
@@ -176,7 +176,7 @@ function ThreadReader({ member, detail, actions, cards, navigation, readVisible 
     : thread.archivedAt ? actions ? 'This conversation is archived. Restore it from More to write here.' : 'This conversation is archived.'
       : !actions ? 'This is someone else’s conversation, so you can read it but not write in it.' : undefined;
   return <article className="comms" aria-label="Conversation">
-    <Head leading={cards?.screen} actions={actions && <Actions>
+    <Head leading={cards?.screen?.(waiting.length > 0)} actions={actions && <Actions>
       {thread.venue !== 'terminal' && thread.working && <Button disabled={busy || thread.stopRequested} onClick={() => change({ change: 'stop' })}>{thread.stopRequested ? 'Stopping…' : 'Stop'}</Button>}
       <Menu label="More" name="More for this conversation">{close => <>
         <Button disabled={busy} onClick={() => { close(); change({ change: 'pin', pinned: !thread.pinned }); }}>{thread.pinned ? 'Unpin' : 'Pin'}</Button>
