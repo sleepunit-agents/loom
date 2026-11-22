@@ -1,6 +1,6 @@
 import {createHash, randomBytes, randomUUID} from 'node:crypto';
 import {constants} from 'node:fs';
-import {link, lstat, mkdir, open, realpath, unlink} from 'node:fs/promises';
+import {link, lstat, mkdir, open, readFile, realpath, unlink} from 'node:fs/promises';
 import {join, resolve} from 'node:path';
 import {z} from 'zod';
 import {machineName} from '../core/line-name.js';
@@ -48,7 +48,7 @@ async function joinIdentity(directory:string, origin:string, name:string) {
 }
 
 /** The worker keeps its own credential. Loom receives only its fingerprint and the request identity. */
-export async function requestWorkerJoin(address:string, name:string, directory:string){
+export async function requestWorkerJoin(address:string, name:string, directory:string, template?:string){
   const origin=privateOrigin(address).origin;
   machineName.parse(name);
   const saved=await joinIdentity(directory,origin,name);
@@ -63,5 +63,37 @@ export async function requestWorkerJoin(address:string, name:string, directory:s
     z.object({state:z.literal('allowed'),box:z.string().regex(/^box-[a-f0-9-]{36}$/)}),
     z.object({state:z.literal('blocked')}),z.object({state:z.literal('expired')}),
   ]).parse(await response.json());
+  if (result.state==='allowed' && template) {
+    const root=resolve(directory),tokenFile=join(root,'runner.token');
+    const input=JSON.parse(await readFile(template,'utf8'));
+    if (input?.box!==null || privateOrigin(input.url).origin!==origin || input.tokenFile!==tokenFile)
+      throw Error('Worker template must match the requested Loom and private token path');
+    const {workerConfigSchema}=await import('./worker-program.js');
+    const config=workerConfigSchema.parse({...input,box:result.box,reportOnly:true});
+    // Publish the config last. A service that sees it can already read the complete credential.
+    await installPrivateFile(root,'runner.token',saved.token+'\n');
+    await installPrivateFile(root,'worker.json',JSON.stringify(config,null,2)+'\n');
+  }
   return result;
+}
+
+/** Never replace an existing service configuration. A retry may adopt identical private files. */
+async function installPrivateFile(directory:string,name:string,contents:string) {
+  const path=join(directory,name), temporary=join(directory,'.install-'+randomUUID());
+  const file=await open(temporary,'wx',0o600);
+  try {
+    try { await file.writeFile(contents); await file.sync(); } finally { await file.close(); }
+    try { await link(temporary,path); } catch(error) {
+      if (!hasCode(error,'EEXIST')) throw error;
+      const existing=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+      try {
+        const info=await existing.stat();
+        if (!info.isFile() || info.uid!==process.getuid?.() || (info.mode&0o077) ||
+            info.size!==Buffer.byteLength(contents) || await existing.readFile('utf8')!==contents)
+          throw Error('Worker service file already exists with different contents or permissions');
+      } finally {await existing.close();}
+    }
+    const parent=await open(directory,'r');
+    try {await parent.sync();} finally {await parent.close();}
+  } finally {await unlink(temporary);}
 }

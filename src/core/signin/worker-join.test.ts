@@ -1,5 +1,6 @@
 import {randomBytes, randomUUID} from 'node:crypto';
-import {mkdtempSync, readFileSync, rmSync} from 'node:fs';
+import {existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync} from 'node:fs';
+import {workerProgram} from '../../runtime/worker-program.js';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import Database from 'better-sqlite3';
@@ -87,7 +88,11 @@ it('lets the signed-in owner see and answer the matching request through the des
     sharedTokens(db,clock).issue({kind:'owner',member:'owner',label:'Fixture owner'});
     const token=db.select().from(tokens).get()!;
     const {cookie}=startBrowser(db,clock.now(),{token,userAgent:'Fixture Browser',via:'link'});
-    const result=await requestWorkerJoin(root.url,'wunder',directory);
+    const template=join(directory,'worker.enrollment.json'),configPath=join(directory,'worker.json'),tokenPath=join(directory,'runner.token');
+    writeFileSync(template,JSON.stringify({url:root.url,box:null,tokenFile:tokenPath,slots:1}));
+    const joinWorker=()=>requestWorkerJoin(root.url,'wunder',directory,template);
+    const result=await joinWorker();
+    expect([existsSync(configPath),existsSync(tokenPath)]).toEqual([false,false]);
     if(result.state!=='pending') throw Error('Expected pending request');
     const call=async(name:string,input:unknown)=> {
       const response=await fetch(root.url+'/api/runtime/'+name,{method:'POST',
@@ -101,11 +106,22 @@ it('lets the signed-in owner see and answer the matching request through the des
     expect(await call('workerJoinDecide',{request:pending.value.requests[0].request,code:result.code,decision:'allow'})).toMatchObject({ok:true,value:{state:'allowed'}});
     expect(await call('workerJoinPending',{})).toMatchObject({ok:true,value:{requests:[]}});
     expect(db.select().from(inbox).all()).toMatchObject([{state:'resolved',resolution:'Machine admitted'}]);
-    const admitted=await requestWorkerJoin(root.url,'wunder',directory);
+    const admitted=await joinWorker();
     if(admitted.state!=='allowed') throw Error('Expected owner-approved machine');
     const saved=JSON.parse(readFileSync(join(directory,'worker-join.json'),'utf8'));
     const auth=root.credentials.authenticate(new Request(root.url,{headers:{authorization:'Bearer '+saved.token}}));
     expect(auth?.viewer).toEqual({kind:'runner',id:admitted.box});
+    expect(await joinWorker()).toEqual(admitted);
+    expect(statSync(tokenPath).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(readFileSync(configPath,'utf8'))).toMatchObject({reportOnly:true,box:admitted.box,tokenFile:tokenPath});
+    let stop=()=>{};
+    const exit=await workerProgram({args:[configPath],read:async path=>readFileSync(path,'utf8'),
+      on:(_,fn)=>{stop=fn;},off:()=>{},error:()=>{},pause:async()=>stop()});
+    expect(exit).toBe(0);
+    expect(db.select().from(boxes).get()).toMatchObject({id:admitted.box,lastSeenAt:new Date(clock.now()).toISOString(),slots:0});
+    writeFileSync(configPath,'{"local":"edited"}');
+    await expect(joinWorker()).rejects.toThrow(/already exists/);
+    expect(readFileSync(configPath,'utf8')).toBe('{"local":"edited"}');
     await requestWorkerJoin(root.url,'second',join(directory,'second'));
     clock.advance(15*60_000);
     expect(db.select().from(inbox).all()).toContainEqual(expect.objectContaining({state:'resolved',resolution:'Join request expired'}));

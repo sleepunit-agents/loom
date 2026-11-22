@@ -3,14 +3,14 @@
 import { readFile } from 'node:fs/promises';
 import { workerProgram } from './runtime/worker-program.js';
 if(process.argv[2]==='request-join'){
-  const [address,name,directory,...rest]=process.argv.slice(3);
+  const [address,name,directory,template,...rest]=process.argv.slice(3);
   if(!address||!name||!directory||rest.length){
-    process.stderr.write('Usage: loom-worker request-join <loom-url> <machine-name> <private-directory>\n');
+    process.stderr.write('Usage: loom-worker request-join <loom-url> <machine-name> <private-directory> [worker-template.json]\n');
     process.exitCode=2;
   }else{
     try{
       const {requestWorkerJoin}=await import('./runtime/worker-join.js');
-      const result=await requestWorkerJoin(address,name,directory);
+      const result=await requestWorkerJoin(address,name,directory,template);
       process.stdout.write(JSON.stringify(result)+'\n');
       if(result.state==='blocked'||result.state==='expired')process.exitCode=1;
     }catch{
