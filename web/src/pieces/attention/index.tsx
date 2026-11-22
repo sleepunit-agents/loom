@@ -1,3 +1,4 @@
+import {WorkerJoinCard} from './worker-join';
 import { TaskQuestionAnswer } from '../tasks/question-answer';
 import { LiveApprovalCard, useApprovalList } from '../../data/work-views';
 import { approvalTitle } from '../approval-view/model';
@@ -73,8 +74,9 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
   return <InboxView zone={zone} snapshot={{ status, settling: reading.settling, folder: drawnFolder, folders: data?.folders, items: data?.items.slice(0, inboxPageSize).map(row => retainedInboxItem(row, Math.max(now, Date.now()))) ?? [] }}
     selected={selected} select={select} detail={{ status: detailStatus, item: current }} actions={actions}
     words={row => { const approval = approvalRequestId(row) ? cardOf(row) : undefined; return approval?.operation === 'household.change' ? named.get(approval.id) ?? approvalTitle(approval) : undefined; }}
-    sourceCard={item => item.source === 'task' && item.waitsOnKind === 'task' ? <TaskQuestionAnswer key={item.id} item={item}/>
-      : cardOf(item) ? <LiveApprovalCard key={item.id} id={item.waitsOnId!} displayTitle={named.get(item.waitsOnId!)} /> : undefined}
+    sourceCard={item => item.source === 'notice' && item.sourceId?.startsWith('worker-join:') ? <WorkerJoinCard key={item.id} item={item}/>
+      : item.source === 'task' && item.waitsOnKind === 'task' ? <TaskQuestionAnswer key={item.id} item={item}/>
+      : cardOf(item) ? <LiveApprovalCard showBlocker key={item.id} id={item.waitsOnId!} displayTitle={named.get(item.waitsOnId!)} /> : undefined}
     results={{ status, results: data?.results ?? [] }} dismissResult={live ? id => mutate('inbox.dismissResult', { id }) : undefined}
     navigation={{ folder, query: search, offset, hasNext: (data?.items.length ?? 0) > inboxPageSize,
       onFolder(id) { setFolder(id); setOffset(0); select(); }, onQuery(value) { setSearch(value); setOffset(0); },

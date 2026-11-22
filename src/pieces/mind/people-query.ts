@@ -47,6 +47,11 @@ export function peopleQueryFields(options:PeopleReaderOptions & {conversations?:
   }},
  }});
  return {nextDeadline:()=>reader?.nextDeadline(),fields:{
+  memoryOwnPersonEvidence:{type:new GraphQLList(new GraphQLNonNull(evidence)),args:{slug:{type:new GraphQLNonNull(GraphQLString)},since:text},resolve:(_source,args,context)=>{
+   if(context?.viewer?.kind!=='agent')return null;
+   if(args.since!=null&&!Number.isFinite(Date.parse(args.since)))throw new GraphQLError('Since must be a timestamp');
+   return safe(()=>reader?.ownEvidence(context.viewer,args.slug,args.since??null)??null,context);
+  }},
   memoryPeopleAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?reader?.access(context.viewer)??null:null},
   memoryPeople:{type:new GraphQLList(new GraphQLNonNull(person)),args:{includeRemovedAgents:{type:GraphQLBoolean,defaultValue:true}},resolve:(_source,args,context)=>{
    const viewer=context?.viewer;

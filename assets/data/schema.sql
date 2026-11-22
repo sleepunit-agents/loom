@@ -1378,6 +1378,29 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `worker_join_requests` (
+	`id` text PRIMARY KEY NOT NULL,
+	`fingerprint` text NOT NULL,
+	`name` text NOT NULL,
+	`code` text NOT NULL,
+	`source_bucket` text NOT NULL,
+	`requested_at` text NOT NULL,
+	`expires_at` text NOT NULL,
+	`state` text NOT NULL,
+	`decided_by` text,
+	`box` text,
+	FOREIGN KEY (`decided_by`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`box`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "worker_join_requested_utc" CHECK("worker_join_requests"."requested_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "worker_join_requests"."requested_at") = "worker_join_requests"."requested_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "worker_join_requests"."requested_at") = "worker_join_requests"."requested_at", 0)),
+	CONSTRAINT "worker_join_expires_utc" CHECK("worker_join_requests"."expires_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "worker_join_requests"."expires_at") = "worker_join_requests"."expires_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "worker_join_requests"."expires_at") = "worker_join_requests"."expires_at", 0)),
+	CONSTRAINT "worker_join_decision" CHECK(("worker_join_requests"."state"='pending' and "worker_join_requests"."decided_by" is null and "worker_join_requests"."box" is null)
+    or ("worker_join_requests"."state"='blocked' and "worker_join_requests"."decided_by" is not null and "worker_join_requests"."box" is null)
+    or ("worker_join_requests"."state"='allowed' and "worker_join_requests"."decided_by" is not null and "worker_join_requests"."box" is not null))
+);
+
+CREATE UNIQUE INDEX `worker_join_requests_fingerprint_unique` ON `worker_join_requests` (`fingerprint`);
+CREATE UNIQUE INDEX `worker_join_requests_code_unique` ON `worker_join_requests` (`code`);
+CREATE INDEX `worker_join_recent` ON `worker_join_requests` (`requested_at`);
 CREATE TABLE `job_session_limits` (
 	`job` text PRIMARY KEY NOT NULL,
 	`since` text NOT NULL,

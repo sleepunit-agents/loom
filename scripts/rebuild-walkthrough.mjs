@@ -25,7 +25,7 @@ import {accessAction} from './rebuild-access-actions.mjs';
 
 import {taskActions} from './rebuild-task-actions.mjs';
 import {conversationActions,selectExampleConversation} from './rebuild-conversation-actions.mjs';
-import {activityWorkLinks,knowledgeActions,knowledgeSourceCheck} from './rebuild-memory-actions.mjs';
+import {activityDays,activityWorkLinks,knowledgeActions,knowledgeSourceCheck} from './rebuild-memory-actions.mjs';
 import {rebuildReport} from './rebuild-report.mjs';
 import {inboxActionSteps} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
@@ -39,13 +39,17 @@ import {inboxTaskSource} from './rebuild-inbox-task-source.mjs';
 import {tmpdir} from 'node:os';
 import {conversationVisibilityActions} from './rebuild-conversation-visibility.mjs';
 import {join,resolve} from 'node:path';
-import {prepareRetention} from './rebuild-retention.mjs';
+import {prepareRetention,shortRetention} from './rebuild-retention.mjs';
 import {installDataProbe,auditDataDoor,dataActions,sharingGrowth,homeReadGrowth} from './rebuild-data-actions.mjs';
 
 import {exampleHome} from '../dist/example-home.js';
 import {conversationRecords} from './rebuild-conversation-records.mjs';
 import {startSharedHome} from '../dist/shared-startup.js';
+import {deskJobs} from './rebuild-desk-jobs.mjs';
+import {deskTicker} from './rebuild-desk-ticker.mjs';
+import {deskWaiting} from './rebuild-desk-waiting.mjs';
 import {deskActions} from './rebuild-desk-actions.mjs';
+import {memberAppearance} from './rebuild-member-appearance.mjs';
 import {appearanceActions} from './rebuild-appearance-actions.mjs';
 import {tempoWalkthrough} from './rebuild-tempo.mjs';
 import {FakeClock} from '../dist/core/clock.js';
@@ -131,6 +135,8 @@ export async function* walkthroughSteps(output) {
   yield {phase:'ready',report:safeReport(report)};
   report.actions={...report.actions,conversationRetention:await retention({page,clock,out})};
   save();yield {phase:'retention',actions:safeReport(report.actions)};
+  report.actions.conversationShortRetention=await shortRetention({browser,home:join(parent,'short-retention'),out});
+  save();yield {phase:'short-retention',actions:safeReport(report.actions)};
   {const tile=await openApp('Sharing');await tile.getByText('Example garden',{exact:true}).first().waitFor();report.actions.dataSharingSQL=await sharingGrowth({page,app,subscriptions,out});await tile.getByRole('button',{name:'Close Sharing',exact:true}).click();await tile.waitFor({state:'detached'});}
   save();yield {phase:'data-growth',actions:safeReport(report.actions)};
   const ready=label=>{const tile=[...document.querySelectorAll('[data-tile]')].find(node=>node.getAttribute('aria-label')===label);const body=tile?.querySelector('.next-page');return !!body?.textContent?.trim()&&!/Opening [^\n]*…|Loading[^\n]*…|Connecting[^\n]*…/.test(body.textContent);};
@@ -169,12 +175,17 @@ export async function* walkthroughSteps(output) {
     }
     if(title==='Machines and jobs'){
      await tile.getByRole('combobox',{name:'Jobs for'}).selectOption('moss');
-     const jobs=tile.getByRole('group',{name:'moss jobs now',exact:true}).locator('.loom-kit-note');
+     const jobs=tile.getByRole('group',{name:'moss queued jobs',exact:true}).locator('.loom-kit-note');
      await jobs.filter({hasText:report.example.runtime.job.title}).waitFor();
+     row.queuedShownAsRunning=await tile.getByRole('group',{name:'moss jobs now',exact:true}).getByText(report.example.runtime.job.title,{exact:true}).count();
      row.runtimeJobs=await jobs.evaluateAll(rows=>rows.map(row=>({title:row.querySelector('.loom-kit-title')?.textContent,status:row.querySelector('.loom-kit-meta')?.textContent})));
      row.text=await tile.innerText();
     }
-    if(title==='Activity')report.actions.activityWorkLinks=await activityWorkLinks({page,tile,example:report.example,out});
+    if(title==='Activity'){
+     const input={page,tile,example:report.example,out};
+     report.actions.activityWorkLinks=await activityWorkLinks(input);
+     report.actions.activityDays=await activityDays(input);
+    }
     if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out,app});report.actions={...report.actions,bridgeSettings:row.action};}
     if(['Your account','Household setup','Sharing'].includes(title))row.action=await accessAction({page,tile,title,app,out});
     if(title==='Subscriptions')Object.assign(report.actions,await modelAccountActions({page,tile,example:report.example,subscriptions,out}));
@@ -229,11 +240,17 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'approval-caution',actions:safeReport(report.actions)};
   {const tile=await openApp('Comms');await selectExampleConversation(page,tile);Object.assign(report.actions,await approvalPreparedChanges({page,tile,app,example:report.example,out,clock}));}
   save();yield {phase:'prepared-changes',actions:safeReport(report.actions)};
-  {const tile=await openApp('Comms');await selectExampleConversation(page,tile);Object.assign(report.actions,await changeInline({page,tile,app,example:report.example,out}));}
+  {const tile=await openApp('Comms');await selectExampleConversation(page,tile);Object.assign(report.actions,await changeInline({page,tile,app,example:report.example,out,open:openApp}));}
   save();yield {phase:'change-references',actions:safeReport(report.actions)};
   for await(const step of inboxActionSteps({page,tile:await openApp('Inbox'),app,example:report.example,out})){
    Object.assign(report.actions,step.actions);save();yield {phase:step.phase,answer:step.answer,actions:safeReport(report.actions)};
   }
+  report.actions.deskWaiting=await deskWaiting({page,tile:await openApp('Inbox'),app,example:report.example,out});
+  save();yield {phase:'desk-waiting',actions:safeReport(report.actions)};
+  report.actions.deskJobs=await deskJobs({page,app,example:report.example,out});
+  save();yield {phase:'desk-jobs',actions:safeReport(report.actions)};
+  report.actions.deskTicker=await deskTicker({page,app,out});
+  save();yield {phase:'desk-ticker',actions:safeReport(report.actions)};
   phase='conversation actions';
   report.actions={...report.actions,...await conversationActions({page,app,example:report.example,out,open:openApp,actions:['inboxAnswer','commsAnswer'],previous:report.actions})};
   save();yield {phase:'actions',actions:safeReport(report.actions)};
@@ -242,6 +259,8 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'desk',actions:safeReport(report.actions)};
   Object.assign(report.actions,await appearanceActions({page,app,out,open:openApp}));
   save();yield {phase:'appearance',actions:safeReport(report.actions)};
+  report.actions.memberAppearance=await memberAppearance({page,app,browser,out});
+  save();yield {phase:'member-appearance',actions:safeReport(report.actions)};
   phase='agent memory files';
   try {
    const {agentMemoryFiles}=await import('./rebuild-agent-memory-files.mjs');

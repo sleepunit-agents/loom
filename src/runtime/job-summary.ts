@@ -1,6 +1,7 @@
 /** Home's current-job projection, and what each agent is doing. The outside composition supplies its current
  * SQL policy for jobs and for what a job is said by (conversations, machines, triggers, tasks); this module never invents sharing rules or reads credentials. */
 import { and, asc, desc, eq, getTableColumns, inArray, is, ne, or, isNotNull, sql, SQL } from 'drizzle-orm';
+import { taskShelved } from '../core/data/project-in-use.js';
 import { readCurrentJobs } from '../core/data/current-jobs-read.js';
 import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
 import type { DataDatabase } from '../core/data/database.js';
@@ -62,6 +63,12 @@ export const doingCap = 8, doingMost = 100;
  * a pill of its own only while it was touched this recently (its `changedAt`: a claim, a comment, an edit,
  * a link, a move), and at most this many do; the rest are counted (`claimed`). */
 export const taskRecentMs = 8 * 3_600_000, taskPills = 3;
+function activeJob(cutoff: string) {
+  return and(inArray(jobs.state, claimedJobStates), or(ne(jobs.startedByKind, 'terminal'),
+    and(isNotNull(jobs.conversation), sql`julianday(${jobs.heardAt}) > julianday(${cutoff})`)));
+}
+const assignedInProgress = () => and(eq(tasks.assigneeKind, 'agent'), eq(tasks.status, 'in_progress'), sql`not ${taskShelved(tasks)}`);
+const touchedAfter = (recent: string) => sql`julianday(${tasks.changedAt}) > julianday(${recent})`;
 /** Things a person is in come first, then what a schedule or another agent started and plain jobs, then tasks. */
 const doingRank: Record<DoingKind, number> = { terminal: 0, discord: 0, slack: 0, loom: 0, private: 0, handoff: 1, trigger: 1, wake: 1, job: 1, task: 2 };
 const threadPath = (place: string) => `/p/comms-preview/thread/${encodeURIComponent(place.replace(/^th:/, ''))}`;
@@ -90,6 +97,18 @@ export class JobSummaries {
     this.observed?.();
     const cutoff = new Date(this.now() - terminalSilenceMs).toISOString();
     return readCurrentJobs(this.db,allowed,agent,cutoff);
+  }
+  /** Same work as the cards, projected to distinct agent ids for the desk counter. */
+  agentsAtWork(ids: string[]): string[] {
+    if (!ids.length) return [];
+    const now = this.now();
+    this.observed?.();
+    const running = this.db.selectDistinct({ agent: jobs.agent }).from(jobs)
+      .where(and(this.allowed(), inArray(jobs.agent, ids), activeJob(new Date(now - terminalSilenceMs).toISOString()))).all();
+    const recent = this.db.selectDistinct({ agent: tasks.assignee }).from(tasks)
+      .where(and(this.rule('tasks')(getTableColumns(tasks)), inArray(tasks.assignee, ids), assignedInProgress(),
+        touchedAfter(new Date(now - taskRecentMs).toISOString()))).all();
+    return [...new Set([...running, ...recent].flatMap(row => row.agent ? [row.agent] : []))].sort();
   }
   rule(name: 'conversations' | 'boxes' | 'tasks' | 'triggers') {
     const rule = this.visibility()[name];
@@ -133,8 +152,7 @@ export class JobSummaries {
       // A terminal session's own row, by its job: the harness and the folder it began in. Read only for a job whose conversation was joined above.
       .leftJoin(terminalSessions, and(eq(terminalSessions.job, jobs.id), eq(conversations.venue, 'terminal')))
       .leftJoin(from, and(eq(conversations.venue, 'handoff'), eq(from.id, conversations.place), fromRule))
-      .where(and(allowed, eq(jobs.agent, agent), inArray(jobs.state, claimedJobStates),
-        or(ne(jobs.startedByKind, 'terminal'), and(isNotNull(jobs.conversation), sql`julianday(${jobs.heardAt}) > julianday(${cutoff})`))))
+      .where(and(allowed, eq(jobs.agent, agent), activeJob(cutoff)))
       .all();
     // The trigger a visible wake's place names (core/tempo/tempo.ts, wakePlace), or the one a program's job records.
     const named = (row: typeof rows[number]) => row.venue === 'wake' && row.place !== null
@@ -144,7 +162,7 @@ export class JobSummaries {
     const notes = new Map((wanted.length ? this.db.select({ id: triggers.id, note: triggers.note, file: triggers.file }).from(triggers)
       .where(and(seen.triggers(getTableColumns(triggers)), inArray(triggers.id, wanted))).all() : []).map(row => [row.id, row.note || row.file || row.id]));
     // Tasks, under the tasks rule throughout: how many the agent has in progress, and the few that may be said.
-    const mine = and(seen.tasks(getTableColumns(tasks)), eq(tasks.assigneeKind, 'agent'), eq(tasks.assignee, agent), eq(tasks.status, 'in_progress'));
+    const mine = and(seen.tasks(getTableColumns(tasks)), assignedInProgress(), eq(tasks.assignee, agent));
     const inProgress = this.db.select({ n: sql<number>`count(*)` }).from(tasks).where(mine).get()!.n;
     // A task filed from a conversation names it (source_kind 'conversation', source_id): the one link from a task to
     // where a job runs. Only conversations this viewer reads are matched.
@@ -152,7 +170,7 @@ export class JobSummaries {
     const recent = new Date(this.now() - taskRecentMs).toISOString();
     const filed = talks.length ? and(eq(tasks.sourceKind, 'conversation'), inArray(tasks.sourceId, talks)) : undefined;
     const candidates = inProgress ? this.db.select({ id: tasks.id, title: tasks.title, changedAt: tasks.changedAt, sourceKind: tasks.sourceKind, sourceId: tasks.sourceId }).from(tasks)
-      .where(and(mine, or(sql`julianday(${tasks.changedAt}) > julianday(${recent})`, filed)))
+      .where(and(mine, or(touchedAfter(recent), filed)))
       // Those a current conversation filed come first, so many recently touched ones cannot crowd them out of the read.
       .orderBy(...(filed ? [desc(filed)] : []), desc(sql`julianday(${tasks.changedAt})`), asc(tasks.id)).limit(doingMost).all() : [];
     // One task per conversation, the latest touched; a job says it in its own pill.
@@ -252,6 +270,10 @@ export function jobSummaryFields(summaries: JobSummaries, canReadUsage = () => t
     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(currentJob))),
     args: { agent: { type: new GraphQLNonNull(GraphQLString) } },
     resolve: (_source: unknown, args: { agent: string }) => summaries.current(args.agent),
+  }, agentsAtWork: {
+    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))),
+    args: { agents: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))) } },
+    resolve: (_source: unknown, args: { agents: string[] }) => summaries.agentsAtWork(args.agents),
   }, agentDoing: {
     type: new GraphQLNonNull(doing),
     args: { agent: { type: new GraphQLNonNull(GraphQLString) }, limit: { type: GraphQLInt, defaultValue: doingCap } },

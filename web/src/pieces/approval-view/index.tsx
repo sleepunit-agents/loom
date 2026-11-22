@@ -87,7 +87,7 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false,
   const exactRequest = exact && <Disclosure label="Exact request"><pre className="whitespace-pre-wrap break-words">{exact}</pre></Disclosure>;
   const storedSummary = !household && !change && a.changeSummary;
   const ifYes = card?.ifYes ?? a.ifYes, ifNo = card?.ifNo ?? a.ifNo;
-  const caution = a.review ? <Body role="note">The request has been refreshed. Review the current settings before allowing it.</Body> : card && a.state === 'pending' && a.blocked
+  const caution = a.review ? <Body role="note">The request has been refreshed. Review the current settings before allowing it.</Body> : household && a.state === 'pending' && a.blocked
     ? <Body role="note">loom will refuse this as things stand: {a.blocked.replace(/^This cannot be allowed(?: yet| as it stands)?: /, '')}</Body>
     : !household && a.problem ? <Body role="note">This cannot be allowed as it stands: {a.problem}</Body> : null;
   const showStored = !household || !!card;

@@ -20,7 +20,12 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  },60_000);
  it('measures encrypted private-word expiry on the program clock',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('retention');
-  const result=step.value.actions?.conversationRetention;expect(result,JSON.stringify(result)).toMatchObject({ok:true,inconclusive:true,before:{encrypted:true,readable:true,browserReadable:true,readableUntilDeadline:true},after:{ciphertextErased:true,words:null,metadataRetained:true,metadataCompared:expect.arrayContaining(['sender','kind','at'])}});
+  const result=step.value.actions?.conversationRetention;expect(result,JSON.stringify(result)).toMatchObject({ok:true,before:{days:14,encrypted:true,readable:true,browserReadable:true,readableUntilDeadline:true},after:{ciphertextErased:true,words:null,metadataRetained:true,metadataCompared:expect.arrayContaining(['sender','kind','at'])}});
+ });
+ it('expires private words under a shorter household policy after restart',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('short-retention');
+  const result=step.value.actions?.conversationShortRetention;
+  expect(result,JSON.stringify(result)).toMatchObject({ok:true,before:{days:3,encrypted:true,readableUntilDeadline:true},after:{ciphertextErased:true,words:null,metadataRetained:true}});
  });
  it('compares actual Sharing SQL executions at two and ten projects',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('data-growth');
@@ -38,7 +43,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   if(title==='Approvals')expect(step.value.report.actions?.approvalRulesAndExpiry,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Settings')expect(app.valueAction,JSON.stringify(app.valueAction)).toMatchObject({ok:true,added:true,replaced:true,removed:true,persistedAfterReload:true,writeOnly:true,recorded:true,ruleSaved:true});
   if(title==='Tasks')expect(step.value.report.actions?.taskQuestions,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
-  if(title==='Machines and jobs'){expect(app.error).toBeUndefined();expect(app.runtimeJobs).toContainEqual({title:runtimeTitle,status:expect.stringMatching(/^Queued · queued /)});}
+  if(title==='Machines and jobs'){expect(app.error).toBeUndefined();expect(app.queuedShownAsRunning).toBe(0);expect(app.runtimeJobs).toContainEqual({title:runtimeTitle,status:expect.stringMatching(/^Queued · queued /)});}
   if(title==='Comms')expect(step.value.report.actions?.taskInlineQuestion,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Approvals')expect(step.value.report.actions?.approvalDecisions,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Changes')expect(step.value.report.actions?.workVisibility,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
@@ -53,6 +58,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   if(['Your account','Household setup','Sharing'].includes(title))expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true});
   if(title==='Home'){const result=step.value.report.actions?.homeMessage;expect(result,JSON.stringify(result)).toMatchObject({ok:true,inboxCopies:1,persistedAfterReload:true});}
   if(title==='Subscriptions')expect(step.value.report.actions.modelsMachines,JSON.stringify(step.value.report.actions.modelsMachines)).toMatchObject({ok:true});
+  if(title==='Activity')for(const action of ['activityWorkLinks','activityDays']){
+   const result=step.value.report.actions[action];
+   expect(result,JSON.stringify(result)).toMatchObject({ok:true});
+  }
   if(title==='Knowledge'){
    expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true,provisional:true,rechecked:true,verified:true,persistedAfterReload:true,connection:'existing /graphql'});
    const source=step.value.report.actions.knowledgeSourceCheck;
@@ -71,6 +80,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  });
  it('follows conversation PR references to their linked task',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('change-references');
+  expect(step.value.actions.conversationChangeCard,JSON.stringify(step.value.actions.conversationChangeCard)).toMatchObject({ok:true,ref:'github:example-house/garden#12',messageSeq:expect.any(Number)});
   expect(step.value.actions.changeInline,JSON.stringify(step.value.actions.changeInline)).toMatchObject({ok:true});
  });
  for(const answer of ['yes','no','words'])it(`records the Inbox ${answer} decision`,{retry:0},async()=>{
@@ -79,14 +89,28 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  });
  it('retains all answered Inbox questions and read marks',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('inbox-history');
-  for(const name of ['inboxDecisions','inboxHistory'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
+  for(const name of ['inboxConsequences','inboxDecisions','inboxHistory'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
  });
+ it('counts only items needing an answer on the desk',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('desk-waiting');
+  expect(step.value.actions.deskWaiting,JSON.stringify(step.value.actions.deskWaiting)).toMatchObject({ok:true});
+ });
+ it('shows a live Codex session on its agent’s rail card until it ends',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('desk-jobs');
+  expect(step.value.actions.deskJobs,JSON.stringify(step.value.actions.deskJobs)).toMatchObject({ok:true});
+ });
+ it('tracks the counts on the desktop ticker as work moves',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('desk-ticker');
+  expect(step.value.actions.deskTicker,JSON.stringify(step.value.actions.deskTicker)).toMatchObject({ok:true});
+ });
+
  it('answers in Inbox and shows the answer in Comms',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('actions');
   for(const name of ['commsSend','inboxAnswer','commsAnswer'])expect(step.value.actions?.[name],JSON.stringify(step.value.actions)).toMatchObject({ok:true});
  });
  it('measures desk launcher and tile controls',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('desk');
+  expect(step.value.actions.deskShell,JSON.stringify(step.value.actions.deskShell)).toMatchObject({ok:true});
   for(const name of ['deskLauncher','deskGeometry','deskLayout']){
 
    const result=step.value.actions?.[name];expect(typeof result?.ok).toBe('boolean');
@@ -97,6 +121,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  it('measures desk looks and persisted appearance',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('appearance');
   for(const name of ['deskLooks','deskAppearance'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
+ });
+ it('keeps appearance choices separate across two signed-in members',{retry:0,timeout:60_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('member-appearance');
+  expect(step.value.actions.memberAppearance,JSON.stringify(step.value.actions.memberAppearance)).toMatchObject({ok:true});
  });
  it('keeps each agent’s memories in its own file across a restart',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('agent-memory-files');
@@ -133,6 +161,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  it('measures the data door, fact queries and live changes',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('data');
   for(const name of ['dataDoor','dataSelectionSQL','dataInboxChange','dataWriteReceipt'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
+  expect(step.value.actions.dataCaller).toMatchObject({ok:true,browserMember:'alex',tokenMember:'robin'});
   expect(step.value.actions.dataTaskPatches).toMatchObject({ok:true,inconclusive:true,initialRevision:1,requests:1});
   expect(step.value.actions.dataSharingSQL.statements.length).toBeGreaterThan(0);
   expect(step.value.actions.dataSharingSQL.samples.map(sample=>sample.projects)).toEqual([2,10]);
@@ -162,6 +191,8 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  });
  it('delivers private source replies, a native handoff and a wake through the one Inbox',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('conversation-mail');
+  expect(step.value.actions.conversationSingleJob).toMatchObject({ok:true,deliveries:3});
+  expect(step.value.actions.conversationTempoDelivery).toMatchObject({ok:true,recipient:'moss'});
   for(const name of ['privateConversationBatch','nativeHandoff','conversationInboxIngress'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true,currentJobFixtures:true,providerStarted:false});
  });
  it('records a private background question in Inbox and returns its answer to the body',{retry:0},async()=>{

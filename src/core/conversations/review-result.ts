@@ -3,7 +3,7 @@ import { and, eq, gte, inArray, like } from 'drizzle-orm';
 import { commsKeepDays } from '../data/comms-days.js';
 import { conversations, jobs, messages } from '../data/schema.js';
 import type { CommsMessages } from './messages.js';
-import { jobMatchesConversation,reviewRequest,reviewThread,REVIEW_BRIEF_EXPIRED,REVIEW_ROLE_CHANGED } from './review-place.js';
+import { jobMatchesConversation,reviewRequest,reviewThread,reviewBriefExpired,REVIEW_ROLE_CHANGED } from './review-place.js';
 import { exitStage, LOOM_EXIT } from '../../runtime/job-exit.js';
 
 /** Seal the thread reply before entering the operation transaction. Retries and concurrent
@@ -49,7 +49,7 @@ export async function reportReviewEnd(service:CommsMessages, id:string, allowed:
   const reason=job.state==='lost'?'worker contact was lost':job.state==='stopped'?'the job was stopped':stage??'the job ended without returning findings';
   const worker=reviewRequest(cv)?.role?.id??'Codex';
   const placementReason = job.exitBy === 'loom' && job.exitCode === LOOM_EXIT.unplaced &&
-    (job.endedNote === REVIEW_ROLE_CHANGED || job.endedNote === REVIEW_BRIEF_EXPIRED) ? job.endedNote : undefined;
+    (job.endedNote === REVIEW_ROLE_CHANGED || job.endedNote === reviewBriefExpired(cv)) ? job.endedNote : undefined;
   const words = worker+' returned no result for “'+cv.label+'”'+(placementReason ? '. '+placementReason : ' ('+reason+').');
   const deliver=await prepareReviewResult(service,cv,id,words);
   commit(()=>{if(!pending() && allowed(cv.member!,cv.agent,cv.project) && reviewThread(db,cv)?.id===thread.id)deliver();});

@@ -82,6 +82,9 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('A task names the conversation it came from.'):row['probe']={'kind':'action','action':'conversationTaskSource'}
    if row['promise'].startswith('An approval records the conversation it was asked in.'):row['probe']={'kind':'action','action':'conversationApprovalSource'}
    if row['promise'].startswith(('A conversation is one agent talking in one place.', 'One table Every conversation', 'One per place An agent')):row['probe']={'kind':'action','action':'conversationRecords'}
+   if row['promise'].startswith('A thread keeps the pull requests it mentions'):row['probe']={'kind':'action','action':'conversationChangeCard'}
+   if row['promise'].startswith('One job at a time'):row['probe']={'kind':'action','action':'conversationSingleJob'}
+   if row['promise'].startswith('A trigger from Tempo drops an item'):row['probe']={'kind':'action','action':'conversationTempoDelivery'}
    if row['promise'].startswith('A piece of work one agent hands to another.'):row['probe']={'kind':'action','action':'nativeHandoff'}
    if row['promise'].startswith('That need becomes a question in the inbox'):row['probe']={'kind':'action','action':'privateConversationQuestion'}
  for app,text,contains in ui.get(f.stem,[]):
@@ -116,7 +119,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='signing-in':add('Making and hiding a one-time sign-in link through Account persists one link without exposing it in evidence.','',{'kind':'action','app':'Your account'})
  if f.stem=='conversations':
   for row in rows:
-   if row['promise'].startswith('e Words. Message words are kept'):row['probe']={'kind':'action','action':'conversationRetention'}
+   if row['promise'].startswith('e Words. Message words are kept'):row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['conversationRetention','conversationShortRetention']]}
  if f.stem=='data':add('The real GraphQL websocket carries data after sign-in without protocol errors.','',{'kind':'live'})
  if f.stem=='models':
   for row in rows:
@@ -129,14 +132,20 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('The conversation it belongs to.'):row['probe']={'kind':'action','action':'conversationInboxIngress'}
    if row['promise'].startswith('Sends you to Approvals or the task when the answer belongs there.'):row['probe']={'kind':'action','action':'inboxSourceTargets'}
    if row['promise'].startswith('A question can name an approval or a task whose outcome settles it.'):row['probe']={'kind':'action','action':'inboxSourceOutcome'}
+   if row['promise']=='Lists what needs you, with what happens on yes and on no.':row['probe']={'kind':'action','action':'inboxConsequences'}
    if row['promise'].startswith(('Takes a yes, a no', 'An item that is a question says')):row['probe']={'kind':'action','action':'inboxDecisions'}
    if row['promise'].startswith(('Marks what you have read', 'Opening an item marks it read')):row['probe']={'kind':'action','action':'inboxHistory'}
  if f.stem=='desk':
   for row in rows:
    if row['promise'].startswith("Home shows each agent's last answer and recent conversations"):row['probe']={'kind':'action','action':'homeMessage'}
    if row['promise'].startswith('Wears one of three looks'):row['probe']={'kind':'action','action':'deskLooks'}
+   if row['promise'].startswith(('Each member keeps their own look','b Your own look.')):row['probe']={'kind':'action','action':'memberAppearance'}
    if row['promise'].startswith('A look is a set of colours'):row['probe']={'kind':'action','action':'deskAppearance'}
 
+   if row['promise'].startswith('The desk is loom on a desktop screen.'):row['probe']={'kind':'action','action':'deskShell'}
+   if row['promise'] in ("A rail card lists the agent's current jobs.", "Shows each agent's face, its state and what it is doing."):row['probe']={'kind':'action','action':'deskJobs'}
+   if row['promise'].startswith('The ticker reads counts'):row['probe']={'kind':'action','action':'deskTicker'}
+   if row['promise'].startswith('The count comes from the items waiting in your inbox.'):row['probe']={'kind':'action','action':'deskWaiting'}
    if row['promise'].startswith('Places tiles by one rule'):row['probe']={'kind':'action','action':'deskGeometry'}
    if row['promise'].startswith('The first tile takes the big slot.'):row['probe']={'kind':'action','action':'deskLayout'}
    if row['promise'].startswith(('Keeps every installed app within reach', 'The launcher lists every app in groups')):row['probe']={'kind':'action','action':'deskLauncher'}
@@ -178,6 +187,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='memory':
   for row in rows:
    if row['promise'].startswith('A change saves the earlier version first.'):row['probe']={'kind':'action','action':'memoryRevisions'}
+   if row['promise']=='Shows what happened each day in Activity.':row['probe']={'kind':'action','action':'activityDays'}
    if row['promise']=='Activity lists the tasks and pull requests each conversation touched.':row['probe']={'kind':'action','action':'activityWorkLinks'}
    if row['promise'].startswith(("Keeps each agent's memories in that agent's own files.","A memory belongs to one agent.","a Memories, notes and cards.")):row['probe']={'kind':'action','action':'agentMemoryFiles'}
    if row['promise'].startswith('Recalls by meaning, and keeps what is used most'):row['probe']={'kind':'action','action':'semanticRecall'}
@@ -190,6 +200,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('migrations The list of changes'):row['probe']={'kind':'action','action':'dataMigrations'}
    if row['promise'].startswith('A tile names exactly the fields'):row['probe']={'kind':'action','action':'dataSelectionSQL'}
    if row['promise'].startswith(('Loom runs one query', 'Loom turns the request into one database query', 'A page reads with one API call', 'Loom handles the request in one API call')):row['probe']={'kind':'action','action':'dataReadBounds'}
+   if row['promise']=='The connection knows the caller from its session or token.':row['probe']={'kind':'action','action':'dataCaller'}
    if row['promise'].startswith(('After the first rows, loom sends only', 'After the first rows, changes arrive')):row['probe']={'kind':'action','action':'dataTaskPatches'}
    if row['promise'].startswith('A new inbox item reaches an open Inbox'):row['probe']={'kind':'action','action':'dataInboxChange'}
  if f.stem=='desk':

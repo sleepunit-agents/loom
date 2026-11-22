@@ -5,6 +5,7 @@
 // in signin.css, and are kept in step by hand.
 import { useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
 import {reconnectDelay,checkSessionEvent,setDeskMember} from '../data/connection';
+import { DeskMember } from '../signin/desk-member';
 import { lookOf, wearLook } from '../look';
 import './signin.css';
 import { WovenCloth } from '../woven-cloth';
@@ -97,7 +98,7 @@ export default function Signin({children}:{children:ReactNode}){
   const login=async()=>{try{const o=await post('/login/passkey/options',{});const c=await navigator.credentials.get({publicKey:{challenge:dec(o.challenge),rpId:o.rpId,userVerification:'required',timeout:o.timeout}}) as PublicKeyCredential;const r=c.response as AuthenticatorAssertionResponse;await post('/login/passkey',{id:enc(c.rawId),clientDataJSON:enc(r.clientDataJSON),authenticatorData:enc(r.authenticatorData),signature:enc(r.signature)});location.reload();}catch(e){say(e instanceof Error?e.message:'Sign-in cancelled');}};
   const state=session?.viewer?'in':session?'out':message?'down':'connecting',shown=state==='out'||state==='down';
   useLayoutEffect(()=>shown?wearGateLook():undefined,[shown]);
-  if(state==='in')return <>{children}</>;
+  if(session?.viewer)return <DeskMember.Provider value={session.viewer.id}>{children}</DeskMember.Provider>;
   const words=state==='connecting'?'Connecting to loom…':message;
   return <main className="loom-gate" data-state={state}>
     <Weave />

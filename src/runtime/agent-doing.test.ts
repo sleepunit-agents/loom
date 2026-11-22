@@ -310,3 +310,27 @@ it('still lists a job the sweep should have ended and has not, last, with when i
     ['j-silent', 'running', '2026-11-14T12:00:00.000Z'],
   ]);
 });
+
+it('counts each requested agent once for visible current work on its card', () => {
+  const h = household();
+  h.job('later', {state:'queued'});
+  h.task('t-8', 'Earlier claim', {changedAt:hour(3)});
+  h.job('private', {member:'alex'});
+  h.task('t-9', 'Repair', {assignee:'mark'});
+  const view = h.as(alex);
+  expect(view.agentsAtWork(['art','mark'])).toEqual(['art','mark'].filter(id=>view.doing(id).items.length));
+  expect(view.agentsAtWork([])).toEqual([]);
+  const hidden = h.as(bo, {jobs:()=>sql`false`,tasks:()=>sql`false`});
+  expect(hidden.agentsAtWork(['art','mark'])).toEqual([]);
+  h.client.prepare("delete from jobs where id='private'").run();
+  expect(view.agentsAtWork(['art'])).toEqual([]);
+  h.db.insert(projectMembers).values({project:'pond',member:'alex'}).run();
+  h.task('t-10', 'Inspect', {project:'pond'});
+  h.db.update(projects).set({retiredAt:at}).run();
+  expect(view.agentsAtWork(['art'])).toEqual([]);
+  expect(view.doing('art').items).toEqual([]);
+  h.db.update(projects).set({retiredAt:null}).run();
+  expect(view.agentsAtWork(['art'])).toEqual(['art']);
+  h.job('current');
+  expect(view.agentsAtWork(['art','art'])).toEqual(['art']);
+});

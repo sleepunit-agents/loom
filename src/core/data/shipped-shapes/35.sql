@@ -1378,17 +1378,29 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
-CREATE TABLE `job_session_limits` (
-	`job` text PRIMARY KEY NOT NULL,
-	`since` text NOT NULL,
-	`keep_until` text NOT NULL,
-	`invalidated` integer DEFAULT false NOT NULL,
-	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE cascade,
-	CONSTRAINT "job_session_limits_valid_flag" CHECK("job_session_limits"."invalidated" in (0, 1)),
-	CONSTRAINT "job_session_limits_since_utc" CHECK("job_session_limits"."since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "job_session_limits"."since") = "job_session_limits"."since" or strftime('%Y-%m-%dT%H:%M:%fZ', "job_session_limits"."since") = "job_session_limits"."since", 0)),
-	CONSTRAINT "job_session_limits_until_utc" CHECK("job_session_limits"."keep_until" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "job_session_limits"."keep_until") = "job_session_limits"."keep_until" or strftime('%Y-%m-%dT%H:%M:%fZ', "job_session_limits"."keep_until") = "job_session_limits"."keep_until", 0))
+CREATE TABLE `worker_join_requests` (
+	`id` text PRIMARY KEY NOT NULL,
+	`fingerprint` text NOT NULL,
+	`name` text NOT NULL,
+	`code` text NOT NULL,
+	`source_bucket` text NOT NULL,
+	`requested_at` text NOT NULL,
+	`expires_at` text NOT NULL,
+	`state` text NOT NULL,
+	`decided_by` text,
+	`box` text,
+	FOREIGN KEY (`decided_by`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`box`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "worker_join_requested_utc" CHECK("worker_join_requests"."requested_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "worker_join_requests"."requested_at") = "worker_join_requests"."requested_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "worker_join_requests"."requested_at") = "worker_join_requests"."requested_at", 0)),
+	CONSTRAINT "worker_join_expires_utc" CHECK("worker_join_requests"."expires_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "worker_join_requests"."expires_at") = "worker_join_requests"."expires_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "worker_join_requests"."expires_at") = "worker_join_requests"."expires_at", 0)),
+	CONSTRAINT "worker_join_decision" CHECK(("worker_join_requests"."state"='pending' and "worker_join_requests"."decided_by" is null and "worker_join_requests"."box" is null)
+    or ("worker_join_requests"."state"='blocked' and "worker_join_requests"."decided_by" is not null and "worker_join_requests"."box" is null)
+    or ("worker_join_requests"."state"='allowed' and "worker_join_requests"."decided_by" is not null and "worker_join_requests"."box" is not null))
 );
 
+CREATE UNIQUE INDEX `worker_join_requests_fingerprint_unique` ON `worker_join_requests` (`fingerprint`);
+CREATE UNIQUE INDEX `worker_join_requests_code_unique` ON `worker_join_requests` (`code`);
+CREATE INDEX `worker_join_recent` ON `worker_join_requests` (`requested_at`);
 CREATE TABLE `archived_questions` (
 	`thread` text NOT NULL,
 	`source_member` text NOT NULL,
@@ -1765,7 +1777,6 @@ CREATE TABLE `conversation_sessions` (
 	`files` blob NOT NULL,
 	`bytes` integer NOT NULL,
 	`started_at` text NOT NULL,
-	`keep_until` text,
 	PRIMARY KEY(`conversation`, `harness`),
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "conversation_sessions_started_at_utc" CHECK("conversation_sessions"."started_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "conversation_sessions"."started_at") = "conversation_sessions"."started_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "conversation_sessions"."started_at") = "conversation_sessions"."started_at", 0))

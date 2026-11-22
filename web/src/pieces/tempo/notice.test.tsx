@@ -9,8 +9,8 @@ import InboxNotice from './notice';
 let tree:ReactTestRenderer|undefined;afterEach(async()=>{await act(async()=>tree?.unmount());tree=undefined;vi.useRealTimers();});
 it('shows only live settled metadata, uses the registered Inbox destination and dismisses one occurrence',async()=>{
  vi.useFakeTimers();
- state.feed={status:'live',data:{settledInboxNotice:null}};await act(async()=>{tree=create(h(InboxNotice));});expect(tree!.toJSON()).toBeNull();
- const update=async(feed:typeof state.feed)=>{state.feed=feed;await act(async()=>tree!.update(h(InboxNotice)));};
+ state.feed={status:'live',data:{settledInboxNotice:null}};await act(async()=>{tree=create(h(InboxNotice,{go:vi.fn()}));});expect(tree!.toJSON()).toBeNull();
+ const update=async(feed:typeof state.feed)=>{state.feed=feed;await act(async()=>tree!.update(h(InboxNotice,{go:vi.fn()})));};
  await update({status:'live',data:{settledInboxNotice:{id:'one',needs:1,fyi:1}}});
  expect(JSON.stringify(tree!.toJSON())).toContain('1 needs your response · 1 FYI');expect(tree!.root.findByType('a').props.href).toBe('/registered-inbox');
  await act(async()=>tree!.root.findByType('button').props.onClick());await act(async()=>{vi.advanceTimersByTime(180); });expect(tree!.toJSON()).toBeNull();
