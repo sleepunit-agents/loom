@@ -4,6 +4,16 @@
 loom's operation door; it does not open loom's database or start inside its server.
 This executable requires POSIX process groups (use WSL on Windows).
 
+## Join a household
+
+Run `loom-worker request-join <loom-url> <machine-name> <private-directory> [worker-template.json]` as the worker's service user. The command prints a matching code. A household owner compares that code with the one in **Inbox → Needs you** and chooses **Let it in** or **Block**. The worker keeps its credential in the private directory.
+
+Run the same command again to collect the decision. With a template, approval installs `worker.json` and `runner.token` in that directory. The template uses the same Loom URL, `box: null`, and the absolute path to that `runner.token` as its `tokenFile`. Start the worker with the generated configuration. Its first heartbeat reports zero job slots.
+
+A pending code lasts 15 minutes. Use `loom-worker renew-join` with the same arguments to request another code after expiry. The owner sees one fresh card. A block is final for that worker identity.
+
+## Run jobs
+
 A worker that takes jobs runs every body in a container, including jobs on the
 owner's word, jobs on another person's word, and jobs held to loom's tools.
 One worker shares its slots across those jobs. A minimal configuration is:

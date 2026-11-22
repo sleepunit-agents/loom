@@ -48,14 +48,14 @@ async function joinIdentity(directory:string, origin:string, name:string) {
 }
 
 /** The worker keeps its own credential. Loom receives only its fingerprint and the request identity. */
-export async function requestWorkerJoin(address:string, name:string, directory:string, template?:string){
+export async function requestWorkerJoin(address:string, name:string, directory:string, template?:string, renew=false){
   const origin=privateOrigin(address).origin;
   machineName.parse(name);
   const saved=await joinIdentity(directory,origin,name);
   const fingerprint=createHash('sha256').update(saved.token).digest('hex');
   const response=await fetch(origin+'/api/worker-join/request',{
     method:'POST',redirect:'error',signal:AbortSignal.timeout(15_000),
-    headers:{'content-type':'application/json'},body:JSON.stringify({request:saved.request,name,fingerprint}),
+    headers:{'content-type':'application/json'},body:JSON.stringify({request:saved.request,name,fingerprint,...(renew?{renew:true}:{})}),
   });
   if(!response.ok)throw Error('Loom did not accept the join request');
   const result=z.discriminatedUnion('state',[

@@ -17,7 +17,7 @@ import {sharedTokens} from './shared-tokens.js';
 import {SHA256_HEX} from '../sha256-hex.js';
 
 const requestBody = z.object({
-  request:z.uuid(), name:machineName, fingerprint:z.string().regex(SHA256_HEX),
+  request:z.uuid(), name:machineName, fingerprint:z.string().regex(SHA256_HEX), renew:z.literal(true).optional(),
 }).strict();
 const lifetime = 15 * 60_000;
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -80,22 +80,27 @@ export function requestWorkerAdmission(db:DataDatabase, clock:Pick<Clock,'now'>,
         throw new OperationError('conflict','Join request already belongs to a different machine');
       if (existing.state === 'allowed') return {state:'allowed' as const,box:existing.box!};
       if (existing.state === 'blocked') return {state:'blocked' as const};
-      if (existing.expiresAt <= at) return {state:'expired' as const};
-      return {state:'pending' as const,code:existing.code};
+      if (existing.expiresAt > at) return {state:'pending' as const,code:existing.code};
+      if (!input.renew) return {state:'expired' as const};
     }
     const recent = gt(requests.requestedAt,new Date(now-lifetime).toISOString());
     const recentCount = (bucket?:string) => tx.select({n:count()}).from(requests)
       .where(bucket === undefined ? recent : and(recent,eq(requests.sourceBucket,bucket))).get()!.n;
     if (recentCount() >= 20 || recentCount(sourceBucket) >= 2)
       throw new OperationError('conflict','Too many recent join requests. Try again later.');
-    if (tx.select({id:requests.id}).from(requests).where(eq(requests.fingerprint,input.fingerprint)).get() ||
+    if ((!existing && tx.select({id:requests.id}).from(requests).where(eq(requests.fingerprint,input.fingerprint)).get()) ||
         tx.select({id:tokens.fingerprint}).from(tokens).where(eq(tokens.fingerprint,input.fingerprint)).get())
       throw new OperationError('conflict','Credential already registered');
     let code = matchCode();
-    while (tx.select({id:requests.id}).from(requests).where(eq(requests.code,code)).get()) code = matchCode();
+    while (tx.select({id:requests.id}).from(requests).where(eq(requests.code,code)).get() ||
+      tx.select({id:inbox.id}).from(inbox).where(and(eq(inbox.source,'notice'),eq(inbox.sourceId,noticeKey(input.request,code)))).get()) code = matchCode();
+    const mail=new Conversations(db,()=>at);
+    if (existing) {
+      mail.resolveSource('notice',noticeKey(existing.id,existing.code),'Join request expired');
+      tx.delete(requests).where(eq(requests.id,existing.id)).run();
+    }
     tx.insert(requests).values({id:input.request,name:input.name,fingerprint:input.fingerprint,code,sourceBucket,
       requestedAt:at,expiresAt:new Date(now+lifetime).toISOString(),state:'pending'}).run();
-    const mail=new Conversations(db,()=>at);
     for (const owner of householdOwners(db)) mail.send({toKind:'person',to:owner,member:owner,source:'notice',
       sourceId:noticeKey(input.request,code),fromKind:'unknown',answers:'yes-no',words:input.name+' wants to join Loom',
       why:'Match '+code+' with the code shown on the machine.',ifYes:'Add this machine as a report-only worker.',

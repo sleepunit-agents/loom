@@ -87,7 +87,8 @@ it('lets the signed-in owner see and answer the matching request through the des
     db.insert(members).values({id:'owner',role:'owner',joinedAt:new Date(clock.now()).toISOString()}).run();
     sharedTokens(db,clock).issue({kind:'owner',member:'owner',label:'Fixture owner'});
     const token=db.select().from(tokens).get()!;
-    const {cookie}=startBrowser(db,clock.now(),{token,userAgent:'Fixture Browser',via:'link'});
+    const signIn=()=>startBrowser(db,clock.now(),{token,userAgent:'Fixture Browser',via:'link'}).cookie;
+    let cookie=signIn();
     const template=join(directory,'worker.enrollment.json'),configPath=join(directory,'worker.json'),tokenPath=join(directory,'runner.token');
     writeFileSync(template,JSON.stringify({url:root.url,box:null,tokenFile:tokenPath,slots:1}));
     const joinWorker=()=>requestWorkerJoin(root.url,'wunder',directory,template);
@@ -122,9 +123,22 @@ it('lets the signed-in owner see and answer the matching request through the des
     writeFileSync(configPath,'{"local":"edited"}');
     await expect(joinWorker()).rejects.toThrow(/already exists/);
     expect(readFileSync(configPath,'utf8')).toBe('{"local":"edited"}');
-    await requestWorkerJoin(root.url,'second',join(directory,'second'));
+    const second=(renew=false)=>requestWorkerJoin(root.url,'second',join(directory,'second'),undefined,renew);
+    const firstCard=await second();
+    if(firstCard.state!=='pending') throw Error('Expected a second worker request');
     clock.advance(15*60_000);
     expect(db.select().from(inbox).all()).toContainEqual(expect.objectContaining({state:'resolved',resolution:'Join request expired'}));
+    expect(await second()).toEqual({state:'expired'});
+    const renewed=await second(true);
+    if(renewed.state!=='pending') throw Error('Expected a fresh matching code');
+    expect(renewed.code).not.toBe(firstCard.code);
+    expect(await second(true)).toEqual(renewed);
+    const [card]=(await call('workerJoinPending',{})).value.requests;
+    expect(await call('workerJoinDecide',{request:card.request,code:renewed.code,decision:'allow'})).toMatchObject({ok:false,code:'denied'});
+    cookie=signIn();
+    expect(await call('workerJoinDecide',{request:card.request,code:firstCard.code,decision:'allow'})).toMatchObject({ok:false,code:'not-found'});
+    expect(await call('workerJoinDecide',{request:card.request,code:renewed.code,decision:'block'})).toMatchObject({ok:true});
+    expect(await second(true)).toEqual({state:'blocked'});
   } finally {await root.close();client.close();rmSync(directory,{recursive:true,force:true});}
 });
 
