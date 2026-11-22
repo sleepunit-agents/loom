@@ -103,7 +103,7 @@ function createAndUpgrade(db: Database): void {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_verifications_page ON verifications(page_id)`,
     // Per-identity read attribution (t-677) — additive to pages.hit_count/
-    // last_accessed, never a replacement. Written by the program that kept this file before; read by nothing now.
+    // last_accessed, never a replacement. Deliberate named-tool reads update both counts; live queries leave them alone.
     `CREATE TABLE IF NOT EXISTS knowledge_access (
       page_id       INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
       identity      TEXT NOT NULL,

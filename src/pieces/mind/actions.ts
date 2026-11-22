@@ -9,7 +9,7 @@ import { slug as slugSchema } from '../../slug.js';
 import { mindReceipts, mindReceiptsReady } from './receipt-schema.js';
 import { snapshotKnowledgeRevision } from '../../backends/knowledge-revisions.js';
 import { MAX_PAGE_BODY_LENGTH } from '../../backends/knowledge-verification.js';
-import { insertKnowledgeCitation, insertKnowledgePage, markKnowledgePageSourced, setKnowledgePageBody } from '../../backends/knowledge-writes.js';
+import { countKnowledgeConsultations, insertKnowledgeCitation, insertKnowledgePage, markKnowledgePageSourced, setKnowledgePageBody } from '../../backends/knowledge-writes.js';
 import { operation, mayAct, OperationError, RecoveredWrite, type Context, type Operations, type Sharing } from '../../core/index.js';
 /** Composition supplies the synchronous verification primitive. Page rows, their words and their
  * citations are written through the knowledge store's own primitives (backends/knowledge-writes.ts),
@@ -38,6 +38,27 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
     for (const slug of result.slugs) ctx.changed('knowledge', slug);
     return new RecoveredWrite(result, prior.expires);
   };
+  // Only deliberate agent consultations are counted. Desktop refreshes use the read-only query.
+  // The actor comes from the authenticated caller and the source receipt makes a retry count once.
+  operations.register(operation({ name: 'mind.knowledgeConsulted', write: true, recheckPolicy: true,
+    input: z.strictObject({ slugs: z.array(pageSlug).min(1).max(50) }), output: z.unknown(), recover,
+    may: viewer => viewer.kind === 'agent' && mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act'),
+    run(ctx, input) {
+      refuse(ctx.viewer);
+      if (!db || !mindReceiptsReady(db)) throw new OperationError('unavailable', 'Knowledge is not prepared for changes');
+      return db.transaction(() => {
+        mindReceipts.expire(db, ctx.now);
+        const replay = recover(ctx);
+        if (replay) return replay;
+        const at = new Date(ctx.now).toISOString();
+        countKnowledgeConsultations(db, input.slugs, ctx.viewer.id, at);
+        const answer = { slugs: [] };
+        mindReceipts.save(db, ctx.receipt!, answer, ctx.receipt!.expires);
+        ctx.stampOnly?.();
+        return answer;
+      }).immediate();
+    },
+  }));
   // A check with no note is a pure stamp: the body, `updated` and the kept
   // versions stay as they are, and the check is recorded in `verifications`.
   for (const [verb, outcome] of [

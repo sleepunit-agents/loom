@@ -65,6 +65,10 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
   if(reply.errors?.length||!reply.data){const first=(reply.errors?.[0] as {message?:unknown}|undefined)?.message;throw new Refusal('The read was refused'+(typeof first==='string'?': '+first:''));}
   return reply.data as T;
  };
+ // Access counts are best effort. A read-only credential or an older source can still serve the page.
+ const consulted=async(slugs:string[])=>{
+   try { await run('mind.knowledgeConsulted',{slugs}); } catch { /* The read already succeeded. */ }
+ };
  const tool=<S extends z.ZodObject>(name:string,description:string,inputSchema:S,handle:(input:z.infer<S>,agent:string)=>Promise<string>)=>
   server.registerTool(name,{description,inputSchema:inputSchema as z.ZodObject},async(args:Record<string,unknown>)=>{
    if(!ports.valid())return refuse('Authentication ended');
@@ -174,6 +178,7 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
     {query:input.query,domain:input.domain??null,first:input.limit??5});
    if(!data.memoryKnowledgeSearch)throw new Refusal('Knowledge is not readable with this credential');
    if(!data.memoryKnowledgeSearch.length)return 'No knowledge pages matched.';
+   await consulted(data.memoryKnowledgeSearch.map(page=>page.slug));
    return data.memoryKnowledgeSearch.map(page=>'## '+page.title+'\n_'+page.domain+' · '+page.slug+' · updated '+page.updated+(page.verified_at?' · verified '+page.verified_at:' · never verified')+'_\n\n'+page.body).join('\n\n---\n\n');
   });
 
@@ -296,6 +301,7 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
    const data=await read<{memoryKnowledgePage:{slug:string;title:string;domain:string;updated:string;verified_at:string|null;sourcing:string|null;body:string;checkRevision:string;sources:{claim:string;locator:string}[]|null;annotations:{kind:string;actor:string;words:string;evidence:string;created:string}[];supersessions:{revision:number;actor:string;reason:string;evidence:string;created:string}[];history:{id:number;op:string;replacedAt:string;actor:string|null}[]|null}|null}>(
     'query($slug:String!){memoryKnowledgePage(slug:$slug){slug title domain updated verified_at sourcing body checkRevision sources{claim locator} annotations{kind actor words evidence created} supersessions{revision actor reason evidence created} history{id op replacedAt actor}}}',{slug:input.slug});
    const page=data.memoryKnowledgePage;if(!page)return 'No knowledge page '+input.slug;
+   await consulted([page.slug]);
    const lines=['# '+page.title,'_'+page.domain+' · '+page.slug+' · '+(page.sourcing??'unsourced')+' · updated '+page.updated+(page.verified_at?' · verified '+page.verified_at:' · never verified')+'_','Check revision: '+page.checkRevision,'',page.body];
    if(page.sources?.length)lines.push('','## Sources',...page.sources.map(row=>'- '+row.locator));
    if(page.annotations?.length)lines.push('','## Annotations',...page.annotations.map(row=>'- '+row.kind+' by '+row.actor+' on '+row.created+' — '+row.words+(row.evidence?' ('+row.evidence+')':'')));
