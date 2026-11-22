@@ -276,7 +276,7 @@ it('keeps equivalent role selectors stable and supports registered native harnes
  expect(eligibleModels(role,[native,{...native,harness:'custom'}],new Set(Object.keys(harnesses)))).toEqual([native]);
 });
 
-it.each(['success','failure','archive','transient','occupied','work-role','mixed-native','role-changed','assignment-removed','agent-removed','scope-changed','origin-changed','worker-loss','parent-retry'] as const)('delivers an owner-requested Codex handoff through its originating thread (%s)',async(mode)=>{
+it.each(['success','failure','archive','transient','occupied','work-role','mixed-native','role-changed','assignment-removed','agent-removed','scope-changed','origin-changed','worker-loss','parent-retry','expired-brief'] as const)('delivers an owner-requested Codex handoff through its originating thread (%s)',async(mode)=>{
  const mixed=mode==='mixed-native';
  const roleMode=mode==='parent-retry'||mixed||mode==='work-role'||mode==='role-changed'||mode==='agent-removed'||mode==='worker-loss';
  const f=await bodyFixture(clean,{workRoles:[{agent:'art',id:'research',description:'Compare the cited documents.',models:['reviewer']},
@@ -349,6 +349,27 @@ it.each(['success','failure','archive','transient','occupied','work-role','mixed
  if(roleMode){
   expect((await (await f.call('handoff',request,'retry-role')).json()).value.conversation).toBe(child);
   expect((await f.call('handoff',{...request,role:'editing'},'reuse-id')).status).toBe(409);
+ }
+ if(mode==='expired-brief'){
+  db.update(s.inbox).set({state:'done',job:'job'}).where(eq(s.inbox.conversation,f.thread.conversation)).run();
+  db.update(s.jobs).set({state:'done',endedAt:now()}).where(eq(s.jobs.id,'job')).run();
+  db.insert(s.household).values({singleton:1,commsDays:1}).onConflictDoUpdate({target:s.household.singleton,set:{commsDays:1}}).run();
+  f.clock.advance(86400_000);
+  accountWindows.recordAccountWindows(db,{account:'paid',owner:'alice',provider:'openai'},[{
+   name:'week',usage:0.1,readAt:now(),resetsAt:new Date(f.clock.now()+86400_000).toISOString(),durationMs:604800000
+  }],now());
+  const polled=await next('after-brief-expired',true);
+  expect(polled.status).toBe(200);
+  expect((await polled.json()).value).toBeNull();
+  const stopped=db.select().from(s.jobs).where(eq(s.jobs.conversation,child)).get();
+  expect(stopped).toMatchObject({state:'failed',claimedAt:null,box:null});
+  const result=await vi.waitFor(()=>{
+   const message=db.select().from(s.messages).where(eq(s.messages.clientId,'review:'+child)).get();
+   expect(message).toBeDefined();return message!;
+  });
+  expect(result.thread).toBe(f.thread.id);
+  expect(await f.key.open(result.words!)).toContain('The handoff brief expired.');
+  return;
  }
  if(mode==='parent-retry'){
   db.update(s.inbox).set({job:'job'}).where(eq(s.inbox.conversation,f.thread.conversation)).run();
