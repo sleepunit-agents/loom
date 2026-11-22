@@ -10,6 +10,9 @@ export const terminalEvent = z.discriminatedUnion('action', [
     words: z.string().min(1).max(MESSAGE_WORDS_MAX) }).strict(),
   z.object({ ...base, action: z.literal('usage'), runId: id, description: z.string().max(500).nullable(),
     completed: z.boolean().optional(), revision: z.number().int().nonnegative(), report: usageReport }).strict(),
+  z.object({ ...base, action: z.literal('present'), instanceId: id, cwd: z.string().min(1).max(4096) }).strict(),
+  z.object({ ...base, action: z.literal('pulse'), instanceId: id, cwd: z.string().min(1).max(4096) }).strict(),
+  z.object({ ...base, action: z.literal('idle'), instanceId: id }).strict(),
   z.object({ ...base, action: z.literal('heartbeat') }).strict(),
   z.object({ ...base, action: z.literal('end') }).strict(),
 ]);

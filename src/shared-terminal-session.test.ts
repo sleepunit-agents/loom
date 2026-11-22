@@ -131,3 +131,47 @@ it('titles a terminal conversation by the last part of its folder, however the p
   expect(await title('d', '/work/line\nbreak\u0007\u2028end')).toBe('Box · claude · linebreakend');
   expect([...(await title('e', '/work/' + 'x'.repeat(200)))]).toHaveLength(60);
 });
+
+it('keeps the hook in charge of words while a separate poller reports activity', async () => {
+  const f = await bodyFixture(clean);
+  const {token} = f.root.services.signin.issue({kind:'agent', agent:'art', label:'Example terminal', terminalMachine:'box'}, 'alice');
+  const send = async (instanceId:string, action:string, extra:Record<string,unknown> = {}, status=200) => {
+    const input = {harness:'codex', machine:'box', sessionId:'example', instanceId, action, ...extra};
+    const res = await f.root.http.request('/api/terminal/session', {method:'POST',
+      headers:{authorization:'Bearer '+token, 'content-type':'application/json'},
+      body:JSON.stringify({id:crypto.randomUUID(), input})});
+    expect(res.status).toBe(status);
+    return (await res.json()).value?.job;
+  };
+  const state = () => f.db.$client.prepare('select state from jobs where id=?').pluck().get(job);
+  const cwd = {cwd:'/example'};
+  let notifications = 0;
+  clean.push(f.root.writes.observe(() => { notifications++; }));
+  const job = await send('first','present',cwd);
+  expect(notifications).toBeGreaterThan(0);
+  notifications = 0;
+  await send('first','pulse',cwd);
+  expect(notifications).toBe(0);
+  expect(state()).toBe('running');
+  await send('first','idle');
+  expect(notifications).toBeGreaterThan(0);
+  expect(await send('second','present',cwd)).toBe(job);
+  await send('first','present',cwd,409);
+  await send('first','pulse',cwd);
+  await send('first','idle');
+  expect(state()).toBe('running');
+  await send('second','idle');
+  expect(state()).toBe('done');
+  await send('hook','open',{...cwd,model:'native-model'});
+  expect(f.db.$client.prepare('select model from jobs where id=?').pluck().get(job)).toBe('native-model');
+  await send('hook','present',cwd);
+  await send('hook','idle');
+  await send('second','present',cwd);
+  await send('second','pulse',cwd);
+  await send('second','idle');
+  expect(state()).toBe('running');
+  await send('hook','turn',{role:'member',eventId:'m1',words:'Fixture words.'});
+  expect(f.db.$client.prepare('select count(*) from turns where conversation=(select conversation from jobs where id=?)').pluck().get(job)).toBe(1);
+  await send('hook','end');
+  expect(state()).toBe('done');
+});
