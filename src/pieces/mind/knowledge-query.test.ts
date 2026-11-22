@@ -175,3 +175,17 @@ it('reviews recorded provisional sourcing in older Knowledge files without a cit
  const {query}=fixture(path);
  expect(await query('{memoryKnowledgeFilingReview{slug reason}}')).toEqual({data:{memoryKnowledgeFilingReview:[{slug:'old',reason:'Provisional sourcing'}]}});
 });
+
+it('keeps reader statistics private and never treats older unattributed counts as personal reads',async()=>{
+ const path=join(home(),'knowledge.db'),store=new KnowledgePages({dbPath:path});closes.push(()=>store.close());
+ await store.writePage({slug:'fixture',title:'Fixture',domain:'world',body:'Fictional text'});
+ const db=new Database(path);closes.push(()=>db.close());
+ db.exec("UPDATE pages SET hit_count=20; INSERT INTO knowledge_access(page_id,identity,hit_count) SELECT id,'other',5 FROM pages WHERE slug='fixture'");
+ const {query}=fixture(path),field='{memoryKnowledgePage(slug:"fixture"){title myAccess{hitCount}}}';
+ const hidden={data:{memoryKnowledgePage:{title:'Fixture',myAccess:null}}};
+ expect(await query(field,{viewer:{kind:'agent',id:'fiction'}})).toEqual(hidden);
+ expect(await query(field,{viewer:{kind:'member',id:'owner'}})).toEqual(hidden);
+ expect((await query(field.replace('myAccess{','myAccess(identity:"other"){'))).errors?.[0].message).toContain('Unknown argument');
+ db.exec('DROP TABLE knowledge_access');
+ expect(await query(field,{viewer:{kind:'agent',id:'fiction'}})).toEqual(hidden);
+});

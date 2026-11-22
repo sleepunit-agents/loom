@@ -29,3 +29,9 @@ In the Knowledge reader, use the annotation form to leave a note, explain why yo
 ## Check a store
 
 Run `python3 scripts/check-knowledge-policy.py /path/to/knowledge.db`. It opens the database read-only and reports active page slugs and rule names. Review findings in context before editing. Audience, topic relevance, source quality and the merits of a dispute require editorial judgment.
+
+An agent can read its own recorded use of an active page through
+`memoryKnowledgePage(slug: ...) { myAccess { hitCount lastAccessed } }`.
+Opening this field leaves the counts unchanged. A null result means there is
+no reader record available to this caller. Historical reads without a known
+reader remain in the page total.

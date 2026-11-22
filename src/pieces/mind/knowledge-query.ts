@@ -36,6 +36,9 @@ const supersession = new GraphQLObjectType({name:'MemoryKnowledgeSupersession',f
 const revision = new GraphQLObjectType({ name:'MemoryKnowledgeRevision', fields:{
  id:{type:new GraphQLNonNull(GraphQLInt)},slug:requiredText,body:requiredText,op:requiredText,replacedAt:requiredText,actor:text,
 } });
+const readerStats = new GraphQLObjectType({name:'MemoryKnowledgeReaderStats',fields:{
+  hitCount:{type:new GraphQLNonNull(GraphQLInt)},lastAccessed:text,
+}});
 const access=new GraphQLObjectType({name:'MemoryKnowledgeAccess',fields:Object.fromEntries(['allowed','canAdd','canVerify','canRecheck'].map(name=>[name,{type:new GraphQLNonNull(GraphQLBoolean)}]))});
 const overview = new GraphQLObjectType({ name:'MemoryKnowledge',fields:{
  timezone:text,
@@ -69,6 +72,16 @@ export function knowledgeQueryFields(options: { path?:string; timezone?():string
  };
  const page = new GraphQLObjectType< {slug:string; body:string; freshness_anchor?:string|null; archiveCandidate?:boolean},MemoryQueryContext>({ name:'MemoryKnowledgePage', fields:{
   ...summaryFields,body:requiredText,sourcing:text,
+  myAccess:{type:readerStats,description:"Reads attributed to the authenticated agent. Older unattributed reads are excluded.",
+   resolve:(source,_args,context)=>{
+    if (!allowed(context) || context.viewer.kind !== 'agent' || !db) return null;
+    try {
+      if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='knowledge_access'").get()) return null;
+      return db.prepare(`SELECT a.hit_count AS hitCount,a.last_accessed AS lastAccessed
+        FROM knowledge_access a JOIN pages p ON p.id=a.page_id
+        WHERE p.slug=? AND p.status='active' AND a.identity=?`).get(source.slug,context.viewer.id) ?? null;
+    } catch { throw new GraphQLError('Knowledge read statistics are unavailable'); }
+   }},
   checkRevision:{...requiredText,resolve:knowledgeCheckRevision},
   sources:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(citation)))},
   citedBy:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(reference)))},
