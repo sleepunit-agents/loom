@@ -18,6 +18,7 @@ import {secretValueAction} from './rebuild-secret-value-actions.mjs';
 import {secretDefaultAction,verifySecretDefaultAfterReload} from './rebuild-secret-actions.mjs';
 import {workVisibility} from './rebuild-work-visibility.mjs';
 import {changeActions,changeInline} from './rebuild-change-actions.mjs';
+import {bridgeMail} from './rebuild-bridge-mail.mjs';
 import {bridgeSettingsAction} from './rebuild-bridge-actions.mjs';
 import {taskStructure} from './rebuild-task-structure.mjs';
 import {maskCredentialScreenshots} from './rebuild-credential-evidence.mjs';
@@ -334,6 +335,9 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'scheduled-inbox',actions:safeReport(report.actions)};
   Object.assign(report.actions,await nativeProtocolAction({page,open:openApp,out,app,example:report.example,clock,home}));
   save();yield {phase:'native-protocol',actions:safeReport(report.actions)};
+  try {report.actions.bridgeMail=await bridgeMail({app,clock});}
+  catch(error){report.actions.bridgeMail={ok:false,error:String(error)};}
+  save();yield {phase:'bridge-mail',actions:safeReport(report.actions)};
 
 
  }catch(error){report.fatal=String(error);}
