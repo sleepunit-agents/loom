@@ -1251,7 +1251,8 @@ minutes or less. The default is five minutes.
 Loom alerts the reporting machine's owner after readings at or above 40% span
 15 minutes. A missed interval longer than seven and a half minutes or an
 unreadable observation starts that duration over. Once open, the notice
-closes when a measurement falls below 40%. Removing a guest from the reported
+closes when a measurement falls below 40%. A day without a successful
+measurement closes the old notice as stale. Removing a guest from the reported
 list closes its notice with the reason. To clear the whole list, report
 `"watchGuestIo": []`.
 

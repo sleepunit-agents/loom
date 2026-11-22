@@ -38,7 +38,10 @@ export function recordGuestPressure(db: DataDatabase, box: string, readings: rea
       notice = null;
       changed = true;
     }
-    const row = { box, guest, observedAt: at, ioHundredths: value, highSince, notice };
+    // An unreadable cgroup still belongs to the watch list. Keep the last
+    // measured time so repeated unknowns cannot keep an old notice open forever.
+    const observedAt = value === null ? before?.observedAt ?? at : at;
+    const row = { box, guest, observedAt, ioHundredths: value, highSince, notice };
     db.insert(guestIoReadings).values(row).onConflictDoUpdate({ target: [guestIoReadings.box, guestIoReadings.guest], set: row }).run();
   }
   for (const row of previous.values()) {
@@ -59,7 +62,7 @@ export function sweepGuestPressure(db: DataDatabase, at: string) {
   const mail = new Conversations(db, () => at, lateMailWaits);
   for (const { reading, revoked } of rows) {
     if (reading.notice) mail.resolveSource('notice', reading.notice, revoked
-      ? 'Machine was removed from the household.' : `No guest disk-wait report for CT ${reading.guest} for a day.`);
+      ? 'Machine was removed from the household.' : `No disk-wait measurement for CT ${reading.guest} for a day.`);
     db.delete(guestIoReadings).where(and(eq(guestIoReadings.box, reading.box), eq(guestIoReadings.guest, reading.guest))).run();
   }
   return rows.length > 0;

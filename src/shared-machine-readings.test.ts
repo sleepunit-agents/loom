@@ -267,7 +267,7 @@ it('bounds guest observations and accepts only the authenticated worker’s own 
   expect((await f.call('runtime.guestIoPressure', { readings: [reading] }, keys.owner)).status).toBe(403);
 });
 
-it.each(['silence', 'revocation'])('closes the guest notice after %s with the observed reason', async reason => {
+it.each(['silence', 'unreadable guest', 'revocation'])('closes the guest notice after %s with the observed reason', async reason => {
   const f = fixture(), now = () => new Date(f.clock.now()).toISOString();
   for (let n = 0; n < 4; n++) {
     f.clock.advance(300_000);
@@ -275,8 +275,13 @@ it.each(['silence', 'revocation'])('closes the guest notice after %s with the ob
   }
   expect(f.db.select().from(inbox).get()?.state).toBe('waiting');
   if (reason === 'silence') f.clock.advance(86_400_000);
-  else f.db.update(boxes).set({ revokedAt: now() }).where(eq(boxes.id, 'worker')).run();
+  else if (reason === 'unreadable guest') {
+    for (let i = 0; i < 2; i++) {
+      f.clock.advance(43_200_000);
+      await f.call('runtime.guestIoPressure', { readings: [{ guest: '103', unknown: true }] }, keys.worker);
+    }
+  } else f.db.update(boxes).set({ revokedAt: now() }).where(eq(boxes.id, 'worker')).run();
   new MachineConditions(f.db, now).sweep();
   expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'resolved',
-    resolution: expect.stringContaining(reason === 'silence' ? 'No guest disk-wait report' : 'removed') });
+    resolution: expect.stringContaining(reason === 'revocation' ? 'removed' : 'No disk-wait measurement') });
 });
