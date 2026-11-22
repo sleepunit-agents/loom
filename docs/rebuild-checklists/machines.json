@@ -35,7 +35,11 @@
     {
       "id": "machines-005",
       "promise": "Shows each agent's current jobs on its card on Home.",
-      "source": "docs/how-it-works/site/machines.html"
+      "source": "docs/how-it-works/site/machines.html",
+      "probe": {
+        "kind": "action",
+        "action": "homeJobs"
+      }
     },
     {
       "id": "machines-006",

@@ -31,6 +31,7 @@ import {activityDays,activityWorkLinks,knowledgeActions,knowledgeSourceCheck} fr
 import {rebuildReport} from './rebuild-report.mjs';
 import {inboxActionSteps} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
+import {homeJobs} from './rebuild-home-jobs.mjs';
 import {homeActions} from './rebuild-home-actions.mjs';
 import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {approvalInbox} from './rebuild-approval-inbox.mjs';
@@ -335,6 +336,8 @@ export async function* walkthroughSteps(output) {
   for await(const step of conversationMailSteps({page,app,clock,example:report.example,out,open:openApp})){Object.assign(report.actions,step.actions);save();yield {phase:step.phase,actions:safeReport(report.actions)};}
   report.actions.scheduledInbox=await scheduledInbox({browser,home:join(parent,'scheduled-home'),out});
   save();yield {phase:'scheduled-inbox',actions:safeReport(report.actions)};
+  report.actions.homeJobs=await homeJobs({page,tile:await openApp('Home'),app,example:report.example,out});
+  save();yield {phase:'home-jobs',actions:safeReport(report.actions)};
   Object.assign(report.actions,await nativeProtocolAction({page,open:openApp,out,app,example:report.example,clock,home}));
   save();yield {phase:'native-protocol',actions:safeReport(report.actions)};
   try {report.actions.bridgeMail=await bridgeMail({app,clock});}
