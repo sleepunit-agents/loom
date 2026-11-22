@@ -4,13 +4,14 @@
  * The owner-only preview reads person links and connections (policy.ts, `bridgePeople` and
  * `bridgeConnections`) and labels of shared conversations without a member or direct-message scope.
  *
- * Names come from indexed person links, the people directory, and retained Discord channel labels.
+ * Names come from indexed person links, the people directory, and retained channel labels.
  * A workspace can be identified by a connection configured for its exact platform and id.
  */
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { DataDatabase } from './core/data/database.js';
 import { agents, bridgeConnections, bridgeIncoming, bridgePeople, conversations } from './core/data/schema.js';
 import { outsidePersonKey } from './pieces/bridges/keys.js';
+import { slackRoomLabel } from './pieces/bridges/place.js';
 import type { CardNames, HeldName } from './proposal-words.js';
 
 export function outsideNames(db: DataDatabase, directory?: (platform: 'slack' | 'discord', workspace: string, user: string) => string | undefined): CardNames {
@@ -29,8 +30,18 @@ export function outsideNames(db: DataDatabase, directory?: (platform: 'slack' | 
       return held;
     },
     channel(platform, workspace, channel): HeldName | null {
-      // Discord sends a channel's name with each message, and the conversation's label keeps it ("Discord channel
-      // #pond"). A Slack conversation's label is the channel id, so Slack channels have no name here.
+      if (platform === 'slack') {
+        // The third place component is the thread. Restrict the indexed place range to this exact room.
+        const prefix = JSON.stringify([workspace, channel]).slice(0, -1);
+        const row = db.select({label: conversations.label}).from(conversations)
+          .where(and(inArray(conversations.agent, db.select({id: agents.id}).from(agents)),
+            eq(conversations.venue, 'slack'), isNull(conversations.member), eq(conversations.direct, false),
+            sql`${conversations.place} >= ${prefix + ','} and ${conversations.place} < ${prefix + '-'}`,
+            sql`case when json_valid(${conversations.place}) then json_array_length(${conversations.place}) = 3 else 0 end`,
+            sql`substr(${conversations.label}, 1, ${slackRoomLabel.length}) = ${slackRoomLabel}`))
+          .orderBy(desc(conversations.lastAt), conversations.id).limit(1).get();
+        return row ? {name: '#' + row.label.slice(slackRoomLabel.length), source: 'The channel name from Slack'} : null;
+      }
       if (platform !== 'discord') return null;
       const row = db.select({ label: conversations.label }).from(conversations).where(and(eq(conversations.venue, 'discord'), isNull(conversations.member), eq(conversations.direct, false),
         inArray(conversations.agent, db.select({ id: agents.id }).from(agents)),

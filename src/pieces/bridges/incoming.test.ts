@@ -13,6 +13,9 @@ import { jobs, memberAgents } from '../../core/data/schema.js';
 import { outsidePersonKey } from './keys.js';
 import { expirePrivateBridgeWords, oldestPrivateBridgeWords } from '../../core/conversations/private-bridge-words.js';
 import { bridgeFileMessages, bridgeFiles, bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
+import { BridgeChannels } from './channels.js';
+import { proposalCard } from '../../proposal-words.js';
+import { outsideNames } from '../../shared-outside-names.js';
 import {normalizeSlack} from './normalize.js';
 const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
@@ -41,6 +44,28 @@ describe('shared-schema bridge ingress', () => {
     expect([first.state,second.state,child.state]).toEqual(['delivered','delivered','delivered']);
     expect(second.conversation).not.toBe(first.conversation);expect(child.conversation).toBe(first.conversation);
     expect(f.db.select().from(conversations).all()).toHaveLength(2);expect(f.db.select().from(inbox).all()).toHaveLength(3);
+  });
+  it('shows a Slack room name learned after delivery only in its own workspace', () => {
+    const f = fixture('slack'), cache = new BridgeChannels();
+    const writer = cache.bind('c', {platform:'slack', workspace:'w'});
+    const root = '1794672000.000001';
+    const receive = (ts:string) => f.ingress.receive(normalizeSlack({id:'c', workspace:'w'}, {
+      type:'event_callback', team_id:'w', event:{type:'message', channel:'room', channel_type:'channel',
+        user:'outside', ts, thread_ts:root, text:'Friday?', channel_name:'untrusted'},
+    }, cache.slack('c','room'))!);
+    const original = receive(root);
+    const names = outsideNames(f.db);
+    expect(names.channel('slack','w','room')).toBeNull();
+    writer.put('room', {id:'room', context_team_id:'w', is_channel:true, name:'field-notes'});
+    expect(receive('1794672001.000001').conversation).toBe(original.conversation);
+    expect(f.db.select().from(conversations).get()?.label).toBe('Slack conversation in #field-notes');
+    expect(names.channel('slack','w','room')?.name).toBe('#field-notes');
+    expect(proposalCard('bridge', {action:'removeChannel', platform:'slack', workspace:'w', channel:'room'}, {names})?.title)
+      .toBe('Remove the answer rule for #field-notes on Slack');
+    expect(names.channel('slack','other','room')).toBeNull();
+    expect(names.channel('slack','w','roo')).toBeNull();
+    writer.put('direct', {id:'direct', is_mpim:true, name:'private-participants'});
+    expect(cache.slack('c','direct')?.name).toBeUndefined();
   });
   it.each(['im','mpim'] as const)('keeps successive unthreaded Slack %s messages in one conversation',kind=>{
     const f=fixture('slack');
