@@ -78,9 +78,18 @@ export class TerminalSessions {
       // while that exact instance still owns the row. Running children, private
       // words, tombstones and a native hook that has already resumed stay intact.
       if (event.action === 'adopt') {
-        if (session.instanceId === event.instanceId)
+        if (session.instanceId === event.instanceId) {
           this.db.update(terminalSessions).set({instanceId:event.native ?? '~' + event.instanceId})
             .where(eq(terminalSessions.job,parent.id)).run();
+          if (session.thread && event.native && event.resume && parent.state === 'done') {
+            // An old end can have committed before its acknowledgement was lost.
+            // Only restore child runs the daemon still reports active for this parent.
+            const runs = event.resume.children.length ? this.db.select({job:terminalRuns.job}).from(terminalRuns)
+              .where(and(eq(terminalRuns.parent,parent.id),inArray(terminalRuns.runId,event.resume.children))).all() : [];
+            this.db.update(jobs).set({state:'running',endedAt:null,heardAt:at})
+              .where(inArray(jobs.id,[parent.id,...runs.map(run=>run.job)])).run();
+          }
+        }
         return result;
       }
       if (!session.thread && event.action !== 'usage' && !ending)
@@ -89,10 +98,16 @@ export class TerminalSessions {
       // heartbeat without displacing it, and an idle observation cannot close it.
       const hasObserver = session.instanceId?.startsWith('~');
       const owns = instance === session.instanceId;
-      if (hasObserver && !owns && event.action === 'present' && parent.state === 'running' &&
-          parent.heardAt && Date.parse(at) - Date.parse(parent.heardAt) < terminalSilenceMs)
-        throw new OperationError('conflict','An active observer already reports this session');
-      if (event.action === 'pulse' && ((hasObserver && !owns) || parent.state === 'done')) return result;
+      if (hasObserver && !owns && event.action === 'present' && parent.state !== 'done') {
+        if (parent.heardAt && Date.parse(at) - Date.parse(parent.heardAt) < terminalSilenceMs)
+          throw new OperationError('conflict','An active observer already reports this session');
+        const incumbent = session.instanceId!.slice(1);
+        if (event.replace !== incumbent)
+          throw new OperationError('conflict','Confirm expired terminal observer: ' + incumbent);
+      }
+      if (event.action === 'pulse' && hasObserver && !owns) return result;
+      if (event.action === 'pulse' && parent.state === 'done')
+        throw new OperationError('conflict','Terminal activity must be observed again');
       const claim = event.action === 'open' || (event.action === 'present' && (hasObserver || parent.state === 'done'));
       if (claim && !owns) {
         this.db.update(terminalSessions).set({instanceId:instance}).where(eq(terminalSessions.job,parent.id)).run();
