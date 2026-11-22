@@ -2374,7 +2374,23 @@ export const guestIoReadings = sqliteTable('guest_io_readings', {
   check('guest_io_observed_utc', utc(t.observedAt)), check('guest_io_high_utc', utc(t.highSince)),
   check('guest_io_percent', sql`${t.ioHundredths} between 0 and 10000`)]);
 
+/** The source conversation determines the audience. Titles and posts carry private words. */
+export const agentPostThreads = sqliteTable('agent_post_threads', {
+  id: text('id').primaryKey().notNull(),
+  source: text('source').notNull().references(() => threads.id, { onDelete: 'cascade' }),
+  title: blob('title', { mode: 'buffer' }).notNull(),
+}, t => [index('agent_post_threads_source').on(t.source)]);
+
+/** A single sequence also orders same-clock replies across different threads. */
+export const agentPosts = sqliteTable('agent_posts', {
+  seq: integer('seq').primaryKey({ autoIncrement: true }),
+  thread: text('thread').notNull().references(() => agentPostThreads.id, { onDelete: 'cascade' }),
+  at: text('at').notNull(),
+  words: blob('words', { mode: 'buffer' }).notNull(),
+}, t => [check('agent_posts_at_utc', utc(t.at)), index('agent_posts_thread_seq').on(t.thread, t.seq)]);
+
 export const plumbing = {
+  agentPostThreads, agentPosts,
   guestIoReadings,
   workerJoinRequests,
   archivedQuestions,
