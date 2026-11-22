@@ -1,6 +1,7 @@
 /** Read machine memory or a single configured path in this helper process. The parent runs only this fixed script
  * with its own Node binary, without a shell, and both sides validate the one argument. */
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, statfsSync, type BigIntStats } from 'node:fs';
+import { readGuestIoPressure } from './guest-io-pressure.js';
 import { diskNumbers, watchedPath } from './machine-check.js';
 
 /** Filesystems that are no disk: kept in memory, made up by the kernel, or an image mounted to be read
@@ -70,9 +71,13 @@ function readMemory() {
 }
 
 const [path, ...extra] = process.argv.slice(2);
-let result: ReturnType<typeof readDisk> = { unknown: true };
+let result: ReturnType<typeof readDisk> | { ioHundredths: number } = { unknown: true };
 if (!extra.length && path) {
   if (path === 'memory') result = readMemory();
+  else if (path.startsWith('guest-io:')) {
+    const ioHundredths = readGuestIoPressure(path.slice('guest-io:'.length));
+    if (ioHundredths !== undefined) result = { ioHundredths };
+  }
   else if (watchedPath(path)) result = readDisk(path);
 }
 process.stdout.write(JSON.stringify(result) + '\n');

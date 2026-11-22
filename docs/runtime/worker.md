@@ -1241,15 +1241,20 @@ its own, name its path in that worker's `watchPaths`.
 
 ### A condition the machine cannot see for itself
 
-Some conditions are only visible from outside (a hypervisor holding a guest
-for want of disk). Nothing reads those yet. The record admits it: what loom
-keeps is a machine, a kind, a thing and a level, and the notices go by the
-level alone (`MachineConditions.settle`). A reader on another host would
-report a fixed word about a named machine through an operation of its own,
-with a credential bound to the machines it may speak for, and loom would write
-the same row with a kind added for it and the level the word stands for. It
-would take a schema step for the new kind and no change to how notices are
-raised and closed.
+On a Proxmox worker, set `"watchGuestIo": ["103"]` to monitor a guest that
+may stall waiting on disk. Use the numeric container IDs on that host. A
+report-only worker can read the kernel's cgroup pressure files as its own
+unprivileged user. Each reading uses the sixty-second percentage of time at
+least one task was waiting on I/O. Set the machine check interval to five
+minutes or less. The default is five minutes.
+
+Loom alerts the reporting machine's owner after readings at or above 40% span
+15 minutes. A missed interval longer than seven and a half minutes or an
+unreadable observation starts that duration over. Once open, the notice
+closes when a measurement falls below 40%. A day without a successful
+measurement closes the old notice as stale. Removing a guest from the reported
+list closes its notice with the reason. To clear the whole list, report
+`"watchGuestIo": []`.
 
 ## Machine-reported facts
 

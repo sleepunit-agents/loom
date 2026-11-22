@@ -11,8 +11,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { relaySignIn } from './account-signin-relay.js';
 import { RELAY_MS } from './account-signin-time.js';
 import { commandUsageProvider } from './worker-process.js';
-import { workerMachineReads, httpWorkerControl, workerSignIn, signInFailureLine, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth, reportWorkerAccountLogins, reportWorkerMachineReadings, WorkerWatchedThingLimit, type WorkerLoginCheck } from './worker-http.js';
+import { workerMachineReads, httpWorkerControl, workerSignIn, signInFailureLine, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth, reportWorkerAccountLogins, reportWorkerMachineReadings, reportWorkerGuestPressure, WorkerWatchedThingLimit, type WorkerLoginCheck } from './worker-http.js';
 import { readLogin, watchesLogin } from './account-login-check.js';
+import { sampleGuestPressure, validGuestId, WATCHED_GUESTS_MAX } from './guest-io-pressure.js';
 import { MACHINE_CHECK_MS } from './machine-reading-time.js';
 import { WATCHED_PATHS_MAX, WATCHED_THING_LIMIT_ERROR, machineReader, watchedPath } from './machine-check.js';
 import { DockerResponseError, dockerEngine } from './docker-engine.js';
@@ -76,6 +77,8 @@ export const workerConfigSchema = z.object({
   machineCheckMs: z.number().int().min(10_000).max(3_600_000).optional(),
   /** More paths whose filesystem is watched, beside the ones every worker watches: `/`, its state directory
    * when it takes jobs. Include the container runtime’s directory if it is on a separate filesystem. */
+  watchGuestIo: z.array(z.string().refine(validGuestId)).max(WATCHED_GUESTS_MAX)
+    .refine(ids => new Set(ids).size === ids.length).optional(),
   watchPaths: z.array(z.string().refine(watchedPath)).max(WATCHED_PATHS_MAX - 2).optional(),
   accountUsage: z.object({ readers: z.array(accountCommand).min(1).max(32), intervalMs: z.number().int().min(1_000).max(3_600_000).optional() }).strict().optional(),
   /** Sign-ins asked for through loom: one program per provider, run on this machine with a private directory
@@ -91,6 +94,9 @@ export const workerConfigSchema = z.object({
     setupTimeoutMs: stepDeadline.optional(),
     cleanupTimeoutMs: stepDeadline.optional() }).strict().optional(),
 }).strict().superRefine((config, context) => {
+  if (config.watchGuestIo?.length && (config.machineCheckMs ?? MACHINE_CHECK_MS) > MACHINE_CHECK_MS) {
+    context.addIssue({ code: 'custom', message: 'Guest disk-wait monitoring needs readings at least every five minutes' });
+  }
   const accounts = config.accountUsage?.readers.map(reader => reader.account.account) ?? [];
   if (new Set(accounts).size !== accounts.length) context.addIssue({ code: 'custom', message: 'Duplicate account quota reader' });
   // Account sign-in directories are container mounts.
@@ -114,6 +120,8 @@ export async function workerProgram(input: {
   reportLogins?: typeof reportWorkerAccountLogins;
   /** What reads this machine, given the paths and the container runtime the configuration names. */
   machineReader?: typeof machineReader;
+  sampleGuestPressure?: typeof sampleGuestPressure;
+  reportGuestPressure?: typeof reportWorkerGuestPressure;
   reportReadings?: typeof reportWorkerMachineReadings;
   /** The wait between two reads of the machine. */
   machinePause?: (ms: number, signal: AbortSignal) => Promise<void>;
@@ -237,7 +245,7 @@ export async function workerProgram(input: {
     // worker that has one configured (`container.socket`), whether or not it also only reports.
     const watchMachine = (statePath?: string) => {
       const socket = config.container?.socket, everyMs = config.machineCheckMs ?? MACHINE_CHECK_MS;
-      let saidLimit = false;
+      let saidLimit = false, guestReportFailed = false;
       const read = (input.machineReader ?? machineReader)({ paths: ['/', ...(config.watchPaths ?? [])],
         ...(statePath === undefined ? {} : { statePath }), signal: abort.signal,
         say: line => input.error(line),
@@ -259,6 +267,18 @@ export async function workerProgram(input: {
           if (!saidLimit) {
             saidLimit = true;
             if (!abort.signal.aborted) input.error(`Worker machine check: ${WATCHED_THING_LIMIT_ERROR}\n`);
+          }
+        }
+        if (config.watchGuestIo && !abort.signal.aborted) {
+          const samples = await Promise.all(config.watchGuestIo.map(guest =>
+            (input.sampleGuestPressure ?? sampleGuestPressure)(guest, abort.signal)));
+          if (abort.signal.aborted) return;
+          try {
+            await (input.reportGuestPressure ?? reportWorkerGuestPressure)(remote, samples);
+            guestReportFailed = false;
+          } catch {
+            if (!guestReportFailed && !abort.signal.aborted) input.error('Worker guest disk-wait report unavailable\n');
+            guestReportFailed = true;
           }
         }
       // A clock of its own: it shares no timing with the usage refresh or the sign-in check.
