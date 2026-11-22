@@ -61,7 +61,10 @@ export function presentedCredential(request: Request): { bearer: string; cookie?
 function prepareCredentialReads(db: DataDatabase) {
   const key = placeholder('key');
   return {
-    token: db.select().from(tokens).where(eq(tokens.fingerprint, key)).prepare(),
+    token: db.select({ token: tokens, member: members.id, agent: agents.id }).from(tokens)
+      .leftJoin(members, and(eq(tokens.kind, 'owner'), eq(members.id, tokens.member), isNull(members.removedAt)))
+      .leftJoin(agents, and(eq(tokens.kind, 'agent'), eq(agents.id, tokens.agent), isNull(agents.removedAt)))
+      .where(eq(tokens.fingerprint, key)).prepare(),
     session: db.select().from(sessions).where(eq(sessions.id, key)).prepare(),
     machine: db.select({ id: boxes.id }).from(boxes).innerJoin(members, eq(members.id, boxes.owner))
       .where(and(eq(boxes.id, key), isNull(boxes.revokedAt), isNull(members.removedAt))).prepare(),
@@ -86,16 +89,17 @@ export function machineCurrent(db: DataDatabase, box: string): boolean {
  * another (a body's, from its machine's) is current only while that one is: revoking a machine's token
  * ends the bodies it started. */
 export function currentToken(db: DataDatabase, id: string, now: number): { token: typeof tokens.$inferSelect; viewer: Exclude<Viewer, { kind: 'service' }>; job?: string } | undefined {
-  const token = credentialReadsFor(db).token.get({ key: id });
+  const found = credentialReadsFor(db).token.get({ key: id });
+  const token = found?.token;
   if (!token || !tokenLive(token, now)) return;
   // One step, never a chain: only a machine's own token enrols another (shared-body-enrollment.ts).
-  if (token.madeFrom !== null && !tokenLive(credentialReadsFor(db).token.get({ key: token.madeFrom }) ?? { revokedAt: 'gone', expiresAt: null }, now)) return;
+  if (token.madeFrom !== null && !tokenLive(credentialReadsFor(db).token.get({ key: token.madeFrom })?.token ?? { revokedAt: 'gone', expiresAt: null }, now)) return;
   if (token.kind === 'owner' && token.member) {
-    if (!db.select({ id: members.id }).from(members).where(and(eq(members.id, token.member), isNull(members.removedAt))).get()) return;
+    if (!found.member) return;
     return { token, viewer: { kind: 'member' as const, id: token.member } };
   }
   if (token.kind === 'agent' && token.agent) {
-    if (!db.select({ id: agents.id }).from(agents).where(and(eq(agents.id, token.agent), isNull(agents.removedAt))).get()) return;
+    if (!found.agent) return;
     if (token.job) {
       const job = db.select({ agent: jobs.agent, box: jobs.box, state: jobs.state, member: jobs.member, source: jobs.startedByKind }).from(jobs).where(eq(jobs.id, token.job)).get();
       if (!job || job.source === 'terminal' || job.agent !== token.agent || !job.box || !jobClaimed(job.state)) return;

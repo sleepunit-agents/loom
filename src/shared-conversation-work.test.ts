@@ -45,6 +45,7 @@ it('bounds the actual Comms source read at two and ten cited changes',async()=>{
     if(n===1)small=reads;else expect(reads).toBe(small);
    }
   }
- // The same 48 reads execute on the baseline and with the credential statements prepared.
- expect(small).toBe(48);
+ // Count real executions and bound the fixed cost as well as growth with rows.
+ expect(small).toBeGreaterThan(0);
+ expect(small).toBeLessThanOrEqual(37);
 });
