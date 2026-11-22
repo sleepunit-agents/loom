@@ -14,6 +14,7 @@ import type {DataWrites} from '../data/writes.js';
 import {householdOwner,householdOwners} from '../../shared-sharing.js';
 import {createReportOnlyMachine} from '../../shared-machine-registry.js';
 import {sharedTokens} from './shared-tokens.js';
+import {DAY_MS} from '../day.js';
 import {SHA256_HEX} from '../sha256-hex.js';
 
 const requestBody = z.object({
@@ -73,7 +74,7 @@ export function requestWorkerAdmission(db:DataDatabase, clock:Pick<Clock,'now'>,
     const now = clock.now();
     const at = new Date(now).toISOString();
     // Keep expired requests for one day so a worker returning late can see the outcome.
-    tx.delete(requests).where(and(eq(requests.state,'pending'),lt(requests.expiresAt,new Date(now-86_400_000).toISOString()))).run();
+    tx.delete(requests).where(and(eq(requests.state,'pending'),lt(requests.expiresAt,new Date(now-DAY_MS).toISOString()))).run();
     const existing = tx.select().from(requests).where(eq(requests.id,input.request)).get();
     if (existing) {
       if (existing.fingerprint !== input.fingerprint || existing.name !== input.name)

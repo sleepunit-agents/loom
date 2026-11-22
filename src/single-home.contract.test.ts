@@ -721,7 +721,8 @@ it('makes two times that must agree one time, or works one out from the other', 
   expect(text('src/runtime/account-signin-time.ts')).toMatch(/export const RELAY_MS = SIGNIN_MS - /);
   expect(sources('src').filter(file => /\b(RELAY_MS|SIGNIN_MS)\s*=/.test(text(file)))).toEqual(['src/runtime/account-signin-time.ts']);
   expect(text('src/runtime/worker-program.ts')).toMatch(/timeoutMs: z\.number\(\)\.int\(\)\.min\(10_000\)\.max\(RELAY_MS\)/);
-  expect(sources('src').filter(file => /\b(900_?000|1_?200_?000|(15|20) \* 60_?000)\b/.test(text(file)))).toEqual(['src/core/conversations/terminal-sessions.ts', 'src/runtime/account-signin-time.ts']);
+  // Worker admission has its own owner matching window, independent of terminal silence and provider sign-in.
+  expect(sources('src').filter(file => /\b(900_?000|1_?200_?000|(15|20) \* 60_?000)\b/.test(text(file)))).toEqual(['src/core/conversations/terminal-sessions.ts', 'src/core/signin/worker-join.ts', 'src/runtime/account-signin-time.ts']);
 });
 
 it('takes these choices from the columns that check them too', () => {

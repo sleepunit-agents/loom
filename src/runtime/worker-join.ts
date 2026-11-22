@@ -60,7 +60,7 @@ export async function requestWorkerJoin(address:string, name:string, directory:s
   if(!response.ok)throw Error('Loom did not accept the join request');
   const result=z.discriminatedUnion('state',[
     z.object({state:z.literal('pending'),code:z.string().regex(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/)}),
-    z.object({state:z.literal('allowed'),box:z.string().regex(/^box-[a-f0-9-]{36}$/)}),
+    z.object({state:z.literal('allowed'),box:z.templateLiteral(['box-',z.uuid()])}),
     z.object({state:z.literal('blocked')}),z.object({state:z.literal('expired')}),
   ]).parse(await response.json());
   if (result.state==='allowed' && template) {
