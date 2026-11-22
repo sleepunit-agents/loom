@@ -124,6 +124,21 @@ it('resolves channel filters and distinguishes report destinations sharing a nam
   expect(preview.facts).toContainEqual({ label: 'Notes from guests’ work go to', value: '#reports on Discord (C1 in G1) → #reports on Discord (C2 in G2)' });
 });
 
+it('keeps Slack guest report addresses in Details when a destination moves between workspaces', () => {
+  const after = {action:'channel',platform:'slack',workspace:'TFIELD',channel:'CHOME',answers:'art',botsMayTalk:false,
+    reportsTo:{platform:'slack',workspace:'TNEW',channel:'CREPORT'}};
+  const previous = {...after,reportsTo:JSON.stringify(['slack','TOLD','CREPORT'])};
+  const labels = {...names, channel: () => ({name:'#reports',source:'The channel name from Slack'})};
+  for (const directory of [labels, names]) {
+    const card = proposalCard('bridge',after,{names:directory,before:{value:previous}})!;
+    expect(card.nothing).toBe(false);
+    expect(card.facts.find(fact=>fact.label==='Notes from guests’ work go to')?.value).toMatch(/ → Another channel with the same label$/);
+    expect(card.facts.filter(fact=>!fact.small).map(fact=>fact.value).join(' ')).not.toMatch(/CREPORT|TOLD|TNEW/);
+    expect(card.facts).toContainEqual({label:'Guest report destination IDs',small:true,value:'CREPORT in TOLD → CREPORT in TNEW'});
+  }
+  expect(proposalCard('bridge',after,{names:labels,before:{value:after}})?.nothing).toBe(true);
+});
+
 it('distinguishes unnamed Slack channel filters and keeps their exact targets in Details', () => {
   const input = {action:'connection',id:'pond',agent:'fern',platform:'slack',workspace:'TWORK',botUser:'UBOT',only:['CNEW'],ignore:[]};
   const previous = {...input,only:['COLD'],ignore:['CMUTED']};

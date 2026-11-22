@@ -547,13 +547,21 @@ function bridge(input: Rec, context: CardContext, name: (id: unknown) => string,
       const at = channel(str(input.platform), workspace, str(input.channel));
       const reportTuple = (value: unknown): string[] | null => !value ? null : typeof value === 'string'
         ? JSON.parse(value) as string[] : [str(rec(value).platform), str(rec(value).workspace), str(rec(value).channel)];
-      const reports = (target: string[] | null) => target
-        ? channel(target[0]!, target[1]!, target[2]!).short + ' (' + target[2] + ' in ' + target[1] + ')' : 'Nowhere';
       const prior = reportTuple(was?.reportsTo), next = reportTuple(input.reportsTo);
+      const sameReport = sameValue(prior, next);
+      const address = (target: string[] | null) => target ? target[2] + ' in ' + target[1] : 'Nowhere';
+      const reports = (target: string[] | null) => {
+        if (!target) return 'Nowhere';
+        const label = channel(target[0]!, target[1]!, target[2]!).short;
+        return target[0] === 'slack' && names ? label : label + ' (' + address(target) + ')';
+      };
+      const oldReport = reports(prior), newReport = reports(next);
+      const reportDetails: CardFact[] = names && !sameReport && (prior?.[0] === 'slack' || next?.[0] === 'slack')
+        ? [{ label: 'Guest report destination IDs', small: true, value: was ? address(prior) + ' → ' + address(next) : address(next) }] : [];
       const told = changes(before, [['Answers there', was && name(was.answers), name(input.answers), was?.answers === input.answers], ['Other bots may talk to it there', was && yes(was.botsMayTalk), yes(input.botsMayTalk)],
-        ['Extra brief for that channel', was && (str(was.brief) || 'None'), str(input.brief) || 'None'], ['Notes from guests’ work go to', was && reports(prior), reports(next), sameValue(prior, next)]]);
+        ['Extra brief for that channel', was && (str(was.brief) || 'None'), str(input.brief) || 'None'], ['Notes from guests’ work go to', was && oldReport, !sameReport && oldReport === newReport ? 'Another channel with the same label' : newReport, sameReport]]);
       return { title: (was && was.answers === input.answers ? 'Change how ' + name(input.answers) + ' answers in ' : 'Let ' + name(input.answers) + ' answer in ') + at.short,
-        facts: [...told.facts, ...(at.held ? [{ label: 'Channel name from', value: at.held.source }] : []), place(), { label: 'Channel id', value: str(input.channel), small: true }], nothing: told.nothing };
+        facts: [...told.facts, ...reportDetails, ...(at.held ? [{ label: 'Channel name from', value: at.held.source }] : []), place(), { label: 'Channel id', value: str(input.channel), small: true }], nothing: told.nothing };
     }
     case 'removeChannel': {
       const at = channel(str(input.platform), workspace, str(input.channel));
