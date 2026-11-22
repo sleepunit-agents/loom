@@ -9,7 +9,7 @@ interface Patch { path: (string | number)[]; removed: boolean; value?: unknown }
 interface Delta { revision: number; patches: Patch[] }
 export interface QueryTransport {
   subscribe(request: SubscribePayload, sink: Sink<FormattedExecutionResult>): () => void;
-  disconnected(listener: () => void): () => void;
+  connectionChanged(listener: (connected: boolean) => void): () => void;
   close(): void;
 }
 const envelope = 'subscription LoomData($query: String!, $variables: DataValue, $operationName: String) { observe(query: $query, variables: $variables, operationName: $operationName) { revision patches { path removed value } } }';
@@ -54,7 +54,16 @@ export function liveQueryExchange(transport: QueryTransport): Exchange {
           current = undefined; revision = 0;
           observer.next({ operation, error: new CombinedError({ networkError: new Error(message) }), hasNext: true, stale: false });
         };
-        const stopDisconnect = transport.disconnected(() => unavailable('Connection closed'));
+        let awaitingReconnect = false;
+        const stopConnection = transport.connectionChanged(connected => {
+          if (!connected) {
+            awaitingReconnect = true;
+            unavailable('Connection closed');
+          } else if (awaitingReconnect) {
+            awaitingReconnect = false;
+            observer.next({ operation, data: undefined, hasNext: true, stale: false });
+          }
+        });
         const stop = transport.subscribe({ query: envelope, variables: { query: print(operation.query), variables: operation.variables, operationName: operation.query.definitions.find(def => def.kind === 'OperationDefinition')?.name?.value } }, {
           next(result) {
             if (stopped) return;
@@ -72,24 +81,24 @@ export function liveQueryExchange(transport: QueryTransport): Exchange {
               observer.next({ operation, data: current, hasNext: true, stale: false });
             } catch { unavailable('Data subscription could not complete'); }
           },
-          error() { unavailable('Data subscription could not complete'); },
-          complete() { if (!stopped) unavailable('Data subscription ended'); },
+          error() { stopConnection(); unavailable('Data subscription could not complete'); },
+          complete() { stopConnection(); if (!stopped) unavailable('Data subscription ended'); },
         });
-        return () => { stopped = true; active.delete(operation.key); stopDisconnect(); stop(); };
+        return () => { stopped = true; active.delete(operation.key); stopConnection(); stop(); };
       }), takeUntil(pipe(shared, filter(other => other.kind === 'teardown' && other.key === operation.key))));
     }));
   };
 }
 
 export function browserQueryTransport(url: string): QueryTransport {
-  const listeners = new Set<() => void>();
+  const listeners = new Set<(connected: boolean) => void>();
   let watchdog:ReturnType<typeof setTimeout>|undefined;
   const subscriptions=new Set<()=>void>();
   let disposed=false;
   let wakeRetry:(()=>void)|undefined;
   const clearWatchdog=()=>{clearTimeout(watchdog);watchdog=undefined;};
   const armWatchdog=()=>{clearWatchdog();watchdog=setTimeout(()=>socket.terminate(),15_000);};
-  const offline=()=>{clearWatchdog();for(const listener of listeners)listener();};
+  const connectionChanged=(connected:boolean)=>{clearWatchdog();for(const listener of listeners)listener(connected);};
   const socket = createSocket({
     url,lazy:true,retryAttempts:Infinity,keepAlive:20_000,connectionAckWaitTimeout:15_000,
     connectionParams:deskConnectionParams,
@@ -105,10 +114,10 @@ export function browserQueryTransport(url: string): QueryTransport {
       globalThis.window?.addEventListener('online',finish);
       globalThis.document?.addEventListener('visibilitychange',visible);
     }),
-    on:{connecting:armWatchdog,connected:clearWatchdog,
+    on:{connecting:armWatchdog,connected:()=>connectionChanged(true),
       ping:received=>{if(!received)armWatchdog();},pong:received=>{if(received)clearWatchdog();},
-      closed:event=>{offline();if((event as CloseEvent|undefined)?.code===4403)globalThis.window?.dispatchEvent(new Event(checkSessionEvent));},
-      error:()=>{offline();globalThis.window?.dispatchEvent(new Event(checkSessionEvent));}},
+      closed:event=>{connectionChanged(false);if((event as CloseEvent|undefined)?.code===4403)globalThis.window?.dispatchEvent(new Event(checkSessionEvent));},
+      error:()=>{connectionChanged(false);globalThis.window?.dispatchEvent(new Event(checkSessionEvent));}},
   });
   return {subscribe(request,sink){
       if(disposed){sink.complete();return ()=>{};}
@@ -120,7 +129,7 @@ export function browserQueryTransport(url: string): QueryTransport {
       subscriptions.add(stop);
       return ()=>{subscriptions.delete(stop);stop();};
     },
-    disconnected(listener){listeners.add(listener);return ()=>{listeners.delete(listener);};},
+    connectionChanged(listener){listeners.add(listener);return ()=>{listeners.delete(listener);};},
     close(){
       disposed=true;listeners.clear();clearWatchdog();
       for(const stop of subscriptions)stop();
