@@ -243,6 +243,8 @@ export async function bodyProgram(input: {
       context.unshift(nativeBudget);continued.unshift(nativeBudget);
     }
     if(coordinating){
+      const activity = 'Post a short update to your agent card when you pick up work, discover something worth sharing, or finish. Use loom_command with operation "conversation.activityPost", a distinct id for each post (reuse it on retry), and input {"action":"open","words":"…"} for a new activity. Keep value.thread from the receipt. Reply with {"action":"reply","thread":"…","words":"…"} or rename with {"action":"rename","thread":"…","title":"…"}. Returning to an activity? Reply to its thread.';
+      context.unshift(activity);continued.unshift(activity);
       const delegation = [
         'For a Loom subagent, use the loom_command MCP tool. Loom runs the child on an eligible worker.',
         'Discover available roles, assigned peers and Codex capacity with {"operation":"conversation.handoffOptions","id":"discover-handoffs","input":{}}.',

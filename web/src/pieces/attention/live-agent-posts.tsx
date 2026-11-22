@@ -2,13 +2,14 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useDataQuery } from '../../data/graphql';
 import { Body, Button, Loading, Section } from '../../kit';
 import { AgentPostFeed, AgentPostHistory, type AgentPost, type AgentPostPreview } from './agent-posts';
+import { threadPath } from './home-comms-data';
 import { agentPath } from './home-model';
 
 export const agentFeedQuery = `query AgentActivityFeed($agent:String!,$limit:Int!){
   agentActivityFeed(agent:$agent,limit:$limit){thread title latest{id at words} parent{id words}}
 }`;
 export const agentHistoryQuery = `query AgentActivityHistory($agent:String!,$thread:String!,$after:String!,$limit:Int!){
-  agentActivityHistory(agent:$agent,thread:$thread,after:$after,limit:$limit){id at words}
+  agentActivityHistory(agent:$agent,thread:$thread,after:$after,limit:$limit){id at words source}
 }`;
 const pageSize = 25;
 
@@ -45,7 +46,7 @@ export function LiveAgentHistory({ agent, thread, go }: {
 }) {
   const [cursors,setCursors] = useState(['0']);
   const after = cursors[cursors.length - 1];
-  const query = useDataQuery<{agentActivityHistory: AgentPost[]}>(agentHistoryQuery, {agent,thread,after,limit:pageSize+1});
+  const query = useDataQuery<{agentActivityHistory: (AgentPost & {source: string})[]}>(agentHistoryQuery, {agent,thread,after,limit:pageSize+1});
   const posts = query.status === 'live' ? query.data?.agentActivityHistory : undefined;
   const now = usePostClock(!!posts?.length);
   return <Section label="Activity thread">
@@ -53,6 +54,7 @@ export function LiveAgentHistory({ agent, thread, go }: {
     {query.status === 'loading' ? <Loading label="Opening activity…"/> :
       !posts?.length ? <Body quiet>Activity unavailable.</Body> :
       <AgentPostHistory title="Activity posts" posts={posts.slice(0,pageSize)} now={now}/>}
+    {posts?.length ? <Button variant="ghost" onClick={()=>go(threadPath(posts[0].source))}>Source conversation</Button> : null}
     {cursors.length>1 && <Button variant="ghost" onClick={()=>setCursors(c=>c.slice(0,-1))}>Earlier posts</Button>}
     {posts && posts.length>pageSize && <Button variant="ghost" onClick={()=>setCursors([...cursors,posts[pageSize-1].id])}>Later posts</Button>}
   </Section>;

@@ -10,7 +10,7 @@ export function agentPostFields(db: DataDatabase, key: WordsKey, allowed: (viewe
 GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
   const string = new GraphQLNonNull(GraphQLString);
   const post = new GraphQLObjectType({ name: 'AgentActivityPost', fields: {
-    id: { type: string }, at: { type: string }, words: { type: string },
+    source: { type: string }, id: { type: string }, at: { type: string }, words: { type: string },
   } });
   const excerpt = new GraphQLObjectType({ name: 'AgentActivityExcerpt', fields: {
     id: { type: string }, words: { type: string },

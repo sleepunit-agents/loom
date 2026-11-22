@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { and, desc, eq, gt, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
@@ -6,9 +7,14 @@ import { agentPosts, agentPostThreads } from '../data/schema.js';
 import { threadTitle } from './title.js';
 import { MESSAGE_WORDS_MAX, type WordsKey } from './words.js';
 
-type Edit = { action: 'open'; words: string; title?: string }
-  | { action: 'reply'; thread: string; words: string }
-  | { action: 'rename'; thread: string; title: string };
+const words = z.string().min(1).max(MESSAGE_WORDS_MAX).refine(text => !!text.trim(), 'Activity post needs text');
+const thread = z.string().min(1).max(200);
+export const agentPostEdit = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('open'), words, title: threadTitle.optional() }).strict(),
+  z.object({ action: z.literal('reply'), thread, words }).strict(),
+  z.object({ action: z.literal('rename'), thread, title: threadTitle }).strict(),
+]);
+type Edit = z.infer<typeof agentPostEdit>;
 
 /** The operation authenticates the source and runs this prepared write inside its receipt transaction. */
 export async function prepareAgentPost(db: DataDatabase, key: WordsKey, source: string, edit: Edit) {
@@ -50,7 +56,7 @@ export async function agentPostPreviews(db: DataDatabase, key: WordsKey, visible
   const previous = sql<number>`(select max(p.seq) from agent_posts p
     where p.thread = ${agentPostThreads.id} and p.seq < ${agentPosts.seq})`;
   const rows = db.select({
-    thread: agentPostThreads.id, title: agentPostThreads.title,
+    thread: agentPostThreads.id, source: agentPostThreads.source, title: agentPostThreads.title,
     latest: { seq: agentPosts.seq, at: agentPosts.at, words: agentPosts.words },
     parent: { seq: parent.seq, words: parent.words },
   }).from(agentPostThreads)
@@ -59,7 +65,7 @@ export async function agentPostPreviews(db: DataDatabase, key: WordsKey, visible
     .where(visibleSource).orderBy(desc(agentPosts.seq)).limit(limit).all();
   return Promise.all(rows.map(async row => ({
     thread: row.thread, title: await key.open(row.title),
-    latest: { id: String(row.latest.seq), at: row.latest.at, words: await key.open(row.latest.words) },
+    latest: { source: row.source, id: String(row.latest.seq), at: row.latest.at, words: await key.open(row.latest.words) },
     parent: row.parent ? { id: String(row.parent.seq), words: await key.open(row.parent.words) } : null,
   })));
 }
@@ -67,9 +73,9 @@ export async function agentPostPreviews(db: DataDatabase, key: WordsKey, visible
 /** Page forward in insertion order so a new reply never shifts a reader's place. */
 export async function agentPostHistory(db: DataDatabase, key: WordsKey, visibleSource: SQL,
   thread: string, after: number, limit: number) {
-  const rows = db.select({ seq: agentPosts.seq, words: agentPosts.words, at: agentPosts.at })
+  const rows = db.select({ source: agentPostThreads.source, seq: agentPosts.seq, words: agentPosts.words, at: agentPosts.at })
     .from(agentPostThreads).innerJoin(agentPosts, eq(agentPosts.thread, agentPostThreads.id))
     .where(and(visibleSource, eq(agentPostThreads.id, thread), gt(agentPosts.seq, after)))
     .orderBy(agentPosts.seq).limit(limit).all();
-  return Promise.all(rows.map(async row => ({ id: String(row.seq), at: row.at, words: await key.open(row.words) })));
+  return Promise.all(rows.map(async row => ({ source: row.source, id: String(row.seq), at: row.at, words: await key.open(row.words) })));
 }

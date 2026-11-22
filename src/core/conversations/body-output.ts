@@ -1,3 +1,4 @@
+import { agentPostEdit, prepareAgentPost } from './agent-posts.js';
 import { prepareReviewResult } from './review-result.js';
 import { reviewThread } from './review-place.js';
 import { threadTitle } from './title.js';
@@ -86,6 +87,30 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
    ctx.changed('messages',found.thread.id);ctx.changed('turns',found.cv.id);ctx.changed('conversations',found.cv.id);return {saved:true as const,seq:message.seq};},
  }));
 
+ operations.register(operation({
+  ...common, name:'conversation.activityPost', input:agentPostEdit,
+  output:z.object({thread:z.string()}).strict(),
+  may(viewer) {
+    const work=current(viewer);
+    return !!work && work.cv.venue==='loom' && !quiet?.(work);
+  },
+  async prepare(input, {viewer}) {
+    const before=threadFor(viewer);
+    const save=await prepareAgentPost(db,service.key,before.thread.id,input);
+    return () => {
+      const live=threadFor(viewer);
+      if (live.job.id!==before.job.id || live.thread.id!==before.thread.id || live.cv.member!==before.cv.member ||
+          live.cv.agent!==before.cv.agent || live.cv.project!==before.cv.project || live.cv.place!==before.cv.place)
+        throw new OperationError('denied','Conversation changed');
+      return save(service.now());
+    };
+  },
+  run(ctx,_input,prepared) {
+    const thread=(prepared as ()=>string)();
+    ctx.changed('threads',threadFor(ctx.viewer).thread.id);
+    return {thread};
+  },
+ }));
  operations.register(operation({...common,name:'conversation.title',
   input:z.object({title:threadTitle}).strict(),output:z.object({saved:z.literal(true),renamed:z.boolean()}).strict(),
   run(ctx,input){const found=threadFor(ctx.viewer),updated=service.threads.rename(found.thread.id,input.title,'agent');ctx.changed('threads',found.thread.id);ctx.changed('conversations',found.cv.id);return {saved:true as const,renamed:updated.title!==found.thread.title};},
