@@ -4,11 +4,13 @@ import { Conversations, lateMailWaits } from '../core/conversations/index.js';
 import type { DataDatabase } from '../core/data/database.js';
 import { DAY_MS } from '../core/day.js';
 import { boxes, guestIoReadings } from '../core/data/schema.js';
+import { MACHINE_CHECK_MS } from './machine-reading-time.js';
 import type { GuestPressureReading } from './guest-io-pressure.js';
 
 const HIGH = 4000;
-const SUSTAINED_MS = 15 * 60_000;
-const MAX_GAP_MS = 7.5 * 60_000;
+const SUSTAINED_MINUTES = 15;
+const SUSTAINED_MS = SUSTAINED_MINUTES * 60_000;
+const MAX_GAP_MS = MACHINE_CHECK_MS * 1.5;
 
 /** One report replaces the reporting host's watch list. Unknown interrupts a
  * pending duration but only a measured recovery can close a notice as recovered. */
@@ -30,11 +32,11 @@ export function recordGuestPressure(db: DataDatabase, box: string, readings: rea
         notice = 'guest-io-' + randomUUID();
         mail.send({ toKind: 'person', to: machine.owner, member: machine.owner, fromKind: 'unknown',
           source: 'notice', sourceId: notice, refs: [box],
-          words: `${machine.name}: CT ${guest} has been waiting on disk for at least 40% of the time for 15 minutes. Latest reading: ${value / 100}%.` });
+          words: `${machine.name}: CT ${guest} has been waiting on disk for at least ${HIGH / 100}% of the time for ${SUSTAINED_MINUTES} minutes. Latest reading: ${value / 100}%.` });
         changed = true;
       }
     } else if (value !== null && notice) {
-      mail.resolveSource('notice', notice, `CT ${guest} is waiting on disk ${value / 100}% of the time, below 40%.`);
+      mail.resolveSource('notice', notice, `CT ${guest} is waiting on disk ${value / 100}% of the time, below ${HIGH / 100}%.`);
       notice = null;
       changed = true;
     }
