@@ -25,7 +25,7 @@ export function briefTime(at: string, zone?: string, now: number = Date.now()): 
   return say(zone, { dateStyle: 'medium' }, date);
 }
 /** The whole of it, for a screen reader and a hover: "Nov 14, 2026, 2:31 PM". */
-export function fullTime(at: string, zone?: string): string {
+export function fullTime(at: string | number, zone?: string): string {
   const date = new Date(at);
   return Number.isFinite(date.getTime()) ? say(zone, { dateStyle: 'medium', timeStyle: 'short' }, date) : '';
 }

@@ -1,3 +1,5 @@
+import { briefTime } from '../../kit/time';
+import { useHouseholdZone } from '../../data/zone';
 import { useLayoutEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useDataQuery, type DataQuerySnapshot } from '../../data/graphql';
 import './doing.css';
@@ -64,19 +66,10 @@ export function doingPhrase(item: DoingItem, name: (id: string) => string = fall
 }
 /** A two-letter mark per kind: drawn in mono, so every look has it and it reads at a pill's size. */
 const marks: Record<string, string> = { terminal: '>_', discord: 'DC', slack: 'SL', loom: 'LM', handoff: 'HO', trigger: 'TP', wake: 'WK', task: 'TK', job: 'JB', private: '··' };
-const clock = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' });
-const day = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' });
-/** "2:15 PM" today, "Nov 18, 2:15 PM" before. */
-export function sinceWord(since: string, now = Date.now()): string {
-  const at = new Date(since);
-  if (!Number.isFinite(at.getTime())) return '';
-  const time = clock.format(at).replace(/ /g, ' ');
-  return day.format(at) === day.format(new Date(now)) ? time : `${day.format(at)}, ${time}`;
-}
 /** The quiet line: a state that is not simply running, the task a job is about, where it runs, and since when.
  * A task says when it was last touched; a job nothing has been heard from says so instead of "since". */
-export function doingMeta(item: DoingItem, now = Date.now()): string {
-  const since = sinceWord(item.since, now), quiet = item.quietSince ? sinceWord(item.quietSince, now) : '';
+export function doingMeta(item: DoingItem, zone?: string, now = Date.now()): string {
+  const since = briefTime(item.since, zone, now), quiet = item.quietSince ? briefTime(item.quietSince, zone, now) : '';
   return [item.state === 'queued' ? 'Queued' : item.state === 'starting' ? 'Starting' : '',
     item.kind !== 'task' && item.ref ? [item.ref, item.task].filter(Boolean).join(' · ') : '',
     item.machine && item.kind !== 'terminal' ? `on ${item.machine}` : '',
@@ -90,6 +83,7 @@ export const claimedPath = (agent: string) => `/p/tasks-preview/?folder=progress
 export function Doing({ doing, name, agent, names, go, compact = false }: {
   doing: DoingReading; name: string; /** The agent's id: with it, the tasks it has only claimed are one quiet line under the pills (never on a compact card). */ agent?: string; names?: ReadonlyMap<string, string>; go(path: string): void; compact?: boolean;
 }) {
+  const zone = useHouseholdZone();
   const named = (id: string) => names?.get(id) ?? fallbackName(id);
   if (doing.status !== 'live') return <p className="desk-doing-quiet" role="status">{doing.status === 'loading' ? 'Checking…' : 'Can’t tell what it is doing right now.'}</p>;
   const opens = (href: string) => (event: { button?: number; metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean; altKey?: boolean; preventDefault(): void }) => {
@@ -101,7 +95,7 @@ export function Doing({ doing, name, agent, names, go, compact = false }: {
   if (!doing.items.length) return <><p className="desk-doing-quiet">Nothing right now.</p>{claimed}</>;
   return <><ul className="desk-doing" data-compact={compact || undefined} aria-label={`What ${name} is doing`}>
     {doing.items.map(item => {
-      const phrase = doingPhrase(item, named), meta = doingMeta(item);
+      const phrase = doingPhrase(item, named), meta = doingMeta(item, zone);
       const inside = <><span className="desk-doing-mark" aria-hidden="true">{marks[item.kind] ?? marks.job}</span>
         <span className="desk-doing-words"><span className="desk-doing-phrase">{phrase}</span>{!compact && meta && <span className="desk-doing-meta">{meta}</span>}</span></>;
       const href = item.href;

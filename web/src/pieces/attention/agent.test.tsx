@@ -37,7 +37,7 @@ beforeEach(()=>{f.call.mockClear();f.listeners.clear();f.extra={DeskDoingAll:{st
  'attention.ask':live([{id:'question',agent:'art',state:'open',ask:'Ship the desk?',why:'Ready to test',createdAt:1}]),
  thread:live([{id:'th:latest',agent:'art',archived:null,unread:false,last:3},{id:'th:unread',agent:'art',archived:null,unread:true,last:1}]),
 };});
-afterEach(async()=>{await act(async()=>tree?.unmount());tree=undefined;});
+afterEach(async()=>{await act(async()=>tree?.unmount());tree=undefined;vi.restoreAllMocks();});
 it('opens one owned agent with real profile/status and routes each deeper action to its owning app',async()=>{
  const go=await draw();expect(text()).not.toContain('Edit profile in Setup');expect(text()).toContain('Art E Fish agent window');expect(text()).toContain('Keeps the household moving.');expect(text()).toContain('Checking the desk');expect(text()).not.toContain('Private foreign profile');
  for(const [title,path] of [['Ship the desk?','/p/inbox-preview/ask/question'],['Conversation','/p/comms-preview/thread/unread'],['Activity','/p/activity-preview/?who=art'],['People','/p/people-preview/person/art']]){await click(title);expect(go).toHaveBeenLastCalledWith(path);}
@@ -58,6 +58,8 @@ it('does not infer profile edit permission and replaces an unread target when th
 });
 
 it('holds everything about one agent in full: what it is doing, its jobs, its last answer, its conversations and its steps',async()=>{
+ vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-22T12:00:00Z'));
+ f.extra.DeskTime={status:'live',data:{deskTime:{at:Date.now(),timezone:'Asia/Tokyo'}}};
  const item=(id:string,fields:object)=>({id,title:null,with:null,place:null,direct:null,ref:null,machine:null,since:'2026-11-14T18:00:00Z',state:'running',href:null,...fields});
  f.extra.DeskDoingAll={status:'live',data:{agentDoing:{more:0,items:[...Array.from({length:10},(_,n)=>item(`j-${n}`,{kind:'job',title:`Job ${n}`})),item('t-7',{kind:'task',title:'Order the pump',ref:'t-7',href:'/p/tasks-preview/task/t-7'})]}}};
  f.extra.DeskAgentJobs={status:'live',data:{boxes:[{id:'box-one',name:'one'}],jobHistory:[
@@ -77,11 +79,13 @@ it('holds everything about one agent in full: what it is doing, its jobs, its la
  // Jobs: one name, the ones running now first with their machine and times, then the earlier ones.
  expect(section('Art E Fish jobs now').findAllByProps({className:'loom-kit-title'}).map(words)).toEqual(['Compare pumps']);
  expect(section('Art E Fish queued jobs').findAllByProps({className:'loom-kit-title'}).map(words)).toEqual(['Order hose']);
- expect(words(section('Art E Fish jobs now'))).toMatch(/Running · on one · queued Nov 14, \d+:\d\d [AP]M · started Nov 14, \d+:\d\d [AP]M/);expect(words(section('Art E Fish queued jobs'))).toMatch(/Queued · queued Nov 14, \d+:\d\d [AP]M/);
- expect(words(section('Art E Fish earlier jobs'))).toMatch(/Drain the pond.*Done · queued Nov 13, .* · started Nov 13, .* · ended Nov 13, \d+:\d\d [AP]M/);expect(text()).not.toContain('box-hidden');expect(text()).not.toContain('Not Art’s job');
+ expect(words(section('Art E Fish jobs now'))).toMatch(/Running · on one · queued Nov 15, 3:00 AM · started Nov 15, 3:01 AM/);expect(words(section('Art E Fish queued jobs'))).toMatch(/Queued · queued Nov 15, 3:05 AM/);
+ expect(words(section('Art E Fish earlier jobs'))).toMatch(/Drain the pond.*Done · queued Nov 14, 3:00 AM · started Nov 14, 3:01 AM · ended Nov 14, 4:00 AM/);expect(text()).not.toContain('box-hidden');expect(text()).not.toContain('Not Art’s job');
  expect(text()).not.toMatch(/Runtime jobs|Current jobs/);
  // The last answer whole, and where it was said.
  await act(async()=>{await import('../../kit/markdown');});
+ expect(words(section('Last answer').findByType('time'))).toContain('11:00 AM');
+ expect(words(section('Last steps').findAllByType('time')[0])).toContain('3:00 AM');
  const html=section('Last answer').findByProps({className:'loom-prose'}).props.dangerouslySetInnerHTML.__html;
  for(const part of ['<strong>Line one</strong>','<li>Line two</li>','<li>Line three</li>','<code>Line four</code>','href="https://example.org/five"','>Line five</a>'])expect(html).toContain(part);
  await click('Open the conversation');expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/2');
