@@ -58,6 +58,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   if(['Your account','Household setup','Sharing'].includes(title))expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true});
   if(title==='Home'){const result=step.value.report.actions?.homeMessage;expect(result,JSON.stringify(result)).toMatchObject({ok:true,inboxCopies:1,persistedAfterReload:true});}
   if(title==='Subscriptions')expect(step.value.report.actions.modelsMachines,JSON.stringify(step.value.report.actions.modelsMachines)).toMatchObject({ok:true});
+  if(title==='Activity')for(const action of ['activityWorkLinks','activityDays']){
+   const result=step.value.report.actions[action];
+   expect(result,JSON.stringify(result)).toMatchObject({ok:true});
+  }
   if(title==='Knowledge'){
    expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true,provisional:true,rechecked:true,verified:true,persistedAfterReload:true,connection:'existing /graphql'});
    const source=step.value.report.actions.knowledgeSourceCheck;

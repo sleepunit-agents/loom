@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 /** Knowledge writes use visible controls on the disposable, running example home. */
 import {join} from 'node:path';
 export async function knowledgeActions({page,tile,out,connections}){
@@ -93,5 +94,37 @@ export async function activityWorkLinks({page,tile,example,out}) {
   }
   await reader.screenshot({path:join(out,screenshot)});
   return {ok:true,screenshot,reason:'The pump conversation shows its four sourced tasks and their pull request with the correct titles and destinations.'};
+ }catch(error){return {ok:false,error:String(error)};}
+}
+
+export async function activityDays({page,tile,example,out}) {
+ const screenshot='action-activity-days.png';
+ try {
+  const back=tile.locator('.loom-split__back:visible');
+  if(await back.count())await back.first().click();
+  const picker=tile.getByRole('combobox',{name:'Shown day'});
+  const earlier=tile.getByRole('button',{name:'Earlier',exact:true});
+  const current=tile.locator('[data-split-row]').filter({has:page.getByText('Repair the garden pump',{exact:true})}).first();
+  await current.waitFor();
+  const today=await current.getAttribute('data-day');
+  assert.equal(await picker.inputValue(),today);
+  const old=tile.locator('[data-split-row]').filter({has:page.getByText('Previous shed inspection',{exact:true})});
+  for(let i=0;i<10 && !await old.count();i++){
+   const options=await picker.locator('option').count();
+   await earlier.click();
+   await picker.locator('option').nth(options).waitFor({state:'attached'});
+  }
+  await old.waitFor();
+  const day=await old.getAttribute('data-day');
+  assert.ok(day && today && day<today);
+  await picker.selectOption(day);
+  const chart=tile.getByRole('group',{name:'Activity per hour, '+day,exact:true});
+  await chart.getByRole('button',{name:new RegExp('^'+await old.getAttribute('data-hour')+':00: [1-9]')}).waitFor();
+  await old.click();
+  const reader=tile.locator('article');
+  await reader.getByRole('heading',{name:'Previous shed inspection',exact:true}).waitFor();
+  assert.equal(Date.parse(await reader.locator('time').getAttribute('datetime')),Date.parse(example.retention.at));
+  await tile.screenshot({path:join(out,screenshot)});
+  return {ok:true,screenshot,reason:'Activity showed the current pump conversation and the earlier shed inspection under different days. Selecting the older day exposed its populated hour, and opening its entry showed the original event time.'};
  }catch(error){return {ok:false,error:String(error)};}
 }
