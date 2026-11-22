@@ -98,7 +98,8 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
           missingPreferred: (input.prefers ?? []).filter(fact => !meetsNeed(facts, fact)) };
       }
     }
-    return { box: id, ...(quotaLimited ? {quotaLimited:true} : {}), reason: signedOut ? 'An account for an allowed model is signed out on this machine.' : 'No signed-in account with room for an allowed model.' };
+    if (quotaLimited) return { box: id, quotaLimited: true, reason: QUOTA_WAIT_REASON };
+    return { box: id, reason: signedOut ? 'An account for an allowed model is signed out on this machine.' : 'No signed-in account with room for an allowed model.' };
   });
   const eligible = candidates.filter(candidate => 'placement' in candidate);
   const winner = eligible.find(candidate => !candidate.missingPreferred.length) ?? eligible[0];
