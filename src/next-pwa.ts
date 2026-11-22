@@ -7,7 +7,9 @@ export function nextWorker(assets: readonly string[]): string {
   const tag = createHash('sha256').update(assets.join('\n')).digest('hex').slice(0, 16);
   return `const CACHE = 'loom-next-static-${tag}';
 const ASSETS = ${JSON.stringify(assets)};
-self.addEventListener('install', e => { self.skipWaiting(); e.waitUntil(caches.open(CACHE).then(c => Promise.all(ASSETS.map(u => c.add(u).catch(() => {}))))); });
+// Open desks still import chunks named by their original build. Let the browser
+// activate this worker and remove the old cache after those clients close.
+self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => Promise.all(ASSETS.map(u => c.add(u).catch(() => {}))))); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 // Notifications never carry message words onto a locked screen. The signed-in
 // destination resolves current records and authority when the person opens it.
