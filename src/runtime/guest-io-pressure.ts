@@ -1,3 +1,6 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { constants, closeSync, openSync, readSync } from 'node:fs';
 
 export const validGuestId = (id: string) => /^[1-9]\d{0,8}$/.test(id);
@@ -29,4 +32,24 @@ export function readGuestIoPressure(guest: string): number | undefined {
   } catch { /* Guests may disappear between polls. */ }
   finally { if (fd !== undefined) closeSync(fd); }
   return undefined;
+}
+
+export const WATCHED_GUESTS_MAX = 16;
+export type GuestPressureReading = { guest: string; ioHundredths: number } | { guest: string; unknown: true };
+
+const helper = fileURLToPath(new URL('./machine-disk-helper.js', import.meta.url));
+const runHelper = promisify(execFile);
+
+export async function sampleGuestPressure(guest: string, signal: AbortSignal): Promise<GuestPressureReading> {
+  if (validGuestId(guest) && !signal.aborted) {
+    try {
+      const { stdout } = await runHelper(process.execPath, [helper, 'guest-io:' + guest], {
+        signal, timeout: 5000, killSignal: 'SIGKILL', maxBuffer: 256,
+        env: { ...process.env, NODE_OPTIONS: undefined },
+      });
+      const value = JSON.parse(stdout).ioHundredths;
+      if (Number.isInteger(value) && value >= 0 && value <= 10000) return { guest, ioHundredths: value };
+    } catch { /* Report the missing observation at the normal interval. */ }
+  }
+  return { guest, unknown: true };
 }
