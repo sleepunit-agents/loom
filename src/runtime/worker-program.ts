@@ -94,6 +94,9 @@ export const workerConfigSchema = z.object({
     setupTimeoutMs: stepDeadline.optional(),
     cleanupTimeoutMs: stepDeadline.optional() }).strict().optional(),
 }).strict().superRefine((config, context) => {
+  if (config.watchGuestIo?.length && (config.machineCheckMs ?? MACHINE_CHECK_MS) > MACHINE_CHECK_MS) {
+    context.addIssue({ code: 'custom', message: 'Guest disk-wait monitoring needs readings at least every five minutes' });
+  }
   const accounts = config.accountUsage?.readers.map(reader => reader.account.account) ?? [];
   if (new Set(accounts).size !== accounts.length) context.addIssue({ code: 'custom', message: 'Duplicate account quota reader' });
   // Account sign-in directories are container mounts.

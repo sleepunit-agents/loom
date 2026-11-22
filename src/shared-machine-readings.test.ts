@@ -8,6 +8,7 @@ import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
 import { boxAlertSettings, boxes, boxReadings, inbox, members, tokens } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
+import { MachineConditions } from './runtime/machine-conditions.js';
 import { reportWorkerMachineReadings } from './runtime/worker-http.js';
 import { sqlVisibility } from './policy-sql.js';
 import type { Viewer } from './policy.js';
@@ -224,4 +225,58 @@ it('accepts an overflowing report with the bare acknowledgement and exposes the 
   expect(await f.query(query, keys.owner)).toEqual({ data: { boxes: [{ readingsLeftOut: 1 }] } });
   await f.report([disk(91, '/d0')]);
   expect(await f.query(query, keys.owner)).toEqual({ data: { boxes: [{ readingsLeftOut: 0 }] } });
+});
+
+it('raises sustained guest pressure once per occasion and resolves it on measured recovery', async () => {
+  const f = fixture();
+  const rows = () => f.db.select().from(inbox).all();
+  const report = async (value: number | null, step = 300_000) => {
+    f.clock.advance(step);
+    const reading = value === null ? { guest: '103', unknown: true } : { guest: '103', ioHundredths: value };
+    expect((await f.call('runtime.guestIoPressure', { readings: [reading] }, keys.worker)).body)
+      .toEqual({ ok: true, value: { ok: true } });
+  };
+  await report(4000);
+  await report(5000, 900_000);
+  await report(null);
+  await report(4000);
+  await report(4000);
+  await report(4000);
+  expect(rows()).toHaveLength(0);
+  await report(6000);
+  await report(9000);
+  await report(null);
+  expect(rows()).toMatchObject([{ to: 'sam', state: 'waiting' }]);
+  await report(3999);
+  expect(rows()).toMatchObject([{ state: 'resolved', resolution: expect.stringContaining('39.99%') }]);
+  for (let n = 0; n < 4; n++) await report(5000);
+  expect(rows()).toHaveLength(2);
+  expect(rows()[1].sourceId).not.toBe(rows()[0].sourceId);
+  await f.call('runtime.guestIoPressure', { readings: [] }, keys.other);
+  expect(rows()[1].state).toBe('waiting');
+  await f.call('runtime.guestIoPressure', { readings: [] }, keys.worker);
+  expect(rows()[1]).toMatchObject({ state: 'resolved', resolution: expect.stringContaining('no longer watched') });
+});
+
+it('bounds guest observations and accepts only the authenticated worker’s own report', async () => {
+  const f = fixture(), reading = { guest: '103', ioHundredths: 4000 };
+  for (const readings of [[reading, reading], [{ ...reading, box: 'other' }], [{ ...reading, unknown: true }],
+    [{ ...reading, ioHundredths: 10001 }], [{ ...reading, guest: '../103' }]]) {
+    expect((await f.call('runtime.guestIoPressure', { readings }, keys.worker)).status).toBe(400);
+  }
+  expect((await f.call('runtime.guestIoPressure', { readings: [reading] }, keys.owner)).status).toBe(403);
+});
+
+it.each(['silence', 'revocation'])('closes the guest notice after %s with the observed reason', async reason => {
+  const f = fixture(), now = () => new Date(f.clock.now()).toISOString();
+  for (let n = 0; n < 4; n++) {
+    f.clock.advance(300_000);
+    await f.call('runtime.guestIoPressure', { readings: [{ guest: '103', ioHundredths: 4000 }] }, keys.worker);
+  }
+  expect(f.db.select().from(inbox).get()?.state).toBe('waiting');
+  if (reason === 'silence') f.clock.advance(86_400_000);
+  else f.db.update(boxes).set({ revokedAt: now() }).where(eq(boxes.id, 'worker')).run();
+  new MachineConditions(f.db, now).sweep();
+  expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'resolved',
+    resolution: expect.stringContaining(reason === 'silence' ? 'No guest disk-wait report' : 'removed') });
 });
