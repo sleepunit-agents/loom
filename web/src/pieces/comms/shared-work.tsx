@@ -5,17 +5,16 @@ import { ChangeCard } from '../change-view';
 import { WorkCard, WorkPanel } from '../comms-view/work';
 import { inboxRefPath } from '../attention/inbox-query';
 import type { Change } from '../change-view/model';
-import { taskSegment } from '../tasks/route';
+import { taskPath } from '../../../../src/task-route';
 type Task = { id: string; title: string; status: string;isShelved?:boolean;sourceKind?:string;sourceId?:string };
 import { sourceQuery, taskQuery, changeQuery } from './work-query';
 function selection(query: string, variables: Record<string, unknown>): QuerySelection<Task[]> {
   return { query, variables, decode(data) { if (!Array.isArray(data.tasks)) throw Error('Invalid work selection'); return data.tasks as Task[]; } };
 }
-const path = (id: string) => `/p/tasks-preview/task/${taskSegment(id)}`;
 /** A task's stored state in plain words ("in_progress" is "in progress"). */
 const stateWord = (task: Task) => task.isShelved ? 'shelved' : task.status.replace(/_/g, ' ');
 function TaskRows({ tasks, go, madeHere = false, conversation }: { tasks: readonly Task[]; go(path: string): void; madeHere?:boolean;conversation?:string }) {
-  return <>{tasks.map(task => <Row key={task.id} title={task.title} onClick={() => go(path(task.id))}
+  return <>{tasks.map(task => <Row key={task.id} title={task.title} onClick={() => go(taskPath(task.id))}
     status={`${task.id} · ${stateWord(task)}${madeHere || task.sourceKind==='conversation' && task.sourceId===conversation ? ' · Made here' : ''}`} />)}</>;
 }
 function MentionedTask({ id, go, conversation }: { id: string; go(path: string): void;conversation:string }) {

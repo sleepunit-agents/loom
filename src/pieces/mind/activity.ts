@@ -1,3 +1,4 @@
+import { taskPath } from '../../task-route.js';
 /** Activity reads existing episode stores in place; conversation content comes only from its new role. */
 import {existsSync} from 'node:fs';
 import BetterSqlite3,{type Database} from 'better-sqlite3';
@@ -61,7 +62,7 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
  }
  function runOpen(r:ActivityRun,v:Viewer):ActivityOpen{
   const entry=fromRun(r,v),refs=refsIn([r.summary??'',...r.asked,...r.decided,...r.tasks,...(r.references??[])].join('\n'),github()),theirs=v.kind==='member'&&r.needsForMember===v.id;
-  const tasks=refs.tasks.map(id=>({label:id,href:`/p/tasks-preview/task/${encodeURIComponent(id)}`}));
+  const tasks=refs.tasks.map(id=>({label:id,href:taskPath(id)}));
   const distinct=(links:{label:string;href?:string}[])=>[...new Map(links.map(link=>[link.href,link])).values()];
   return {...entry,asked:r.asked,decided:r.decided,...(r.summary?{story:r.summary}:{}),tasks:distinct([...tasks,...(r.linkedWork?.tasks??[])]),prs:distinct([...refs.prs,...(r.linkedWork?.prs??[])]),
    links:[...r.links,...(theirs&&r.needsHref?[{label:'What it needs you for',href:r.needsHref}]:[])],...(theirs&&r.needs?{needs:r.needs}:{}),
@@ -121,7 +122,7 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
   const parts=fallbackParts(e.content),refs=refsIn(`${p.title}\n${e.content}`,github());
   return {id:`e~${agent}~${e.ref}`,...(p.conversation?{conversationId:p.conversation}:{}),agent,at:e.created,...stamp(e.created),...splitTitle(p.title),venue,where:whereLabel(p.where)||VENUES[venue]||venue,what:whatOf({place:p.where,title:p.title}),
    ...(ownerPerson(v)&&p.where.includes(ownerPerson(v)!)?{owner:true as const}:{}),...(e.expires_at||related?.expires!==undefined?{expires:Math.min(e.expires_at?Date.parse(e.expires_at):Infinity,related?.expires??Infinity)}:{}),
-   asked:parts?.asked?[parts.asked]:[],decided:parts?.shipped??[],story:parts?parts.said:e.content,tasks:refs.tasks.map(id=>({label:id,href:`/p/tasks-preview/task/${id}`})),prs:refs.prs,links:[{label:'The memory',href:`/p/activity-preview/memory/${encodeURIComponent(`${agent}:${e.ref}`)}`}],more:[]};
+   asked:parts?.asked?[parts.asked]:[],decided:parts?.shipped??[],story:parts?parts.said:e.content,tasks:refs.tasks.map(id=>({label:id,href:taskPath(id)})),prs:refs.prs,links:[{label:'The memory',href:`/p/activity-preview/memory/${encodeURIComponent(`${agent}:${e.ref}`)}`}],more:[]};
  }
  function window(scope:string,v:Viewer):ActivityWindow|undefined{
   if(!agents(v).length)return;
