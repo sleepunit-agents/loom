@@ -125,7 +125,6 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
     if(app){open(app.id);router.go(app.id,path);}
   };
   return <RailContext.Provider value={phone?null:companion}><div className="next-shell" data-shell={phone ? 'phone' : 'desk'} data-dock-mode={phone?'always':hiding.modes.dock}>
-    {Notice && <Notice go={go} />}
     {Bar ? <Bar title={apps.find(a => a.id === focused?.id)?.title ?? 'Home'} go={go} /> : <header className="next-bar"><strong>LOOM<span aria-hidden="true">//</span>OS</strong><span>{apps.find(a => a.id === focused?.id)?.title ?? 'Home'}</span><Button variant="ghost" size="sm" onClick={() => setLauncher(!launcher)}>All apps</Button></header>}
     <div ref={ground} className="next-ground">
       {!visible.length && (Home ? <Home go={path => { const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/')); if(app){open(app.id);router.go(app.id,path);} }} /> : <Empty title="Your desk" text="Open an app from the dock." />)}
@@ -157,6 +156,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
         </section>;
       })}
     </div>
+    {Notice && <Notice go={go} />}
     {!phone&&Signals&&<Signals onAttention={setAttention} go={path=>{const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}}/>}
     <Launcher apps={apps} open={launcher&&!keys.switching} onOpenChange={setLauncher} launch={open} />
     <Switcher apps={apps} switching={keys.switching} pick={keys.pick} />
