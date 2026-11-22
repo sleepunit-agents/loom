@@ -68,6 +68,8 @@ export interface BodySessions {
   take(now?: () => number): Promise<string | undefined>;
   /** Absolute deadline of the files put back by take. */
   readonly keepUntil?: string;
+  /** Upper bound on coordinator time while using a retained checkpoint. */
+  coordinatorNow?(): number;
   /** A coordinator predating keyed history accepts the original take and save shapes only. */
   historyKeys?: boolean;
   /** Hashes of the bridge records already represented in the restored harness session. */
@@ -92,11 +94,14 @@ export function bodySessions(client: Client, harness: string, env: Env, place: s
   const remove = (session: string) => { for (const rel of layout.files(root, session).filter(file => layout.owns(file, session)).reverse()) removeUnfollowed(root, rel); };
   let restored: string | undefined, covered: string[] | undefined, historyKeys=true, retention=true;
   let inheritedStart:string|undefined, inheritedEnd:string|undefined;
+  let coordinatorNow = () => -Infinity;
   return {
+    coordinatorNow: () => coordinatorNow(),
     get historyKeys(){return historyKeys;},
     get covered(){return covered;},
     get keepUntil(){return inheritedEnd;},
     async take(now = Date.now) {
+      const start = performance.now(), wallStart = now();
       let reply;
       try {
         reply = await client.command('conversation.session', {historyKeys:true,retention:true}, randomUUID());
@@ -111,8 +116,16 @@ export function bodySessions(client: Client, harness: string, env: Env, place: s
       } catch { return undefined; } // A lost response tells us nothing about the stored session.
       if (!reply.ok) return undefined;
       try {
-        const kept = z.object({ session: z.object({ session: z.string().regex(SESSION_ID), files: z.string(), since:z.iso.datetime({offset:true}).optional(), keepUntil:z.iso.datetime({offset:true}).optional(), covered:z.array(z.hash('sha256')).max(SESSION_HISTORY_KEYS).optional() }).strict().nullable() }).strict().parse(reply.value).session;
-        if (kept && (!kept.keepUntil || now() < Date.parse(kept.keepUntil))) { unpackSession(layout, root, kept.files, kept.session); covered=kept.covered;inheritedStart=kept.since;inheritedEnd=kept.keepUntil;return restored = kept.session; }
+        const response = z.object({ servedAt:z.iso.datetime().optional(), session: z.object({ session: z.string().regex(SESSION_ID), files: z.string(), since:z.iso.datetime({offset:true}).optional(), keepUntil:z.iso.datetime({offset:true}).optional(), covered:z.array(z.hash('sha256')).max(SESSION_HISTORY_KEYS).optional() }).strict().nullable() }).strict().parse(reply.value);
+        const kept = response.session;
+        if (retention && kept) {
+          if (!response.servedAt || !kept.keepUntil) return undefined;
+          const served = Date.parse(response.servedAt);
+          // Charge the entire round trip against the remaining time. Either clock
+          // can advance while the other stalls or the worker's wall clock steps.
+          coordinatorNow = () => served + Math.max(performance.now()-start, now()-wallStart);
+        }
+        if (kept && (!kept.keepUntil || Math.max(now(),coordinatorNow()) < Date.parse(kept.keepUntil))) { unpackSession(layout, root, kept.files, kept.session); covered=kept.covered;inheritedStart=kept.since;inheritedEnd=kept.keepUntil;return restored = kept.session; }
       } catch { /* handed something this body cannot use */ }
       // Handed nothing it can continue: whatever loom keeps is of no use to this body and will be behind the
       // conversation once it answers. Say so now, so that it is removed (core/conversations/sessions.ts).

@@ -63,7 +63,7 @@ export function registerConversationSessions(operations: Operations, db: DataDat
   const coverage=z.array(z.hash('sha256')).max(SESSION_HISTORY_KEYS);
   const defaults = bodyOperationDefaults(current, hash, 'loom-conversation-session-v1');
   operations.register({ name: 'conversation.session', write: false, doors: ['http'], input: z.object({historyKeys:z.literal(true).optional(),retention:z.literal(true).optional()}).strict(),
-    output: z.object({ session: z.object({ session: z.string(), files: z.string(), since:z.string().optional(),keepUntil:z.string().optional(), covered: coverage.optional() }).strict().nullable() }).strict(),
+    output: z.object({ servedAt:z.iso.datetime().optional(), session: z.object({ session: z.string(), files: z.string(), since:z.string().optional(),keepUntil:z.string().optional(), covered: coverage.optional() }).strict().nullable() }).strict(),
     may: (viewer, input) => {
       const mine = bound(viewer);
       return !!mine && (!mine.scope || input.retention === true);
@@ -82,7 +82,7 @@ export function registerConversationSessions(operations: Operations, db: DataDat
         const expires=wordsDeadline({at:row.startedAt,keepUntil:row.keepUntil},commsKeepDays(db));
         if(!held || Date.parse(held.since)>Date.parse(row.startedAt) || wordsDeadline({at:held.since,keepUntil:held.keepUntil},commsKeepDays(db))>expires)return {session:null};
       }
-      return { session: { session: kept.session, files: kept.files, ...(input.retention ? {since: row.startedAt,keepUntil: new Date(wordsDeadline({at:row.startedAt,keepUntil:row.keepUntil},commsKeepDays(db))).toISOString()} : {}), ...(input.historyKeys && kept.covered ? {covered:kept.covered} : {}) } };
+      return { ...(input.retention ? {servedAt:new Date(operations.clock.now()).toISOString()} : {}), session: { session: kept.session, files: kept.files, ...(input.retention ? {since: row.startedAt,keepUntil: new Date(wordsDeadline({at:row.startedAt,keepUntil:row.keepUntil},commsKeepDays(db))).toISOString()} : {}), ...(input.historyKeys && kept.covered ? {covered:kept.covered} : {}) } };
     },
   });
   operations.register({ ...defaults, name: 'conversation.sessionSave',

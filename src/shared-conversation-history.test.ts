@@ -370,6 +370,6 @@ it('hands a private Comms checkpoint to the replacement body after a loss and ke
  expect((await f.call('session',{retention:true},'read',raw.body)).status).toBeGreaterThanOrEqual(400);
  expect((await f.call('session',{},'legacy-read',token)).status).toBe(403);
  const restored=await f.call('session',{retention:true},'restore',token);
- expect(await restored.json()).toMatchObject({ok:true,value:{session:{session,keepUntil:expiry}}});
+ expect(await restored.json()).toMatchObject({ok:true,value:{servedAt:new Date(f.clock.now()).toISOString(),session:{session,keepUntil:expiry}}});
  await run(retry.id,'backup',token,true);
 });
