@@ -5,11 +5,13 @@ import {useDataQuery} from '../../data/graphql';
 import {AgentJobs} from '../attention/agent-jobs';
 import {OwnerMachines} from '../runtime/machines';
 
-const query='{ account { member } agents { id removedAt } boxes { id name owner revokedAt } }';
+import {MachineHostingDetails, machineHostingFields, type MachineHosting} from '../runtime/machine-hosting';
+
+const query=`{ account { member } agents { id removedAt } boxes { id name ${machineHostingFields} } }`;
 type Inventory={
  account:{member:string}|null;
  agents:{id:string;removedAt:string|null}[];
- boxes:{id:string;name:string;owner:string;revokedAt:string|null}[];
+ boxes:(MachineHosting & {id:string;name:string})[];
 };
 
 export default function Machines({go=()=>{},active=true}:{go?:(path:string)=>void;active?:boolean}){
@@ -24,7 +26,7 @@ export default function Machines({go=()=>{},active=true}:{go?:(path:string)=>voi
   <div className="grid min-w-0 content-start gap-4 overflow-auto p-5">
    {feed.status==='loading'?<Loading label="Opening machines…"/>:!inventory||!member?<ErrorView text="Machines are unavailable."/>:<>
     {active&&<OwnerMachines key={member} member={member}/>}
-    {!!others.length&&<Section label="Other visible machines"><ul>{others.map(box=><li key={box.id}>{box.name}</li>)}</ul></Section>}
+    {!!others.length&&<Section label="Other visible machines"><ul>{others.map(box=><li key={box.id}><h3>{box.name}</h3><MachineHostingDetails box={box}/></li>)}</ul></Section>}
     {!inventory.boxes.length&&<Empty title="No machines" text="No machines are visible to this account."/>}
     {agent&&<><Field label="Jobs for"><NativeSelect value={agent.id} onChange={e=>select(e.target.value)}>
      {agents.map(a=><option key={a.id} value={a.id}>{a.id}</option>)}
