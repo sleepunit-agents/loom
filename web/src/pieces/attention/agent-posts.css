@@ -1,0 +1,41 @@
+.desk-agent-posts, .desk-agent-history {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.desk-agent-posts button {
+  display: grid;
+  gap: .2rem;
+  width: 100%;
+  padding: .4rem .5rem;
+  color: inherit;
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+.desk-agent-post-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .4rem;
+  min-width: 0;
+}
+.desk-agent-post-heading strong, .desk-agent-post-parent,
+.desk-agent-posts[data-compact] .desk-agent-post-words {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.desk-agent-post-heading time, .desk-agent-history time {
+  flex: none;
+  font-size: .75em;
+}
+.desk-agent-post-parent {
+  border-inline-start: 2px solid currentColor;
+  padding-inline-start: .4rem;
+  opacity: .75;
+}
+.desk-agent-post-words, .desk-agent-history p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
