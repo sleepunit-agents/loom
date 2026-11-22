@@ -143,8 +143,9 @@ export async function bodyProgram(input: {
       sessionClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal:jobSignal,onJobEnded,fetch:input.fetch,clock:input.clock});
       keeper=input.sessions??(input.native?undefined:bodySessions(sessionClient,job.harness,input.env));
     }
-    const now=()=>input.clock?.now() ?? Date.now();
-    let resume=await keeper?.take(now);
+    const localNow=()=>input.clock?.now() ?? Date.now();
+    let resume=await keeper?.take(localNow);
+    const now=()=>Math.max(localNow(), keeper?.coordinatorNow?.() ?? -Infinity);
     if(signal.aborted)throw new Error();
     // Keys identify individual posts even when two replies have identical text and timestamps.
     const keyOf=(id:string)=>createHash('sha256').update(id).digest('hex');

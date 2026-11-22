@@ -183,9 +183,9 @@ it('saves bridge history with its receipt deadline when the provider posted it l
 it.each(['checkpoint','mail'])('rechecks the %s deadline after startup and before launching the harness', async expiring => {
   const f=fixture(), value=JSON.parse(f.input.toString()), clock=new FakeClock();
   value.job.venue='loom';
-  const deadline=new Date(clock.now()+1000).toISOString();
+  const deadline=new Date(clock.now()+83000+1000).toISOString();
   const discard=vi.fn();
-  const sessions={take:async()=>'session-1',keepUntil:deadline,save:async()=>{},discard};
+  const sessions={take:async()=>'session-1',keepUntil:deadline,coordinatorNow:()=>clock.now()+83000,save:async()=>{},discard};
   const native=vi.fn(async()=>{
     expect(discard).toHaveBeenCalledOnce();
     return {text:'Fresh answer',model:'observed',actions:[]};
