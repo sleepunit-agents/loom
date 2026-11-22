@@ -211,6 +211,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   expect(step.value.actions.nativeProtocol.runs).toHaveLength(2);
   expect(step.value.actions.nativeReply).toMatchObject({ok:true,persistedAfterReload:true});
  });
+ it('delivers Discord and Slack messages into the receiving agent Inbox',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('bridge-mail');
+  expect(step.value.actions.bridgeMail,JSON.stringify(step.value.actions.bridgeMail)).toMatchObject({ok:true});
+ });
  afterAll(async()=>{
   try{
    if(!ready)return;
