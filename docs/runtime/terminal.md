@@ -36,6 +36,26 @@ The tools are:
   admitted. Calling an otherwise granted operation does not require catalogue
   access.
 
+An observed terminal can post to its agent card through `loom_command` using the
+same harness and native session ID its terminal hook registered. For example:
+
+```json
+{
+  "operation": "terminal.activityPost",
+  "id": "boot-first-post",
+  "input": {
+    "harness": "codex",
+    "sessionId": "<current native session ID>",
+    "post": {"action": "open", "words": "Giving boot a scrolling console."}
+  }
+}
+```
+
+Keep `value.thread` from the receipt. For a reply, send a new command ID and
+`post: {"action":"reply","thread":"<activity ID>","words":"It scrolls!"}`. A
+rename takes `action: "rename"`, the same thread ID, and a `title`.
+The source conversation link on the card opens the terminal that posted it.
+
 A terminal session also gets the names it already calls. Each is a thin mapping
 onto one registered command or one query on this same door, so a named tool
 that works proves its data layer works:

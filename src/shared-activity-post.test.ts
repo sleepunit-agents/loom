@@ -37,3 +37,43 @@ it('posts, resumes and renames activities through the body MCP tool and reads th
     {thread:disk,title:'The test homes',latest:{words:'It was my test homes.',source:f.thread.id},parent:{words:'What filled the disk?'}},
   ]}});
 });
+
+it('posts from the selected standalone terminal when two sessions are open on the machine', async () => {
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+  const f = await bodyFixture(clean);
+  const {token} = f.root.services.signin.issue({kind:'agent',agent:'art',label:'Terminal',terminalMachine:'box'},'alice');
+  const origin='https://loom.invalid';
+  const client=new Client({name:'fixture-terminal',version:'1'});
+  await client.connect(new StreamableHTTPClientTransport(new URL('/mcp',origin),{
+    fetch:async(url,init)=>f.root.http.request(new Request(url,init)),requestInit:{headers:{authorization:'Bearer '+token}},
+  }));
+  clean.push(()=>client.close());
+  const command=async(operation:string,id:string,input:unknown)=>{
+    const result=await client.callTool({name:'loom_command',arguments:{operation,id,input}});
+    return JSON.parse((result.content as {text:string}[])[0].text);
+  };
+  const sessions=[{harness:'claude',sessionId:'first'},{harness:'codex',sessionId:'second'}];
+  const sources=[];
+  for (const session of sessions) {
+    const result=await command('terminal.session','open-'+session.sessionId,{
+      action:'open',machine:'box',...session,model:null,cwd:'/work',
+    });
+    expect(result.ok).toBe(true);
+    sources.push(result.value.thread);
+  }
+  const post = (i:number, id:string, edit:unknown) =>
+    command('terminal.activityPost',id,{...sessions[i],post:edit});
+  const first={action:'open',words:'Checking the disk.'};
+  const opened=await post(1,'disk',first);
+  expect(opened).toMatchObject({ok:true,value:{thread:expect.any(String)}});
+  expect(await post(1,'disk',first)).toEqual(opened);
+  const reply={action:'reply',thread:opened.value.thread,words:'Found the test directories.'};
+  expect(await post(1,'found',reply)).toEqual(opened);
+  const response=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',
+    cookie:'loom_ui='+bodyCredentials.memberCookie},body:JSON.stringify({query:'{agentActivityFeed(agent:"art"){latest{words source} parent{words}}}'})});
+  expect(await response.json()).toEqual({data:{agentActivityFeed:[{latest:{words:reply.words,source:sources[1]},parent:{words:first.words}}]}});
+  await command('terminal.session','finished',{action:'end',machine:'box',...sessions[1]});
+  expect((await post(1,'late',reply)).ok).toBe(false);
+  expect(f.db.select().from(agentPosts).all()).toHaveLength(2);
+});
