@@ -1,3 +1,4 @@
+import InboxNotice from './pieces/tempo/notice';
 import { machinesApp } from './pieces/machines/registration';
 import { subscriptionsApp } from './pieces/subscriptions/registration';
 import { usageApp } from './pieces/usage/registration';
@@ -24,4 +25,4 @@ export const apps = [tasksApp, approvalsApp, sharingApp, changesApp, knowledgeAp
 export const appAt = (path: string) => apps.find(app => path === app.path || path.startsWith(`${app.path}/`));
 
 /** Home's piece may supply these ordinary record-driven surfaces; the shell fetches nothing. */
-export const shellSurfaces: import('./shell').ShellSurfaces = { Home: HomeSurface, Rail: RailSurface, Bar: BarSurface, Signals: SignalsSurface };
+export const shellSurfaces: import('./shell').ShellSurfaces = { Notice: InboxNotice, Home: HomeSurface, Rail: RailSurface, Bar: BarSurface, Signals: SignalsSurface };
