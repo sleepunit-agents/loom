@@ -15,5 +15,5 @@ export function useLoadCount() {
     setCount(n => n + 1);
     return () => setCount(n => n - 1);
   }, []);
-  return { busy: count > 0, start };
+  return { busy: count > 0, count, start };
 }
