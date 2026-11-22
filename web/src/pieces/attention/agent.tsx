@@ -1,3 +1,4 @@
+import { useHouseholdZone } from '../../data/zone';
 import { useDeskWaitingCounts, WaitingRow, waitingPath } from './waiting';
 import { useDeskAgentDisplays } from './agent-displays';
 import { useDeskAgentProfiles } from './agent-profiles';
@@ -19,6 +20,7 @@ import './home.css';
 type Agent = ReturnType<typeof namedAgents>[number];
 /** Everything about one agent, in full: what Home's card summarises, and what only lives here (its jobs, its steps). */
 function AgentReader({ agent, names, go }: { agent: Agent; names: ReadonlyMap<string, string>; go(path: string): void }) {
+  const zone = useHouseholdZone();
   const profiles=useDeskAgentProfiles(), statuses=useDeskAgentStatuses();
   const waiting=useDeskWaitingCounts(), comms=useHomeComms();
   const activity=useDeskRecentActivity(), displays=useDeskAgentDisplays();
@@ -39,7 +41,7 @@ function AgentReader({ agent, names, go }: { agent: Agent; names: ReadonlyMap<st
       <Meta>{agentStateLine(status?.state,count,needs)}</Meta></div>
     <Section label="Doing now"><Doing doing={doing} name={agent.name} agent={agent.id} names={names} go={go}/></Section>
     {profiles.status==='live'&&(profile?.description||profile?.requestedAt)&&<Section label="About">{profile.description&&<Body>{profile.description}</Body>}{profile.requestedAt&&<Body quiet>A description has been asked for.</Body>}</Section>}
-    {statuses.status==='live'&&status?.work&&<Section label="Its own report"><Body>{status.work}</Body><Meta><time dateTime={new Date(status.changedAt).toISOString()}>{stamp(status.changedAt)}</time></Meta></Section>}
+    {statuses.status==='live'&&status?.work&&<Section label="Its own report"><Body>{status.work}</Body><Meta><time dateTime={new Date(status.changedAt).toISOString()}>{stamp(status.changedAt, zone)}</time></Meta></Section>}
     <Section label="Needs you">{waiting.status==='loading'?<Body quiet>Checking…</Body>:waiting.status!=='live'?<Body quiet>Can’t tell what is waiting on you right now.</Body>:needs?<><List label={`${agent.name} first waiting item`}><WaitingRow agent={agent.id} go={go}/></List>{needs>1&&<LinkButton onClick={()=>go(waitingPath())}>{`+${needs-1} more in Inbox`}</LinkButton>}</>:<Body quiet>Nothing.</Body>}</Section>
     <AgentJobs agent={agent.id} name={agent.name}/>
     <LastAnswerSection talk={talk} go={go}/>

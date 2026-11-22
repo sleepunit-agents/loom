@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createElement as h } from 'react';
 // @ts-expect-error Existing renderer dependency has no bundled declarations.
 import { act, create } from 'react-test-renderer';
-import { claimedPath, Doing, doingMeta, doingPhrase, doingReading, sinceWord, type DoingItem, type DoingReading } from './doing';
+import { claimedPath, Doing, doingMeta, doingPhrase, doingReading, type DoingItem, type DoingReading } from './doing';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 type Node = { children: Array<Node | string>; props: Record<string, any>; type: unknown };
 const item = (kind: string, fields: Partial<DoingItem> = {}): DoingItem => ({ id: `id-${kind}`, kind, title: null, with: null, place: null, direct: null, ref: null,
@@ -42,19 +42,18 @@ it.each([
 it('takes a display name where it is given one, and says since when, where and a state that is not simply running', () => {
   expect(doingPhrase(item('loom', { with: 'jb' }), id => id === 'jb' ? 'Jonathan' : id)).toBe('Talking with Jonathan in loom');
   const now = Date.parse('2026-11-19T22:00:00.000Z');
-  expect(sinceWord('2026-11-19T20:15:00.000Z', now)).toBe('2:15 PM');
-  expect(sinceWord('2026-11-18T20:15:00.000Z', now)).toBe('Nov 18, 2:15 PM');
-  expect(doingMeta(item('job'), now)).toBe('since 2:15 PM');
-  expect(doingMeta(item('job', { machine: 'one', state: 'queued' }), now)).toBe('Queued · on one · since 2:15 PM');
-  expect(doingMeta(item('job', { state: 'starting' }), now)).toBe('Starting · since 2:15 PM');
+  expect(doingMeta(item('job'), 'Asia/Tokyo', Date.parse('2026-11-20T15:00Z'))).toBe('since Nov 20, 5:15 AM');
+  expect(doingMeta(item('job'), 'America/Chicago', now)).toBe('since 2:15 PM');
+  expect(doingMeta(item('job', { machine: 'one', state: 'queued' }), 'America/Chicago', now)).toBe('Queued · on one · since 2:15 PM');
+  expect(doingMeta(item('job', { state: 'starting' }), 'America/Chicago', now)).toBe('Starting · since 2:15 PM');
   // A task says when it was last touched; a terminal's machine is in its phrase, not said twice.
-  expect(doingMeta(item('task', { state: 'in_progress', ref: 't-7' }), now)).toBe('touched 2:15 PM');
-  expect(doingMeta(item('terminal', { machine: 'loom' }), now)).toBe('since 2:15 PM');
+  expect(doingMeta(item('task', { state: 'in_progress', ref: 't-7' }), 'America/Chicago', now)).toBe('touched 2:15 PM');
+  expect(doingMeta(item('terminal', { machine: 'loom' }), 'America/Chicago', now)).toBe('since 2:15 PM');
   // A job in the conversation a task was filed from names the task, quietly.
-  expect(doingMeta(item('loom', { ref: 't-2190', task: 'Order the pump', machine: 'one' }), now)).toBe('t-2190 · Order the pump · on one · since 2:15 PM');
+  expect(doingMeta(item('loom', { ref: 't-2190', task: 'Order the pump', machine: 'one' }), 'America/Chicago', now)).toBe('t-2190 · Order the pump · on one · since 2:15 PM');
   // A job nothing has been heard from says so, with its true state.
-  expect(doingMeta(item('job', { state: 'running', quietSince: '2026-11-14T20:15:00.000Z' }), now)).toBe('no word since Nov 14, 2:15 PM');
-  expect(doingMeta(item('job', { state: 'queued', quietSince: '2026-11-14T20:15:00.000Z' }), now)).toBe('Queued · no word since Nov 14, 2:15 PM');
+  expect(doingMeta(item('job', { state: 'running', quietSince: '2026-11-14T20:15:00.000Z' }), 'America/Chicago', now)).toBe('no word since Nov 14, 2:15 PM');
+  expect(doingMeta(item('job', { state: 'queued', quietSince: '2026-11-14T20:15:00.000Z' }), 'America/Chicago', now)).toBe('Queued · no word since Nov 14, 2:15 PM');
 });
 
 it('shows one quiet line with nothing to show, and no heading or count', async () => {

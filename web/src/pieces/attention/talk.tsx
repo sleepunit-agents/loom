@@ -1,10 +1,10 @@
+import { briefTime, fullTime } from '../../kit/time';
+import { useHouseholdZone } from '../../data/zone';
 import {conversationTitle} from '../../data/conversation-title';
 import { Suspense, useMemo, type ReactNode } from 'react';
 import { useDataQuery, type DataQuerySnapshot } from '../../data/graphql';
 import { Body, Loading, Markdown, LinkButton, List, Meta, Row, Section } from '../../kit';
-import { sinceWord } from './doing';
 import { threadPath } from './home-comms-data';
-import { stamp } from './time';
 
 /** An agent's recent conversations and its last answer, in one request for one card. The server picks the
  * latest answered conversation before its limit; nothing here reads a thread or subscribes to one. */
@@ -44,12 +44,13 @@ const opens = (path: string, go: (path: string) => void) => ({ href: path, onCli
 export function HomeTalk({ talk, name, unread = 0, firstUnread, all, go, composer }: {
   talk: CardTalk; name: string; unread?: number; firstUnread?: string; all: string; go(path: string): void; composer?: ReactNode;
 }) {
+  const zone = useHouseholdZone();
   if (talk.status !== 'live') return <>{composer}</>;
   const answer = talk.answer, unreadPath = firstUnread ? threadPath(firstUnread) : undefined;
   return <>
     {answer && <div className="desk-home-answer">
       <a className="desk-home-answer-link" aria-label={`${name} last answer. Open the conversation`} {...opens(answer.path, go)}>
-        <span className="desk-home-kicker">Last answer · <time dateTime={answer.at}>{sinceWord(answer.at)}</time></span>
+        <span className="desk-home-kicker">Last answer · <time dateTime={answer.at}>{briefTime(answer.at, zone)}</time></span>
       </a>
       <div className="desk-home-answer-words"><Suspense fallback={null}><Markdown text={answer.words}/></Suspense></div>
     </div>}
@@ -58,7 +59,7 @@ export function HomeTalk({ talk, name, unread = 0, firstUnread, all, go, compose
       <span className="desk-home-kicker">Conversations{unread ? ` · ${unread} unread` : ''}</span>
       <ul>{talk.recent.map(row => <li key={row.id}><a className="desk-home-talk" title={row.title} data-unread={row.path === unreadPath || undefined} {...opens(row.path, go)}>
         {row.path === unreadPath && <span className="desk-home-unread" role="img" aria-label="Unread" />}
-        <span className="desk-home-talk-title">{row.title}</span>{row.at && <time dateTime={row.at}>{sinceWord(row.at)}</time>}
+        <span className="desk-home-talk-title">{row.title}</span>{row.at && <time dateTime={row.at}>{briefTime(row.at, zone)}</time>}
       </a></li>)}</ul>
       <a className="desk-home-all" {...opens(all, go)}>All conversations ›</a>
     </nav>}
@@ -67,22 +68,24 @@ export function HomeTalk({ talk, name, unread = 0, firstUnread, all, go, compose
 
 /** The agent's own page: the last answer whole. */
 export function LastAnswerSection({ talk, go }: { talk: CardTalk; go(path: string): void }) {
+  const zone = useHouseholdZone();
   if (talk.status !== 'live' || !talk.answer) return null;
   const answer = talk.answer;
   return <Section label="Last answer">
     <Suspense fallback={<Loading label="Loading answer…"/>}><Markdown text={answer.words}/></Suspense>
-    <Meta><time dateTime={answer.at}>{stamp(Date.parse(answer.at))}</time></Meta>
+    <Meta><time dateTime={answer.at}>{fullTime(answer.at, zone)}</time></Meta>
     <LinkButton onClick={() => go(answer.path)}>Open the conversation</LinkButton>
   </Section>;
 }
 /** The agent's own page: its recent conversations, and Comms for every one of them. */
 export function ConversationsSection({ talk, name, unread = 0, firstUnread, go }: { talk: CardTalk; name: string; unread?: number; firstUnread?: string; go(path: string): void }) {
+  const zone = useHouseholdZone();
   const unreadPath = firstUnread ? threadPath(firstUnread) : undefined;
   return <Section label={unread ? `Conversations · ${unread} unread` : 'Conversations'}>
     {talk.status === 'loading' ? <Body quiet>Checking…</Body> : talk.status !== 'live' ? <Body quiet>Can’t read conversations right now.</Body>
       : !talk.recent.length ? <Body quiet>None yet.</Body>
       : <List label={`${name} conversations`}>{talk.recent.map(row => <Row key={row.id} title={row.title} unread={row.path === unreadPath}
-        meta={row.at ? sinceWord(row.at) : undefined} onClick={() => go(row.path)} />)}</List>}
+        meta={row.at ? briefTime(row.at, zone) : undefined} onClick={() => go(row.path)} />)}</List>}
     <LinkButton onClick={() => go('/p/comms-preview')}>All conversations in Comms</LinkButton>
   </Section>;
 }
