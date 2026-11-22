@@ -35,3 +35,17 @@ it('keeps the desk mounted during boot, then shows refresh activity without taki
     expect(tree.root.findAllByProps({className:'loom-window-refresh'})).toHaveLength(0);
   } finally {await act(async()=>tree.unmount());}
 });
+
+it('prints pending reads and releases a stalled desk automatically without a skip button', async()=>{
+  vi.useFakeTimers();
+  let tree!: ReturnType<typeof create>;
+  await act(async()=>{tree=create(<DesktopBoot><Read busy/></DesktopBoot>);});
+  try {
+    await act(async()=>{vi.advanceTimersByTime(7000);});
+    const log=tree.root.findByProps({className:'loom-boot-console'});
+    expect(log.findAllByType('div').some(row=>row.children.includes('desk.io   : waiting on 1 read'))).toBe(true);
+    expect(tree.root.findAllByType('button')).toHaveLength(0);
+    await act(async()=>{vi.advanceTimersByTime(8000);});
+    expect(tree.root.findByProps({className:'loom-desk-mount'}).props.inert).toBe(false);
+  } finally {await act(async()=>tree.unmount());}
+});
