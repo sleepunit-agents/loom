@@ -7,7 +7,7 @@ import './notice.css';
 export const settledNoticeQuery = '{ settledInboxNotice { id needs fyi } }';
 type Notice = { id: string; needs: number; fyi: number };
 
-function Popup({ notice, dismiss }: { notice: Notice; dismiss: (id: string) => void }) {
+function Popup({ notice, dismiss, go }: { notice: Notice; dismiss: (id: string) => void; go(path:string):void }) {
   const [closing, setClosing] = useState(false);
   const [focused, setFocused] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -27,19 +27,22 @@ function Popup({ notice, dismiss }: { notice: Notice; dismiss: (id: string) => v
   return <aside role="status" aria-label="Inbox notification" className="tempo-inbox-notice" data-closing={closing}
     onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
     onFocus={() => setFocused(true)} onBlur={event => setFocused(event.currentTarget.contains(event.relatedTarget))}>
-    <a href={inboxApp.path}><strong>Inbox</strong><span>{counts}</span></a>
+    <a href={inboxApp.path} onClick={event=>{
+      if(event.defaultPrevented || event.button!==0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)return;
+      event.preventDefault();go(inboxApp.path);setClosing(true);
+    }}><strong>Inbox</strong><span>{counts}</span></a>
     <button type="button" className="next-win" data-act="close" aria-label="Dismiss Inbox notification" title="Close" onClick={() => setClosing(true)}>
       <i aria-hidden="true" />
     </button>
   </aside>;
 }
 
-export default function InboxNotice() {
+export default function InboxNotice({go}: {go(path:string):void}) {
   const query = useDataQuery<{ settledInboxNotice: Notice | null }>(settledNoticeQuery);
   const [dismissed, dismiss] = useState<string>();
   const notice = query.status === 'live' ? query.data?.settledInboxNotice : undefined;
   const opening = useContext(DeskOpening);
   if (opening || !notice || ![notice.needs, notice.fyi].every(n => Number.isSafeInteger(n) && n >= 0)
     || notice.needs + notice.fyi === 0 || notice.id === dismissed) return null;
-  return <Popup key={notice.id} notice={notice} dismiss={dismiss} />;
+  return <Popup key={notice.id} notice={notice} dismiss={dismiss} go={go} />;
 }
