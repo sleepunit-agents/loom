@@ -66,7 +66,7 @@ it('holds everything about one agent in full: what it is doing, its jobs, its la
   {id:'j-old',agent:'art',title:'Drain the pond',state:'done',box:'box-hidden',queuedAt:'2026-11-13T18:00:00Z',claimedAt:'2026-11-13T18:01:00Z',endedAt:'2026-11-13T19:00:00Z'},
   {id:'j-other',agent:'mark',title:'Not Art’s job',state:'running',box:null,queuedAt:'2026-11-14T18:00:00Z',claimedAt:null,endedAt:null}]}};
  const talk=(id:string,fields:object={})=>({id,agent:'art',label:`Talk ${id}`,venue:'loom',place:`th:${id}`,lastAt:`2026-11-14T0${id}:00:00Z`,...fields});
- f.extra.DeskCardTalk={status:'live',data:{recent:[1,2,3,4,5].map(n=>talk(String(n))),answered:[talk('2',{lastAnswer:{at:'2026-11-14T02:00:00Z',words:'Line one\nLine two\nLine three\nLine four\nLine five'}})]}};
+ f.extra.DeskCardTalk={status:'live',data:{recent:[1,2,3,4,5].map(n=>talk(String(n))),answered:[talk('2',{lastAnswer:{at:'2026-11-14T02:00:00Z',words:'**Line one**\n\n- Line two\n- Line three\n\n`Line four` and [Line five](https://example.org/five)'}})]}};
  const entry=(id:string,agent='art')=>({id,agent,at:'2026-11-13T18:00:00Z',day:'2026-11-13',hour:12,title:`Step ${id}`,line:'What landed',venue:'terminal',where:'Terminal',what:'work'});
  f.snapshots['activity.window']=live([{id:'recent',to:'2026-11-13',days:['2026-11-13'],entries:[entry('a'),entry('b'),entry('c'),entry('d'),entry('private','other')],conversations:'available',episodes:'available',truncated:false,expires:1}]);
  const go=await draw(),section=(label:string)=>tree!.root.findByProps({'aria-label':label});
@@ -81,7 +81,9 @@ it('holds everything about one agent in full: what it is doing, its jobs, its la
  expect(words(section('Art E Fish earlier jobs'))).toMatch(/Drain the pond.*Done · queued Nov 13, .* · started Nov 13, .* · ended Nov 13, \d+:\d\d [AP]M/);expect(text()).not.toContain('box-hidden');expect(text()).not.toContain('Not Art’s job');
  expect(text()).not.toMatch(/Runtime jobs|Current jobs/);
  // The last answer whole, and where it was said.
- expect(words(section('Last answer'))).toContain('Line one\nLine two\nLine three\nLine four\nLine five');
+ await act(async()=>{await import('../../kit/markdown');});
+ const html=section('Last answer').findByProps({className:'loom-prose'}).props.dangerouslySetInnerHTML.__html;
+ for(const part of ['<strong>Line one</strong>','<li>Line two</li>','<li>Line three</li>','<code>Line four</code>','href="https://example.org/five"','>Line five</a>'])expect(html).toContain(part);
  await click('Open the conversation');expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/2');
  // More conversations than Home's three, newest first, the unread one marked, and the way to all of them.
  const rows=section('Art E Fish conversations').findAllByType('button');
