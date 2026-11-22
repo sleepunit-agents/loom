@@ -1,7 +1,7 @@
 import {conversationTitle} from '../../data/conversation-title';
 import { Suspense, useMemo, type ReactNode } from 'react';
 import { useDataQuery, type DataQuerySnapshot } from '../../data/graphql';
-import { Body, Markdown, LinkButton, List, Meta, Row, Section } from '../../kit';
+import { Body, Loading, Markdown, LinkButton, List, Meta, Row, Section } from '../../kit';
 import { sinceWord } from './doing';
 import { threadPath } from './home-comms-data';
 import { stamp } from './time';
@@ -70,7 +70,7 @@ export function LastAnswerSection({ talk, go }: { talk: CardTalk; go(path: strin
   if (talk.status !== 'live' || !talk.answer) return null;
   const answer = talk.answer;
   return <Section label="Last answer">
-    <Body>{answer.words}</Body>
+    <Suspense fallback={<Loading label="Loading answer…"/>}><Markdown text={answer.words}/></Suspense>
     <Meta><time dateTime={answer.at}>{stamp(Date.parse(answer.at))}</time></Meta>
     <LinkButton onClick={() => go(answer.path)}>Open the conversation</LinkButton>
   </Section>;
