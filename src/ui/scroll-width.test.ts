@@ -31,14 +31,16 @@ it('keeps the scrollbar\'s place on every box that scrolls and is a size contain
   const loose = [...said].filter(([, body]) => scrolls(body) && sized(body) && !kept(body)).map(([selector]) => selector);
   expect(loose).toEqual([]);
   // The ones this is known to hold today, so that the scan above cannot pass by finding nothing.
-  for (const selector of ['.desk-home', '.next-page', '.next-rail']) expect(scrolls(said.get(selector)!) && sized(said.get(selector)!) && kept(said.get(selector)!), selector).toBe(true);
+  for (const selector of ['.next-page', '.next-rail']) expect(scrolls(said.get(selector)!) && sized(said.get(selector)!) && kept(said.get(selector)!), selector).toBe(true);
 });
 
 it('keeps it too where a script measures the box to decide its layout', () => {
   const said = (sheet: string, selector: string) => rules(readFileSync(join(root, sheet), 'utf8')).filter(([name]) => name.split(',').map(part => part.trim()).includes(selector)).map(([, body]) => body).join(';');
   expect(kept(said('pieces/attention/rail.css', '.desk-agent-rail'))).toBe(true);
-  // Home's card is a summary now and scrolls nothing of its own (its details live on the agent's page).
-  // Home's scrolling is said in its sheet beside its container type, not by a utility class the scan cannot see.
+  // Home stays fixed between the status bar and dock. Its content panes own any scrolling.
+  const home = said('pieces/attention/home.css', '.desk-home');
+  expect(sized(home)).toBe(true);
+  expect(scrolls(home)).toBe(false);
   expect(readFileSync(join(root, 'pieces/attention/home.tsx'), 'utf8')).not.toMatch(/className="desk-home [^"]*\boverflow-(auto|scroll|[xy]-)/);
   expect(readFileSync(join(root, 'pieces/attention/home.tsx'), 'utf8')).not.toMatch(/overflow-(y-)?(auto|scroll)/);
 });
