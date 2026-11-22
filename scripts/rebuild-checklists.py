@@ -151,6 +151,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith(('Keeps every installed app within reach', 'The launcher lists every app in groups')):row['probe']={'kind':'action','action':'deskLauncher'}
  if f.stem=='data':
   for row in rows:
+   if row['promise'].startswith(('terminal_credentials ', 'terminal_sessions ')):row['probe']={'kind':'action','action':'deskJobs'}
    if row['promise'].startswith('A query names a table from the model'):row['probe']={'kind':'legacy-data-socket'}
  if f.stem=='desk':
   for row in rows:
