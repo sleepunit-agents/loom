@@ -336,13 +336,13 @@ export async function* walkthroughSteps(output) {
   for await(const step of conversationMailSteps({page,app,clock,example:report.example,out,open:openApp})){Object.assign(report.actions,step.actions);save();yield {phase:step.phase,actions:safeReport(report.actions)};}
   report.actions.scheduledInbox=await scheduledInbox({browser,home:join(parent,'scheduled-home'),out});
   save();yield {phase:'scheduled-inbox',actions:safeReport(report.actions)};
+  report.actions.homeJobs=await homeJobs({page,tile:await openApp('Home'),app,example:report.example,out});
+  save();yield {phase:'home-jobs',actions:safeReport(report.actions)};
   Object.assign(report.actions,await nativeProtocolAction({page,open:openApp,out,app,example:report.example,clock,home}));
   save();yield {phase:'native-protocol',actions:safeReport(report.actions)};
   try {report.actions.bridgeMail=await bridgeMail({app,clock});}
   catch(error){report.actions.bridgeMail={ok:false,error:String(error)};}
   save();yield {phase:'bridge-mail',actions:safeReport(report.actions)};
-  report.actions.homeJobs=await homeJobs({page,tile:await openApp('Home'),app,example:report.example,out});
-  save();yield {phase:'home-jobs',actions:safeReport(report.actions)};
 
 
  }catch(error){report.fatal=String(error);}

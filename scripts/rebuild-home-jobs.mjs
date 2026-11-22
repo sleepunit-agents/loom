@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {join} from 'node:path';
+import {browserRead} from './rebuild-conversation-visibility.mjs';
 
 export async function homeJobs({page,tile,app,example,out}) {
  const screenshot='action-home-jobs.png';
@@ -23,6 +24,8 @@ export async function homeJobs({page,tile,app,example,out}) {
  const row=(card,agent)=>card.locator('[data-kind="terminal"]').filter({hasText:'work-'+agent});
  const fern=cards.get('fern'),moss=cards.get('moss');
  try {
+  const {currentJobs}=await browserRead(page,'{currentJobs(agent:"moss"){id state}}');
+  assert(currentJobs.some(job=>job.id===example.runtime.job.id&&job.state==='queued'),'Missing queued control job');
   for(const agent of cards.keys())credentials.set(agent,app.services.signin.issue({
    kind:'agent',agent,terminalMachine:machine,label:'Home terminal for '+agent,
   },'alex'));
