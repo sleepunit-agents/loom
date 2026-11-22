@@ -9,7 +9,7 @@
  * suite passed there and failed here.
  *
  *  - LOOM_HOME is a fresh, empty dir per test file (removed when the worker
- *    exits). A test that wants a household still sets its own.
+ *    finishes its test file). A test that wants a household still sets its own.
  *  - PATH keeps its dirs, but a dir that holds a `loom-<piece>` executable is
  *    stood in for by a dir of links to everything else in it (so `age`, `git`
  *    and the rest are still found), and the only pieces a test finds are the
@@ -17,10 +17,16 @@
  */
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { afterAll } from 'vitest';
 import { delimiter, join } from 'node:path';
 
 const root = mkdtempSync(join(tmpdir(), 'loom-test-env-'));
-process.on('exit', () => rmSync(root, { recursive: true, force: true }));
+const cleanup = () => rmSync(root, { recursive: true, force: true });
+process.once('exit', cleanup);
+afterAll(() => {
+  cleanup();
+  process.removeListener('exit', cleanup);
+});
 const home = join(root, 'home');
 mkdirSync(home);
 process.env.LOOM_HOME = home;
