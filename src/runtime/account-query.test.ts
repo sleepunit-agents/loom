@@ -296,12 +296,33 @@ it('offers sign-in only for a reporting machine the viewer may manage',async()=>
   expect(await login('house')).toEqual({reporting:false,needsSignIn:false,canRequest:false});
 });
 
+it.each([
+  {offset:2000,expected:.2},
+  {offset:2001,expected:0},
+])('uses contiguous weekly readings within reset tolerance ($offset ms)', async ({offset,expected}) => {
+  const f=fixture(), end=f.clock.now(), iso=(at:number)=>new Date(at).toISOString();
+  const reset=end+3.5*86400_000, start=iso(end-60_000);
+  f.db.insert(accountWeekReadings).values([
+    {account:'private-a',window:'week',readAt:start,resetsAt:iso(reset),usage:0},
+    {account:'private-a',window:'week',readAt:iso(end-30_000),resetsAt:iso(reset+offset),usage:0},
+  ]).run();
+  f.db.insert(jobs).values({id:'measured',agent:'agent',member:'alice',account:'private-a',title:'Measured job',
+    state:'done',model:'m',brief:'',startedByKind:'member',startedBy:'alice',houseRepository:'r',houseFile:'f',houseBranch:'b',
+    queuedAt:start,claimedAt:start,endedAt:iso(end)}).run();
+  f.db.insert(jobUsage).values({job:'measured',source:'report',tokensIn:1,tokensOut:1}).run();
+  const result=await (await f.post('alice','{modelAccounts {... on RuntimeAccountDetail { weeklyUsage {unattributed agents {share}}}}}')).json();
+  expect(result.data.modelAccounts[0].weeklyUsage).toEqual([{
+    agents:expected ? [{share:expected}] : [],unattributed:.2-expected,
+  }]);
+});
+
 it('shows only the account owner’s readable conversations and keeps hidden work in the unassigned share', async () => {
   const gate = Promise.withResolvers<void>(), began = Promise.withResolvers<void>();
   const f=fixture({hold:{type:GraphQLString,resolve:async()=>{began.resolve();await gate.promise;return 'ready';}}});
   const end=f.now(), start=new Date(f.clock.now()-60000).toISOString();
   const reset=new Date(f.clock.now()+3.5*86400_000).toISOString();
-  f.db.insert(accountWeekReadings).values({account:'private-a',window:'week',readAt:start,resetsAt:reset,usage:0}).run();
+  // The provider's reset estimate moved by a fraction of a second between polls.
+  f.db.insert(accountWeekReadings).values({account:'private-a',window:'week',readAt:start,resetsAt:new Date(Date.parse(reset)-650).toISOString(),usage:0}).run();
   for(const member of ['alice','bob']){
     f.db.insert(conversations).values({id:member,agent:'agent',member,venue:'loom',place:'th:'+member,label:member+' discussion',
       direct:true,startedAt:start,lastAt:end,turnCount:1}).run();

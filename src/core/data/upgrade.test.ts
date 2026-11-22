@@ -615,3 +615,23 @@ it('fences pre-upgrade workers with unrecorded inputs until their jobs end', () 
   expect(old.prepare('SELECT job FROM job_session_limits WHERE invalidated=1 ORDER BY job').all())
     .toEqual(['discord-running','loom-running','slack-running'].map(job => ({job})));
 });
+it('keeps the Slack checkpoint at 36 and only retires it at 37',()=>{
+  const old=household(35);
+  old.prepare("INSERT INTO household (comms_days) VALUES (2)").run();
+  old.exec("INSERT INTO agents (id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('agent','','','','drop','dot')");
+  old.prepare("INSERT INTO conversations (id,agent,venue,place,label,started_at,last_at,turn_count) VALUES ('room','agent','slack','channel','Channel',?,?,0)").run(at,at);
+  const files=Buffer.from('fictional sealed checkpoint');
+  old.prepare('INSERT INTO conversation_sessions (conversation,harness,session,files,bytes,started_at) VALUES (?,?,?,?,?,?)')
+    .run('room','claude','abcd-1234',files,files.length,at);
+  old.prepare("INSERT INTO jobs (id,agent,conversation,title,state,brief,model,started_by_kind,started_by,house_repository,house_file,house_branch,queued_at) VALUES ('finished','agent','room','fixture','done','','fixture','agent','agent','repo','','main',?)").run(at);
+  old.prepare('INSERT INTO inbox (id,to_kind,"to",conversation,source,from_kind,from_id,at,changed_at,state) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run('old-handoff','agent','agent','room','handoff','agent','agent','2026-11-12T00:00:00.000Z',at,'done');
+  const checkpoint = () => old.prepare('SELECT * FROM conversation_sessions').all();
+  const original = checkpoint();
+  applyUpgrades(old,35,()=>at,36);
+  expect(checkpoint()).toEqual(original);
+  upgradeDataSchema(old,()=>at);
+  expect(old.prepare('SELECT files FROM conversation_sessions').get()).toBeUndefined();
+  expect(old.prepare("SELECT state FROM jobs WHERE id='finished'").get()).toEqual({state:'done'});
+});
+

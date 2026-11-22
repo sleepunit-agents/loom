@@ -12,7 +12,11 @@
     {
       "id": "machines-002",
       "promise": "Records each machine with a worker, who owns it and which agents may run there.",
-      "source": "docs/how-it-works/site/machines.html"
+      "source": "docs/how-it-works/site/machines.html",
+      "probe": {
+        "kind": "action",
+        "action": "machineRoster"
+      }
     },
     {
       "id": "machines-003",
@@ -31,7 +35,11 @@
     {
       "id": "machines-005",
       "promise": "Shows each agent's current jobs on its card on Home.",
-      "source": "docs/how-it-works/site/machines.html"
+      "source": "docs/how-it-works/site/machines.html",
+      "probe": {
+        "kind": "action",
+        "action": "homeJobs"
+      }
     },
     {
       "id": "machines-006",
@@ -95,7 +103,11 @@
     {
       "id": "machines-017",
       "promise": "c Boxes. A box belongs to the member who owns it, and lists the agents allowed to run there.",
-      "source": "docs/how-it-works/site/machines.html#see-h"
+      "source": "docs/how-it-works/site/machines.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "machineRoster"
+      }
     },
     {
       "id": "machines-018",

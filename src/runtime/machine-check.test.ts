@@ -2,20 +2,13 @@ import { execFileSync } from 'node:child_process';
 import { EventEmitter, once } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
-import fs from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
-import { SIZE_BYTES_MAX, WATCHED_PATHS_MAX, machineReader, parseDiskResult, readMemory, startDiskHelper, watchedPath } from './machine-check.js';
+import { SIZE_BYTES_MAX, WATCHED_PATHS_MAX, machineReader, parseDiskResult, startMachineHelper, watchedPath } from './machine-check.js';
 
-const availableMemory = vi.hoisted(() => vi.fn<() => number | undefined>());
-vi.mock('node:os', async importOriginal => {
-  const actual = await importOriginal<typeof import('node:os')>();
-  return { ...actual, default: { ...actual.default, availableMemory } };
-});
-
-afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); availableMemory.mockReset(); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 const data = { sizeBytes: 100, freeBytes: 29 };
 const answer = JSON.stringify(data) + '\n';
 const disk = (thing: string) => ({ kind: 'disk', thing, ...data });
@@ -38,7 +31,7 @@ function starters(auto: (path: string) => boolean) {
     const child = new Helper();
     children.set(path, child);
     if (auto(path)) queueMicrotask(() => child.exit());
-    return child as unknown as ReturnType<typeof startDiskHelper>;
+    return child as unknown as ReturnType<typeof startMachineHelper>;
   });
   return { start, children };
 }
@@ -46,18 +39,18 @@ function starters(auto: (path: string) => boolean) {
 it('runs only the fixed script within the build, with one validated argument and no shell', () => {
   const spawn = vi.fn();
   const localBuild = dirname(fileURLToPath(import.meta.url));
-  startDiskHelper('/mnt/data', spawn);
+  startMachineHelper('/mnt/data', spawn);
   expect(spawn).toHaveBeenCalledExactlyOnceWith(process.execPath, [join(localBuild, 'machine-disk-helper.js'), '/mnt/data'], {
     shell: false, stdio: ['ignore', 'pipe', 'ignore'], env: expect.objectContaining({ NODE_OPTIONS: undefined }),
   });
   for (const path of ['relative', '/mnt/../data', '/mnt/x\n', '/mnt/\u0085', '/mnt/\u2028', '/' + 'a'.repeat(120)]) {
     expect(watchedPath(path)).toBe(false);
-    expect(() => startDiskHelper(path, spawn)).toThrow('Invalid watched path');
+    expect(() => startMachineHelper(path, spawn)).toThrow('Invalid watched path');
   }
   expect(spawn).toHaveBeenCalledTimes(1);
 });
 
-it('runs the emitted helper with the configured path, rejecting links and extra arguments', async () => {
+it('reads memory and disk in the emitted helper, rejecting missing estimates, FIFOs, links and extra arguments', async () => {
   const manifestUrl = new URL('../../package.json', import.meta.url);
   const manifest = JSON.parse(readFileSync(manifestUrl, 'utf8')) as { bin: { 'loom-worker': string }; files: string[] };
   const worker = manifest.bin['loom-worker'];
@@ -71,6 +64,7 @@ it('runs the emitted helper with the configured path, rejecting links and extra 
     symlinkSync('/', link);
     const report = await built.machineReader({ paths: ['/'], timeoutMs: 10_000 })();
     expect(report[0]).toMatchObject({ kind: 'disk', thing: '/', sizeBytes: expect.any(Number), freeBytes: expect.any(Number) });
+    expect(report.at(-1)).toEqual({ kind: 'memory', sizeBytes: os.totalmem(), freeBytes: expect.any(Number) });
     const launch = async (...args: string[]) => {
       const { spawn } = await import('node:child_process');
       const child = spawn(process.execPath, [helper, ...args]);
@@ -79,6 +73,25 @@ it('runs the emitted helper with the configured path, rejecting links and extra 
       expect(await once(child, 'close')).toEqual([0, null]);
       return output;
     };
+    const meminfo = join(build, 'meminfo');
+    const preload = join(build, 'memory-fixture.mjs');
+    writeFileSync(preload, `
+      import fs from 'node:fs';
+      import { syncBuiltinESMExports } from 'node:module';
+      const original = fs.openSync;
+      fs.openSync = (path, ...args) => original(path === '/proc/meminfo' ? process.env.MEM_FIXTURE : path, ...args);
+      syncBuiltinESMExports();
+    `);
+    const readFixture = () => JSON.parse(execFileSync(process.execPath, ['--import', preload, helper, 'memory'], {
+      encoding: 'utf8', timeout: 3000, env: { ...process.env, MEM_FIXTURE: meminfo },
+    }));
+    writeFileSync(meminfo, 'MemTotal: 8192 kB\nMemFree: 128 kB\nMemAvailable: 6144 kB\n');
+    expect(readFixture()).toEqual({ sizeBytes: 8192 * 1024, freeBytes: 6144 * 1024 });
+    writeFileSync(meminfo, 'MemTotal: 8192 kB\nMemFree: 128 kB\n');
+    expect(readFixture()).toEqual({ unknown: true });
+    rmSync(meminfo);
+    execFileSync('mkfifo', [meminfo]);
+    expect(readFixture()).toEqual({ unknown: true });
     expect(await launch(link)).toBe('{"unknown":true,"reason":"link"}\n');
     expect(await launch('/')).toMatch(/^\{"sizeBytes":\d+,"freeBytes":\d+\}\n$/);
     expect(await launch('/', '/tmp')).toBe('{"unknown":true}\n');
@@ -157,7 +170,7 @@ it('keeps a timed-out helper by its exact path, reads healthy siblings and retri
   const controller = new AbortController();
   const read = machineReader({ paths: [hanging, healthy], start, timeoutMs: 50, signal: controller.signal });
   const first = read();
-  expect(start.mock.calls).toEqual([[hanging], [healthy]]);
+  expect(start.mock.calls).toEqual([[hanging], [healthy], ['memory']]);
   await vi.advanceTimersByTimeAsync(50);
   expect(await first).toMatchObject([unknown(hanging), disk(healthy), { kind: 'memory' }]);
   const asleep = children.get(hanging)!;
@@ -165,14 +178,14 @@ it('keeps a timed-out helper by its exact path, reads healthy siblings and retri
   expect(asleep.stdout.destroyed).toBe(true);
   expect(asleep.kill).not.toHaveBeenCalled();
   expect(await read()).toMatchObject([unknown(hanging), disk(healthy), { kind: 'memory' }]);
-  expect(start.mock.calls).toEqual([[hanging], [healthy], [healthy]]);
+  expect(start.mock.calls).toEqual([[hanging], [healthy], ['memory'], [healthy], ['memory']]);
   recovered = true;
   asleep.exit();
   expect(await read()).toMatchObject([disk(hanging), disk(healthy), { kind: 'memory' }]);
-  expect(start.mock.calls).toEqual([[hanging], [healthy], [healthy], [hanging], [healthy]]);
+  expect(start.mock.calls).toEqual([[hanging], [healthy], ['memory'], [healthy], ['memory'], [hanging], [healthy], ['memory']]);
 });
 
-it('bounds all live helpers by configured paths, detaches their pipes, and kills live children on stop', async () => {
+it('bounds live helpers to one for memory and one per configured path, detaches their pipes, and kills live children on stop', async () => {
   vi.useFakeTimers();
   const { start, children } = starters(() => false);
   const signal = new AbortController();
@@ -180,7 +193,7 @@ it('bounds all live helpers by configured paths, detaches their pipes, and kills
   const read = machineReader({ paths: [...paths, paths[0]], start, timeoutMs: 50, signal: signal.signal });
   const pending = read();
   await read();
-  expect(start).toHaveBeenCalledTimes(WATCHED_PATHS_MAX);
+  expect(start).toHaveBeenCalledTimes(WATCHED_PATHS_MAX + 1);
   signal.abort();
   expect(await pending).toMatchObject([...paths.slice(0, WATCHED_PATHS_MAX).map(unknown), { kind: 'memory' }]);
   for (const child of children.values()) {
@@ -188,7 +201,7 @@ it('bounds all live helpers by configured paths, detaches their pipes, and kills
     expect(child.stdout.destroyed).toBe(true);
   }
   await read();
-  expect(start).toHaveBeenCalledTimes(WATCHED_PATHS_MAX);
+  expect(start).toHaveBeenCalledTimes(WATCHED_PATHS_MAX + 1);
 });
 
 it('logs start failures once, treats failed and malformed helpers as unknown, and retries failed starts', async () => {
@@ -198,27 +211,28 @@ it('logs start failures once, treats failed and malformed helpers as unknown, an
     const child = new Helper();
     delete (child as { pid?: number }).pid;
     queueMicrotask(() => child.emit('error', new Error('private ENOENT')));
-    return child as unknown as ReturnType<typeof startDiskHelper>;
+    return child as unknown as ReturnType<typeof startMachineHelper>;
   });
   start.mockImplementationOnce(() => {
     const child = new Helper();
     queueMicrotask(() => child.exit(answer, 1));
-    return child as unknown as ReturnType<typeof startDiskHelper>;
+    return child as unknown as ReturnType<typeof startMachineHelper>;
   });
   start.mockImplementationOnce(() => {
     const child = new Helper();
     queueMicrotask(() => child.exit('x'.repeat(257)));
-    return child as unknown as ReturnType<typeof startDiskHelper>;
+    return child as unknown as ReturnType<typeof startMachineHelper>;
   });
   start.mockImplementationOnce(() => {
     const child = new Helper();
     queueMicrotask(() => child.exit());
-    return child as unknown as ReturnType<typeof startDiskHelper>;
+    return child as unknown as ReturnType<typeof startMachineHelper>;
   });
-  const read = machineReader({ paths: ['/'], start, say });
+  const memory = starters(() => true);
+  const read = machineReader({ paths: ['/'], start: path => path === 'memory' ? memory.start(path) : start(path), say });
   for (let i = 0; i < 4; i++) expect((await read())[0]).toEqual(unknown('/'));
   expect((await read())[0]).toEqual(disk('/'));
-  expect(say).toHaveBeenCalledExactlyOnceWith('Worker machine check: a disk helper could not be started\n');
+  expect(say).toHaveBeenCalledExactlyOnceWith('Worker machine check: a machine helper could not be started\n');
 });
 
 it('reports every configured alias and reports HTTP errors separately from no answer, including after a restart', async () => {
@@ -234,42 +248,7 @@ it('reports every configured alias and reports HTTP errors separately from no an
     signal.addEventListener('abort', () => reject(signal.reason), { once: true })));
   expect((await machineReader({ ...config, timeoutMs: 10 })())[0]).toEqual({ kind: 'containers', unknown: true });
   expect(engine).toHaveBeenCalledTimes(4);
-  expect(start.mock.calls).toEqual(Array.from({ length: 4 }, () => [['/'], ['/var/lib/runtime']]).flat());
-});
-
-it('uses the kernel’s available memory rather than its free pages', async () => {
-  vi.spyOn(os, 'totalmem').mockReturnValue(8192 * 1024);
-  vi.spyOn(os, 'freemem').mockReturnValue(128 * 1024);
-  availableMemory.mockReturnValue(6144 * 1024);
-  expect(await readMemory()).toEqual({ kind: 'memory', sizeBytes: 8192 * 1024, freeBytes: 6144 * 1024 });
-});
-
-it('reports and shuts down even when the memory fallback path is a FIFO with no writer', async () => {
-  const tmp = mkdtempSync(join(os.tmpdir(), 'loom-meminfo-'));
-  const fifo = join(tmp, 'meminfo');
-  execFileSync('mkfifo', [fifo]);
-  const actualOpen = fs.open.bind(fs);
-  const open = vi.spyOn(fs, 'open').mockImplementation((path, ...args) =>
-    actualOpen(path === '/proc/meminfo' ? fifo : path, ...args));
-  const abort = new AbortController();
-  const { start } = starters(() => true);
-  const pending = machineReader({ paths: ['/'], start, signal: abort.signal })();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const result = await Promise.race([pending, new Promise(resolve => { timer = setTimeout(() => resolve('blocked'), 150); })]);
-    abort.abort();
-    expect(result).toEqual([disk('/'), { kind: 'memory', unknown: true }]);
-  } finally {
-    clearTimeout(timer);
-    if (open.mock.calls.length) {
-      // Unblock the old implementation so a regression cannot hang the test process.
-      const writer = await actualOpen(fifo, 'w');
-      await writer.writeFile('MemAvailable: 4096 kB\n');
-      await writer.close();
-      await pending;
-    }
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  expect(start.mock.calls).toEqual(Array.from({ length: 4 }, () => [['/'], ['/var/lib/runtime'], ['memory']]).flat());
 });
 
 it('reads a printable state directory and reports one fixed reason for an invalid state directory', async () => {

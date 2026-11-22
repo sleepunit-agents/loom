@@ -89,11 +89,23 @@ describe.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo browser',()=>{
   const page=a;
   for(const size of [page.viewportSize()!,{width:375,height:667}]){
    await page.setViewportSize(size);
+   if(size.width===375)await page.locator('.next-shell[data-shell=phone]').waitFor();
    const notice=page.getByRole('status',{name:'Inbox notification'});
    const rect=await notice.boundingBox(), viewport=page.viewportSize()!;
    expect(rect).not.toBeNull();
    expect(rect!.y).toBeGreaterThanOrEqual(32);
-   expect(rect!.y).toBeLessThan(80);
+   if(size.width===375){
+    const strip=page.locator('.next-tile[data-focused] .next-strip');
+    const bounds=await strip.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(rect!.y).toBeGreaterThanOrEqual(bounds!.y+bounds!.height);
+    for(const control of await strip.locator('button.next-win:visible').all()){
+     expect(await control.evaluate(button=>{
+      const {x,y,width,height}=button.getBoundingClientRect();
+      return button.contains(document.elementFromPoint(x+width/2,y+height/2));
+     })).toBe(true);
+    }
+   }else expect(rect!.y).toBeLessThan(80);
    expect(viewport.width-rect!.x-rect!.width).toBeCloseTo(16,0);
    expect(rect!.x).toBeGreaterThan(0);
    const close=notice.getByRole('button',{name:'Dismiss Inbox notification'});

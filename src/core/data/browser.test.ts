@@ -33,7 +33,7 @@ it('feeds a generated SQL selection into the normalized browser cache, including
       stopped.push(running);
       return () => { cancelled = true; void iterator?.return?.(); };
     },
-    disconnected: () => () => {}, close() {},
+    connectionChanged: () => () => {}, close() {},
   };
   const client = generatedDataClient(transport);
   const results: unknown[] = []; let resolve: ((data: unknown) => void) | undefined;

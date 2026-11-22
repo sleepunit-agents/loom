@@ -1,7 +1,7 @@
 import { it, expect, vi } from 'vitest';
 import * as docker from './docker-engine.js';
 import type { machineReader } from './machine-check.js';
-import { workerSignIn, reportWorkerMachineReadings, type WorkerHttpOptions } from './worker-http.js';
+import { workerSignIn, reportWorkerMachineReadings, reportWorkerGuestPressure, type WorkerHttpOptions } from './worker-http.js';
 import { workerProgram } from './worker-program.js';
 import { containerWorkerExecutor, UPKEEP_FAILED } from './worker-container.js';
 import { defaultWorkerState } from './worker-left.js';
@@ -609,11 +609,38 @@ it('watches its machine when it only reports, with no state directory and no con
   expect(machineReader).toHaveBeenCalledExactlyOnceWith({ paths: ['/'], signal: expect.any(AbortSignal), say: expect.any(Function) });
   expect(reportReadings).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ token: 'private-token' }), []);
 });
-it.each([['machineCheckMs', 5_000], ['machineCheckMs', 4_000_000], ['watchPaths', ['relative']], ['watchPaths', ['/has\nnewline']], ['watchPaths', ['/up/../etc']], ['watchPaths', ['/mnt/\u202e']], ['watchPaths', ['/' + 'a'.repeat(120)]]])('refuses a configuration whose %s is %j', async (key, value) => {
+it.each([['watchGuestIo', ['../103']], ['watchGuestIo', ['103', '103']], ['machineCheckMs', 5_000], ['machineCheckMs', 4_000_000], ['watchPaths', ['relative']], ['watchPaths', ['/has\nnewline']], ['watchPaths', ['/up/../etc']], ['watchPaths', ['/mnt/\u202e']], ['watchPaths', ['/' + 'a'.repeat(120)]]])('refuses a configuration whose %s is %j', async (key, value) => {
   const f = fixture();
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, [key]: value }) : 'private-token');
   expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]);
   expect(f.run).not.toHaveBeenCalled();
+});
+
+it('keeps ordinary machine reports running when a coordinator lacks guest pressure, then delivers on recovery', async () => {
+  const f = fixture();
+  f.read.mockImplementation(async path => path === '/config'
+    ? JSON.stringify({ ...config, watchGuestIo: ['103', '104'] }) : 'private-token');
+  const send = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(null, { status: 404 }))
+    .mockResolvedValueOnce(Response.json({ ok: true, value: { ok: true } }));
+  let finish!: () => void;
+  f.run.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
+  let rounds = 0;
+  const machinePause = async () => {
+    if (++rounds === 2) { finish(); throw new Error('done'); }
+  };
+  expect(await workerProgram({ ...f, machinePause,
+    sampleGuestPressure: async guest => guest === '103' ? { guest, ioHundredths: 4000 } : { guest, unknown: true },
+    reportGuestPressure: (remote, readings) => reportWorkerGuestPressure({ ...remote, fetch: send }, readings),
+  })).toBe(0);
+  expect(f.reportReadings).toHaveBeenCalledTimes(2);
+  expect(send).toHaveBeenCalledTimes(2);
+  for (const [url, options] of send.mock.calls) {
+    expect(String(url)).toBe('https://loom.example/api/runtime/guestIoPressure');
+    expect(JSON.parse(String(options?.body)).input).toEqual({ readings: [
+      { guest: '103', ioHundredths: 4000 }, { guest: '104', unknown: true },
+    ] });
+  }
+  expect(f.error.mock.calls.flat()).toEqual(['Worker guest disk-wait report unavailable\n']);
 });
 
 it('logs the old server’s fixed watched-thing refusal once and keeps sending reports', async () => {

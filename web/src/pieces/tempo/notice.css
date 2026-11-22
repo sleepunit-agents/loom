@@ -15,6 +15,14 @@
   box-shadow: 0 0 .7rem #63d8b735;
   animation: tempo-crt-in 180ms ease-out both;
 }
+[data-shell=phone] .next-tile[data-focused] > .next-strip {
+  anchor-name: --phone-window-strip;
+}
+[data-shell=phone]:has(.next-tile[data-focused][data-tile]) .tempo-inbox-notice {
+  top: calc(env(safe-area-inset-top, 0px) + var(--next-status-line-height) + 3rem);
+  position-anchor: --phone-window-strip;
+  top: calc(anchor(bottom) + .5rem);
+}
 .tempo-inbox-notice a { display: grid; gap: .15rem; }
 .tempo-inbox-notice strong { color: #95ead1; font: bold .75rem monospace; letter-spacing: .12em; text-transform: uppercase; }
 .tempo-inbox-notice .next-win {

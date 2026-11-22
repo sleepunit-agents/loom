@@ -1,6 +1,7 @@
+import { briefTime } from '../../kit/time';
+import { useHouseholdZone } from '../../data/zone';
 import { useDataQuery } from '../../data/graphql';
 import { Body, List, NoteRow, Section } from '../../kit';
-import { sinceWord } from './doing';
 
 /** An agent's jobs for its own page: the ones running now, then the ones that ended, newest first. Machine
  * names come only from the machines this viewer may read, in the same request. */
@@ -12,16 +13,15 @@ interface Job { id: string; agent: string; title: string; state: string; box: st
 type Data = { jobHistory: Job[]; boxes?: { id: string; name: string }[] };
 const current = ['queued', 'starting', 'running'];
 const stateWords: Record<string, string> = { queued: 'Queued', starting: 'Starting', running: 'Running', done: 'Done', failed: 'Failed', stopped: 'Stopped', lost: 'Lost' };
-/** Short times, as the doing list says them: the hour today, the day too before. */
-const time = (at: string) => sinceWord(at);
 export function AgentJobs({ agent, name }: { agent: string; name: string }) {
+  const zone = useHouseholdZone();
   const query = useDataQuery<Data>(agentJobsQuery, { agent });
   const live = query.status === 'live' && !!query.data && Array.isArray(query.data.jobHistory);
   const jobs = live ? query.data!.jobHistory.filter(job => job.agent === agent) : [];
   const machines = new Map((live ? query.data!.boxes ?? [] : []).map(box => [box.id, box.name]));
   const row = (job: Job) => <NoteRow key={job.id} title={job.title || 'Untitled job'}
-    meta={[stateWords[job.state] ?? job.state, job.box && machines.has(job.box) ? `on ${machines.get(job.box)}` : '', `queued ${time(job.queuedAt)}`,
-      job.claimedAt ? `started ${time(job.claimedAt)}` : '', job.endedAt ? `ended ${time(job.endedAt)}` : ''].filter(Boolean).join(' · ')} />;
+    meta={[stateWords[job.state] ?? job.state, job.box && machines.has(job.box) ? `on ${machines.get(job.box)}` : '', `queued ${briefTime(job.queuedAt, zone)}`,
+      job.claimedAt ? `started ${briefTime(job.claimedAt, zone)}` : '', job.endedAt ? `ended ${briefTime(job.endedAt, zone)}` : ''].filter(Boolean).join(' · ')} />;
   const now = jobs.filter(job => current.includes(job.state) && job.state !== 'queued'), queued = jobs.filter(job => job.state === 'queued'), earlier = jobs.filter(job => !current.includes(job.state));
   return <Section label="Jobs">
     {query.status === 'loading' || query.status === 'live' && !live ? <Body quiet>Checking…</Body> : !live ? <Body quiet>Can’t read jobs right now.</Body>

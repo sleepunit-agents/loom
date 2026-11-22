@@ -16,7 +16,7 @@ import type { DataDatabase } from '../core/data/database.js';
 import { agentModels, agentRunSettings, agentHousePorts, boxes, programFirings, changes, changeReviewRounds, jobNeeds, jobs, inbox, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
 import { Jobs, workingIn, type Job } from './jobs.js';
 import { Machines } from './machines.js';
-import { QUOTA_WAIT_REASON, decidePlacement, type ModelRole } from './placement.js';
+import { decidePlacement, type ModelRole } from './placement.js';
 import type { WorkerRunPolicy } from './worker.js';
 import type { WorkerExitBy } from './job-exit.js';
 import { SILENCE_MS } from './silence.js';
@@ -49,7 +49,7 @@ export class Dispatcher {
     const decision=decidePlacement(this.db,{agent,now:this.now(),roles:models,
       eligibleBoxes:this.reviewBoxes,needs:settings.gpu?['gpu']:[]});
     if (decision.placement) return {available:true};
-    return decision.quotaLimited ? {available:false,reason:QUOTA_WAIT_REASON} : {available:false};
+    return decision.quotaWaitReason ? {available:false,reason:decision.quotaWaitReason} : {available:false};
   }
   private currentThread(job:Pick<Job,'id'|'agent'|'conversation'>){
     if(!job.conversation)return undefined;

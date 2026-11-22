@@ -34,7 +34,7 @@ it('heads the list with the folder, its count and New, searches from a compact f
 });
 it('draws the open thread as the site does: a head built from the kit, bubbles, a dashed step line, one filled button', () => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-11-14T22:00:00Z'));
-  const html = view({}, { cards: { screen: h('span', { className: 'face' }) } });
+  const html = view({}, { cards: { screen: () => h('span', { className: 'face' }) } });
   expect(html).toContain('<header class="loom-reader__head "><span class="face"></span><div class="loom-reader__head-words"><h2 class="loom-reader__title ">Pond pump</h2><p class="loom-reader__meta ">with Art <span class="loom-kit-chip">pond</span></p></div>');
   // Stop is not offered (nothing is running); More is the one control in the head, closed.
   expect(html).toMatch(/<\/div><div class="loom-kit-actions "><span class="loom-kit-menu"><button[^>]*aria-expanded="false"[^>]*>/);

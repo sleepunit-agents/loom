@@ -17,6 +17,7 @@ import { oneWindowKept } from '../look';
 import { recency, useShortcuts } from './shortcuts';
 import Switcher from './switcher';
 import { WindowLoad } from './loading';
+import { AgentCardMotion } from './agent-card-motion';
 import { useDeparture, useDockRestore } from './window-motion';
 export interface RegisteredApp extends AppRegistration { icon: string; Screen: LazyExoticComponent<ComponentType<{ path?: string; go?: (path: string) => void; active?: boolean; visible?: boolean }>> }
 /** The shell only consumes registrations. Home and agent rail will register alongside other apps. */
@@ -125,9 +126,9 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
     if(app){open(app.id);router.go(app.id,path);}
   };
   return <RailContext.Provider value={phone?null:companion}><div className="next-shell" data-shell={phone ? 'phone' : 'desk'} data-dock-mode={phone?'always':hiding.modes.dock}>
-    {Notice && <Notice go={go} />}
     {Bar ? <Bar title={apps.find(a => a.id === focused?.id)?.title ?? 'Home'} go={go} /> : <header className="next-bar"><strong>LOOM<span aria-hidden="true">//</span>OS</strong><span>{apps.find(a => a.id === focused?.id)?.title ?? 'Home'}</span><Button variant="ghost" size="sm" onClick={() => setLauncher(!launcher)}>All apps</Button></header>}
     <div ref={ground} className="next-ground">
+      <AgentCardMotion ground={ground} home={!visible.length} phone={phone}>
       {!visible.length && (Home ? <Home go={path => { const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/')); if(app){open(app.id);router.go(app.id,path);} }} /> : <Empty title="Your desk" text="Open an app from the dock." />)}
       {!phone && Rail && visible.length>0 && <>
         {visible.length>0&&railAs!=='always'&&<button type="button" data-hide-part="rail" className="next-rail-edge" data-mode={railAs} data-attention={attention||undefined} aria-label="Show agents rail" aria-expanded={hiding.peek.rail}
@@ -137,6 +138,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
           <Rail go={path => {const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}} />
         </aside>
       </>}
+      </AgentCardMotion>
       {route.tiles.map(tile => {
         const shown=presented.some(t => t.id === tile.id);
         const app = apps.find(a => a.id === tile.id)!;
@@ -157,6 +159,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
         </section>;
       })}
     </div>
+    {Notice && <Notice go={go} />}
     {!phone&&Signals&&<Signals onAttention={setAttention} go={path=>{const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}}/>}
     <Launcher apps={apps} open={launcher&&!keys.switching} onOpenChange={setLauncher} launch={open} />
     <Switcher apps={apps} switching={keys.switching} pick={keys.pick} />

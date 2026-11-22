@@ -1,3 +1,5 @@
+import { DAY_MS } from '../core/day.js';
+
 /** One provider observation for a subscription's allowance. Windows belong to
  * the account, never to the agent or machine using it. No credential values. */
 export interface QuotaWindow {
@@ -33,7 +35,7 @@ function time(value: string): number {
  * Project the observed average rate forward, so an aging observation does not
  * keep granting its old headroom. The reserve starts at 5%; in the final 10%
  * of a window it can be lent if that rate forecasts usage strictly below 100%.
- * Missing, future or expired observations cannot establish available capacity.
+ * Missing, future, expired or day-old observations cannot establish available capacity.
  * In particular, passing a reset never fabricates a fresh provider reading.
  */
 export function accountCapacity(windows: readonly QuotaWindow[], now: string): AccountCapacity {
@@ -51,7 +53,7 @@ export function accountCapacity(windows: readonly QuotaWindow[], now: string): A
     const read = window.readAt === null ? null : time(window.readAt);
     if (read !== null && (read < start || read >= reset)) throw new Error('Quota observation outside its window');
     const unavailable: WindowCapacity = { name: window.name, estimatedUsage: null, forecast: null, hasRoom: false, reserveLent: false };
-    if (read === null || window.usage === null || read > current || current >= reset || current < start) return unavailable;
+    if (read === null || window.usage === null || read > current || current - read >= DAY_MS || current >= reset || current < start) return unavailable;
     const elapsed = read - start;
     // At the very beginning no elapsed sample exists to establish a rate.
     // The observed amount is usable, but cannot justify lending a reserve.

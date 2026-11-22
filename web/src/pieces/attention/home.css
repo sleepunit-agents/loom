@@ -40,8 +40,10 @@
 .desk-home-open{margin-left:auto;padding:4px 2px;font-size:12.5px;white-space:nowrap;text-decoration:none;color:var(--v-text-2)}
 .desk-home-kicker{display:block;font:500 11px var(--font-data,monospace);letter-spacing:.1em;text-transform:uppercase;color:var(--v-text-3)}
 /* The last answer in brief: three lines, since the whole of it is one click away. */
-.desk-home-answer{display:grid;gap:4px;min-width:0;padding:10px 12px;border:1px solid var(--v-border);color:var(--v-text);text-decoration:none}
-.desk-home-answer-words{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;white-space:pre-wrap;font-size:13.5px;line-height:1.45}
+.desk-home-answer{position:relative;display:grid;gap:4px;min-width:0;padding:10px 12px;border:1px solid var(--v-border);color:var(--v-text);text-decoration:none}
+.desk-home-answer-link::after{content:"";position:absolute;inset:0}
+.desk-home-answer-words a{position:relative;z-index:1}
+.desk-home-answer-words{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;font-size:13.5px;line-height:1.45}
 .desk-home-talks{display:grid;grid-template-columns:minmax(0,1fr);gap:4px;min-width:0}
 .desk-home-talks ul{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;margin:0;padding:0;list-style:none}
 .desk-home-talk{display:flex;align-items:baseline;gap:8px;min-width:0;padding:5px 0;border-bottom:1px solid var(--v-border);font-size:13px;color:var(--v-text-2);text-decoration:none}

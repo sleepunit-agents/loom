@@ -98,7 +98,11 @@
     {
       "id": "conversations-011",
       "promise": "When an agent finishes a stretch of work it writes a digest: a summary, what was decided, the tasks and projects it touched, and anything it needs from its owner.",
-      "source": "docs/how-it-works/site/conversations.html"
+      "source": "docs/how-it-works/site/conversations.html",
+      "probe": {
+        "kind": "action",
+        "action": "conversationDigest"
+      }
     },
     {
       "id": "conversations-012",

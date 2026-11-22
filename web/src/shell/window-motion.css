@@ -26,3 +26,16 @@
   65% { transform: scale(1,.013); filter: brightness(2.5); }
   100% { transform: scale(.025,.013); opacity: 0; }
 }
+
+/* Let the live rail card cross the app area while it folds out of Home. */
+.next-rail:has([data-card-flight]), .desk-agent-rail:has([data-card-flight]) { overflow: visible; }
+.next-rail:has([data-card-flight]) { z-index: 32; }
+[data-card-flight] { position: relative; z-index: 1; }
+[data-card-flight] > :not(.desk-solo-hero, .desk-home-identity, .desk-rail-agent, [data-split-row]),
+[data-card-flight] :is(.desk-solo-hero, .desk-home-identity, .desk-rail-agent) > :not(:first-child) {
+  animation: desk-card-content 740ms ease-out both;
+}
+@keyframes desk-card-content {
+  0%, 24% { opacity: 0; }
+  82%, 100% { opacity: 1; }
+}

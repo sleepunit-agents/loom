@@ -7,10 +7,12 @@ import {conditionLine, readingAge, readingLine, readingsOf, type Reading} from '
 import {fullTime} from '../../kit/time';
 import {useHouseholdZone} from '../../data/zone';
 
-type Machine = {id:string; name:string; owner:string; revokedAt:string|null; readers:string[]|null; readingsLeftOut:number};
+import {MachineHostingDetails, machineHostingFields, type MachineHosting} from './machine-hosting';
+
+type Machine = MachineHosting & {id:string; name:string; readers:string[]|null; readingsLeftOut:number};
 type Entry = {id:string; agent:string; job:string; conversation:string|null; word:string; person:string|null; read:string; args:string; askedAt:string; bytes:number; outcome:string};
 type Card = {id:string; ask:string;review?:string};
-const query = 'query OwnerMachines { boxes { id name owner readers revokedAt readingsLeftOut } boxReadings { box kind thing usedPercent sizeMib freeMib engineStatus level readAt unknownSince stale } agents { id } }';
+const query = `query OwnerMachines { boxes { id name ${machineHostingFields} readers readingsLeftOut } boxReadings { box kind thing usedPercent sizeMib freeMib engineStatus level readAt unknownSince stale } agents { id } }`;
 
 /** What the machine's worker last read on it: any open condition plainly, then the numbers quietly. */
 function MachineReadings({readings}: {readings:Reading[]}) {
@@ -100,6 +102,7 @@ export function OwnerMachines({member}:{member:string}) {
  return <section aria-label="Your machines" className="grid gap-3"><h2>Your machines</h2>
   {machines.map(box=><article key={box.id} className="grid gap-3 rounded-xl border p-4"><h3>
    <Button variant="outline" aria-expanded={open===box.id} onClick={()=>setOpen(open===box.id?'':box.id)}>{box.name}{box.revokedAt?' (revoked)':''}</Button></h3>
+   <MachineHostingDetails box={box}/>
    {!box.revokedAt&&box.readingsLeftOut>0&&<p role="status">More than 24 things reported; {box.readingsLeftOut} were left out.</p>}
    {!box.revokedAt&&<MachineReadings readings={readingsOf(feed.data?.boxReadings,box.id)}/>}
    {open===box.id&&<MachineSettings box={box} agents={(feed.data?.agents??[]).map(agent=>agent.id)}/>}

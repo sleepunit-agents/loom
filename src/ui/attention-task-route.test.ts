@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { inboxSourcePath } from '../../web/src/pieces/attention/inbox-query';
 import type { InboxItem } from '../../web/src/pieces/inbox-view/model';
-import { taskId, taskSegment } from '../../web/src/pieces/tasks/route';
+import { taskId, taskSegment } from '../task-route.js';
 const item=(sourceId:string):InboxItem=>({id:'source',source:'task',sourceId,at:'2026-11-14T00:00:00Z',state:'waiting',volume:'full',read:true,refs:[],body:{words:'Source task'}});
 it.each(['t-1','~t-1','.','..','a/b',':d800','~:d800','\ud800','\ud801','\ufffd'])('opens exact imported source task %j through its canonical route',id=>{
  const path=inboxSourcePath(item(id))!;

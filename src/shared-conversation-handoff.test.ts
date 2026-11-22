@@ -314,6 +314,11 @@ it.each(['success','failure','archive','transient','occupied','work-role','mixed
    expect(await blocked.json()).toEqual({ok:false,code:'unavailable',message:details.codexUnavailableReason});
   }
   expect(db.select().from(s.conversations).where(eq(s.conversations.venue,'handoff')).all()).toHaveLength(0);
+  db.update(s.modelAccountWindows).set({usage:0.1,usageReadAt:new Date(f.clock.now()-36*3600000).toISOString()}).where(eq(s.modelAccountWindows.account,'paid')).run();
+  const stale=(await (await f.call('handoffOptions',{},'stale-quota')).json()).value;
+  expect(stale.codexAvailable).toBe(false);
+  expect(stale.codexUnavailableReason).toBe('An eligible worker reported a signed-in account. Loom needs a current quota reading before it can start this job.');
+  expect(stale.roles).toMatchObject([{id:'research',available:false,reason:stale.codexUnavailableReason}]);
   accountUsageUnavailable(db,identity);
   const failed=(await (await f.call('handoffOptions',{},'failed-read')).json()).value;
   expect(failed.codexAvailable).toBe(false);

@@ -131,3 +131,120 @@ it('titles a terminal conversation by the last part of its folder, however the p
   expect(await title('d', '/work/line\nbreak\u0007\u2028end')).toBe('Box · claude · linebreakend');
   expect([...(await title('e', '/work/' + 'x'.repeat(200)))]).toHaveLength(60);
 });
+
+it('keeps the hook in charge of words while a separate poller reports activity', async () => {
+  const f = await bodyFixture(clean);
+  const {token} = f.root.services.signin.issue({kind:'agent', agent:'art', label:'Example terminal', terminalMachine:'box'}, 'alice');
+  const send = async (instanceId:string, action:string, extra:Record<string,unknown> = {}, status=200) => {
+    const input = {harness:'codex', machine:'box', sessionId:'example', instanceId, action, ...extra};
+    const res = await f.root.http.request('/api/terminal/session', {method:'POST',
+      headers:{authorization:'Bearer '+token, 'content-type':'application/json'},
+      body:JSON.stringify({id:crypto.randomUUID(), input})});
+    expect(res.status).toBe(status);
+    return (await res.json()).value?.job;
+  };
+  const state = () => f.db.$client.prepare('select state from jobs where id=?').pluck().get(job);
+  const cwd = {cwd:'/example'};
+  let notifications = 0;
+  clean.push(f.root.writes.observe(() => { notifications++; }));
+  const job = await send('first','present',cwd);
+  expect(notifications).toBeGreaterThan(0);
+  notifications = 0;
+  await send('first','pulse',cwd);
+  expect(notifications).toBe(0);
+  expect(state()).toBe('running');
+  await send('first','idle');
+  expect(notifications).toBeGreaterThan(0);
+  expect(await send('second','present',cwd)).toBe(job);
+  await send('first','present',cwd,409);
+  await send('first','pulse',cwd);
+  await send('first','idle');
+  expect(state()).toBe('running');
+  await send('second','idle');
+  expect(state()).toBe('done');
+  await send('hook','open',{...cwd,model:'native-model'});
+  expect(f.db.$client.prepare('select model from jobs where id=?').pluck().get(job)).toBe('native-model');
+  await send('hook','present',cwd);
+  await send('hook','idle');
+  await send('second','present',cwd);
+  await send('second','pulse',cwd);
+  await send('second','idle');
+  expect(state()).toBe('running');
+  await send('hook','turn',{role:'member',eventId:'m1',words:'Fixture words.'});
+  expect(f.db.$client.prepare('select count(*) from turns where conversation=(select conversation from jobs where id=?)').pluck().get(job)).toBe(1);
+  await send('hook','end');
+  expect(state()).toBe('done');
+});
+
+it('orders retirement against both deliveries of an old presence open', async () => {
+  const f = await bodyFixture(clean);
+  const {token} = f.root.services.signin.issue({kind:'agent',agent:'art',label:'Terminal',terminalMachine:'box'},'alice');
+  for (const arrived of [false,true]) {
+    const id = crypto.randomUUID();
+    const base = {sessionId:id,instanceId:id,machine:'box',harness:'codex'};
+    const call = (method:string,input:unknown) => f.root.http.request('/api/terminal/'+method,{
+      method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({id,input}),
+    });
+    const unauthorized = await f.root.http.request('/api/terminal/retireOpen',{method:'POST',
+      headers:{authorization:'Bearer '+bodyCredentials.agent,'content-type':'application/json'},body:JSON.stringify({id,input:base})});
+    expect(unauthorized.status).toBe(403);
+    const open = () => call('session',{...base,action:'open',cwd:'/fixture',model:null});
+    if(arrived)expect((await open()).status).toBe(200);
+    for(let attempt=0;attempt<2;attempt++)
+      expect((await call('retireOpen',base)).status).toBe(arrived?409:200);
+    expect((await open()).status).toBe(arrived?200:409);
+    expect(f.db.$client.prepare('select count(*) from terminal_sessions where session_id=?').pluck().get(id)).toBe(arrived?1:0);
+  }
+});
+
+it('restores a displaced live hook and preserves a deleted terminal thread through adoption', async () => {
+  const f = await bodyFixture(clean);
+  const {token} = f.root.services.signin.issue({kind:'agent',agent:'art',label:'Terminal',terminalMachine:'box'},'alice');
+  const native = 'a'.repeat(64), legacy = crypto.randomUUID();
+  const send = async (action:string,instanceId:string,extra:Record<string,unknown> = {}, status=200) => {
+    const res=await f.root.http.request('/api/terminal/session',{method:'POST',
+      headers:{authorization:'Bearer '+token,'content-type':'application/json'},
+      body:JSON.stringify({id:crypto.randomUUID(),input:{action,instanceId,machine:'box',harness:'codex',sessionId:'legacy',...extra}})});
+    expect(res.status).toBe(status);
+    return (await res.json()).value;
+  };
+  const meta = {cwd:'/test',model:null};
+  const {thread,job,conversation} = await send('open',native,meta);
+  await send('usage',native,{runId:'child',description:'Test',revision:1,report:{source:'none'}});
+  await send('open',legacy,meta);
+  await send('adopt',legacy,{native});
+  await send('idle',legacy);
+  await send('turn',native,{role:'member',eventId:'one',words:'Fixture words'});
+  expect(f.db.$client.prepare('select count(*) from turns where conversation=?').pluck().get(conversation)).toBe(1);
+  expect(f.db.$client.prepare('select j.state from terminal_runs r join jobs j on j.id=r.job where r.parent=?').pluck().all(job)).toEqual(['running','running']);
+  await send('usage',native,{runId:'finished',description:'Finished',revision:1,completed:true,report:{source:'none'}});
+  await send('open',legacy,meta);
+  await send('end',legacy);
+  await send('adopt',legacy,{native,resume:{children:['child']}});
+  const runs=f.db.$client.prepare('select r.run_id,j.state from terminal_runs r join jobs j on j.id=r.job where r.parent=? order by r.run_id').all(job);
+  expect(runs).toEqual([{run_id:'child',state:'running'},{run_id:'finished',state:'done'},{run_id:'main',state:'running'}]);
+  await send('turn',native,{role:'agent',eventId:'two',words:'Fixture reply'});
+  f.root.services.comms!.delete(thread);
+  await send('adopt',legacy,{native:null});
+  await send('present',legacy,{cwd:'/test'},409);
+  await send('pulse',legacy,{cwd:'/test'},409);
+  await send('end',native);
+  expect(f.db.$client.prepare('select thread from terminal_sessions where job=?').pluck().get(job)).toBeNull();
+});
+
+it('requires fresh confirmation before replacing a silent observer', async () => {
+  const f=await bodyFixture(clean);
+  const {token}=f.root.services.signin.issue({kind:'agent',agent:'art',label:'Terminal',terminalMachine:'box'},'alice');
+  const post=(instanceId:string,action:string,fields:Record<string,unknown>={})=>f.root.http.request('/api/terminal/session',{
+    method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},
+    body:JSON.stringify({id:crypto.randomUUID(),input:{sessionId:'stale',machine:'box',harness:'codex',instanceId,action,...fields}})});
+  const cwd={cwd:'/test'};
+  const first=await post('newer','present',cwd),{value}=await first.json();
+  f.clock.advance(16*60_000);
+  expect((await post('late','present',cwd)).status).toBe(409);
+  await post('late','idle');
+  expect(f.db.$client.prepare('select state from jobs where id=?').pluck().get(value.job)).not.toBe('done');
+  expect((await post('fresh','present',{...cwd,replace:'newer'})).status).toBe(200);
+  await post('newer','idle');
+  expect(f.db.$client.prepare('select state from jobs where id=?').pluck().get(value.job)).toBe('running');
+});

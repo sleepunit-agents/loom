@@ -83,6 +83,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('An approval records the conversation it was asked in.'):row['probe']={'kind':'action','action':'conversationApprovalSource'}
    if row['promise'].startswith(('A conversation is one agent talking in one place.', 'One table Every conversation', 'One per place An agent')):row['probe']={'kind':'action','action':'conversationRecords'}
    if row['promise'].startswith('A thread keeps the pull requests it mentions'):row['probe']={'kind':'action','action':'conversationChangeCard'}
+   if row['promise'].startswith('When an agent finishes a stretch of work'):row['probe']={'kind':'action','action':'conversationDigest'}
    if row['promise'].startswith('One job at a time'):row['probe']={'kind':'action','action':'conversationSingleJob'}
    if row['promise'].startswith('A trigger from Tempo drops an item'):row['probe']={'kind':'action','action':'conversationTempoDelivery'}
    if row['promise'].startswith('A piece of work one agent hands to another.'):row['probe']={'kind':'action','action':'nativeHandoff'}
@@ -108,6 +109,9 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem in ['approvals','inbox']:
   for row in rows:
    if row['promise'].startswith(("A pending approval is an item in a person's Inbox", 'A pending approval arrives as an item')):row['probe']={'kind':'action','action':'approvalInbox'}
+ if f.stem=='bridges':
+  for row in rows:
+   if row['promise']=='It arrives in the inbox with discord or slack as its source.':row['probe']={'kind':'action','action':'bridgeMail'}
  if f.stem=='bridges':add('The owner can save a Discord channel rule and a Slack person link in Bridges and inspect both after reload.','',{'kind':'action','action':'bridgeSettings'})
  if f.stem=='inbox':add('Answering Yes records who answered and adds exactly one item for the agent.','',{'kind':'action','action':'inboxAnswer'})
 
@@ -151,6 +155,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith(('Keeps every installed app within reach', 'The launcher lists every app in groups')):row['probe']={'kind':'action','action':'deskLauncher'}
  if f.stem=='data':
   for row in rows:
+   if row['promise'].startswith(('terminal_credentials ', 'terminal_sessions ', 'terminal_runs ')):row['probe']={'kind':'action','action':'deskJobs'}
    if row['promise'].startswith('A query names a table from the model'):row['probe']={'kind':'legacy-data-socket'}
  if f.stem=='desk':
   for row in rows:
@@ -175,6 +180,8 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('A task is ready when it is open'):row['probe']={'kind':'all','probes':[{'kind':'action','action':'taskStructure'},{'kind':'action','action':'taskLifecycle'}]}
  if f.stem=='machines':
   for row in rows:
+   if row['promise']=="Shows each agent's current jobs on its card on Home.":row['probe']={'kind':'action','action':'homeJobs'}
+   if row['promise'].startswith(('Records each machine with a worker', 'c Boxes. A box belongs')):row['probe']={'kind':'action','action':'machineRoster'}
    if row['promise'].startswith(('Retries a job that fails to start','A job that fails to start is tried again')):row['probe']={'kind':'action','action':'workerRetries'}
  if f.stem=='tools':
   for row in rows:

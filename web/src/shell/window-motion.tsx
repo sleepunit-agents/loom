@@ -49,7 +49,7 @@ export function useDeparture(ground: React.RefObject<HTMLDivElement | null>, rem
       const duration = effect === 'tv' ? 680 : effect === 'glitch' ? 720 : 800;
       if (effect === 'matrix' || effect === 'hexagon') animations.push(...animateDissolve(effect, bounds.width, bounds.height, duration));
       if (offset) animations.push(root.animate([{translate:'0 0',scale:'1'}, {translate:'0 0',scale:'1',offset:.32}, {translate:offset,scale:'.08'}],
-        {duration,easing:'ease-in',fill:'both',pseudoElement:'::view-transition-group(loom-departure)'}));
+        {duration,easing:'ease-in',fill:'both',pseudoElement:'::view-transition-image-pair(loom-departure)'}));
     }, () => {});
     void transition.finished.finally(() => {
       for (const animation of animations) animation.cancel();
