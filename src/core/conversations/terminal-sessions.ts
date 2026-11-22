@@ -74,6 +74,15 @@ export class TerminalSessions {
         : this.db.select().from(deletedThreads).where(eq(deletedThreads.id,cv.place)).get();
       if (!thread || thread.id !== cv.place || thread.conversation !== cv.id) throw new Error('Terminal records disagree');
       const result = {conversation:cv.id,thread:thread.id,job:parent.id};
+      // The v1 poller used an ordinary instance ID. Hand off bookkeeping only
+      // while that exact instance still owns the row. Running children, private
+      // words, tombstones and a native hook that has already resumed stay intact.
+      if (event.action === 'adopt') {
+        if (session.instanceId === event.instanceId)
+          this.db.update(terminalSessions).set({instanceId:event.native ?? '~' + event.instanceId})
+            .where(eq(terminalSessions.job,parent.id)).run();
+        return result;
+      }
       if (!session.thread && event.action !== 'usage' && !ending)
         throw new OperationError('conflict','Terminal thread was deleted');
       // A native hook owns turn capture until it ends. The poller can refresh its

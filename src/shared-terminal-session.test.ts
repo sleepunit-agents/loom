@@ -175,3 +175,49 @@ it('keeps the hook in charge of words while a separate poller reports activity',
   await send('hook','end');
   expect(state()).toBe('done');
 });
+
+it('orders retirement against both deliveries of an old presence open', async () => {
+  const f = await bodyFixture(clean);
+  const {token} = f.root.services.signin.issue({kind:'agent',agent:'art',label:'Terminal',terminalMachine:'box'},'alice');
+  for (const arrived of [false,true]) {
+    const id = crypto.randomUUID();
+    const base = {sessionId:id,instanceId:id,machine:'box',harness:'codex'};
+    const call = (method:string,input:unknown) => f.root.http.request('/api/terminal/'+method,{
+      method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({id,input}),
+    });
+    const open = () => call('session',{...base,action:'open',cwd:'/fixture',model:null});
+    if(arrived)expect((await open()).status).toBe(200);
+    for(let attempt=0;attempt<2;attempt++)
+      expect((await call('retireOpen',base)).status).toBe(arrived?409:200);
+    expect((await open()).status).toBe(arrived?200:409);
+    expect(f.db.$client.prepare('select count(*) from terminal_sessions where session_id=?').pluck().get(id)).toBe(arrived?1:0);
+  }
+});
+
+it('restores a displaced live hook and preserves a deleted terminal thread through adoption', async () => {
+  const f = await bodyFixture(clean);
+  const {token} = f.root.services.signin.issue({kind:'agent',agent:'art',label:'Terminal',terminalMachine:'box'},'alice');
+  const native = 'a'.repeat(64), legacy = crypto.randomUUID();
+  const send = async (action:string,instanceId:string,extra:Record<string,unknown> = {}, status=200) => {
+    const res=await f.root.http.request('/api/terminal/session',{method:'POST',
+      headers:{authorization:'Bearer '+token,'content-type':'application/json'},
+      body:JSON.stringify({id:crypto.randomUUID(),input:{action,instanceId,machine:'box',harness:'codex',sessionId:'legacy',...extra}})});
+    expect(res.status).toBe(status);
+    return (await res.json()).value;
+  };
+  const meta = {cwd:'/test',model:null};
+  const {thread,job,conversation} = await send('open',native,meta);
+  await send('usage',native,{runId:'child',description:'Test',revision:1,report:{source:'none'}});
+  await send('open',legacy,meta);
+  await send('adopt',legacy,{native});
+  await send('idle',legacy);
+  await send('turn',native,{role:'member',eventId:'one',words:'Fixture words'});
+  expect(f.db.$client.prepare('select count(*) from turns where conversation=?').pluck().get(conversation)).toBe(1);
+  expect(f.db.$client.prepare('select j.state from terminal_runs r join jobs j on j.id=r.job where r.parent=?').pluck().all(job)).toEqual(['running','running']);
+  f.root.services.comms!.delete(thread);
+  await send('adopt',legacy,{native:null});
+  await send('present',legacy,{cwd:'/test'},409);
+  await send('pulse',legacy,{cwd:'/test'},409);
+  await send('end',native);
+  expect(f.db.$client.prepare('select thread from terminal_sessions where job=?').pluck().get(job)).toBeNull();
+});
