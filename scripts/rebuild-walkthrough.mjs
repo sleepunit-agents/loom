@@ -5,6 +5,7 @@ import {randomUUID} from 'node:crypto';
 import {nativeProtocolAction} from './rebuild-native-protocol.mjs';
 import {conversationLinks} from './rebuild-conversation-links.mjs';
 import {conversationMailSteps} from './rebuild-conversation-mail.mjs';
+import {machineRoster} from './rebuild-machine-roster.mjs';
 import {modelAccountActions} from './rebuild-model-actions.mjs';
 /** Real built startup and first-run sign-in. No seeded session or mock transport. */
 import {approvalCaution} from './rebuild-approval-caution.mjs';
@@ -178,6 +179,7 @@ export async function* walkthroughSteps(output) {
      await tile.getByRole('combobox',{name:'Jobs for'}).selectOption('moss');
      const jobs=tile.getByRole('group',{name:'moss queued jobs',exact:true}).locator('.loom-kit-note');
      await jobs.filter({hasText:report.example.runtime.job.title}).waitFor();
+     report.actions.machineRoster=await machineRoster({page,tile,example:report.example,out});
      row.queuedShownAsRunning=await tile.getByRole('group',{name:'moss jobs now',exact:true}).getByText(report.example.runtime.job.title,{exact:true}).count();
      row.runtimeJobs=await jobs.evaluateAll(rows=>rows.map(row=>({title:row.querySelector('.loom-kit-title')?.textContent,status:row.querySelector('.loom-kit-meta')?.textContent})));
      row.text=await tile.innerText();
