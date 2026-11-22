@@ -393,3 +393,29 @@ it('reads archived metadata without ciphertext and rechecks thread visibility af
   expect(JSON.stringify(changed)).not.toContain('Fictional archive words');
   expect((await ask('ref body{text}')).data).toEqual({commsArchivedQuestions:[]});
 });
+
+it('serves the activity card and history under the current source conversation visibility', async () => {
+  const f = await fixture();
+  const { prepareAgentPost } = await import('./agent-posts.js');
+  const at = '2026-11-14T18:00:00.000Z';
+  const other = f.comms.threads.open({ agent:'art', member:'bob', title:'Other' });
+  const write = async (source: string, edit: Parameters<typeof prepareAgentPost>[3]) =>
+    (await prepareAgentPost(f.db, f.key, source, edit))(at);
+  const thread = await write(f.thread.id,{ action:'open', words:'Boot console' });
+  await write(f.thread.id,{ action:'reply', thread, words:'It scrolls!' });
+  const otherActivity = await write(other.id,{ action:'open', words:'Other work' });
+  const schema = new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:commsQueryFields(f.service)})});
+  const read = (who: typeof alice, id: string) => graphql({schema,contextValue:{viewer:who},variableValues:{id},
+    source:`query($id:String!){
+      agentActivityFeed(agent:"art"){thread title latest{words} parent{words}}
+      agentActivityHistory(agent:"art",thread:$id){id words}
+    }`});
+  const own = await read(alice,thread);
+  expect(own.errors).toBeUndefined();
+  expect(own.data).toEqual({agentActivityFeed:[{thread,title:'Boot console',latest:{words:'It scrolls!'},parent:{words:'Boot console'}}],
+    agentActivityHistory:[{id:'1',words:'Boot console'},{id:'2',words:'It scrolls!'}]});
+  expect((await read(alice,otherActivity)).data?.agentActivityHistory).toEqual([]);
+  expect((await read(owner,otherActivity)).data?.agentActivityHistory).toEqual([{id:'3',words:'Other work'}]);
+  f.onOpen(f.revoke);
+  expect((await read(alice,thread)).data).toEqual({agentActivityFeed:[],agentActivityHistory:[]});
+});

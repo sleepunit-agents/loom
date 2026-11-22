@@ -1,3 +1,4 @@
+import { LiveAgentFeed } from './live-agent-posts';
 import { useDeskWaitingCounts, WaitingRow, waitingPath } from './waiting';
 import { useDeskAgentDisplays } from './agent-displays';
 import { useDeskAgentDirectory } from './agent-directory';
@@ -83,6 +84,7 @@ export default function AgentRail({ go }: { go(path: string): void }) {
             <AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(state,ask)} size={40} />
             <span><strong>{agent.name}</strong><span className="desk-rail-state">{word}</span></span>
           </button>}
+          <LiveAgentFeed agent={agent.id} compact go={go} onChange={waitingChanged}/>
           <Doing doing={doing} name={agent.name} names={names} go={go} compact />
           <button className="desk-rail-thread" onClick={()=>go(path)}>{threadStatus!=='live'?'Conversations unavailable':unread?`${unread} unread ${unread===1?'thread':'threads'}`:thread?(summary?.last?.title||'Recent conversation'):'Start a conversation'}<span aria-hidden="true"> ↗</span></button>
         </section>;
