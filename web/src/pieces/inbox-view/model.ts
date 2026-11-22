@@ -29,7 +29,7 @@ export function approvalRequestId(item: InboxItem): string | undefined {
   return item.source === 'approval' && item.waitsOnKind === 'approval' ? item.waitsOnId ?? undefined : undefined;
 }
 export function managed(item: InboxItem): boolean {
-  return !!item.waitsOnKind || ['task', 'approval', 'secret-request'].includes(item.source);
+  return (item.source === 'notice' && !!item.sourceId?.startsWith('worker-join:')) || !!item.waitsOnKind || ['task', 'approval', 'secret-request'].includes(item.source);
 }
 export function rows(snapshot: InboxSnapshot, folder: string, query: string): InboxItem[] {
   if (snapshot.status !== 'live') return [];

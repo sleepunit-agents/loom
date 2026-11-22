@@ -8,7 +8,7 @@ import {createDataSchema,dataDatabase} from '../data/database.js';
 import {FakeClock} from '../clock.js';
 import {serveShared} from '../../shared-serve.js';
 import {requestWorkerJoin} from '../../runtime/worker-join.js';
-import {boxes,members,tokens} from '../data/schema.js';
+import {boxes,inbox,members,tokens} from '../data/schema.js';
 import {credentialFingerprint,currentToken} from '../data/authentication.js';
 import {sharedTokens} from './shared-tokens.js';
 import {startBrowser} from './shared-browser.js';
@@ -95,15 +95,20 @@ it('lets the signed-in owner see and answer the matching request through the des
         body:JSON.stringify({id:randomUUID(),input})});
       return response.json();
     };
+    expect(db.select().from(inbox).all()).toMatchObject([{to:'owner',state:'waiting',answers:'yes-no',why:expect.stringContaining(result.code)}]);
     const pending=await call('workerJoinPending',{});
     expect(pending).toMatchObject({ok:true,value:{requests:[{name:'wunder',code:result.code}]}});
     expect(await call('workerJoinDecide',{request:pending.value.requests[0].request,code:result.code,decision:'allow'})).toMatchObject({ok:true,value:{state:'allowed'}});
     expect(await call('workerJoinPending',{})).toMatchObject({ok:true,value:{requests:[]}});
+    expect(db.select().from(inbox).all()).toMatchObject([{state:'resolved',resolution:'Machine admitted'}]);
     const admitted=await requestWorkerJoin(root.url,'wunder',directory);
     if(admitted.state!=='allowed') throw Error('Expected owner-approved machine');
     const saved=JSON.parse(readFileSync(join(directory,'worker-join.json'),'utf8'));
     const auth=root.credentials.authenticate(new Request(root.url,{headers:{authorization:'Bearer '+saved.token}}));
     expect(auth?.viewer).toEqual({kind:'runner',id:admitted.box});
+    await requestWorkerJoin(root.url,'second',join(directory,'second'));
+    clock.advance(15*60_000);
+    expect(db.select().from(inbox).all()).toContainEqual(expect.objectContaining({state:'resolved',resolution:'Join request expired'}));
   } finally {await root.close();client.close();rmSync(directory,{recursive:true,force:true});}
 });
 

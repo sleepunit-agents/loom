@@ -1,15 +1,17 @@
 import {isIP} from 'node:net';
 import {randomBytes} from 'node:crypto';
-import {and, count, eq, gt, lt} from 'drizzle-orm';
+import {and, count, eq, gt, lt, lte, sql} from 'drizzle-orm';
 import {z} from 'zod';
 import type {Clock} from '../clock.js';
 import type {DataDatabase} from '../data/database.js';
-import {tokens, workerJoinRequests as requests} from '../data/schema.js';
+import {inbox, tokens, workerJoinRequests as requests} from '../data/schema.js';
 import {machineName} from '../line-name.js';
 import type {Viewer} from '../../policy.js';
 import {OperationError,type Operations} from '../operations/index.js';
 import {currentSession,freshProof} from '../data/authentication.js';
-import {householdOwner} from '../../shared-sharing.js';
+import {Conversations} from '../conversations/index.js';
+import type {DataWrites} from '../data/writes.js';
+import {householdOwner,householdOwners} from '../../shared-sharing.js';
 import {createReportOnlyMachine} from '../../shared-machine-registry.js';
 import {sharedTokens} from './shared-tokens.js';
 import {SHA256_HEX} from '../sha256-hex.js';
@@ -34,6 +36,29 @@ export function workerJoinSource(peer?:string) {
   const [start,end]=canonical.split('::');
   const left=start?start.split(':'):[], right=end?end.split(':'):[];
   return [...left,...Array(8-left.length-right.length).fill('0'),...right].slice(0,4).join(':');
+}
+
+const noticeKey=(id:string,code:string)=>'worker-join:'+id+':'+code;
+
+/** One deadline for the earliest waiting card. Rebuild it from durable mail on startup. */
+export function workerJoinDeadlines(db:DataDatabase,clock:Clock,writes:DataWrites) {
+  let cancel:(()=>void)|undefined;
+  const mail=new Conversations(db,()=>new Date(clock.now()).toISOString());
+  function arm(){
+    cancel?.();
+    const now=new Date(clock.now()).toISOString();
+    const waiting=()=>db.selectDistinct({id:requests.id,code:requests.code,expiresAt:requests.expiresAt})
+      .from(requests).innerJoin(inbox,and(eq(inbox.source,'notice'),eq(inbox.state,'waiting'),
+        eq(inbox.sourceId,sql`'worker-join:' || ${requests.id} || ':' || ${requests.code}`)));
+    const expired=waiting().where(lte(requests.expiresAt,now)).all();
+    if (expired.length) writes.run(()=>{
+      for (const row of expired) mail.resolveSource('notice',noticeKey(row.id,row.code),'Join request expired');
+    });
+    const first=waiting().where(gt(requests.expiresAt,now)).orderBy(requests.expiresAt).limit(1).get();
+    cancel=first && clock.at(Date.parse(first.expiresAt),arm);
+  }
+  arm();
+  return {arm,close:()=>cancel?.()};
 }
 
 function matchCode() {
@@ -70,6 +95,11 @@ export function requestWorkerAdmission(db:DataDatabase, clock:Pick<Clock,'now'>,
     while (tx.select({id:requests.id}).from(requests).where(eq(requests.code,code)).get()) code = matchCode();
     tx.insert(requests).values({id:input.request,name:input.name,fingerprint:input.fingerprint,code,sourceBucket,
       requestedAt:at,expiresAt:new Date(now+lifetime).toISOString(),state:'pending'}).run();
+    const mail=new Conversations(db,()=>at);
+    for (const owner of householdOwners(db)) mail.send({toKind:'person',to:owner,member:owner,source:'notice',
+      sourceId:noticeKey(input.request,code),fromKind:'unknown',answers:'yes-no',words:input.name+' wants to join Loom',
+      why:'Match '+code+' with the code shown on the machine.',ifYes:'Add this machine as a report-only worker.',
+      ifNo:'Block this join request.'});
     return {state:'pending' as const,code};
   },{behavior:'immediate'});
 }
@@ -95,6 +125,7 @@ export function decideWorkerAdmission(db:DataDatabase, clock:Pick<Clock,'now'>, 
       sharedTokens(db,clock).enrolRunner(box,row.fingerprint);
     }
     db.update(requests).set({state,box,decidedBy:auth.viewer.id}).where(eq(requests.id,row.id)).run();
+    new Conversations(db,()=>at).resolveSource('notice',noticeKey(row.id,row.code),state==='allowed'?'Machine admitted':'Join request blocked');
     return {state,box};
   },{behavior:'immediate'});
 }

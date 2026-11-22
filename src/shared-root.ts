@@ -112,7 +112,7 @@ import { installSharedTempo, mayReadProgramWork, type SharedTempoOptions } from 
 import { nextData,sharedQueryTables } from './next-data.js';
 import { deskTimeFields, startDeskTime } from './desk-time.js';
 import { deskSpriteFields } from './desk-sprites.js';
-import {registerWorkerAdmission,requestWorkerAdmission,workerJoinSource} from './core/signin/worker-join.js';
+import {registerWorkerAdmission,requestWorkerAdmission,workerJoinDeadlines,workerJoinSource} from './core/signin/worker-join.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
 import { createRuntime } from './runtime/runtime.js';
 import type { ModelRole } from './runtime/placement.js';
@@ -283,6 +283,8 @@ export function sharedRoot(options: {
   registerModelAccountAdmin(operations, db, roles, now, accountSignIns.ask);
   let tempo!: ReturnType<typeof installSharedTempo>;
 
+  const joinDeadlines=workerJoinDeadlines(db,clock,data.writes);
+  stops.push(joinDeadlines.close);
   registerWorkerAdmission(operations,db,clock,credentials.browser);
   registerMachineRegistry(operations,db,{now,changed:()=>tempo?.capacityChanged()});
   const reviewReports = new Set<Promise<void>>();
@@ -518,6 +520,7 @@ export function sharedRoot(options: {
     try {
       const result=data.writes.run(()=>requestWorkerAdmission(db,clock,workerJoinSource(c.env?.peer),input));
       for (const error of result.notificationErrors) options.reportError(error);
+      if(result.value.state==='pending') joinDeadlines.arm();
       return c.json(result.value);
     } catch(error) {
       if (error instanceof z.ZodError) return c.json(failure('invalid','Invalid join request'),400);
