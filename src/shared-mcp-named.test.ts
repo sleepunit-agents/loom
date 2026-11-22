@@ -482,6 +482,11 @@ it('counts deliberate Knowledge consultations by authenticated reader and leaves
   expect(db.prepare('SELECT hit_count FROM pages WHERE slug=?').pluck().get(slug)).toBe(106);
   expect(db.prepare('SELECT identity,a.hit_count FROM knowledge_access a JOIN pages p ON p.id=a.page_id WHERE p.slug=? ORDER BY identity').all(slug))
    .toEqual([{identity:'art',hit_count:2},{identity:'mark',hit_count:4}]);
+  const stats={query:'{memoryKnowledgePage(slug:"fictional-reader-tally"){myAccess{hitCount lastAccessed}}}'};
+  for(const [caller,expected] of [[art,2],[mark,4]] as const) {
+   const answer=await caller.call('loom_query',stats);
+   expect(JSON.parse(answer.text).data.memoryKnowledgePage.myAccess).toEqual({hitCount:expected,lastAccessed:expect.any(String)});
+  }
   const stamp={operation:'mind.knowledgeConsulted',id:'fixture-access-retry',input:{slugs:[slug,slug]}};
   for(let n=0;n<2;n++) expect((await art.call('loom_command',stamp)).error).toBe(false);
   expect(db.prepare('SELECT hit_count FROM pages WHERE slug=?').pluck().get(slug)).toBe(107);
