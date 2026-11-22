@@ -16,7 +16,7 @@ import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations, lateMailWaits, refreshConversationLabel } from '../../core/conversations/index.js';
 import { incomingId, inboxSourceId, outsidePersonKey, parseIncomingId } from './keys.js';
-import { conversationPlace, discordPlace } from './place.js';
+import { conversationPlace, discordPlace, slackRoomLabel } from './place.js';
 import { holds, inHousehold, rules } from '../../policy.js';
 import { unendedJobStates } from '../../core/data/job-states.js';
 import { sharedSharing } from '../../shared-sharing.js';
@@ -218,9 +218,13 @@ export class BridgeIncoming {
           // nobody in this household. A duplicate delivery (above) keeps its original recorded scope.
           const member = message.isDm && !message.groupDm && !sender ? matchedMember : null;
           const place = conversationPlace(connection.workspace, message, member);
-          const label = connection.platform === 'discord' ? discordPlace(message, member) : message.thread ?? message.channel;
+          const slackLabel = connection.platform === 'slack' && !message.isDm && message.channelName
+            ? slackRoomLabel + message.channelName : undefined;
+          const label = connection.platform === 'discord' ? discordPlace(message, member) : slackLabel ?? message.thread ?? message.channel;
           const cv = this.conversations.open({ agent: connection.agent, venue: connection.platform, place, label, member, direct: message.isDm });
           conversation = cv.id;
+          if (slackLabel && cv.label !== slackLabel && (cv.label === message.thread || cv.label === message.channel || cv.label.startsWith(slackRoomLabel)))
+            refreshConversationLabel(this.db, cv, slackLabel);
           if (connection.platform === 'discord' && label !== cv.label && (cv.label === message.channel || (message.channelName && /^(Discord channel #|Discord thread #)/.test(cv.label)
             && (!message.parent || message.parentName || cv.label.endsWith(' under #' + message.parent)))))
             refreshConversationLabel(this.db, cv, label);

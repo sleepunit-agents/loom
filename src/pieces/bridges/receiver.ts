@@ -140,7 +140,8 @@ export class BridgeReceiver {
     for (const row of held) {
       this.heldAfter.set(connection, row);
       const channel = source.platform === 'discord' ? this.channels.discord(connection, row.channel) : undefined;
-      this.incoming.retry(row.id, { channelName: channel?.name, parentName: channel?.parentName });
+      const channelName = source.platform === 'slack' ? this.channels.slack(connection, row.channel)?.name : channel?.name;
+      this.incoming.retry(row.id, { channelName, parentName: channel?.parentName });
     }
     let failure: unknown, failed = false;
     // A frame that cannot be taken in now: a later version of this code, better channel metadata or a

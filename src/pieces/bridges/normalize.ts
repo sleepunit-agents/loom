@@ -130,7 +130,7 @@ export function normalizeDiscord(connection: PlatformConnection & { botUser?: st
  * resolves channel metadata before draining those messages; never infer DM
  * privacy from a channel id prefix or from a missing field.
  */
-export interface SlackChannel { id: string; kind: z.infer<typeof slackChannelType> }
+export interface SlackChannel { id: string; kind: z.infer<typeof slackChannelType>; name?: string }
 /** Whether a channel is a direct message, and of which sort, is all that is read from its kind. Slack
  * itself does not name a private channel the same way twice: its events call one `group`, while the
  * channel's own details say `is_channel` for any made since private channels and public ones were unified.
@@ -154,6 +154,7 @@ export function normalizeSlack(connection: PlatformConnection, payload: unknown,
     id: JSON.stringify([message.channel, message.ts]), connection: connection.id,
     channel: message.channel, thread: slackThread(kind, message.ts, message.thread_ts),
     isDm: kind === 'im' || kind === 'mpim',
+    ...(slackRoom(kind) === 'room' && channel?.name && {channelName: channel.name}),
     ...(kind === 'mpim' ? { groupDm: true } : {}),
     // Legacy integrations have only a bot id. Never confuse it with a user id.
     user: message.user ?? `bot:${message.bot_id}`, text: message.text,
