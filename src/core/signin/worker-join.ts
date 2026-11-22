@@ -1,3 +1,4 @@
+import {isIP} from 'node:net';
 import {randomBytes} from 'node:crypto';
 import {and, count, eq, gt, lt} from 'drizzle-orm';
 import {z} from 'zod';
@@ -18,6 +19,22 @@ const requestBody = z.object({
 }).strict();
 const lifetime = 15 * 60_000;
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+/** Only the socket peer is trusted. Hosts behind the same proxy share its limit. */
+export function workerJoinSource(peer?:string) {
+  if (!peer) return 'local';
+  if (isIP(peer)===4) return peer.split('.').slice(0,3).join('.');
+  if (isIP(peer)!==6) return 'local';
+  const canonical=new URL('http://['+peer.split('%')[0]+']/').hostname.slice(1,-1);
+  const mapped=/^::ffff:([a-f0-9]+):([a-f0-9]+)$/.exec(canonical);
+  if (mapped) {
+    const high=parseInt(mapped[1],16),low=parseInt(mapped[2],16);
+    return [high>>>8,high&255,low>>>8].join('.');
+  }
+  const [start,end]=canonical.split('::');
+  const left=start?start.split(':'):[], right=end?end.split(':'):[];
+  return [...left,...Array(8-left.length-right.length).fill('0'),...right].slice(0,4).join(':');
+}
 
 function matchCode() {
   const digits = Array.from(randomBytes(8), byte => alphabet[byte % alphabet.length]).join('');

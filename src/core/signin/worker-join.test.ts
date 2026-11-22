@@ -1,17 +1,18 @@
 import {randomBytes, randomUUID} from 'node:crypto';
-import {mkdtempSync, rmSync} from 'node:fs';
+import {mkdtempSync, readFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import Database from 'better-sqlite3';
 import {expect,it} from 'vitest';
 import {createDataSchema,dataDatabase} from '../data/database.js';
 import {FakeClock} from '../clock.js';
-import {sharedRoot} from '../../shared-root.js';
+import {serveShared} from '../../shared-serve.js';
+import {requestWorkerJoin} from '../../runtime/worker-join.js';
 import {boxes,members,tokens} from '../data/schema.js';
 import {credentialFingerprint,currentToken} from '../data/authentication.js';
 import {sharedTokens} from './shared-tokens.js';
 import {startBrowser} from './shared-browser.js';
-import {decideWorkerAdmission,requestWorkerAdmission} from './worker-join.js';
+import {decideWorkerAdmission,requestWorkerAdmission,workerJoinSource} from './worker-join.js';
 
 const fresh = () => ({request:randomUUID(),name:'wunder',fingerprint:randomBytes(32).toString('hex')});
 
@@ -79,22 +80,35 @@ it('commits the owner decision, report-only machine and runner credential togeth
 
 it('lets the signed-in owner see and answer the matching request through the desktop command door',async () => {
   const client=new Database(':memory:'), db=createDataSchema(client), clock=new FakeClock();
-  const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:error=>{throw error;}});
+  const directory=mkdtempSync(join(tmpdir(),'loom-worker-join-'));
+  const root=await serveShared({db,clock,originAllowed:()=>true,reportError:error=>{throw error;}});
   try {
     db.insert(members).values({id:'owner',role:'owner',joinedAt:new Date(clock.now()).toISOString()}).run();
     sharedTokens(db,clock).issue({kind:'owner',member:'owner',label:'Fixture owner'});
     const token=db.select().from(tokens).get()!;
     const {cookie}=startBrowser(db,clock.now(),{token,userAgent:'Fixture Browser',via:'link'});
-    const worker=fresh(), result=requestWorkerAdmission(db,clock,'local',worker);
+    const result=await requestWorkerJoin(root.url,'wunder',directory);
     if(result.state!=='pending') throw Error('Expected pending request');
     const call=async(name:string,input:unknown)=> {
-      const response=await root.http.request('http://loom/api/runtime/'+name,{method:'POST',
-        headers:{cookie:'loom_ui='+cookie,origin:'http://loom','content-type':'application/json'},
+      const response=await fetch(root.url+'/api/runtime/'+name,{method:'POST',
+        headers:{cookie:'loom_ui='+cookie,origin:root.url,'content-type':'application/json'},
         body:JSON.stringify({id:randomUUID(),input})});
       return response.json();
     };
-    expect(await call('workerJoinPending',{})).toMatchObject({ok:true,value:{requests:[{name:'wunder',code:result.code}]}});
-    expect(await call('workerJoinDecide',{request:worker.request,code:result.code,decision:'allow'})).toMatchObject({ok:true,value:{state:'allowed'}});
+    const pending=await call('workerJoinPending',{});
+    expect(pending).toMatchObject({ok:true,value:{requests:[{name:'wunder',code:result.code}]}});
+    expect(await call('workerJoinDecide',{request:pending.value.requests[0].request,code:result.code,decision:'allow'})).toMatchObject({ok:true,value:{state:'allowed'}});
     expect(await call('workerJoinPending',{})).toMatchObject({ok:true,value:{requests:[]}});
-  } finally {await root.close();client.close();}
+    const admitted=await requestWorkerJoin(root.url,'wunder',directory);
+    if(admitted.state!=='allowed') throw Error('Expected owner-approved machine');
+    const saved=JSON.parse(readFileSync(join(directory,'worker-join.json'),'utf8'));
+    const auth=root.credentials.authenticate(new Request(root.url,{headers:{authorization:'Bearer '+saved.token}}));
+    expect(auth?.viewer).toEqual({kind:'runner',id:admitted.box});
+  } finally {await root.close();client.close();rmSync(directory,{recursive:true,force:true});}
+});
+
+it('groups socket peers by network including IPv4-mapped IPv6 peers',()=>{
+  expect(workerJoinSource('::ffff:192.0.2.19')).toBe(workerJoinSource('192.0.2.241'));
+  expect(workerJoinSource('2001:db8::1')).toBe(workerJoinSource('2001:db8:0:0:ffff::2'));
+  expect(workerJoinSource('2001:db8:0:1::1')).not.toBe(workerJoinSource('2001:db8::1'));
 });

@@ -112,7 +112,7 @@ import { installSharedTempo, mayReadProgramWork, type SharedTempoOptions } from 
 import { nextData,sharedQueryTables } from './next-data.js';
 import { deskTimeFields, startDeskTime } from './desk-time.js';
 import { deskSpriteFields } from './desk-sprites.js';
-import {registerWorkerAdmission} from './core/signin/worker-join.js';
+import {registerWorkerAdmission,requestWorkerAdmission,workerJoinSource} from './core/signin/worker-join.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
 import { createRuntime } from './runtime/runtime.js';
 import type { ModelRole } from './runtime/placement.js';
@@ -471,7 +471,7 @@ export function sharedRoot(options: {
   };
 
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
-  const http = new Hono<{ Variables: { shutdown: AbortController } }>();
+  const http = new Hono<{ Bindings:{peer?:string}; Variables: { shutdown: AbortController } }>();
   const uploads=new Set<string>(), releaseUpload=new WeakMap<AbortController,()=>void>();
   const bodyRequest = (request: Request, abort: Pick<AbortController,'signal'>, limited = false, limit=DOOR_REQUEST_BYTES) => {
     let size = 0;
@@ -506,6 +506,24 @@ export function sharedRoot(options: {
       }
       await next();
     } finally { releaseUpload.get(abort)?.(); active.delete(entry); finished(); }
+  });
+  http.post('/api/worker-join/request',async c=>{
+    const request=c.req.raw;
+    if (!sameRequestOrigin(request,options.publicOrigin)) return c.json(failure('denied','Cross-origin request refused'),403);
+    if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type')??'')) return c.json(failure('invalid','Use application/json'),415);
+    let input:unknown;
+    try { input=await bodyRequest(request,c.get('shutdown'),true,4096).json(); }
+    catch(error) { return c.json(failure('invalid','Invalid join request'),error instanceof BodyTooLarge?413:400); }
+    if (closing || c.get('shutdown').signal.aborted || request.signal.aborted) return c.json(failure('unavailable','Request ended'),503);
+    try {
+      const result=data.writes.run(()=>requestWorkerAdmission(db,clock,workerJoinSource(c.env?.peer),input));
+      for (const error of result.notificationErrors) options.reportError(error);
+      return c.json(result.value);
+    } catch(error) {
+      if (error instanceof z.ZodError) return c.json(failure('invalid','Invalid join request'),400);
+      if (error instanceof OperationError) return c.json(failure(error.code,error.message),409);
+      throw error;
+    }
   });
   http.route('/', sharedSigninLinkRoutes({ db, clock, writes: data.writes, issueProgram:programSetup?input=>{const parsed=programIssueInput.safeParse(input);if(!parsed.success)throw new OperationError('invalid','Invalid program token request');return programSetup.issue(parsed.data);}:undefined, publicOrigin: options.publicOrigin, admitted: () => !closing, reportError: options.reportError, authenticate:request=>authenticate(request,{programs:'deny'}) }));
   http.all('/graphql', c => data.http.fetch(bodyRequest(c.req.raw, c.get('shutdown'))));
