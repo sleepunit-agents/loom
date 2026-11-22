@@ -153,6 +153,18 @@ it('replies to the last accepted matching bridge reference even when its words a
   const batch=await response.json(),first={...batch.value.items[0],source:'slack',refs:['bi:first']};batch.value.items=[first,{...first,id:'second',seq:2,words:null,refs:['bi:last']}];return Response.json(batch);
  }})).toBe(0);expect(f.native).toHaveBeenCalledWith(expect.anything(),expect.stringMatching(/\n\nPRIVATE MAIL$/),expect.any(AbortSignal));expect(f.calls.find(row=>row.path==='reply')?.body.input).toMatchObject({incoming:'bi:last',model:'observed'});expect(f.calls.some(row=>row.path==='message')).toBe(false);
 });
+it.each(['fresh','continued'])('gives a %s owner Comms body callable Loom delegation instructions', async mode => {
+ const f=fixture(), input=JSON.parse(f.input.toString());
+ input.job.venue='loom';
+ f.native.mockResolvedValue({text:'Answer',model:'observed',actions:[]});
+ const sessions=mode==='continued'?{take:async()=>'session-1',save:async()=>{},discard:()=>{}}:undefined;
+ expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(input)),sessions})).toBe(0);
+ const prompt=f.native.mock.calls[0][1];
+ expect(prompt).toContain('loom_command MCP tool');
+ expect(prompt).toContain('{"operation":"conversation.handoffOptions","id":"discover-handoffs","input":{}}');
+ expect(prompt).toContain('value.conversation from the receipt as input.conversation');
+});
+
 it.each(['fresh','continued'])('tells a %s Discord body where this conversation is', async mode => {
  const f=fixture(), value=JSON.parse(f.input.toString());
  Object.assign(value.job,{venue:'discord',thread:null,venueDescription:'Discord direct message with Jonathan'});

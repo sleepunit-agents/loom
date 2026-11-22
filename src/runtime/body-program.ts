@@ -243,7 +243,13 @@ export async function bodyProgram(input: {
       context.unshift(nativeBudget);continued.unshift(nativeBudget);
     }
     if(coordinating){
-      const delegation='Check conversation.handoffOptions for assigned peers, enabled work roles and current availability. To delegate through Loom, call conversation.handoff with one of role (a listed work role), agent (a listed peer), or harness "codex". Include a label, self-contained words and a clientId unique to the brief. Reuse the clientId if this job retries it. For repository work, put the repository and commit in words. For a role or Codex handoff, Loom returns the result to this thread. To start it later, include notBefore as a UTC timestamp within the private brief retention period. To check that worker’s progress, pass the returned child conversation to conversation.handoffStatus. For help inside this job, use native subagents when your harness provides them.';
+      const delegation = [
+        'For a Loom subagent, use the loom_command MCP tool. Loom runs the child on an eligible worker.',
+        'Discover available roles, assigned peers and Codex capacity with {"operation":"conversation.handoffOptions","id":"discover-handoffs","input":{}}.',
+        'Submit conversation.handoff through the same tool. Give the command a stable id. In input, include exactly one of role (a listed role), agent (a listed peer), or harness "codex", plus label, words and a clientId unique to the brief. Reuse both IDs and the same input when retrying that brief.',
+        'Make words self-contained. Include the repository and commit for repository work. To schedule a role or Codex job, supply notBefore as a UTC timestamp within the private brief retention period.',
+        'Role and Codex results return to this thread. Check progress with conversation.handoffStatus, passing value.conversation from the receipt as input.conversation. For help inside this job, use native subagents when your harness provides them.',
+      ].join(' ');
       context.unshift(delegation);continued.unshift(delegation);
     }
     if(job.venue==='discord'&&job.venueDescription){
