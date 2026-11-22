@@ -48,7 +48,11 @@
     {
       "id": "memory-006",
       "promise": "Shows what happened each day in Activity.",
-      "source": "docs/how-it-works/site/memory.html"
+      "source": "docs/how-it-works/site/memory.html",
+      "probe": {
+        "kind": "action",
+        "action": "activityDays"
+      }
     },
     {
       "id": "memory-007",
