@@ -10,6 +10,21 @@ type Scope = { agent: string; member: string; machine: string };
 export function registerTerminalSession(operations: Operations, db: DataDatabase, key: WordsKey,
   scope: (viewer: Viewer) => Scope | undefined, now: () => string) {
   const sessions = new TerminalSessions(db, key, now);
+  // A v1 reporter used its instance UUID as the receipt for its first open.
+  // Reserving that same ID before retiring it makes a delayed first delivery
+  // conflict, even when the original request never reached the coordinator.
+  operations.register({
+    name: 'terminal.retireOpen', write: true, doors: ['http'],
+    input: z.object({machine:z.string(), harness:z.literal('codex'), sessionId:z.string(), instanceId:z.uuid()}).strict(),
+    output: z.literal(true),
+    may: (viewer, input) => scope(viewer)?.machine === input.machine,
+    inputHash: (canonical, { actor }) => key.hash(JSON.stringify(['terminal.retireOpen',scope(actor),canonical])),
+    run(ctx, input) {
+      if (input.instanceId !== ctx.receipt?.id) throw new OperationError('invalid','Expected the original open receipt');
+      ctx.stampOnly?.();
+      return true;
+    },
+  });
   operations.register({
     name: 'terminal.session', write: true, doors: ['http'], recheckPolicy: true, input: terminalEvent,
     output: z.object({ conversation: z.string(), thread: z.string(), job: z.string() }).strict(),
