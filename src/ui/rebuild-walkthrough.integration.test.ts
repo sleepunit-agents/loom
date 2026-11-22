@@ -217,6 +217,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('bridge-mail');
   expect(step.value.actions.bridgeMail,JSON.stringify(step.value.actions.bridgeMail)).toMatchObject({ok:true});
  });
+ it('updates each Home card independently as terminal jobs start and end',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('home-jobs');
+  expect(step.value.actions.homeJobs).toMatchObject({ok:true});
+ });
  afterAll(async()=>{
   try{
    if(!ready)return;

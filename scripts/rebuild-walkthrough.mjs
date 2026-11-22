@@ -31,6 +31,7 @@ import {activityDays,activityWorkLinks,knowledgeActions,knowledgeSourceCheck} fr
 import {rebuildReport} from './rebuild-report.mjs';
 import {inboxActionSteps} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
+import {homeJobs} from './rebuild-home-jobs.mjs';
 import {homeActions} from './rebuild-home-actions.mjs';
 import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {approvalInbox} from './rebuild-approval-inbox.mjs';
@@ -340,6 +341,8 @@ export async function* walkthroughSteps(output) {
   try {report.actions.bridgeMail=await bridgeMail({app,clock});}
   catch(error){report.actions.bridgeMail={ok:false,error:String(error)};}
   save();yield {phase:'bridge-mail',actions:safeReport(report.actions)};
+  report.actions.homeJobs=await homeJobs({page,tile:await openApp('Home'),app,example:report.example,out});
+  save();yield {phase:'home-jobs',actions:safeReport(report.actions)};
 
 
  }catch(error){report.fatal=String(error);}
