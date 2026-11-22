@@ -4,6 +4,7 @@
  * it cannot preempt a callback that blocks the JavaScript event loop. Targets
  * assert the complete pending Moss queue in this serialized fixture; they do
  * not add a target selector to the normal worker scheduler. */
+import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {writeFileSync,rmSync} from 'node:fs';
 import {readFile} from 'node:fs/promises';
@@ -111,10 +112,20 @@ export async function nativeProtocolSmoke({app,example,clock,home,signal,native,
 
 /** The browser observes the reply produced through the same actual body path. */
 export async function nativeProtocolAction(context){
- const {page,open,out}=context,actions={};
+ const {page,open,out,example}=context,actions={};
+ const summary='Inspected the seed tray and recorded the planting decision.';
+ const items=[{kind:'decision',text:'Use the blue tray'},{kind:'project',text:'garden'},{kind:'task',text:example.tasks[0]}];
+ const question={to:'alex',answers:'yes-no',words:'Should Moss label the fictional seed tray?',ifYes:'Moss labels the tray.',ifNo:'Moss leaves it blank.'};
+ let questionId;
+ const native=async({job,call})=>{
+  if(job.id===example.runtime.publicJob.id){
+   const result=await call('digest',{summary,items,question});questionId=result.item;
+  }
+  return {text:'Fictional native protocol response.',model:'fixture-observed-native-model',actions:[]};
+ };
  // Measure background work without every retained desk subscription competing
  // with the actual worker HTTP requests. The browser rejoins for reply proof.
- try{await page.goto('about:blank');actions.nativeProtocol={ok:true,...await nativeProtocolSmoke(context)};}
+ try{await page.goto('about:blank');actions.nativeProtocol={ok:true,...await nativeProtocolSmoke({...context,native})};}
  catch{actions.nativeProtocol={ok:false,error:'The fictional native protocol could not complete or restore its temporary authority.'};}
  const screenshot='action-nativeReply.png';
  try{
@@ -127,5 +138,27 @@ export async function nativeProtocolAction(context){
   await current.getByText('Fictional native protocol response.',{exact:true}).waitFor();
   actions.nativeReply={ok:true,persistedAfterReload:true,screenshot};
  }catch{actions.nativeReply={ok:false,error:'The native fixture reply was not observed in its browser thread after reload.',screenshot};}
- await page.screenshot({path:join(out,screenshot),fullPage:true});return actions;
+ await page.screenshot({path:join(out,screenshot),fullPage:true});
+ const digestShot='action-conversationDigest.png';
+ try{
+  const db=context.app.services.comms.db.$client;
+  const run=actions.nativeProtocol.runs.find(row=>row.job===example.runtime.publicJob.id);
+  const digest=db.prepare('SELECT id,conversation,summary,inbox_item FROM digests WHERE run=?').get(run.job);
+  assert.ok(questionId && digest);
+  assert.equal(digest.summary,summary);assert.equal(digest.conversation,run.conversation);assert.equal(digest.inbox_item,questionId);
+  assert.deepEqual(db.prepare('SELECT kind,text FROM digest_items WHERE digest=? ORDER BY kind').all(digest.id),items);
+  const tile=await open('Inbox');
+  const back=tile.locator('.loom-split__back:visible');if(await back.count())await back.first().click();
+  await tile.getByRole('button',{name:/^Needs you(?:\s|$)/}).first().click();
+  await tile.locator('[data-split-row]:visible').filter({hasText:question.words}).click();
+  await tile.getByRole('heading',{name:question.words,exact:true}).waitFor();
+  for(const outcome of [question.ifYes,question.ifNo])await tile.getByText(outcome,{exact:true}).waitFor();
+  await page.screenshot({path:join(out,digestShot),fullPage:true});
+  await tile.getByRole('button',{name:'Yes',exact:true}).click();
+  await tile.getByRole('heading',{name:'Answer',exact:true}).waitFor();
+  const replies=db.prepare("SELECT conversation,to_kind,[to] AS recipient FROM inbox WHERE source='answer' AND source_id=?").all(questionId);
+  assert.deepEqual(replies,[{conversation:run.conversation,to_kind:'agent',recipient:'moss'}]);
+  actions.conversationDigest={ok:true,screenshot:digestShot,job:run.job,conversation:run.conversation,digest:digest.id,question:questionId};
+ }catch(error){actions.conversationDigest={ok:false,error:String(error)};}
+ return actions;
 }

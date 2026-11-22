@@ -1,3 +1,4 @@
+import { taskPath } from '../../../src/task-route';
 import { renderTempoChange } from '../pieces/tempo/settings';
 import { renderMeasuringChange } from '../pieces/measuring/settings';
 import { useEffect, useState } from 'react';
@@ -172,7 +173,7 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
   return <Changes snapshot={{ ...snapshot, reviewHistory }} actions={actions ?? defaultActions} names={names}
     navigation={{ selected, select: id => visit(id ? `${base}/change/${encodeURIComponent(id)}` : base), folder,
       openFolder: id => visit(id.startsWith('project:') ? `${base}/project/${encodeURIComponent(id.slice(8))}` : id === 'all' ? base : `${base}/${id}`) }}
-    openTask={go ? id => go(`/p/tasks-preview/task/${encodeURIComponent(id)}`) : undefined} />;
+    openTask={go ? id => go(taskPath(id)) : undefined} />;
 }
 /** Cards read current entities. Inline approvals answer one request; standing grants live in the tiles. */
 export function LiveApprovalCard({ id, timezone, actions, displayTitle, showBlocker = false }: { id: string; showBlocker?: boolean; displayTitle?: string; timezone?: string; actions?: ApprovalActions }) {

@@ -47,7 +47,11 @@
     {
       "id": "bridges-009",
       "promise": "It arrives in the inbox with discord or slack as its source.",
-      "source": "docs/how-it-works/site/bridges.html#con-h"
+      "source": "docs/how-it-works/site/bridges.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeMail"
+      }
     },
     {
       "id": "bridges-010",

@@ -2364,6 +2364,16 @@ export const workerJoinRequests = sqliteTable('worker_join_requests', {
   index('worker_join_recent').on(t.requestedAt),
 ]);
 
+export const guestIoReadings = sqliteTable('guest_io_readings', {
+  box: text('box').notNull().references(() => boxes.id),
+  guest: text('guest').notNull(),
+  observedAt: text('observed_at').notNull(),
+  ioHundredths: integer('io_hundredths'),
+  highSince: text('high_since'),
+  notice: text('notice'),
+}, t => [primaryKey({ columns: [t.box, t.guest] }),
+  check('guest_io_observed_utc', utc(t.observedAt)), check('guest_io_high_utc', utc(t.highSince)),
+  check('guest_io_percent', sql`${t.ioHundredths} between 0 and 10000`)]);
 /** The earliest private words and fixed expiry passed to a running body. No message or transcript content. */
 export const jobSessionLimits = sqliteTable('job_session_limits', {
   job: text('job').primaryKey().notNull().references(() => jobs.id, {onDelete:'cascade'}),
@@ -2373,6 +2383,7 @@ export const jobSessionLimits = sqliteTable('job_session_limits', {
 }, t => [check('job_session_limits_valid_flag',sql`${t.invalidated} in (0, 1)`),check('job_session_limits_since_utc',utc(t.since)),check('job_session_limits_until_utc',utc(t.keepUntil))]);
 
 export const plumbing = {
+  guestIoReadings,
   workerJoinRequests,
   jobSessionLimits,
   archivedQuestions,

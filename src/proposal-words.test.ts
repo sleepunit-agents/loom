@@ -124,6 +124,19 @@ it('resolves channel filters and distinguishes report destinations sharing a nam
   expect(preview.facts).toContainEqual({ label: 'Notes from guests’ work go to', value: '#reports on Discord (C1 in G1) → #reports on Discord (C2 in G2)' });
 });
 
+it('distinguishes unnamed Slack channel filters and keeps their exact targets in Details', () => {
+  const input = {action:'connection',id:'pond',agent:'fern',platform:'slack',workspace:'TWORK',botUser:'UBOT',only:['CNEW'],ignore:[]};
+  const previous = {...input,only:['COLD'],ignore:['CMUTED']};
+  const card = proposalCard('bridge', input, {names,before:{value:previous}})!;
+  expect(card.facts).toContainEqual({label:'Listens only in',value:'an unnamed Slack channel → Different channel selection'});
+  expect(card.facts).toContainEqual({label:'Listens only in — channel IDs',value:'COLD → CNEW',small:true});
+  expect(card.facts).toContainEqual({label:'Ignores — channel IDs',value:'CMUTED → None',small:true});
+  expect(card.facts.filter(fact=>!fact.small).map(fact=>fact.value).join(' ')).not.toMatch(/COLD|CNEW|CMUTED/);
+  const moved = proposalCard('bridge',input,{names,before:{value:{...input,workspace:'TOLD'}}})!;
+  expect(moved.facts).toContainEqual({label:'Listens only in — channel IDs',value:'CNEW in TOLD → CNEW in TWORK',small:true});
+  expect(proposalCard('bridge', input, {names,before:{value:input}})!.nothing).toBe(true);
+});
+
 it('keeps Slack bot account identifiers secondary, including when both accounts have the same label', () => {
   const input = { action: 'connection', id: 'pond', platform: 'slack', agent: 'fern', workspace: 'TNEW', botUser: 'UNEW' };
   const prior = { ...input, workspace: 'TOLD', botUser: 'UOLD' };

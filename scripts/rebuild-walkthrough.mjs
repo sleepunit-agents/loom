@@ -5,6 +5,7 @@ import {randomUUID} from 'node:crypto';
 import {nativeProtocolAction} from './rebuild-native-protocol.mjs';
 import {conversationLinks} from './rebuild-conversation-links.mjs';
 import {conversationMailSteps} from './rebuild-conversation-mail.mjs';
+import {machineRoster} from './rebuild-machine-roster.mjs';
 import {modelAccountActions} from './rebuild-model-actions.mjs';
 /** Real built startup and first-run sign-in. No seeded session or mock transport. */
 import {approvalCaution} from './rebuild-approval-caution.mjs';
@@ -18,6 +19,7 @@ import {secretValueAction} from './rebuild-secret-value-actions.mjs';
 import {secretDefaultAction,verifySecretDefaultAfterReload} from './rebuild-secret-actions.mjs';
 import {workVisibility} from './rebuild-work-visibility.mjs';
 import {changeActions,changeInline} from './rebuild-change-actions.mjs';
+import {bridgeMail} from './rebuild-bridge-mail.mjs';
 import {bridgeSettingsAction} from './rebuild-bridge-actions.mjs';
 import {taskStructure} from './rebuild-task-structure.mjs';
 import {maskCredentialScreenshots} from './rebuild-credential-evidence.mjs';
@@ -29,6 +31,7 @@ import {activityDays,activityWorkLinks,knowledgeActions,knowledgeSourceCheck} fr
 import {rebuildReport} from './rebuild-report.mjs';
 import {inboxActionSteps} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
+import {homeJobs} from './rebuild-home-jobs.mjs';
 import {homeActions} from './rebuild-home-actions.mjs';
 import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {approvalInbox} from './rebuild-approval-inbox.mjs';
@@ -177,6 +180,7 @@ export async function* walkthroughSteps(output) {
      await tile.getByRole('combobox',{name:'Jobs for'}).selectOption('moss');
      const jobs=tile.getByRole('group',{name:'moss queued jobs',exact:true}).locator('.loom-kit-note');
      await jobs.filter({hasText:report.example.runtime.job.title}).waitFor();
+     report.actions.machineRoster=await machineRoster({page,tile,example:report.example,out});
      row.queuedShownAsRunning=await tile.getByRole('group',{name:'moss jobs now',exact:true}).getByText(report.example.runtime.job.title,{exact:true}).count();
      row.runtimeJobs=await jobs.evaluateAll(rows=>rows.map(row=>({title:row.querySelector('.loom-kit-title')?.textContent,status:row.querySelector('.loom-kit-meta')?.textContent})));
      row.text=await tile.innerText();
@@ -332,8 +336,13 @@ export async function* walkthroughSteps(output) {
   for await(const step of conversationMailSteps({page,app,clock,example:report.example,out,open:openApp})){Object.assign(report.actions,step.actions);save();yield {phase:step.phase,actions:safeReport(report.actions)};}
   report.actions.scheduledInbox=await scheduledInbox({browser,home:join(parent,'scheduled-home'),out});
   save();yield {phase:'scheduled-inbox',actions:safeReport(report.actions)};
+  report.actions.homeJobs=await homeJobs({page,tile:await openApp('Home'),app,example:report.example,out});
+  save();yield {phase:'home-jobs',actions:safeReport(report.actions)};
   Object.assign(report.actions,await nativeProtocolAction({page,open:openApp,out,app,example:report.example,clock,home}));
   save();yield {phase:'native-protocol',actions:safeReport(report.actions)};
+  try {report.actions.bridgeMail=await bridgeMail({app,clock});}
+  catch(error){report.actions.bridgeMail={ok:false,error:String(error)};}
+  save();yield {phase:'bridge-mail',actions:safeReport(report.actions)};
 
 
  }catch(error){report.fatal=String(error);}

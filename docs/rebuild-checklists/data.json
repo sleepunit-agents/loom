@@ -171,17 +171,29 @@
     {
       "id": "data-026",
       "promise": "terminal_credentials The machine and member an enrolled credential may report terminal sessions for.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "action",
+        "action": "deskJobs"
+      }
     },
     {
       "id": "data-027",
       "promise": "terminal_sessions The private Comms thread and parent job for a harness session on a member’s machine.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "action",
+        "action": "deskJobs"
+      }
     },
     {
       "id": "data-028",
       "promise": "terminal_runs The parent job, run identifier and last transcript revision for each observed terminal run.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "action",
+        "action": "deskJobs"
+      }
     },
     {
       "id": "data-029",

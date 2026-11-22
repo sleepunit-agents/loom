@@ -13,8 +13,10 @@ Direct ingestion uses `recordAccountWindows` and rejects older retained readings
 
 Placement evaluates the persisted windows at its current time, so an expired or
 aging reading cannot keep granting stale headroom. Missing, malformed, unknown or
-future observations close admission. It never fabricates a fresh allowance when a
-reset passes. Limits belong to the account and are shared by all its agents.
+future observations close admission. For each limit the worker needs a provider
+reading less than 24 hours old, even when the last reading showed zero usage.
+The window’s own reset can close it sooner. A delayed report keeps its original
+reading time. A fresh successful report can restore admission. Limits belong to the account and are shared by all its agents.
 
 Choices where the site is silent: provider responses replace the complete set of
 limits, window names must be unique, and overlapping asynchronous refreshes use

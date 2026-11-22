@@ -1,3 +1,4 @@
+import { sweepGuestPressure } from './guest-io-conditions.js';
 import { randomUUID } from 'node:crypto';
 import { and, eq, gte, isNotNull, or } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
@@ -306,7 +307,7 @@ export class MachineConditions {
           this.settle(undefined, reading, after, lines, at, this.expiryReason(reading));
         }
       }
-      return rows.length > 0;
+      return sweepGuestPressure(this.db, at) || rows.length > 0;
     }, { behavior: 'immediate' });
   }
 }

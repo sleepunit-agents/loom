@@ -1,3 +1,4 @@
+import type { GuestPressureReading } from './guest-io-pressure.js';
 import type { LoginReason } from './account-login-check.js';
 import { WATCHED_THING_LIMIT_ERROR, type MachineReading } from './machine-check.js';
 import { privateSecretClient, PRIVATE_SECRET_TIMEOUT_MS } from '../pieces/secrets/private-client.js';
@@ -185,6 +186,9 @@ export function reportWorkerAccountLogins(input: WorkerHttpOptions, logins: read
  * Loom tracks the report order. */
 export function reportWorkerMachineReadings(input: WorkerHttpOptions, readings: readonly MachineReading[]) {
   return operationCaller(input)('machineReadings', { readings }, z.object({ ok: z.literal(true) }).strict());
+}
+export function reportWorkerGuestPressure(input: WorkerHttpOptions, readings: readonly GuestPressureReading[]) {
+  return operationCaller(input)('guestIoPressure', { readings }, z.object({ ok: z.literal(true) }).strict());
 }
 export function workerMachineReads(input: WorkerHttpOptions) {
   const call = operationCaller(input);

@@ -2,7 +2,7 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {createElement as h} from 'react';
 // @ts-expect-error Renderer has no bundled declarations.
 import {act,create} from 'react-test-renderer';
-const f=vi.hoisted(()=>({feed:{status:'live',data:{boxes:[{id:'box',name:'Workshop',owner:'lee',readers:['art']},{id:'other',name:'Elsewhere',owner:'sam'}],agents:[{id:'art'},{id:'fern'}]}},call:vi.fn()}));
+const f=vi.hoisted(()=>({feed:{status:'live',data:{boxes:[{id:'box',name:'Workshop',owner:'lee',revokedAt:null,reportOnly:false,hostsAny:false,boxAgentsByBox:[{agent:'fern',lent:true}],readers:['art']},{id:'other',name:'Elsewhere',owner:'sam',revokedAt:null,reportOnly:true,hostsAny:true,boxAgentsByBox:[]}],agents:[{id:'art'},{id:'fern'}]}},call:vi.fn()}));
 vi.mock('../../data/graphql',()=>({useDataQuery:()=>f.feed}));
 vi.mock('../../data/operation',()=>({memberOperation:f.call}));
 vi.mock('../../kit',()=>({Button:(props:object)=>h('button',props),Error:()=>null,Loading:()=>null}));
@@ -16,6 +16,7 @@ it('shows owner history and proposes and answers scoped read grants',async()=>{
  f.call.mockImplementation(async(name:string)=>name==='machine.history'?[{id:'read',askedAt:'2026-11-15T12:00:00Z',agent:'art',job:'job-private',word:'owners',read:'disk',args:'{}',bytes:50,outcome:'answered'}]:name==='machine.readerCards'?[{id:'card',ask:'Grant machine reads to fern?'}]:{});
  await act(async()=>{tree=create(h(OwnerMachines,{member:'lee'}));});
  const button=(name:string)=>tree.root.findAllByType('button').find((b:{children:unknown[]})=>b.children.join('')===name);
+ expect(tree.root.findAllByType('dd').map((node:{children:string[]})=>node.children.join(''))).toEqual(['lee','Listed agents only','fern (lent)']);
  expect(JSON.stringify(tree.toJSON())).not.toContain('Elsewhere');
  await act(async()=>button('Workshop').props.onClick());
  expect(f.call).toHaveBeenCalledWith('machine.history',{machine:'box'});

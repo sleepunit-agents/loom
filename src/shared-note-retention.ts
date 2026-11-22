@@ -28,10 +28,12 @@ function snapshot<T>(file: string, dryRun: boolean, read: (source: Database.Data
 export function sweepAgentNotes(db: DataDatabase, agent: AgentSource, knowledgeFile: string, now: () => number, dryRun: boolean) {
   const cited = new Set<string>();
   const tx = db.$client.transaction(() => {
-    collect(cited, db.$client.prepare(`SELECT title, description, goal, why, done_when, ask, if_yes, if_no
-      FROM tasks WHERE status <> 'closed'
-      UNION ALL SELECT c.text,NULL,NULL,NULL,NULL,NULL,NULL,NULL
-      FROM task_comments c JOIN tasks t ON t.id=c.task WHERE t.status <> 'closed'`).raw().iterate() as Iterable<unknown[]>);
+    collect(cited, db.$client.prepare(`SELECT title, description, goal, why, done_when, ask, if_yes, if_no,
+      spec_item, criterion, source_id FROM tasks WHERE status <> 'closed'`).raw().iterate() as Iterable<unknown[]>);
+    for (const row of db.$client.prepare(`SELECT source_id FROM tasks WHERE status <> 'closed' AND source_kind='note' AND source_id IS NOT NULL`).iterate() as Iterable<{source_id: string}>) {
+      cited.add(row.source_id);
+    }
+    collect(cited, db.$client.prepare(`SELECT c.text FROM task_comments c JOIN tasks t ON t.id=c.task WHERE t.status <> 'closed'`).raw().iterate() as Iterable<unknown[]>);
     return snapshot(knowledgeFile, dryRun, knowledge => {
       collect(cited, knowledge.prepare(`SELECT title, body, provenance FROM pages WHERE status='active'
         UNION ALL SELECT claim, source_locator, excerpt FROM citations JOIN pages ON pages.id=page_id WHERE pages.status='active'

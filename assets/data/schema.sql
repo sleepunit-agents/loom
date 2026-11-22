@@ -1378,6 +1378,20 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `guest_io_readings` (
+	`box` text NOT NULL,
+	`guest` text NOT NULL,
+	`observed_at` text NOT NULL,
+	`io_hundredths` integer,
+	`high_since` text,
+	`notice` text,
+	PRIMARY KEY(`box`, `guest`),
+	FOREIGN KEY (`box`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "guest_io_observed_utc" CHECK("guest_io_readings"."observed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "guest_io_readings"."observed_at") = "guest_io_readings"."observed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "guest_io_readings"."observed_at") = "guest_io_readings"."observed_at", 0)),
+	CONSTRAINT "guest_io_high_utc" CHECK("guest_io_readings"."high_since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "guest_io_readings"."high_since") = "guest_io_readings"."high_since" or strftime('%Y-%m-%dT%H:%M:%fZ', "guest_io_readings"."high_since") = "guest_io_readings"."high_since", 0)),
+	CONSTRAINT "guest_io_percent" CHECK("guest_io_readings"."io_hundredths" between 0 and 10000)
+);
+
 CREATE TABLE `worker_join_requests` (
 	`id` text PRIMARY KEY NOT NULL,
 	`fingerprint` text NOT NULL,

@@ -43,6 +43,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   if(title==='Approvals')expect(step.value.report.actions?.approvalRulesAndExpiry,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Settings')expect(app.valueAction,JSON.stringify(app.valueAction)).toMatchObject({ok:true,added:true,replaced:true,removed:true,persistedAfterReload:true,writeOnly:true,recorded:true,ruleSaved:true});
   if(title==='Tasks')expect(step.value.report.actions?.taskQuestions,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
+  if(title==='Machines and jobs')expect(step.value.report.actions.machineRoster).toMatchObject({ok:true,owner:'alex',agents:['fern','moss']});
   if(title==='Machines and jobs'){expect(app.error).toBeUndefined();expect(app.queuedShownAsRunning).toBe(0);expect(app.runtimeJobs).toContainEqual({title:runtimeTitle,status:expect.stringMatching(/^Queued · queued /)});}
   if(title==='Comms')expect(step.value.report.actions?.taskInlineQuestion,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Approvals')expect(step.value.report.actions?.approvalDecisions,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
@@ -205,11 +206,20 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const action=step.value.actions.scheduledInbox;
   expect(action,JSON.stringify(action)).toMatchObject({ok:true,recipients:2,delivered:2,unchangedAfterRestart:true});
  });
+ it('updates each Home card independently as terminal jobs start and end',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('home-jobs');
+  expect(step.value.actions.homeJobs).toMatchObject({ok:true});
+ });
  it('completes the actual worker/body protocol and reads its persisted private reply',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('native-protocol');
   expect(step.value.actions.nativeProtocol,JSON.stringify(step.value.actions.nativeProtocol)).toMatchObject({ok:true,runs:expect.arrayContaining([expect.objectContaining({running:true,state:'done',bootstrapErased:true})])});
   expect(step.value.actions.nativeProtocol.runs).toHaveLength(2);
+  expect(step.value.actions.conversationDigest,JSON.stringify(step.value.actions.conversationDigest)).toMatchObject({ok:true});
   expect(step.value.actions.nativeReply).toMatchObject({ok:true,persistedAfterReload:true});
+ });
+ it('delivers Discord and Slack messages into the receiving agent Inbox',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('bridge-mail');
+  expect(step.value.actions.bridgeMail,JSON.stringify(step.value.actions.bridgeMail)).toMatchObject({ok:true});
  });
  afterAll(async()=>{
   try{

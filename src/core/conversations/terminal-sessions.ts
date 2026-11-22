@@ -45,15 +45,21 @@ export class TerminalSessions {
   /** Only sealing runs asynchronously. The caller rechecks the grant before the returned commit. */
   async prepare(scope: TerminalScope, event: TerminalEvent) {
     if (scope.machine !== event.machine) throw new OperationError('denied','Terminal machine differs from its credential');
+    // The tilde is outside the wire id alphabet, so an observer can never equal a hook instance.
+    const watching = event.action === 'present' || event.action === 'pulse';
+    const observer = watching || event.action === 'idle';
+    const instance = observer ? '~' + event.instanceId : event.instanceId ?? null;
+    const ending = event.action === 'end' || event.action === 'idle';
     const words = event.action === 'turn' ? await this.key.seal(event.words) : null;
     return (stampOnly?: () => void) => this.db.transaction(() => {
       const at = this.now();
       let session = this.db.select().from(terminalSessions).where(and(eq(terminalSessions.machine,scope.machine),
         eq(terminalSessions.agent,scope.agent),eq(terminalSessions.member,scope.member),eq(terminalSessions.harness,event.harness),
         eq(terminalSessions.sessionId,event.sessionId))).get();
+      const existing = !!session;
       if (!session) {
-        if (event.action !== 'open') throw new OperationError('conflict','Terminal session has not opened');
-        session = this.open(scope,event,at);
+        if (event.action !== 'open' && !watching) throw new OperationError('conflict','Terminal session has not opened');
+        session = this.open(scope,watching ? {...event,action:'open',model:null,instanceId:instance!} : event,at);
       }
       const parent = this.db.select().from(jobs).where(eq(jobs.id,session.job)).get();
       if (!parent?.conversation || parent.startedByKind !== 'terminal' || parent.box !== scope.machine ||
@@ -68,12 +74,46 @@ export class TerminalSessions {
         : this.db.select().from(deletedThreads).where(eq(deletedThreads.id,cv.place)).get();
       if (!thread || thread.id !== cv.place || thread.conversation !== cv.id) throw new Error('Terminal records disagree');
       const result = {conversation:cv.id,thread:thread.id,job:parent.id};
-      if (!session.thread && event.action !== 'usage' && event.action !== 'end')
+      // The v1 poller used an ordinary instance ID. Hand off bookkeeping only
+      // while that exact instance still owns the row. Running children, private
+      // words, tombstones and a native hook that has already resumed stay intact.
+      if (event.action === 'adopt') {
+        if (session.instanceId === event.instanceId) {
+          this.db.update(terminalSessions).set({instanceId:event.native ?? '~' + event.instanceId})
+            .where(eq(terminalSessions.job,parent.id)).run();
+          if (session.thread && event.native && event.resume && parent.state === 'done') {
+            // An old end can have committed before its acknowledgement was lost.
+            // Only restore child runs the daemon still reports active for this parent.
+            const runs = event.resume.children.length ? this.db.select({job:terminalRuns.job}).from(terminalRuns)
+              .where(and(eq(terminalRuns.parent,parent.id),inArray(terminalRuns.runId,event.resume.children))).all() : [];
+            this.db.update(jobs).set({state:'running',endedAt:null,heardAt:at})
+              .where(inArray(jobs.id,[parent.id,...runs.map(run=>run.job)])).run();
+          }
+        }
+        return result;
+      }
+      if (!session.thread && event.action !== 'usage' && !ending)
         throw new OperationError('conflict','Terminal thread was deleted');
-      const instance = event.instanceId ?? null;
-      if (event.action === 'open' && instance !== session.instanceId) {
+      // A native hook owns turn capture until it ends. The poller can refresh its
+      // heartbeat without displacing it, and an idle observation cannot close it.
+      const hasObserver = session.instanceId?.startsWith('~');
+      const owns = instance === session.instanceId;
+      if (hasObserver && !owns && event.action === 'present' && parent.state !== 'done') {
+        if (parent.heardAt && Date.parse(at) - Date.parse(parent.heardAt) < terminalSilenceMs)
+          throw new OperationError('conflict','An active observer already reports this session');
+        const incumbent = session.instanceId!.slice(1);
+        if (event.replace !== incumbent)
+          throw new OperationError('conflict','Confirm expired terminal observer: ' + incumbent);
+      }
+      if (event.action === 'pulse' && hasObserver && !owns) return result;
+      if (event.action === 'pulse' && parent.state === 'done')
+        throw new OperationError('conflict','Terminal activity must be observed again');
+      const claim = event.action === 'open' || (event.action === 'present' && (hasObserver || parent.state === 'done'));
+      if (claim && !owns) {
         this.db.update(terminalSessions).set({instanceId:instance}).where(eq(terminalSessions.job,parent.id)).run();
-      } else if (event.action !== 'usage' && instance !== session.instanceId) {
+        if (hasObserver && event.action === 'open' && event.model && !parent.model)
+          this.db.update(jobs).set({model:event.model}).where(eq(jobs.id,parent.id)).run();
+      } else if (!watching && event.action !== 'usage' && !owns) {
         return result;
       }
       if (event.action === 'usage') {
@@ -81,17 +121,17 @@ export class TerminalSessions {
         this.usage(parent,event,at);
         return result;
       }
-      if (event.action === 'end') {
+      if (ending) {
         if (parent.state === 'running') finish(this.db,parent.id,'done',at);
         else if (parent.state === 'lost') this.db.update(jobs).set({state:'done'}).where(eq(jobs.id,parent.id)).run();
         return result;
       }
-      if (parent.state !== 'running' && parent.state !== 'lost' && event.action !== 'open')
+      if (parent.state !== 'running' && parent.state !== 'lost' && event.action !== 'open' && !watching)
         throw new OperationError('conflict','Terminal session has ended');
       if (event.action === 'turn' && !this.messages.recordObserved(thread.id,event.role,event.eventId,words!,parent.id))
         return result;
       this.db.update(jobs).set({state:'running',endedAt:null,heardAt:at}).where(eq(jobs.id,parent.id)).run();
-      if (event.action === 'heartbeat' && parent.state === 'running' && !parent.endedAt && parent.heardAt) {
+      if (existing && (event.action === 'heartbeat' || watching) && parent.state === 'running' && !parent.endedAt && parent.heardAt) {
         const elapsed = Date.parse(at) - Date.parse(parent.heardAt);
         if (elapsed >= 0 && elapsed < terminalSilenceMs) stampOnly?.();
       }

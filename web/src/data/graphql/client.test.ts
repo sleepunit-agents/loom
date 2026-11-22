@@ -8,13 +8,13 @@ import { browserQueryTransport, dataCacheKeys, applyDataPatch, generatedDataClie
 
 class Transport implements QueryTransport {
   feeds: { request: SubscribePayload; sink: Sink<FormattedExecutionResult> }[] = [];
-  listeners = new Set<() => void>();
+  listeners = new Set<(connected: boolean) => void>();
   subscribe(request: SubscribePayload, sink: Sink<FormattedExecutionResult>) {
     const feed = { request, sink }; this.feeds.push(feed);
     return () => { this.feeds = this.feeds.filter(value => value !== feed); };
   }
-  disconnected(listener: () => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
-  close() { this.listeners.forEach(listener => listener()); }
+  connectionChanged(listener: (connected: boolean) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
+  close() { this.listeners.forEach(listener => listener(false)); }
   send(revision: number, patches: unknown[]) { this.feeds[0].sink.next({ data: { observe: { revision, patches } } }); }
 }
 const query = gql`query Tasks { tasks { id title } }`;
@@ -38,9 +38,25 @@ it('clears the visible result on disconnect and replaces it from a reconnect sna
   const subscription = client.query(query, {}).subscribe(result => results.push(result));
   wire.send(1, [{ path: [], removed: false, value: { tasks: [{ __typename: 'TasksSelectItem', id: 't-1', title: 'Private' }] } }]);
   wire.close(); expect(results.at(-1)?.error).toBeDefined(); expect(results.at(-1)?.data).toBeUndefined();
+  wire.listeners.forEach(listener => listener(true));
+  expect(results.at(-1)?.error).toBeUndefined(); expect(results.at(-1)?.data).toBeUndefined();
   wire.send(1, [{ path: [], removed: false, value: { tasks: [] } }]);
   expect(results.at(-1)?.data).toEqual({ tasks: [] });
   subscription.unsubscribe();
+});
+
+it.each(['complete', 'error'] as const)('keeps a terminal %s unavailable when another subscription reconnects', kind => {
+  const wire = new Transport(), client = generatedDataClient(wire);
+  const results: {error?: unknown}[] = [];
+  const sub = client.query(query, {}).subscribe(result => results.push(result));
+  if (kind === 'complete') wire.feeds[0].sink.complete();
+  else wire.feeds[0].sink.error(new Error('ended'));
+  expect(results.at(-1)?.error).toBeDefined();
+  const count = results.length;
+  wire.close();
+  wire.listeners.forEach(listener => listener(true));
+  expect(results).toHaveLength(count);
+  sub.unsubscribe();
 });
 
 it('removes rows without changing previously retained snapshots', () => {

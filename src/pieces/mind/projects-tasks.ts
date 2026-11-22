@@ -1,3 +1,4 @@
+import { taskPath } from '../../task-route.js';
 /** Pure task-feed projection. Data arrives through the new Tasks role, never legacy IO. */
 import type {ProjectGroup,ProjectItem} from './projects-model.js';
 import type {ProjectQuery} from './projects-roles.js';
@@ -32,7 +33,7 @@ export function taskGroups(tasks:ScopedTask[],links:Link[],readyIds:Set<string>,
   const moved=[t.createdAt,t.startedAt,...t.comments.map(c=>c.at)].filter((x):x is string=>!!x&&Number.isFinite(Date.parse(x))).sort((a,b)=>Date.parse(b)-Date.parse(a))[0];
   const status=closed?(t.closeReason==='cancelled'?'cancelled':'done'):shelved?'shelved':!inside?'outside the tree':waiting?t.status:readyIds.has(t.id)?'ready':t.status==='in_progress'?'in progress':'blocked';
   const prose=body(t);
-  const item:ProjectItem={title:clip(t.title.trim()||t.id,200),ref:t.id,...(closed?t.closedAt?{when:new Date(t.closedAt).toISOString()}:{}:moved?{when:new Date(moved).toISOString()}:{}),href:`/p/tasks-preview/task/${encodeURIComponent(t.id)}`,status,...(prose?{body:prose}:{}),...(waiting?{waiting:true}:{})};
+  const item:ProjectItem={title:clip(t.title.trim()||t.id,200),ref:t.id,...(closed?t.closedAt?{when:new Date(t.closedAt).toISOString()}:{}:moved?{when:new Date(moved).toISOString()}:{}),href:taskPath(t.id),status,...(prose?{body:prose}:{}),...(waiting?{waiting:true}:{})};
   groups[group].items.push(item);
  }
  // Fairly share the old fifty-item cap; a truncated group names its full size.

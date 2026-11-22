@@ -403,7 +403,9 @@ const upgrades: readonly (readonly string[])[] = [
    "CREATE UNIQUE INDEX `worker_join_requests_fingerprint_unique` ON `worker_join_requests` (`fingerprint`);",
    "CREATE UNIQUE INDEX `worker_join_requests_code_unique` ON `worker_join_requests` (`code`);",
    "CREATE INDEX `worker_join_recent` ON `worker_join_requests` (`requested_at`);"],
-  // 36: pre-upgrade bridge sessions may include private handoffs whose deadlines were never recorded.
+  // 36: the latest guest disk-wait observations and their active notices.
+  ["CREATE TABLE `guest_io_readings` (\n\t`box` text NOT NULL,\n\t`guest` text NOT NULL,\n\t`observed_at` text NOT NULL,\n\t`io_hundredths` integer,\n\t`high_since` text,\n\t`notice` text,\n\tPRIMARY KEY(`box`, `guest`),\n\tFOREIGN KEY (`box`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,\n\tCONSTRAINT \"guest_io_observed_utc\" CHECK(\"guest_io_readings\".\"observed_at\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"guest_io_readings\".\"observed_at\") = \"guest_io_readings\".\"observed_at\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"guest_io_readings\".\"observed_at\") = \"guest_io_readings\".\"observed_at\", 0)),\n\tCONSTRAINT \"guest_io_high_utc\" CHECK(\"guest_io_readings\".\"high_since\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"guest_io_readings\".\"high_since\") = \"guest_io_readings\".\"high_since\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"guest_io_readings\".\"high_since\") = \"guest_io_readings\".\"high_since\", 0)),\n\tCONSTRAINT \"guest_io_percent\" CHECK(\"guest_io_readings\".\"io_hundredths\" between 0 and 10000)\n);"],
+  // 37: pre-upgrade bridge sessions may include private handoffs whose deadlines were never recorded.
   ['ALTER TABLE conversation_sessions ADD COLUMN keep_until text',
     "DELETE FROM conversation_sessions WHERE conversation IN (SELECT id FROM conversations WHERE venue IN ('slack','discord'))",
     "UPDATE conversation_sessions SET keep_until = strftime('%Y-%m-%dT%H:%M:%fZ', started_at, '+' || coalesce((select comms_days from household limit 1), 14) || ' days')",

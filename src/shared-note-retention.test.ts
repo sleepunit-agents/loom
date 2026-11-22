@@ -27,7 +27,7 @@ it('expires notes at the household hour and retains live task, knowledge and mem
     const base = { createdByKind:'member' as const, createdBy:'owner', ownerKind:'household' as const, createdAt:stamp, changedAt:stamp };
     db.insert(tasks).values([
       {...base,id:'open',title:'See notes/pump.md',doneWhen:'Check note:actual.md'},
-      {...base,id:'working',title:'Working',status:'in_progress'},
+      {...base,id:'working',title:'Working',status:'in_progress',specItem:'See note:spec',criterion:'Follow notes/criterion.md',sourceKind:'note',sourceId:'source-note'},
       {...base,id:'closed',title:'Old note:scratch',status:'closed'},
     ]).run();
     db.insert(taskComments).values({task:'working',seq:1,actorKind:'member',actor:'owner',at:stamp,text:'See notes/inspection/photo.jpg'}).run();
@@ -38,11 +38,11 @@ it('expires notes at the household hour and retains live task, knowledge and mem
       .run('Evidence','note','note:manual','',stamp,stamp);
     memories.exec('CREATE TABLE memories (title,content,metadata,provenance,archived)');
     memories.prepare('INSERT INTO memories VALUES (?,?,?,?,0)').run('Garden','','','note:log');
-    for (const path of ['pump','actual.md','inspection','manual','log','scratch']) notes.write(path,'words',{lifespan:'short',by:'art'});
+    for (const path of ['pump','actual.md','inspection','manual','log','scratch','spec','criterion','source-note']) notes.write(path,'words',{lifespan:'short',by:'art'});
     clock.advance(15*86400000);
     const dry = sweepAgentNotes(db,agent,commons.knowledge,()=>clock.now(),true);
     expect(dry.gone).toEqual(['scratch']);
-    expect(dry.keptCited.sort()).toEqual(['actual.md','inspection','log','manual','pump']);
+    expect(dry.keptCited.sort()).toEqual(['actual.md','criterion','inspection','log','manual','pump','source-note','spec']);
     expect(notes.read('scratch')).not.toBeNull();
     stop = nightlyNoteRetention(db,clock,{agents:[agent],commons},'art',changed,report);
     // A missing citation source must prevent deletion. The next night tries again.
@@ -55,6 +55,9 @@ it('expires notes at the household hour and retains live task, knowledge and mem
     expect(notes.read('scratch')).toBeNull();
     expect(changed).toHaveBeenCalledTimes(1);
     for (const path of dry.keptCited) expect(notes.read(path)).not.toBeNull();
+    client.prepare("UPDATE tasks SET status='closed' WHERE id='working'").run();
+    clock.advance(86400000);
+    for (const path of ['spec','criterion','source-note','inspection']) expect(notes.read(path)).toBeNull();
     stop();stop=undefined;
     client.prepare("UPDATE tasks SET status='closed' WHERE id='open'").run();
     clock.advance(86400000);

@@ -9,7 +9,7 @@ import type { QueryVisibility } from '../core/data/queries.js';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { boxes, conversations, jobs, tasks, terminalRuns, terminalSessions, triggers } from '../core/data/schema.js';
 import { wakePlaceTriggers } from '../core/tempo/tempo.js';
-import { TASK_ID } from '../slug.js';
+import { taskPath } from '../task-route.js';
 import { claimedJobStates, unendedJobStates } from '../core/data/job-states.js';
 import { SILENCE_MS } from './silence.js';
 import { jobUsageFields } from './job-usage-queries.js';
@@ -73,9 +73,6 @@ const touchedAfter = (recent: string) => sql`julianday(${tasks.changedAt}) > jul
 const doingRank: Record<DoingKind, number> = { terminal: 0, discord: 0, slack: 0, loom: 0, private: 0, handoff: 1, trigger: 1, wake: 1, job: 1, task: 2 };
 const threadPath = (place: string) => `/p/comms-preview/thread/${encodeURIComponent(place.replace(/^th:/, ''))}`;
 const conversationPath = (id: string) => `/p/comms-preview/conversation/${encodeURIComponent(id)}`;
-/** As web/src/pieces/tasks/route.ts writes a task's segment: a current id as it is, an imported one marked. */
-const currentTaskId = new RegExp(`^${TASK_ID}$`);
-const taskPath = (id: string) => `/p/tasks-preview/task/${currentTaskId.test(id) ? id : '~' + encodeURIComponent(id)}`;
 /** A bridge place (pieces/bridges/place.ts): [workspace, channel, thread, who a direct message is private to]. */
 function bridgePlace(place: string): { group: boolean } {
   try { const parts: unknown = JSON.parse(place); return { group: Array.isArray(parts) && Array.isArray(parts[3]) && parts[3][0] === 'group' }; } catch { return { group: false }; }

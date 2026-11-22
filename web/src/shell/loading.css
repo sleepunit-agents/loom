@@ -22,3 +22,10 @@ html[data-motion="full"] .loom-window-body .next-page:not([data-opening]){animat
   background-repeat:no-repeat}
 .loom-window-start button{color:var(--v-text);text-decoration:underline;text-underline-offset:4px}
 html[data-motion="full"] .loom-desk-mount:not([inert]) .next-shell{animation:loom-read-resolve 180ms ease-out}
+
+.loom-boot-console{height:4.8em;max-width:100%;overflow:hidden;color:var(--v-text-2);
+  font:clamp(10px,2.8vw,13px)/1.6 ui-monospace,monospace;font-variant-numeric:tabular-nums;white-space:pre}
+.loom-boot-console span{color:var(--v-pink)}
+.loom-boot-console div:last-child{color:var(--v-text)}
+html[data-motion="full"] .loom-boot-console div:last-child{animation:loom-console-line 140ms ease-out}
+@keyframes loom-console-line{from{opacity:.3;transform:translateY(.35em)}}

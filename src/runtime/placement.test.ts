@@ -3,7 +3,7 @@ import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { agents, members, memberAgents, boxes, boxAgents, boxFacts, agentBoxes, agentModels, modelAccounts, modelAccountWindows, modelAccountBoxes, modelAccountLogins } from '../core/data/schema.js';
-import { decidePlacement, selectPlacement } from './placement.js';
+import { decidePlacement, QUOTA_WAIT_REASON, selectPlacement } from './placement.js';
 const opened: Database.Database[] = [];
 afterEach(() => opened.splice(0).forEach(client => client.close()));
 function fixture() {
@@ -226,6 +226,14 @@ it('explains quota only for an eligible container sign-in and a usable window re
   expect(quotaLimited()).toBe(false);
   db.insert(modelAccountLogins).values({...login,place:'containers'}).run();
   expect(quotaLimited()).toBe(true);
+  expect(decidePlacement(db,input).decision[0]).toEqual({box:'local',outcome:'passed',reason:QUOTA_WAIT_REASON});
+  expect(decidePlacement(db,input).decision[1].reason).not.toBe(QUOTA_WAIT_REASON);
+  // A second subscription with room but signed out on this worker doesn't hide the signed-in route's quota diagnosis.
+  db.insert(modelAccounts).values({id:'second',owner:'owner',provider:'provider',label:'Second',hasRoom:true}).run();
+  db.insert(modelAccountBoxes).values({account:'second',box:'local'}).run();
+  db.insert(modelAccountWindows).values({account:'second',window:'week',usage:0.1,usageReadAt:input.now,resetsAt:'2026-11-14T21:00:00.000Z',durationMs:7*86400_000}).run();
+  for(const harness of ['runner','other'])db.insert(modelAccountLogins).values({...login,account:'second',harness,place:'containers',state:'signed-out'}).run();
+  expect(decidePlacement(db,input)).toMatchObject({quotaLimited:true,decision:[{reason:QUOTA_WAIT_REASON},{box:'remote'}]});
   expect(decidePlacement(db,{...input,eligibleBoxes:new Set(['remote'])}).quotaLimited).toBe(false);
   db.update(modelAccountLogins).set({expiresAt:input.now}).run();
   expect(quotaLimited()).toBe(false);

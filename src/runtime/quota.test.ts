@@ -40,6 +40,16 @@ it('accounts for time since observation, without inventing a fresh allowance at 
   expect(accountCapacity([{ ...window(0.1), usage: null, readAt: null }], at(5)).hasRoom).toBe(false);
 });
 
+it('requires a fresh reading for every window once a day has elapsed', () => {
+  const weekly = window(0, 12, 168);
+  const current = { ...weekly, name: 'other', readAt: at(36) };
+  expect(accountCapacity([weekly], new Date(Date.parse(at(36)) - 1).toISOString()).hasRoom).toBe(true);
+  expect(accountCapacity([current, weekly], at(36))).toMatchObject({
+    hasRoom: false, windows: [{ hasRoom: true }, { hasRoom: false, forecast: null, estimatedUsage: null, reserveLent: false }],
+  });
+  expect(accountCapacity([{ ...weekly, readAt: at(36) }, current], at(36)).hasRoom).toBe(true);
+});
+
 it('uses configured reserves and leaves observations unchanged', () => {
   const windows = [Object.freeze({ ...window(0.91), reserve: 0.1 })];
   expect(accountCapacity(Object.freeze(windows), at(5)).hasRoom).toBe(false);

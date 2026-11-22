@@ -7,6 +7,8 @@ import { liveWorker } from './shared-worker.js';
 import { householdOwner } from './shared-sharing.js';
 import { boxReadings } from './core/data/schema.js';
 import { SIZE_BYTES_MAX, WATCHED_PATHS_MAX, watchedPath } from './runtime/machine-check.js';
+import { validGuestId, WATCHED_GUESTS_MAX } from './runtime/guest-io-pressure.js';
+import { recordGuestPressure } from './runtime/guest-io-conditions.js';
 import { MachineConditions, alertLines, setAlertLines } from './runtime/machine-conditions.js';
 
 // loom keeps a size in whole mebibytes and the read API serves an integer column as a GraphQL `Int`, which
@@ -55,6 +57,24 @@ export function registerSharedMachineReadings(operations: Operations, db: DataDa
       // ordinary change, told at once. Numbers alone are a stamp and reach an open window as a last-seen
       // time does (docs/accepted-tradeoffs.md): MachineConditions.read says which this was.
       if (changed) ctx.changed('box', box); else ctx.stampOnly?.();
+      return { ok: true as const };
+    },
+  });
+  const guest = z.string().refine(validGuestId);
+  const guestReading = z.union([
+    z.strictObject({ guest, ioHundredths: z.number().int().min(0).max(10000) }),
+    z.strictObject({ guest, unknown: z.literal(true) }),
+  ]);
+  operations.register({ name: 'runtime.guestIoPressure', write: true, recheckPolicy: true, doors: ['http'],
+    input: z.strictObject({ readings: z.array(guestReading).max(WATCHED_GUESTS_MAX)
+      .refine(rows => new Set(rows.map(row => row.guest)).size === rows.length) }),
+    output: z.strictObject({ ok: z.literal(true) }),
+    may: viewer => !!liveWorker(db, viewer, runner(viewer)),
+    run(ctx, input) {
+      const box = liveWorker(db, ctx.viewer, runner(ctx.viewer));
+      if (!box) throw new OperationError('denied', 'Worker required');
+      if (recordGuestPressure(db, box, input.readings, now())) ctx.changed('box', box);
+      else ctx.stampOnly?.();
       return { ok: true as const };
     },
   });
