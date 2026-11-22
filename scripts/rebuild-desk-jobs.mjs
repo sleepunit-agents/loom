@@ -38,10 +38,20 @@ export async function deskJobs({page,app,example,out}) {
    assert.equal(await rail.getByText(queued.title,{exact:false}).count(),0);
    await page.screenshot({path:join(out,screenshot),fullPage:true});
   } finally {await event('end');}
+  const db=app.services.comms.db.$client;
+  const binding=db.prepare('SELECT machine,member FROM terminal_credentials WHERE fingerprint=?').get(credential.fingerprint);
+  assert.deepEqual(binding,{machine,member:'alex'});
+  const saved=db.prepare(`SELECT s.job,s.thread,s.machine,s.member,s.agent,s.harness,s.session_id,
+    c.id AS conversation,c.member AS private_member,c.venue,j.started_by_kind,j.state
+    FROM terminal_sessions s JOIN threads t ON t.id=s.thread JOIN conversations c ON c.id=t.conversation
+    JOIN jobs j ON j.id=s.job AND j.conversation=c.id AND j.box=s.machine
+    WHERE s.job=?`).get(opened.job);
+  assert.deepEqual(saved,{...opened,machine,member:'alex',agent:'moss',harness:'codex',session_id:'desk-current',
+    private_member:'alex',venue:'terminal',started_by_kind:'terminal',state:'done'});
   await row.waitFor({state:'detached'});
   await mossFace('quiet').waitFor();
   await moss.getByText('Nothing right now.',{exact:true}).waitFor();
-  return {ok:true,screenshot,reason:'Fern and Moss showed their own faces. Moss changed from quiet to working beside the Codex terminal’s machine and folder, kept one entry across a heartbeat and returned to quiet on exit. Its queued job stayed out of current work.'};
+  return {ok:true,screenshot,reason:'Fern and Moss showed their own faces. Moss changed from quiet to working beside the Codex terminal’s machine and folder, kept one entry across a heartbeat and returned to quiet on exit. Its queued job stayed out of current work. The terminal credential named the machine and its member. The ended session retained the same parent job and member-private Comms thread.'};
  } catch(error) {return {ok:false,error:String(error)};}
  finally {app.services.signin.revoke(credential.fingerprint);}
 }
