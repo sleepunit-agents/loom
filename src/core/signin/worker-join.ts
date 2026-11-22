@@ -5,7 +5,12 @@ import type {Clock} from '../clock.js';
 import type {DataDatabase} from '../data/database.js';
 import {tokens, workerJoinRequests as requests} from '../data/schema.js';
 import {machineName} from '../line-name.js';
-import {OperationError} from '../operations/index.js';
+import type {Viewer} from '../../policy.js';
+import {OperationError,type Operations} from '../operations/index.js';
+import {currentSession,freshProof} from '../data/authentication.js';
+import {householdOwner} from '../../shared-sharing.js';
+import {createReportOnlyMachine} from '../../shared-machine-registry.js';
+import {sharedTokens} from './shared-tokens.js';
 import {SHA256_HEX} from '../sha256-hex.js';
 
 const requestBody = z.object({
@@ -50,4 +55,56 @@ export function requestWorkerAdmission(db:DataDatabase, clock:Pick<Clock,'now'>,
       requestedAt:at,expiresAt:new Date(now+lifetime).toISOString(),state:'pending'}).run();
     return {state:'pending' as const,code};
   },{behavior:'immediate'});
+}
+
+/** sessionId comes from the authenticated browser transport. A decision and any resulting credential commit together. */
+export function decideWorkerAdmission(db:DataDatabase, clock:Pick<Clock,'now'>, sessionId:string,
+  request:string, code:string, decision:'allow'|'block') {
+  return db.transaction(() => {
+    const now=clock.now();
+    const auth=currentSession(db,sessionId,now);
+    if (!auth || !freshProof(auth.session,now) || !householdOwner(db,auth.viewer))
+      throw new OperationError('denied','Sign in again as a household owner to decide this request');
+    const row=db.select().from(requests).where(eq(requests.id,request)).get();
+    if (!row || row.code!==code) throw new OperationError('not-found','Join request could not be matched');
+    const state=decision==='allow'?'allowed':'blocked';
+    if (row.state===state) return {state,box:row.box};
+    if (row.state!=='pending') throw new OperationError('conflict','This request has already been decided');
+    const at=new Date(now).toISOString();
+    if (row.expiresAt<=at) throw new OperationError('conflict','Join request has expired');
+    let box:string|null=null;
+    if (state==='allowed') {
+      box=createReportOnlyMachine(db,row.name,auth.viewer.id,false,at);
+      sharedTokens(db,clock).enrolRunner(box,row.fingerprint);
+    }
+    db.update(requests).set({state,box,decidedBy:auth.viewer.id}).where(eq(requests.id,row.id)).run();
+    return {state,box};
+  },{behavior:'immediate'});
+}
+
+export function registerWorkerAdmission(operations:Operations,db:DataDatabase,clock:Pick<Clock,'now'>,
+  browser:(viewer:Viewer)=>Readonly<{session:string}>|undefined) {
+  const may=(viewer:Viewer)=>householdOwner(db,viewer)&&!!browser(viewer);
+  operations.register({name:'runtime.workerJoinPending',write:false,windowOnly:true,doors:['http'],may,
+    input:z.object({}).strict(),output:z.object({requests:z.array(z.object({
+      request:z.uuid(),name:machineName,code:z.string(),expiresAt:z.string(),
+    }))}),
+    run() {
+      return {requests:db.select({request:requests.id,name:requests.name,code:requests.code,expiresAt:requests.expiresAt})
+        .from(requests).where(and(eq(requests.state,'pending'),gt(requests.expiresAt,new Date(clock.now()).toISOString())))
+        .orderBy(requests.requestedAt).all()};
+    },
+  });
+  operations.register({name:'runtime.workerJoinDecide',write:true,windowOnly:true,recheckPolicy:true,doors:['http'],may,
+    input:z.object({request:z.uuid(),code:z.string().regex(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/),decision:z.enum(['allow','block'])}).strict(),
+    output:z.object({state:z.enum(['allowed','blocked']),box:z.string().nullable()}),
+    run(ctx,input) {
+      const proof=browser(ctx.viewer);
+      if (!proof) throw new OperationError('denied','Use a signed-in owner browser');
+      const result=decideWorkerAdmission(db,clock,proof.session,input.request,input.code,input.decision);
+      ctx.changed('workerJoin',input.request);
+      if (result.box) ctx.changed('boxes',result.box);
+      return result;
+    },
+  });
 }

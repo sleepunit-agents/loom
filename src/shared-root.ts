@@ -112,6 +112,7 @@ import { installSharedTempo, mayReadProgramWork, type SharedTempoOptions } from 
 import { nextData,sharedQueryTables } from './next-data.js';
 import { deskTimeFields, startDeskTime } from './desk-time.js';
 import { deskSpriteFields } from './desk-sprites.js';
+import {registerWorkerAdmission} from './core/signin/worker-join.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
 import { createRuntime } from './runtime/runtime.js';
 import type { ModelRole } from './runtime/placement.js';
@@ -282,6 +283,7 @@ export function sharedRoot(options: {
   registerModelAccountAdmin(operations, db, roles, now, accountSignIns.ask);
   let tempo!: ReturnType<typeof installSharedTempo>;
 
+  registerWorkerAdmission(operations,db,clock,credentials.browser);
   registerMachineRegistry(operations,db,{now,changed:()=>tempo?.capacityChanged()});
   const reviewReports = new Set<Promise<void>>();
   const reviewRetries = new Map<string,()=>void>();
