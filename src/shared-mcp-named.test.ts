@@ -2,6 +2,7 @@
 import {expect,it,vi} from 'vitest';
 import {writeFileSync,mkdirSync} from 'node:fs';
 import {join} from 'node:path';
+import Database from 'better-sqlite3';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {sharedUiProgram} from '../test/fixtures/shared-ui-program.js';
@@ -462,4 +463,27 @@ it('lets an agent review potentially misfiled shared Knowledge through loom_quer
   expect(result.error,result.text).toBe(false);
   expect(JSON.parse(result.text)).toEqual({data:{memoryKnowledgeFilingReview:[{slug,reason:'Provisional sourcing'}]}});
  }finally{await reader.client.close();await writer.client.close();await p.close();}
+});
+
+it('counts deliberate Knowledge consultations by authenticated reader and leaves refreshes uncounted',async()=>{
+ const {p,connect}=await program(),art=await connect('art'),mark=await connect('mark');
+ const db=new Database(join(p.home,'commons/knowledge.db'));
+ try{
+  const made=await art.call('knowledge_write',{title:'Fictional reader tally',domain:'fixture',body:'Cerulean fixture'});
+  expect(made.error).toBe(false);
+  const slug=made.text.replace(/^Wrote knowledge page /,'');
+  db.prepare('UPDATE pages SET hit_count=100 WHERE slug=?').run(slug);
+  for(const caller of [art,mark,mark]){
+   expect((await caller.call('knowledge_recall',{query:'cerulean fixture'})).text).toContain('Cerulean fixture');
+   expect((await caller.call('knowledge_read',{slug})).text).toContain('Cerulean fixture');
+  }
+  expect((await art.call('loom_query',{query:'{ memoryKnowledgePage(slug:"fictional-reader-tally"){body} }'})).error).toBe(false);
+  expect((await mark.call('knowledge_read',{slug:'fictional-missing'})).text).toContain('No knowledge page');
+  expect(db.prepare('SELECT hit_count FROM pages WHERE slug=?').pluck().get(slug)).toBe(106);
+  expect(db.prepare('SELECT identity,a.hit_count FROM knowledge_access a JOIN pages p ON p.id=a.page_id WHERE p.slug=? ORDER BY identity').all(slug))
+   .toEqual([{identity:'art',hit_count:2},{identity:'mark',hit_count:4}]);
+  const stamp={operation:'mind.knowledgeConsulted',id:'fixture-access-retry',input:{slugs:[slug,slug]}};
+  for(let n=0;n<2;n++) expect((await art.call('loom_command',stamp)).error).toBe(false);
+  expect(db.prepare('SELECT hit_count FROM pages WHERE slug=?').pluck().get(slug)).toBe(107);
+ }finally{db.close();await mark.client.close();await art.client.close();await p.close();}
 });
