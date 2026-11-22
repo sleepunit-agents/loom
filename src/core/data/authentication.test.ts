@@ -12,8 +12,8 @@ afterEach(() => clients.splice(0).forEach(c => c.close()));
 const raw = 'a'.repeat(64), cookie = 'b'.repeat(64);
 const hash = (v: string) => createHash('sha256').update(v).digest('hex');
 const at = '2026-11-14T00:00:00.000Z';
-function fixture() {
-  const client = new Database(':memory:'); clients.push(client);
+function fixture(verbose?: (sql: string) => void) {
+  const client = new Database(':memory:', { verbose }); clients.push(client);
   const db = createDataSchema(client);
   db.insert(members).values({ id: 'sam', role: 'member', joinedAt: at }).run();
   db.insert(tokens).values({ fingerprint: hash(raw), label: 'sam', kind: 'owner', member: 'sam', createdAt: at }).run();
@@ -211,12 +211,15 @@ it('makes a machine-bound terminal credential the agent at that machine owner\'s
 });
 
 it('prepares the repeated credential reads once per database and rechecks a rolled-back revocation', () => {
-  const first = fixture(), other = fixture();
+  let executed = 0;
+  const first = fixture(() => { executed++; }), other = fixture();
   first.db.insert(boxes).values({ id: 'box', owner: 'sam', name: 'Worker', sameMachineAsLoom: false, hostsAny: true, reportOnly: false, alwaysOn: false, enrolledAt: at }).run();
   const prepare = vi.spyOn(first.client, 'prepare');
   const session = () => currentSession(first.db, hash(cookie), Date.parse(at));
   for (let i = 0; i < 5; i++) {
+    executed = 0;
     expect(session()?.viewer.id).toBe('sam');
+    expect(executed).toBe(2); // The browser session and its token with the current holder.
     expect(machineCurrent(first.db, 'box')).toBe(true);
     expect(machineCurrent(other.db, 'box')).toBe(false);
   }
