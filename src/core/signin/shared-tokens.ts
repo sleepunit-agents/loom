@@ -81,6 +81,12 @@ export function sharedTokens(db: DataDatabase, clock: Pick<Clock, 'now'>) {
         return { token, fingerprint };
       });
     },
+    /** The worker keeps its bearer. Called inside the owner decision's machine-creation transaction. */
+    enrolRunner(box:string, fingerprint:string) {
+      if (!db.$client.inTransaction) throw Error('Runner enrollment requires a transaction');
+      if (!SHA256_HEX.test(fingerprint)) throw new OperationError('invalid', 'Invalid fingerprint');
+      add({kind:'runner',box,label:'Worker '+box},fingerprint);
+    },
     /** A job body's token. Its worker made the secret and sends the fingerprint alone, so there is no
      * bearer to hand back and loom never holds one. A job has one live body token: enrolling ends any
      * other (add). `madeFrom` is the machine token that enrolled it; the body's token is current only while

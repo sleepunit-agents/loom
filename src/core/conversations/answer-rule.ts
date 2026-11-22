@@ -8,16 +8,16 @@ import type { inbox } from '../data/schema.js';
 
 type Item = typeof inbox.$inferSelect;
 export type Answer = NonNullable<Item['answer']>;
-type Question = Pick<Item, 'toKind' | 'answers' | 'state' | 'source' | 'waitsOnKind' | 'answer' | 'answerText' | 'answeredBy'>;
+type Question = Pick<Item, 'toKind' | 'answers' | 'state' | 'source' | 'sourceId' | 'waitsOnKind' | 'answer' | 'answerText' | 'answeredBy'>;
 
 /** Tasks, approvals and secret requests are answered where they live; so is
  * any question that waits on one. Their outcome settles the Inbox item. */
-const linked = (item: Pick<Item, 'source' | 'waitsOnKind'>): boolean =>
-  item.source === 'task' || item.source === 'approval' || item.source === 'secret-request' || !!item.waitsOnKind;
+const linked = (item: Pick<Item, 'source' | 'sourceId' | 'waitsOnKind'>): boolean =>
+  (item.source === 'notice' && !!item.sourceId?.startsWith('worker-join:')) || item.source === 'task' || item.source === 'approval' || item.source === 'secret-request' || !!item.waitsOnKind;
 
 /** A question a person can still answer in the Inbox. Who that person is
  * belongs to the caller: this says nothing about the reader. */
-export const answerable = (item: Pick<Item, 'toKind' | 'answers' | 'state' | 'source' | 'waitsOnKind'>): boolean =>
+export const answerable = (item: Pick<Item, 'toKind' | 'answers' | 'state' | 'source' | 'sourceId' | 'waitsOnKind'>): boolean =>
   item.toKind === 'person' && !!item.answers && item.state === 'waiting' && !linked(item);
 
 /** Decide one answer attempt. 'apply' means record it. 'repeat' means this

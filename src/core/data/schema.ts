@@ -2343,7 +2343,28 @@ export const archivedQuestions = sqliteTable('archived_questions', {
   check('archived_questions_keep_utc',utc(t.keepUntil)), check('archived_questions_answered_utc',utc(t.answeredAt)),
   index('archived_questions_history').on(t.thread,t.raisedAt,t.ref)]);
 
+/** A worker keeps the bearer; its public fingerprint binds the pending owner decision. */
+export const workerJoinRequests = sqliteTable('worker_join_requests', {
+  id:text('id').primaryKey().notNull(),
+  fingerprint:text('fingerprint').notNull().unique(),
+  name:text('name').notNull(),
+  code:text('code').notNull().unique(),
+  sourceBucket:text('source_bucket').notNull(),
+  requestedAt:text('requested_at').notNull(),
+  expiresAt:text('expires_at').notNull(),
+  state:text('state',{enum:['pending','blocked','allowed']}).notNull(),
+  decidedBy:text('decided_by').references(()=>members.id),
+  box:text('box').references(()=>boxes.id),
+}, t=>[
+  check('worker_join_requested_utc',utc(t.requestedAt)),check('worker_join_expires_utc',utc(t.expiresAt)),
+  check('worker_join_decision',sql`(${t.state}='pending' and ${t.decidedBy} is null and ${t.box} is null)
+    or (${t.state}='blocked' and ${t.decidedBy} is not null and ${t.box} is null)
+    or (${t.state}='allowed' and ${t.decidedBy} is not null and ${t.box} is not null)`),
+  index('worker_join_recent').on(t.requestedAt),
+]);
+
 export const plumbing = {
+  workerJoinRequests,
   archivedQuestions,
   accountWeekReadings,
   changeReviewRounds,

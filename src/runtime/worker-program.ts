@@ -38,7 +38,7 @@ const accountCommand = z.object({
   timeoutMs: stepDeadline.optional(),
 }).strict();
 const usageCommand = accountCommand.extend({ report: z.object({ url: z.string(), tokenFile: z.string().min(1) }).strict().optional() });
-const configSchema = z.object({
+export const workerConfigSchema = z.object({
   reportOnly: z.literal(true).optional(),
   journalUnits:z.array(journalUnit).max(128).optional(),
   reads: z.array(z.enum(machineReadKinds)).max(machineReadKinds.length).optional(),
@@ -175,7 +175,7 @@ export async function workerProgram(input: {
     }
     if (input.args.length !== 1) throw new Error('Expected worker configuration path');
     stage = 'config';
-    const config = configSchema.parse(JSON.parse(await input.read(input.args[0])));
+    const config = workerConfigSchema.parse(JSON.parse(await input.read(input.args[0])));
     if (!config.reportOnly && !config.container) throw new WorkerStop('containerRequired');
     if (config.container?.nestedSocket !== undefined) throw new WorkerStop('mounts', 'container.nestedSocket');
     // Keys a worker with container bodies used to take. It does not go on without them as if they were
