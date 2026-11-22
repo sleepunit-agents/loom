@@ -311,7 +311,10 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   clock.advance(1); // Distinguish the new thread's lastAt from the seeded one.
   await b.goto(app.url);
   const compose=b.getByRole('region',{name:`${displayName} card`,exact:true}),draftWords='Disposable shared desk composer message';
-  await compose.getByRole('textbox',{name:`Message ${displayName}`,exact:true}).fill(draftWords);
+  const editor=compose.getByRole('textbox',{name:`Message ${displayName}`,exact:true});
+  await editor.click();
+  await editor.fill(draftWords);
+  await expect.poll(()=>compose.getByRole('button',{name:'Send',exact:true}).isEnabled()).toBe(true);
   const opened=b.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/comms/open');
   const sent=b.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/comms/send');
   await compose.getByRole('button',{name:'Send',exact:true}).click();
