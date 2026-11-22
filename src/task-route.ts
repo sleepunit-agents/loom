@@ -1,9 +1,13 @@
+import { TASK_ID } from './slug.js';
+
+const currentTaskId = new RegExp(`^${TASK_ID}$`);
+
 /** A marker prevents URL normalization of imported '.' and '..' task ids.
  * ~: carries raw UTF-16 for empty or malformed legacy ids; ':' is otherwise
  * percent-encoded, so it cannot collide with an existing canonical segment.
  */
 export function taskSegment(id:string):string {
- if(/^t-\d+$/.test(id))return id;
+ if(currentTaskId.test(id))return id;
  if(id)try{return `~${encodeURIComponent(id)}`;}catch{/* valid legacy string outside URI's scalar domain */}
  return '~:'+Array.from({length:id.length},(_,n)=>id.charCodeAt(n).toString(16).padStart(4,'0')).join('');
 }
