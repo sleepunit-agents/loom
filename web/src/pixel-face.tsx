@@ -305,7 +305,10 @@ export default function PixelFace({ sprite, state = 'idle', size, label, fallbac
   }, [sheet]);
 
   useEffect(() => { player.current?.want(state); }, [state]);
-  useEffect(() => { if (talk) player.current?.talk(talk.n); }, [talk?.key]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (talk) player.current?.talk(talk.n);
+    else player.current?.want(want.current);
+  }, [talk?.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A sheet that can't be had (gone, refused): the agent's drawn face, not an empty square.
   if (failed || !sheet) return <>{fallback}</>;

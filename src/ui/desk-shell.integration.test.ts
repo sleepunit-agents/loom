@@ -233,6 +233,21 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
     expect(await b.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);await b.screenshot({path:join(shots,`new-agent-${look}-${width}.png`),animations:'disabled'});
    }
   }
+  // A reply in a different open thread animates even while Art has a question elsewhere.
+  const portraitThread=app.writes.run(()=>messages.threads.open({member:'owner',agent:'art',title:'Live portrait'})).value;
+  const portraitUrl=app.url+'/p/comms-preview/thread/'+encodeURIComponent(portraitThread.id.replace(/^th:/,''));
+  await set({motion:'off'},'portrait-motion');
+  await b.goto(portraitUrl);
+  const replyScreen=b.locator('.desk-comms-screen');
+  await expect.poll(()=>replyScreen.locator('canvas').count()).toBe(1);
+  app.writes.run(await messages.prepareSend({thread:portraitThread.id,sender:'art',kind:'reply',words:'A new live reply.'}));
+  await expect.poll(()=>replyScreen.getAttribute('data-face'),{interval:50}).toBe('talking');
+  await expect.poll(()=>replyScreen.getAttribute('data-face'),{interval:50}).toBe('complete');
+  await expect.poll(()=>replyScreen.getAttribute('data-face')).toBe('working');
+  await b.reload();
+  await expect.poll(()=>replyScreen.locator('canvas').count()).toBe(1);
+  expect(await replyScreen.getAttribute('data-face')).toBe('working');
+  await set({motion:'on'},'portrait-restore');
   // A narrow desktop keeps the compact companion inline; minimizing clears
   // selection even though the reader component remains mounted in the tile.
   await b.setViewportSize({width:1024,height:900});await b.goto(app.url+'/p/comms-preview/thread/'+encodeURIComponent(thread.id.replace(/^th:/,'')));
@@ -296,7 +311,10 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   clock.advance(1); // Distinguish the new thread's lastAt from the seeded one.
   await b.goto(app.url);
   const compose=b.getByRole('region',{name:`${displayName} card`,exact:true}),draftWords='Disposable shared desk composer message';
-  await compose.getByRole('textbox',{name:`Message ${displayName}`,exact:true}).fill(draftWords);
+  const editor=compose.getByRole('textbox',{name:`Message ${displayName}`,exact:true});
+  await editor.click();
+  await editor.fill(draftWords);
+  await expect.poll(()=>compose.getByRole('button',{name:'Send',exact:true}).isEnabled()).toBe(true);
   const opened=b.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/comms/open');
   const sent=b.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/comms/send');
   await compose.getByRole('button',{name:'Send',exact:true}).click();
