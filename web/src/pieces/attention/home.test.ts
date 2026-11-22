@@ -186,13 +186,15 @@ it('is a summary that leads to the agent’s own page: the name, the face and a 
   expect(artCard().findAllByType('button').map(words)).toEqual([]);
 });
 it('shows the last answer in brief, opening its conversation, and nothing at all when there is none',async()=>{
-  f.snapshots['conversation.summary']=live([talk('old',{lastAnswer:{at:'2026-11-14T11:00:00Z',words:'Line one\nLine two\nLine three\nLine four'}}),talk('channel',{venue:'discord',place:'[]',label:'Discord channel #pond'})]);
+  f.snapshots['conversation.summary']=live([talk('old',{lastAnswer:{at:'2026-11-14T11:00:00Z',words:'**Line one**\n\n- Line two\n- Line three'}}),talk('channel',{venue:'discord',place:'[]',label:'Discord channel #pond'})]);
   const go=await draw(),answer=()=>artCard().findAllByProps({className:'desk-home-answer'});
   expect(answer()).toHaveLength(1);expect(words(answer()[0])).toContain('Last answer · ');
   // The whole text is in the block; the sheet clamps it to three lines.
-  expect(words(answer()[0].findByProps({className:'desk-home-answer-words'}))).toBe('Line one\nLine two\nLine three\nLine four');
-  expect(answer()[0].props.href).toBe('/p/comms-preview/thread/old');
-  await act(async()=>answer()[0].props.onClick({button:0,preventDefault(){}}));expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/old');
+  await act(async()=>{await import('../../kit/markdown');});
+  expect(answer()[0].findByProps({className:'loom-prose'}).props.dangerouslySetInnerHTML.__html).toMatch(/<strong>Line one<\/strong>[\s\S]*<li>Line three<\/li>/);
+  const link=answer()[0].findByType('a');
+  expect(link.props.href).toBe('/p/comms-preview/thread/old');
+  await act(async()=>link.props.onClick({button:0,preventDefault(){}}));expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/old');
   expect(tree!.root.findByProps({'aria-label':'Mark card'}).findAllByProps({className:'desk-home-answer'})).toHaveLength(0);
   await publish('conversation.summary',live([talk('old')]));expect(answer()).toHaveLength(0);expect(text()).not.toContain('Line one');expect(text()).not.toMatch(/Last answer|No retained agent answer|Answer unavailable/);
 });
@@ -282,7 +284,7 @@ it('keeps the solo desk actions with room for more work and conversations', asyn
     expect(go).toHaveBeenLastCalledWith(href);
   };
   await click('desk-doing-pill','/job/0');
-  await click('desk-home-answer','/p/comms-preview/thread/0');
+  await click('desk-home-answer-link','/p/comms-preview/thread/0');
   await click('desk-home-talk','/p/comms-preview/thread/0');
   await click('desk-home-all','/p/agents-preview/agent/art');
   await publish('generated.jobs',live([]));

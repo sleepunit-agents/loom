@@ -1,7 +1,7 @@
 import {conversationTitle} from '../../data/conversation-title';
-import { useMemo, type ReactNode } from 'react';
+import { Suspense, useMemo, type ReactNode } from 'react';
 import { useDataQuery, type DataQuerySnapshot } from '../../data/graphql';
-import { Body, LinkButton, List, Meta, Row, Section } from '../../kit';
+import { Body, Markdown, LinkButton, List, Meta, Row, Section } from '../../kit';
 import { sinceWord } from './doing';
 import { threadPath } from './home-comms-data';
 import { stamp } from './time';
@@ -47,10 +47,12 @@ export function HomeTalk({ talk, name, unread = 0, firstUnread, all, go, compose
   if (talk.status !== 'live') return <>{composer}</>;
   const answer = talk.answer, unreadPath = firstUnread ? threadPath(firstUnread) : undefined;
   return <>
-    {answer && <a className="desk-home-answer" aria-label={`${name} last answer. Open the conversation`} {...opens(answer.path, go)}>
-      <span className="desk-home-kicker">Last answer · <time dateTime={answer.at}>{sinceWord(answer.at)}</time></span>
-      <span className="desk-home-answer-words">{answer.words}</span>
-    </a>}
+    {answer && <div className="desk-home-answer">
+      <a className="desk-home-answer-link" aria-label={`${name} last answer. Open the conversation`} {...opens(answer.path, go)}>
+        <span className="desk-home-kicker">Last answer · <time dateTime={answer.at}>{sinceWord(answer.at)}</time></span>
+      </a>
+      <div className="desk-home-answer-words"><Suspense fallback={null}><Markdown text={answer.words}/></Suspense></div>
+    </div>}
     {composer}
     {talk.recent.length > 0 && <nav className="desk-home-talks" aria-label={`${name} conversations`}>
       <span className="desk-home-kicker">Conversations{unread ? ` · ${unread} unread` : ''}</span>
