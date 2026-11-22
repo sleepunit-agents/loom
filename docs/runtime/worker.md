@@ -1071,8 +1071,7 @@ back under the line. No model takes part, and the worker sends no words of its
 own: numbers, an HTTP status, and for a disk the path watched. Loom acknowledges
 a successful report without returning any household state.
 
-The worker uses Node's filesystem calls in its own disk helper, memory calls
-in the worker, and one bounded request to the configured container socket.
+The worker uses Node's filesystem calls in a bounded helper for disks and memory, and one bounded request to the configured container socket.
 
 - **Disks.** The filesystems under `/`, the worker’s state directory when it has one, and each path in `watchPaths`. Include the container runtime's
   real data directory in `watchPaths` when it is on a separate filesystem.
@@ -1082,18 +1081,19 @@ in the worker, and one bounded request to the configured container socket.
   List one path per filesystem. Two paths on the same filesystem produce two
   readings and can each raise a notice.
 - **Memory.** The total and the kernel estimate of what is available to start
-  something new. The worker uses `os.availableMemory()` where available.
+  something new. The helper reads Linux’s `MemTotal` and `MemAvailable` from the same
+  sample of `/proc/meminfo`.
   Without that estimate, the reading is unknown.
 - **The container runtime.** Whether the engine at `container.socket`
   answers a version request within five seconds. A completed error response
   counts as a refusal. A timeout or transport failure is unknown. Only workers
   with that socket configured report this reading.
 
-For every watched path the worker starts this program's own
+For memory and every watched path the worker starts this program's own
 `machine-disk-helper.js` at a fixed location beside the compiled reader,
 using the worker's own Node binary (`process.execPath`) with no shell.
-The sole script argument is the configured path. Both the worker and helper
-validate it with `watchedPath`. The check runs no other program.
+The sole argument is the fixed word `memory` or the configured disk path.
+Both the worker and helper validate disk paths with `watchedPath`. The check runs no other program.
 
 The helper checks every directory from `/` down, then opens each component
 relative to the previous descriptor with `O_DIRECTORY | O_NOFOLLOW`. It
@@ -1108,10 +1108,10 @@ components are disallowed. An invalid `watchPaths` entry fails configuration.
 The worker reports a state directory outside these bounds as unknown with a
 fixed reason, without sending the directory name.
 
-Helpers can read in parallel. After five seconds the worker reports the path
+Helpers can read in parallel. After five seconds the worker reports the reading
 as unknown and leaves the helper alone. It starts a replacement only after
-the previous helper exits. This bounds live helpers by the number of watched
-paths. Healthy siblings continue to be read each round. Shutdown signals live
+the previous helper exits. This bounds live helpers to one for memory plus one per watched
+path. Healthy siblings continue to be read each round. Shutdown signals live
 helpers and the worker exits normally. A helper stuck in the kernel can
 remain asleep until the mount responds or the machine restarts. A failed
 start produces an unknown reading and a fixed diagnostic logged once.
