@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useDataQuery } from '../../data/graphql';
 import { SharedTasks, type SharedTask, type TaskAction } from './shared-view';
 import { SharedTaskForm, type TaskFormProps } from './shared-form';
-import { taskId, taskSegment } from './route';
+import { taskId, taskSegment } from '../../../../src/task-route';
 import { tasksQuery, type TasksSelection } from './query';
 
 export interface TasksAppProps {

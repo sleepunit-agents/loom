@@ -1,3 +1,4 @@
+import { taskPath } from '../../task-route.js';
 import { readActivityWork, readEpisodeConversations, readActivityAgents, readActivityWindow, readActivityConversation, readActivityDigest, readActivitySet, type ActivityReadSet } from '../../core/data/activity-read.js';
 /** Activity's read projection of the shared Conversations service's records.
  * No legacy database, copied content, or independent visibility policy. */
@@ -75,7 +76,7 @@ export function sharedActivityConversations(db: DataDatabase, options: {
       const detail = run(viewer, row, readActivitySet(db, viewer, [row.id], digest ? [digest.id] : [], digest?.inboxItem ? [digest.inboxItem] : []), digest);
       const work = readActivityWork(db, viewer, row.id);
       return { ...detail, linkedWork: {
-        tasks: work.map(task => ({ label: task.title, href: `/p/tasks-preview/task/${encodeURIComponent(task.id)}` })),
+        tasks: work.map(task => ({ label: task.title, href: taskPath(task.id) })),
         prs: work.flatMap(task => task.changeTasksByTask.map(({ changeRow }) => ({ label: changeRow.title, href: changeRow.url || `/p/changes-preview/change/${encodeURIComponent(changeRow.id)}` }))),
       } };
     },

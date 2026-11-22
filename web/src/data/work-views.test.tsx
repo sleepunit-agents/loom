@@ -74,6 +74,17 @@ it('tile and inline cards follow the same current answer/head and clear retained
   }
 });
 
+it('opens the linked imported task even when its ID begins with the route marker', async () => {
+  fixture();
+  const id = '~t-1', go = vi.fn();
+  feed.changes = { ...feed.changes, changeTasks: [
+    { change: 'c-one', task: id, taskRow: { id, title: 'Imported tray', status: 'open' } },
+  ] };
+  await draw(h(ChangesApp, { path: '/p/changes-preview/change/c-one', go }));
+  await act(async () => tree.root.findByProps({ label: 'Open Imported tray, ~t-1' }).props.onClick());
+  expect(go).toHaveBeenCalledExactlyOnceWith('/p/tasks-preview/task/~~t-1');
+});
+
 it('opens the exact change from a Comms deep link and follows shell navigation and back', async () => {
   fixture();
   const id = 'github:acme/app#3';
