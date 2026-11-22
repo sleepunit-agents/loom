@@ -3,13 +3,14 @@ import {createElement as h} from 'react';
 // @ts-expect-error Existing renderer has no declarations.
 import {act,create} from 'react-test-renderer';
 import {RailContext,type RailLink} from '../../desk-rail';
-const f=vi.hoisted(()=>({reads:0}));
+const f=vi.hoisted(()=>({reads:0,work:0}));
 vi.mock('./agent-displays',()=>({useDeskAgentDisplays:()=>{f.reads++;return [];}}));
 vi.mock('./agent-directory',()=>({useDeskAgentDirectory:()=>({status:'denied',records:[]})}));
 vi.mock('./roster',()=>({useDeskRoster:()=>({status:'live',records:[{id:'art'}]})}));
 vi.mock('./agent-status',()=>({useDeskAgentStatuses:()=>({status:'denied',records:[]})}));
 vi.mock('./waiting',()=>({useDeskWaitingCounts:()=>({status:'denied',agents:new Map()})}));
-vi.mock('./agent-face',()=>({default:()=>null,faceState:()=> 'idle'}));
+vi.mock('./doing',()=>({useDoing:()=>({items:Array(f.work)})}));
+vi.mock('./agent-face',async importOriginal=>({...await importOriginal<typeof import('./agent-face')>(),default:()=>null}));
 vi.mock('../../kit',()=>({Button:'button'}));
 import Companion from './comms-companion';
 (globalThis as typeof globalThis&{IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
@@ -25,6 +26,12 @@ it('announces only a visible reader and clears the same source on selection chan
   // Without the rail it is a small face beside the thread's title: no screen, no name and no status line over the conversation.
   expect(tree.root.findAllByType('section')).toHaveLength(0);expect(tree.root.findAllByType('p')).toHaveLength(0);
   expect(tree.root.findByProps({'data-location':'inline'}).findByType('button').props).toMatchObject({'aria-label':'Open Art',title:'Quiet'});
+  f.work=1;
+  await act(async()=>tree.update(view('art',true)));
+  expect(tree.root.findByType('button').props.title).toBe('Working');
+  f.work=0;
+  await act(async()=>tree.update(view('art',true)));
+  expect(tree.root.findByType('button').props.title).toBe('Quiet');
   await act(async()=>tree.update(view('birch',true)));
   expect(onAir.mock.calls.slice(1)).toEqual([[null,source],[{agent:'birch'},source]]);
   await act(async()=>tree.update(view('birch',false)));

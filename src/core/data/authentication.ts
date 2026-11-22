@@ -8,7 +8,7 @@
  */
 import { DAY_MS } from '../day.js';
 import { createHash } from 'node:crypto';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, placeholder } from 'drizzle-orm';
 import type { Authentication } from '../live/index.js';
 import type { DataDatabase } from './database.js';
 import { tokens, sessions, members, agents, boxes, jobs, programTokens, terminalCredentials } from './schema.js';
@@ -57,12 +57,28 @@ export function presentedCredential(request: Request): { bearer: string; cookie?
   return cookie ? { cookie } : undefined;
 }
 
+/** Reuse only the SQL program. Each call binds its own key and reads the current transaction. */
+function prepareCredentialReads(db: DataDatabase) {
+  const key = placeholder('key');
+  return {
+    token: db.select().from(tokens).where(eq(tokens.fingerprint, key)).prepare(),
+    session: db.select().from(sessions).where(eq(sessions.id, key)).prepare(),
+    machine: db.select({ id: boxes.id }).from(boxes).innerJoin(members, eq(members.id, boxes.owner))
+      .where(and(eq(boxes.id, key), isNull(boxes.revokedAt), isNull(members.removedAt))).prepare(),
+  };
+}
+const credentialReads = new WeakMap<DataDatabase, ReturnType<typeof prepareCredentialReads>>();
+function credentialReadsFor(db: DataDatabase) {
+  let prepared = credentialReads.get(db);
+  if (!prepared) { prepared = prepareCredentialReads(db); credentialReads.set(db, prepared); }
+  return prepared;
+}
+
 /** A machine that has not been revoked and whose owner is in the household now. A removed member is nobody
  * (policy.ts), so their machine's token, and a body running there, stop being current when they are
  * removed, and are current again if they are restored. */
 export function machineCurrent(db: DataDatabase, box: string): boolean {
-  return !!db.select({ id: boxes.id }).from(boxes).innerJoin(members, eq(members.id, boxes.owner))
-    .where(and(eq(boxes.id, box), isNull(boxes.revokedAt), isNull(members.removedAt))).get();
+  return !!credentialReadsFor(db).machine.get({ key: box });
 }
 /** A token that is live and whose holder is current: a member who has not been removed, an agent that has
  * not been removed, or a machine that is current (machineCurrent). A token bound to a job is current only
@@ -70,10 +86,10 @@ export function machineCurrent(db: DataDatabase, box: string): boolean {
  * another (a body's, from its machine's) is current only while that one is: revoking a machine's token
  * ends the bodies it started. */
 export function currentToken(db: DataDatabase, id: string, now: number): { token: typeof tokens.$inferSelect; viewer: Exclude<Viewer, { kind: 'service' }>; job?: string } | undefined {
-  const token = db.select().from(tokens).where(eq(tokens.fingerprint, id)).get();
+  const token = credentialReadsFor(db).token.get({ key: id });
   if (!token || !tokenLive(token, now)) return;
   // One step, never a chain: only a machine's own token enrols another (shared-body-enrollment.ts).
-  if (token.madeFrom !== null && !tokenLive(db.select().from(tokens).where(eq(tokens.fingerprint, token.madeFrom)).get() ?? { revokedAt: 'gone', expiresAt: null }, now)) return;
+  if (token.madeFrom !== null && !tokenLive(credentialReadsFor(db).token.get({ key: token.madeFrom }) ?? { revokedAt: 'gone', expiresAt: null }, now)) return;
   if (token.kind === 'owner' && token.member) {
     if (!db.select({ id: members.id }).from(members).where(and(eq(members.id, token.member), isNull(members.removedAt))).get()) return;
     return { token, viewer: { kind: 'member' as const, id: token.member } };
@@ -104,7 +120,7 @@ export function currentToken(db: DataDatabase, id: string, now: number): { token
 }
 /** A browser session that has not run out, on a token that is current. `ends` is when it stops. */
 export function currentSession(db: DataDatabase, id: string, now: number) {
-  const session = db.select().from(sessions).where(eq(sessions.id, id)).get();
+  const session = credentialReadsFor(db).session.get({ key: id });
   if (!session || sessionEnds(session) <= now) return;
   const held = currentToken(db, session.token, now);
   if (!held) return;

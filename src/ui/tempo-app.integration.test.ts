@@ -83,6 +83,7 @@ describe.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo browser',()=>{
    expect(await page.getByRole('status',{name:'Inbox notification'}).textContent()).not.toContain('PRIVATE');
   }
   if(scenario==='Inbox alert layout and close animation'){
+  await b.getByRole('status',{name:'Inbox notification'}).getByRole('link').focus();
   // The alert stays clear of the status bar and uses the window close icon on both desk sizes.
   await a.bringToFront();
   const page=a;
@@ -108,6 +109,11 @@ describe.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo browser',()=>{
   await close.press('Enter');
   await expect.poll(()=>a.locator('body').getAttribute('data-inbox-exit')).toBe('played');
   await expect.poll(()=>a.getByRole('status',{name:'Inbox notification'}).count()).toBe(0);
+  const original=await b.evaluate(()=>performance.timeOrigin);
+  await b.getByRole('status',{name:'Inbox notification'}).getByRole('link').click();
+  await b.getByRole('region',{name:'Inbox tile'}).waitFor();
+  expect(await b.evaluate(()=>performance.timeOrigin)).toBe(original);
+  await expect.poll(()=>b.getByRole('status',{name:'Inbox notification'}).count()).toBe(0);
   return;
   }
   await a.getByRole('button',{name:'Dismiss Inbox notification',exact:true}).click();

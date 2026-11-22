@@ -4,6 +4,16 @@
 loom's operation door; it does not open loom's database or start inside its server.
 This executable requires POSIX process groups (use WSL on Windows).
 
+## Join a household
+
+Run `loom-worker request-join <loom-url> <machine-name> <private-directory> [worker-template.json]` as the worker's service user. The command prints a matching code. A household owner compares that code with the one in **Inbox → Needs you** and chooses **Let it in** or **Block**. The worker keeps its credential in the private directory.
+
+Run the same command again to collect the decision. With a template, approval installs `worker.json` and `runner.token` in that directory. The template uses the same Loom URL, `box: null`, and the absolute path to that `runner.token` as its `tokenFile`. Start the worker with the generated configuration. Its first heartbeat reports zero job slots.
+
+A pending code lasts 15 minutes. Use `loom-worker renew-join` with the same arguments to request another code after expiry. The owner sees one fresh card. A block is final for that worker identity.
+
+## Run jobs
+
 A worker that takes jobs runs every body in a container, including jobs on the
 owner's word, jobs on another person's word, and jobs held to loom's tools.
 One worker shares its slots across those jobs. A minimal configuration is:
@@ -1874,6 +1884,8 @@ For the GraphQL queries, count definitions and observations, see [Reading job us
 ### House programs
 
 An owner reviews the HTTPS repository, full commit, content-addressed house image, executable path relative to the repository, argument template and credential bindings. Either a kit invocation or a time trigger can request a program. Loom checks the actual house against all three pins before sending program credentials. A schedule keeps its recorded definition when the house branch moves. The next attempt fails on a mismatch and starts no executable. For a kit, approve a replacement definition. For a schedule, stop the old trigger and set a new one with the reviewed pins. The replacement trigger begins with its own state. A rebuild of the same commit can also change the image.
+
+To use one reviewed image on multiple Podman workers, copy the built image under its full Loom house tag, including the commit and core tag. Run Podman as the account that owns each worker's image store. On the source, read the manifest type and image ID with `podman image inspect "$house_tag" --format '{{.ManifestType}} {{.Id}}'`. For a Docker v2 image (`application/vnd.docker.distribution.manifest.v2+json`), save it with `podman save --format docker-archive -o house.tar "$house_tag"`. Converting that image to an OCI archive can change its config digest. Move the archive to the second machine and run `podman load -i house.tar`. Inspect the full house tag there and compare its image ID to the reviewed pin before scheduling work on that machine. The program definition uses the full `sha256:<64 hex digits>` form of that ID.
 
 Both callers start a fresh helper container from the pinned image. It runs as an unprivileged user with a read-only root filesystem, dropped capabilities, resource limits and container logging disabled. It has outbound network access. No body token, account login, host mount or engine socket enters the helper. The worker passes invocation data over attached stdin. The launcher supplies credentials to the executable under reviewed `KIT_` environment aliases and supplies schedule state and payload on the executable's stdin. It constructs each argument separately and executes the program directly. The owner can inspect each credential's name and its binding without seeing its value.
 

@@ -284,3 +284,13 @@ it('keeps a linked private question and its explanation above the approval contr
   expect(tree.root.findAllByType('Title')[0].props.children).toBe(notice.body!.words);
   expect(button('Allow')).toBeUndefined();
 });
+it.each([['Let it in','allow'],['Block','block']])('answers worker admission with %s from the matching Inbox card',async(label,decision)=>{
+  const request='3221b252-ee2c-49e4-847a-571a0914c811',code='ABCD-2345';
+  setup(row({source:'notice',sourceId:'worker-join:'+request+':'+code,read:true,canAnswer:false,
+    body:{words:'wunder wants to join Loom',why:'Match '+code+' with the code shown on the machine.'}}));
+  await act(async()=>{tree=create(h(InboxApp,{path:'/p/inbox-preview/ask/in-1',go:vi.fn()}));});
+  expect(text()).toContain(code);
+  expect(button('Yes')).toBeUndefined();
+  await act(async()=>{button(label).props.onClick();});
+  expect(f.call).toHaveBeenCalledWith('runtime.workerJoinDecide',{request,code,decision});
+});

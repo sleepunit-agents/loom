@@ -5,7 +5,7 @@ import {handoffPeersAssigned,handoffTarget} from './handoff-access.js';
 import {MESSAGE_WORDS_MAX} from './words.js';
 /** A current native body hands a brief to another assigned agent. Labels and
  * parent place come from its live conversation, never from caller claims. */
-import {and,desc,eq,sql} from 'drizzle-orm';
+import {and,desc,eq,inArray,sql} from 'drizzle-orm';
 import {z} from 'zod';
 import type {OnWord} from '../../policy.js';
 import {inbox} from '../data/schema.js';
@@ -43,7 +43,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
  const db=service.db,cvs=service.threads.conversations,current=conversationBodyScope(db,proof,privateAssignment),requireCurrent=requireBodyScope(current);
  const common=bodyOperationDefaults(current,value=>service.key.hash(value),'body-handoff');
  type Work=NonNullable<ReturnType<typeof current>>;
- const scheduledParent=(job:Work['job'])=>{
+ const retryLineage=(job:Work['job'])=>{
   let parent=job;
   const seen=new Set([job.id]);
   while(parent.retryOf){
@@ -52,7 +52,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
      previous.project!==job.project || previous.member!==job.member)throw new OperationError('conflict','Invalid coordinator retry history');
    seen.add(previous.id);parent=previous;
   }
-  return parent.id;
+  return [...seen];
  };
  const ownerThread=(work:Work)=>{
   const person=self?.word(work);
@@ -120,8 +120,9 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    return resolved?{sealed,resolved}:sealed;},
   run(ctx,input,prepared){
    const {job,cv}=requireCurrent(ctx.viewer);
-   const parent=input.notBefore?scheduledParent(job):job.id,sourceId=JSON.stringify([parent,input.clientId]);
+   const sourceFor=(parent:string)=>JSON.stringify([parent,input.clientId]);
    if(input.to){
+    const sourceId=sourceFor(job.id);
     if(!self)throw new OperationError('denied','This program hands no note to an agent\'s own body');
     const before=db.select().from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,cv.agent),eq(inbox.source,'handoff'),eq(inbox.sourceId,sourceId))).get();
     if(before?.conversation)return {conversation:before.conversation,item:before.id};
@@ -141,19 +142,18 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    const delegated=!!(input.harness || input.role);
    const recipient=delegated?cv.agent:input.agent;
    if(!recipient)throw new OperationError('invalid','A hand-off names an agent or a place');
-   // Omitting the schedule on a retry must still find the original scheduled request.
-   if(delegated && !input.notBefore && job.retryOf){
-    const rootSource=JSON.stringify([scheduledParent(job),input.clientId]);
-    const scheduled=db.select({time:conversations.handoffNotBefore}).from(inbox)
-     .innerJoin(conversations,eq(inbox.conversation,conversations.id))
-     .where(and(eq(inbox.toKind,'agent'),eq(inbox.to,recipient),eq(inbox.source,'handoff'),eq(inbox.sourceId,rootSource))).get();
-    if(scheduled?.time)throw new OperationError('conflict','Handoff scope changed');
-   }
-   const existing=db.select().from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,recipient),eq(inbox.source,'handoff'),eq(inbox.sourceId,sourceId))).get();
+   // Earlier builds keyed an immediate brief to the attempt that submitted it. Search the whole
+   // retry line before creating a child so a lost receipt survives worker failure and upgrades.
+   const parents=delegated?retryLineage(job):[job.id];
+   const parent=input.notBefore?parents[parents.length-1]:job.id,sourceId=sourceFor(parent);
+   const receipts=db.select().from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,recipient),
+    eq(inbox.source,'handoff'),inArray(inbox.sourceId,parents.map(sourceFor)))).limit(2).all();
+   if(receipts.length>1)throw new OperationError('conflict','Multiple handoffs already exist for this request');
+   const [existing]=receipts;
    if(existing){
     const target=existing.conversation?cvs.conversation(existing.conversation):undefined;
     const request=target && reviewRequest(target);
-    const same=delegated?request?.parent===parent && request.clientId===input.clientId && request.role?.id===input.role && target?.handoffNotBefore===(input.notBefore??null):target?.place===job.id;
+    const same=delegated?!!request && existing.sourceId===sourceFor(request.parent) && request.clientId===input.clientId && request.role?.id===input.role && target?.handoffNotBefore===(input.notBefore??null):target?.place===job.id;
     if(!target||target.venue!=='handoff'||!same||target.agent!==recipient||target.project!==cv.project||target.member!==cv.member||target.direct!==cv.direct)throw new OperationError('conflict','Handoff scope changed');
     return {conversation:target.id,item:existing.id};
    }

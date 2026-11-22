@@ -1,5 +1,6 @@
-import { defaultFieldResolver, type GraphQLSchema } from 'graphql/index.js';
+import { defaultFieldResolver, type GraphQLFieldResolver, type GraphQLSchema } from 'graphql/index.js';
 import { mapReadFields } from './query-fields.js';
+import type { Viewer } from '../../policy.js';
 
 type Tracked<T> = T extends { then: (...args: never[]) => unknown } ? Promise<Awaited<T>> : T;
 
@@ -26,10 +27,15 @@ export class ExecutionDrain {
   schema(source: GraphQLSchema, admitted: () => boolean) {
     // Each transport selection owns its resolver closures, reused for live
     // reruns. No ambient scopes or mutation of a retained schema.
-    return mapReadFields(source, field => ({ ...field, resolve: (...values) => {
-      if (!admitted()) throw new Error('Data access ended');
-      return this.run(() => (field.resolve ?? defaultFieldResolver)(...values));
-    } }));
+    const track = (resolve: GraphQLFieldResolver<unknown, { viewer: Viewer }>): typeof resolve =>
+      (...values) => {
+        if (!admitted()) throw new Error('Data access ended');
+        return this.run(() => resolve(...values));
+      };
+    // Most generated fields use the same resolver. Retain only the function
+    // to call, so a live selection can release each intermediate field config.
+    const readProperty = track(defaultFieldResolver);
+    return mapReadFields(source, field => ({ ...field, resolve: field.resolve ? track(field.resolve) : readProperty }));
   }
 }
 

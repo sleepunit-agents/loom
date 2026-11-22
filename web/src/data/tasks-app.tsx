@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useContext } from 'react';
+import { DeskMember } from '../signin/desk-member';
 import Tasks, { type TasksAppProps } from '../pieces/tasks';
 import { useDataQuery } from './graphql';
 import { useTaskCommandSubmitter } from './task-command';
@@ -14,17 +15,7 @@ export default function TasksScreen(props: TasksAppProps = {}) {
   const submit = useTaskCommandSubmitter();
   const choices = useDataQuery<Choices>(taskChoicesQuery);
   const names = useAgentNames(), zone = useHouseholdZone();
-  const [member, setMember] = useState<string>();
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch('/auth/session', { credentials: 'same-origin', signal: controller.signal }).then(async response => {
-      const data: unknown = await response.json();
-      if (!controller.signal.aborted && data && typeof data === 'object' && 'viewer' in data
-        && data.viewer && typeof data.viewer === 'object' && 'kind' in data.viewer && data.viewer.kind === 'member'
-        && 'id' in data.viewer && typeof data.viewer.id === 'string') setMember(data.viewer.id);
-    }).catch(() => {});
-    return () => controller.abort();
-  }, []);
+  const member = useContext(DeskMember);
   const data = choices.status === 'live' ? choices.data : undefined;
   const agents = liveAgents(data?.agents ?? []);
   return <Tasks {...props} liveAgentIds={new Set(agents.map(agent => agent.id))} questionFor={props.questionFor ?? member}

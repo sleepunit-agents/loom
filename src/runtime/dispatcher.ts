@@ -1,7 +1,7 @@
 /** Trusted control plane for a runner door. The outside door must derive box
  * from the authenticated runner; installed callers use this directly. Nothing
  * here executes a process, opens credentials or invents another transport. */
-import { jobMatchesConversation, reviewThread, reviewRequest, REVIEW_BRIEF_EXPIRED, REVIEW_ROLE_CHANGED } from '../core/conversations/review-place.js';
+import { jobMatchesConversation, reviewThread, reviewRequest, reviewBriefExpired, REVIEW_ROLE_CHANGED } from '../core/conversations/review-place.js';
 import { handoffDeadline } from '../core/conversations/handoff-words.js';
 import { commsKeepDays } from '../core/data/comms-days.js';
 import {eligibleModels,roleRevision,type WorkRole} from './work-roles.js';
@@ -105,12 +105,12 @@ export class Dispatcher {
         // And the word the job works on goes with it: on anybody else's the body is held to loom's tools (policy.ts, loomToolsOnly).
         const cv=job.conversation?this.db.select().from(conversations).where(eq(conversations.id,job.conversation)).get():undefined;
         const review=cv && reviewRequest(cv);
-        if (cv?.handoffNotBefore && review) {
-          if (Date.parse(cv.handoffNotBefore) > Date.parse(at)) continue;
+        if (cv && review) {
+          if (cv.handoffNotBefore && Date.parse(cv.handoffNotBefore) > Date.parse(at)) continue;
           const brief = this.db.select({at:inbox.at,words:inbox.words}).from(inbox).where(and(
             eq(inbox.conversation,cv.id),eq(inbox.source,'handoff'),eq(inbox.sourceId,JSON.stringify([review.parent,review.clientId])))).get();
           if (!brief || handoffDeadline(brief,commsKeepDays(this.db)) <= Date.parse(at)) {
-            if (this.jobs.unplaceable(job.id,REVIEW_BRIEF_EXPIRED)) ended?.push(job.id);
+            if (this.jobs.unplaceable(job.id,reviewBriefExpired(cv))) ended?.push(job.id);
             continue;
           }
         }

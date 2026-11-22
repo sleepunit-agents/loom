@@ -7,7 +7,11 @@
     {
       "id": "desk-001",
       "promise": "The desk is loom on a desktop screen. App tiles side by side, the agents on a rail, a ticker along the top and a dock along the bottom.",
-      "source": "docs/how-it-works/site/desk.html"
+      "source": "docs/how-it-works/site/desk.html",
+      "probe": {
+        "kind": "action",
+        "action": "deskShell"
+      }
     },
     {
       "id": "desk-002",
@@ -30,7 +34,11 @@
     {
       "id": "desk-004",
       "promise": "Shows each agent's face, its state and what it is doing.",
-      "source": "docs/how-it-works/site/desk.html"
+      "source": "docs/how-it-works/site/desk.html",
+      "probe": {
+        "kind": "action",
+        "action": "deskJobs"
+      }
     },
     {
       "id": "desk-005",
@@ -53,17 +61,29 @@
     {
       "id": "desk-007",
       "promise": "A rail card lists the agent's current jobs.",
-      "source": "docs/how-it-works/site/desk.html#con-h"
+      "source": "docs/how-it-works/site/desk.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "deskJobs"
+      }
     },
     {
       "id": "desk-008",
       "promise": "The count comes from the items waiting in your inbox.",
-      "source": "docs/how-it-works/site/desk.html#con-h"
+      "source": "docs/how-it-works/site/desk.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "deskWaiting"
+      }
     },
     {
       "id": "desk-009",
       "promise": "The ticker reads counts from each part, such as tasks in progress and ready.",
-      "source": "docs/how-it-works/site/desk.html#con-h"
+      "source": "docs/how-it-works/site/desk.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "deskTicker"
+      }
     },
     {
       "id": "desk-010",
@@ -77,7 +97,11 @@
     {
       "id": "desk-011",
       "promise": "Each member keeps their own look and switches.",
-      "source": "docs/how-it-works/site/desk.html#con-h"
+      "source": "docs/how-it-works/site/desk.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "memberAppearance"
+      }
     },
     {
       "id": "desk-012",
@@ -119,7 +143,11 @@
     {
       "id": "desk-017",
       "promise": "b Your own look. The look, the desk background and the switches belong to each member.",
-      "source": "docs/how-it-works/site/desk.html#see-h"
+      "source": "docs/how-it-works/site/desk.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "memberAppearance"
+      }
     },
     {
       "id": "desk-018",

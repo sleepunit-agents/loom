@@ -59,6 +59,26 @@ it('multiplexes generated selections and delivers only changed paths over graphq
   expect(changed.payload.data.observe).toEqual({ revision: 2, patches: [{ path: ['tasks', 0, 'title'], removed: false, value: 'Fits' }] });
 });
 
+it('uses the current projection for each selection opened on the same socket', async () => {
+  const f = await setup(), ws = await f.open();
+  const projection = (word: string) => new GraphQLSchema({query: new GraphQLObjectType({
+    name: 'Query', fields: {word: {type: GraphQLString, resolve: () => word}}
+  })});
+  const observe = (id: string) => read(ws, () => ws.send(JSON.stringify({
+    ...selection, id, payload: {...selection.payload, variables: {query: '{ word }'}}
+  })));
+  const first = projection('first');
+  f.setSchema(() => first);
+  for (const id of ['one', 'two']) {
+    const frame = await observe(id);
+    expect(frame.payload.data.observe.patches[0].value).toEqual({word: 'first'});
+  }
+  const replacement = projection('second');
+  f.setSchema(() => replacement);
+  const frame = await observe('three');
+  expect(frame.payload.data.observe.patches[0].value).toEqual({word: 'second'});
+});
+
 it('closes an idle connection at token expiry using the owned clock', async () => {
   const f = await setup(), ws = await f.open();
   const closed = once(ws, 'close'); f.clock.advance(1000);

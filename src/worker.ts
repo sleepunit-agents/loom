@@ -2,7 +2,24 @@
 /** Standalone work-plane executable. Never imported by loom's server. */
 import { readFile } from 'node:fs/promises';
 import { workerProgram } from './runtime/worker-program.js';
-process.exitCode = await workerProgram({ args: process.argv.slice(2),
+const mode=process.argv[2];
+if(mode==='request-join'||mode==='renew-join'){
+  const [address,name,directory,template,...rest]=process.argv.slice(3);
+  if(!address||!name||!directory||rest.length){
+    process.stderr.write('Usage: loom-worker <request-join|renew-join> <loom-url> <machine-name> <private-directory> [worker-template.json]\n');
+    process.exitCode=2;
+  }else{
+    try{
+      const {requestWorkerJoin}=await import('./runtime/worker-join.js');
+      const result=await requestWorkerJoin(address,name,directory,template,mode==='renew-join');
+      process.stdout.write(JSON.stringify(result)+'\n');
+      if(result.state==='blocked'||result.state==='expired')process.exitCode=1;
+    }catch{
+      process.stderr.write('Worker join unavailable. Check the address and private join directory before retrying.\n');
+      process.exitCode=1;
+    }
+  }
+}else process.exitCode = await workerProgram({ args: process.argv.slice(2),
   read: path => readFile(path, 'utf8'),
   on: (name, stop) => { process.on(name, stop); },
   off: (name, stop) => { process.off(name, stop); },

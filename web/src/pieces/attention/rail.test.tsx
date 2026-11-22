@@ -63,6 +63,11 @@ it('folds measured overflow, keeps current working state before asks/unread, and
   expect(tree.root.findByProps({className:'desk-agent-rail'}).props['data-fold']).toBe(true);
   expect(tree.root.findByProps({className:'desk-rail-card'}).props['data-agent']).toBe('art');
   expect(tree.root.findByProps({className:'desk-rail-compact'}).props['data-agent']).toBe('mark');
+  const dot=()=>tree.root.findByProps({className:'desk-rail-compact'}).findByProps({className:'desk-rail-dot'});
+  await publish('generated.jobs','live',[{id:'terminal',agent:'mark',kind:'terminal'}]);
+  expect(dot().props).toMatchObject({'data-state':'working','aria-label':'Working'});
+  await publish('generated.jobs','live',[]);
+  expect(dot().props['aria-label']).toBe('Quiet');
   // Current working state takes priority over Art's ask.
   await publish('attention.agent','live',[{id:'mark',agent:'mark',state:'working',work:'In flight',changedAt:2}]);
   expect(tree.root.findByProps({className:'desk-rail-card'}).props['data-agent']).toBe('mark');

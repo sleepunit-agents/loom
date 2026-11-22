@@ -3,7 +3,8 @@ import type { DataDatabase } from '../data/database.js';
 import { conversations, jobs, threads } from '../data/schema.js';
 
 export const REVIEW_ROLE_CHANGED = 'The requested work role changed or was removed.';
-export const REVIEW_BRIEF_EXPIRED = 'The scheduled handoff brief expired.';
+export const reviewBriefExpired = (cv: {handoffNotBefore: string | null}) =>
+  cv.handoffNotBefore ? 'The scheduled handoff brief expired.' : 'The handoff brief expired.';
 
 type ConversationScope = Pick<typeof conversations.$inferSelect, 'agent' | 'member' | 'project'>;
 

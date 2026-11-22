@@ -34,7 +34,11 @@
     {
       "id": "conversations-004",
       "promise": "One job at a time At most one job works in a conversation.",
-      "source": "docs/how-it-works/site/conversations.html"
+      "source": "docs/how-it-works/site/conversations.html",
+      "probe": {
+        "kind": "action",
+        "action": "conversationSingleJob"
+      }
     },
     {
       "id": "conversations-005",
@@ -71,7 +75,11 @@
     {
       "id": "conversations-008",
       "promise": "A trigger from Tempo drops an item in the agent's inbox, such as a lane that runs every night.",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "conversationTempoDelivery"
+      }
     },
     {
       "id": "conversations-009",
@@ -132,7 +140,11 @@
     {
       "id": "conversations-017",
       "promise": "A thread keeps the pull requests it mentions and shows them as cards.thread_refs.ref",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "conversationChangeCard"
+      }
     },
     {
       "id": "conversations-018",
@@ -204,8 +216,17 @@
       "promise": "e Words. Message words are kept for the household's keep time, 14 days at most, then removed. They are encrypted where they are stored.",
       "source": "docs/how-it-works/site/conversations.html#see-h",
       "probe": {
-        "kind": "action",
-        "action": "conversationRetention"
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "conversationRetention"
+          },
+          {
+            "kind": "action",
+            "action": "conversationShortRetention"
+          }
+        ]
       }
     },
     {

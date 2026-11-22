@@ -62,6 +62,28 @@ export async function deskActions({page,out,inventory}) {
   await launch('Tasks');await launch('Inbox');
   await page.waitForFunction(()=>{const a=document.querySelector('[aria-label="Tasks tile"]')?.getBoundingClientRect(),b=document.querySelector('[aria-label="Inbox tile"]')?.getBoundingClientRect();return a&&b&&a.right<=b.left;});
   const wide=await snapshot();
+  await attempt('deskShell',async()=>{
+   const rail=page.getByRole('complementary',{name:'Your agents',exact:true});
+   const agents=rail.getByRole('region',{name:/ rail card$/});
+   await agents.first().waitFor();
+   const ticker=page.locator('.loom-tick');
+   await ticker.getByText('live',{exact:true}).first().waitFor();
+   const dock=page.locator('.next-dock');
+   await dock.getByRole('button',{name:'Open Tasks',exact:true}).waitFor();
+   const [railBounds,tickerBounds,dockBounds]=await Promise.all([rail.boundingBox(),ticker.boundingBox(),dock.boundingBox()]);
+   const viewport=page.viewportSize();
+   for(const box of [railBounds,tickerBounds,dockBounds]){
+    check(box&&box.width>0&&box.height>0&&box.x>=0&&box.y>=0&&box.x+box.width<=viewport.width+1&&box.y+box.height<=viewport.height+1,'A desk control is outside the viewport');
+   }
+   check(wide.length===2,'Expected two visible apps');
+   for(const tile of wide){
+    check(tickerBounds.y+tickerBounds.height<=tile.y+1,'Ticker overlaps '+tile.name);
+    check(dockBounds.y>=tile.y+tile.h-1,'Dock overlaps '+tile.name);
+    check(railBounds.x>=tile.x+tile.w-1&&railBounds.y<tile.y+tile.h&&railBounds.y+railBounds.height>tile.y,'Agent rail is not beside '+tile.name);
+   }
+   const agentCards=await agents.evaluateAll(nodes=>nodes.map(node=>node.getAttribute('aria-label')));
+   return{reason:'Two open apps sit side by side between the live ticker and the dock, beside the populated agent rail.',tiles:wide,agentCards,rail:railBounds,ticker:tickerBounds,dock:dockBounds};
+  });
   await page.setViewportSize({width:1100,height:1500});
   await page.waitForFunction(()=>{const a=document.querySelector('[aria-label="Tasks tile"]')?.getBoundingClientRect(),b=document.querySelector('[aria-label="Inbox tile"]')?.getBoundingClientRect();return a&&b&&a.bottom<=b.top;});
   const tall=await snapshot();
@@ -80,6 +102,7 @@ export async function deskActions({page,out,inventory}) {
   const evicted=await snapshot();phase='restore evicted Tasks';await page.locator('.next-dock').getByRole('button',{name:'Open Tasks',exact:true}).click();await tile('Tasks').waitFor();
   return{reason:'Wide and tall tile bounds filled the desk without overlap; promotion, minimize/restore, close, and least-recently-used eviction worked.',wide,tall,promoted,minimizedRestored:true,closedRemoved:true,leastRecentlyUsed:'Tasks',evicted};
  });
+ if(!evidence.deskShell)evidence.deskShell={ok:false,error:evidence.deskLayout?.error,phase:evidence.deskLayout?.phase,screenshot:evidence.deskLayout?.screenshot};
  if(!evidence.deskGeometry)evidence.deskGeometry={ok:false,error:evidence.deskLayout?.error,phase:evidence.deskLayout?.phase,screenshot:evidence.deskLayout?.screenshot};
  await page.setViewportSize({width:1600,height:1000});
  return evidence;
