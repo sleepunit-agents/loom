@@ -1,6 +1,6 @@
-/** Read a single configured path in this helper process. The parent runs only this fixed script
- * with its own Node binary, without a shell, and both sides validate the one path argument. */
-import { closeSync, constants, fstatSync, lstatSync, openSync, statfsSync, type BigIntStats } from 'node:fs';
+/** Read machine memory or a single configured path in this helper process. The parent runs only this fixed script
+ * with its own Node binary, without a shell, and both sides validate the one argument. */
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, statfsSync, type BigIntStats } from 'node:fs';
 import { diskNumbers, watchedPath } from './machine-check.js';
 
 /** Filesystems that are no disk: kept in memory, made up by the kernel, or an image mounted to be read
@@ -53,5 +53,26 @@ function readDisk(path: string) {
   return { unknown: true };
 }
 
+function readMemory() {
+  let fd: number | undefined;
+  try {
+    fd = openSync('/proc/meminfo', constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    if (!fstatSync(fd).isFile()) return { unknown: true };
+    const buffer = Buffer.alloc(8192);
+    const length = readSync(fd, buffer);
+    const info = buffer.toString('ascii', 0, length);
+    const sizeBytes = Number(/^MemTotal:[ \t]+(\d+) kB$/m.exec(info)?.[1]) * 1024;
+    const freeBytes = Number(/^MemAvailable:[ \t]+(\d+) kB$/m.exec(info)?.[1]) * 1024;
+    if (diskNumbers(sizeBytes, freeBytes)) return { sizeBytes, freeBytes };
+  } catch { /* Missing or unreadable kernel estimate. */ }
+  finally { if (fd !== undefined) closeSync(fd); }
+  return { unknown: true };
+}
+
 const [path, ...extra] = process.argv.slice(2);
-process.stdout.write(JSON.stringify(path && !extra.length && watchedPath(path) ? readDisk(path) : { unknown: true }) + '\n');
+let result: ReturnType<typeof readDisk> = { unknown: true };
+if (!extra.length && path) {
+  if (path === 'memory') result = readMemory();
+  else if (watchedPath(path)) result = readDisk(path);
+}
+process.stdout.write(JSON.stringify(result) + '\n');

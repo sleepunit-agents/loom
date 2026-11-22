@@ -1,9 +1,8 @@
 /** The worker reports memory, container runtime availability, and every configured disk path.
- * For each disk path it runs this program's own adjacent machine-disk-helper.js with process.execPath
- * and no shell. Its only script argument is the configured path, validated here and in the helper.
+ * For memory and each disk path it runs the adjacent machine-disk-helper.js with process.execPath
+ * and no shell. Its only argument is the fixed word memory or a path validated here and in the helper.
  * This check runs no other program. loom evaluates each reading and decides what to say. */
 import { spawn } from 'node:child_process';
-import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 /** The kinds of thing read. The list itself is the column's (`box_readings.kind`); the worker loads no
@@ -52,8 +51,8 @@ export function parseDiskResult(output: string): DiskResult {
 }
 
 const helper = fileURLToPath(new URL('./machine-disk-helper.js', import.meta.url));
-export function startDiskHelper(path: string, start = spawn) {
-  if (!watchedPath(path)) throw new Error('Invalid watched path');
+export function startMachineHelper(path: string, start = spawn) {
+  if (path !== 'memory' && !watchedPath(path)) throw new Error('Invalid watched path');
   return start(process.execPath, [helper, path], { shell: false, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, NODE_OPTIONS: undefined } });
 }
 
@@ -61,18 +60,8 @@ const SAID = {
   link: 'Worker machine check: a watched path is not a directory reached without a link, and is not read\n',
   name: 'Worker machine check: a directory to watch has a name loom does not take, and is not watched\n',
   'state-path': 'Worker machine check: the state directory path is outside the watched path bounds\n',
-  start: 'Worker machine check: a disk helper could not be started\n',
+  start: 'Worker machine check: a machine helper could not be started\n',
 } as const;
-
-/** Read only the kernel's estimate of memory available for new work. */
-export async function readMemory(): Promise<MachineReading> {
-  const sizeBytes = os.totalmem();
-  const kernel = os as typeof os & { availableMemory?: () => number };
-  const available = kernel.availableMemory?.();
-  const freeBytes = available === undefined ? undefined : Math.min(available, sizeBytes);
-  return freeBytes !== undefined && diskNumbers(sizeBytes, freeBytes)
-    ? { kind: 'memory', sizeBytes, freeBytes } : { kind: 'memory', unknown: true };
-}
 
 export function machineReader(input: {
   paths: readonly string[];
@@ -81,10 +70,10 @@ export function machineReader(input: {
   timeoutMs?: number;
   signal?: AbortSignal;
   say?: (line: string) => void;
-  start?: typeof startDiskHelper;
+  start?: typeof startMachineHelper;
 }) {
   const timeoutMs = input.timeoutMs ?? MACHINE_READ_MS;
-  const live = new Map<string, { child: ReturnType<typeof startDiskHelper>; stop: () => void }>();
+  const live = new Map<string, { child: ReturnType<typeof startMachineHelper>; stop: () => void }>();
   const said = new Set<keyof typeof SAID>();
   const sayOnce = (why: keyof typeof SAID) => {
     if (!said.has(why)) { said.add(why); input.say?.(SAID[why]); }
@@ -101,11 +90,11 @@ export function machineReader(input: {
     return false;
   }).slice(0, WATCHED_PATHS_MAX - Number(invalidStatePath));
 
-  function disk(path: string): Promise<DiskResult> {
+  function sample(path: string): Promise<DiskResult> {
     if (input.signal?.aborted || live.has(path)) return Promise.resolve(unknown);
     return new Promise(resolve => {
-      let child: ReturnType<typeof startDiskHelper>;
-      try { child = (input.start ?? startDiskHelper)(path); }
+      let child: ReturnType<typeof startMachineHelper>;
+      try { child = (input.start ?? startMachineHelper)(path); }
       catch { sayOnce('start'); resolve(unknown); return; }
       child.unref();
       const pipe = child.stdout!;
@@ -145,13 +134,13 @@ export function machineReader(input: {
   }, { once: true });
 
   return async (): Promise<MachineReading[]> => {
-    const memory = readMemory();
     const disks = Promise.all(paths.map(async (thing): Promise<MachineReading> => {
-      const result = await disk(thing);
+      const result = await sample(thing);
       if ('sizeBytes' in result) return { kind: 'disk', thing, ...result };
       if (result.reason) sayOnce(result.reason);
       return { kind: 'disk', thing, unknown: true };
     }));
+    const memory = sample('memory');
     const readings: MachineReading[] = [];
     if (input.engine) {
       try {
@@ -163,6 +152,8 @@ export function machineReader(input: {
     }
     readings.push(...await disks);
     if (invalidStatePath) readings.push({ kind: 'disk', unknown: true, reason: 'state-path' });
-    return [...readings, await memory];
+    const result = await memory;
+    readings.push('sizeBytes' in result ? { kind: 'memory', ...result } : { kind: 'memory', unknown: true });
+    return readings;
   };
 }
