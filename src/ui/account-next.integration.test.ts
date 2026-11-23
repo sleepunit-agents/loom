@@ -31,7 +31,7 @@ it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live
   const handlers:Record<string,(event:unknown)=>void>={};const worker=await (await fetch(app.url+'/sw.js')).text();
   runInNewContext(worker,{URL,location:{origin:app.url},self:{addEventListener:(name:string,handler:(event:unknown)=>void)=>{handlers[name]=handler;},registration:{showNotification:async(title:string,options:{body:string;data:{url:string}})=>{delivered.push({title,body:options.body,url:options.data.url});}}}});
   receive=async payload=>{let work:Promise<void>|undefined;handlers.push({data:{json:()=>JSON.parse(payload)},waitUntil:(pending:Promise<void>)=>{work=pending;}});if(!work)throw Error('Served worker did not handle push');await work;};
-  const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},userAgent:'Fixture notification browser'});
+  const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},userAgent:'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/140.0.0.0 Mobile Safari/537.36'});
   await context.addInitScript(()=>{Object.defineProperty(Notification,'requestPermission',{value:async()=> 'granted'});Object.defineProperty(navigator.serviceWorker,'ready',{value:Promise.resolve({pushManager:{getSubscription:async()=>null,subscribe:async()=>({endpoint:'https://fcm.googleapis.com/browser-proof',toJSON:()=>({keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}})})}})});});
   await context.addCookies([{name:'loom_ui',value:cookie,url:app.url}]);
   const a=await context.newPage(),b=await context.newPage(),errors:string[]=[];let legacy=0;
@@ -43,14 +43,14 @@ it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live
   const tablet=a.getByRole('heading',{name:'Kitchen tablet',exact:true}).locator('..');
   await tablet.getByRole('button',{name:'Sign out browser',exact:true}).click();
   await expect.poll(()=>b.getByRole('heading',{name:'Kitchen tablet',exact:true}).count()).toBe(0);expect(db.select().from(sessions).all()).toHaveLength(1);
-  await a.getByRole('button',{name:'Make sign-in link',exact:true}).click();await expect.poll(()=>a.getByRole('status').last().textContent()).toContain('/login/');
+  await a.getByRole('button',{name:'Make sign-in link',exact:true}).click();await a.locator('[data-signin-link]').waitFor();expect(await a.locator('[data-signin-link]').evaluate(el=>{const link=new URL(el.textContent!);return link.origin===location.origin&&/^\/login\/[a-f0-9]{64}$/.test(link.pathname);})).toBe(true);
   await a.getByRole('button',{name:'Hide sign-in link',exact:true}).click();await a.locator('[data-signin-link]').waitFor({state:'hidden'});
   await a.getByRole('button',{name:'Enable notifications on this browser',exact:true}).click();
-  await expect.poll(()=>b.getByRole('heading',{name:'Fixture notification browser',exact:true}).count()).toBe(1);
+  await expect.poll(()=>b.getByRole('heading',{name:'Chrome on Android',exact:true}).count()).toBe(1);
   app.writes.run(()=>app.services.conversations.send({toKind:'person',to:'sam',member:'sam',source:'notice',fromKind:'unknown',words:'PRIVATE NOTIFICATION PROOF WORDS'}));clock.advance(5000);
   await expect.poll(()=>delivered.length).toBe(1);expect(settled.length).toBe(1);expect(pushErrors).toEqual([]);expect(pushes).toEqual([{endpoint:'https://fcm.googleapis.com/browser-proof',payload:JSON.stringify({title:'loom',body:'',tag:'loom-inbox',url:'/p/inbox-preview'})}]);expect(delivered).toEqual([{title:'loom',body:'',url:app.url+'/p/inbox-preview'}]);
   await b.getByRole('button',{name:'Remove notification device',exact:true}).click();
-  await expect.poll(()=>a.getByRole('heading',{name:'Fixture notification browser',exact:true}).count()).toBe(0);
+  await expect.poll(()=>a.getByRole('heading',{name:'Chrome on Android',exact:true}).count()).toBe(0);
   app.writes.run(()=>app.services.conversations.send({toKind:'person',to:'sam',member:'sam',source:'notice',fromKind:'unknown',words:'PRIVATE AFTER DISABLE'}));clock.advance(5000);await app.services.notifications!.publish('sam',[]);expect(settled.length).toBe(2);expect(pushErrors).toEqual([]);expect(pushes).toHaveLength(1);expect(delivered).toHaveLength(1);
   const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});
   await a.screenshot({path:join(shots,'account-shared.png'),animations:'disabled',mask:[a.locator('[data-signin-link]')]});
@@ -99,6 +99,7 @@ it.runIf(enabled)('registers and uses a real browser passkey against the shared 
   expect(db.select().from(signinLinks).all()).toEqual([]);expect(db.select().from(sessions).all()).toMatchObject([{token:hash(raw),via:'link',isAgent:false}]);
   expect((await context.request.post(origin+link.path)).status()).toBe(401);
   await page.goto(origin+'/p/account-preview');
+  await page.locator('.loom-desk-boot').waitFor({state:'hidden'});
   const form=page.getByRole('form',{name:'Add a passkey',exact:true});await form.getByLabel('Passkey name',{exact:true}).fill('Virtual laptop');await form.getByRole('button',{name:'Add a passkey',exact:true}).click();
   await page.getByRole('heading',{name:'Virtual laptop',exact:true}).waitFor();
   expect(db.select().from(passkeys).all()).toMatchObject([{label:'Virtual laptop',token:hash(raw)}]);

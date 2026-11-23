@@ -191,6 +191,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('Lists your signed-in browsers and passkeys, and lets you end them.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':'signinPasskeyControls'},{'kind':'action','action':'signinBrowsers'}]}
    if row['promise'].startswith("A person's token names the member."):row['probe']={'kind':'action','action':'signinMember'}
    if row['promise'].startswith('A person gets a session with a passkey or by opening a one-time sign-in link.'):row['probe']={'kind':'action','action':'signinCounterRules'}
+   if row['promise'].startswith(("A person's browser holds a session", 'b Owners.', 'c Never the token.')):row['probe']={'kind':'action','action':'signinDoor'}
    if row['promise'].startswith('a Your own.'):row['probe']={'kind':'action','action':'signinOwnSettings'}
  if f.stem=='tasks':
   for row in rows:

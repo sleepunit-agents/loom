@@ -25,6 +25,7 @@ import {bridgeMail} from './rebuild-bridge-mail.mjs';
 import {bridgeSettingsAction} from './rebuild-bridge-actions.mjs';
 import {taskStructure} from './rebuild-task-structure.mjs';
 import {maskCredentialScreenshots} from './rebuild-credential-evidence.mjs';
+import {signinDoorEvidence} from './rebuild-signin-door.mjs';
 import {accessAction} from './rebuild-access-actions.mjs';
 
 import {taskActions} from './rebuild-task-actions.mjs';
@@ -354,6 +355,9 @@ export async function* walkthroughSteps(output) {
    report.actions.memoryRevisions=await memoryRevisionEvidence();
   } catch(error) { report.actions.memoryRevisions={ok:false,error:String(error)}; }
   save();yield {phase:'memory-revisions',actions:safeReport(report.actions)};
+  phase='sign-in door';
+  report.actions.signinDoor=await signinDoorEvidence();
+  save();yield {phase:'signin-door',actions:safeReport(report.actions)};
   phase='migration measurements';
   try {
    // SQLite upgrades are synchronous. Keep the coordinator available for desk heartbeats.
