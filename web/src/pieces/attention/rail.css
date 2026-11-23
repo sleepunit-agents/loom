@@ -32,4 +32,4 @@
 .desk-rail-card[data-state=waiting]{--portrait-state:var(--v-yellow)}
 .desk-rail-agent>.desk-agent-face{outline:1px solid var(--portrait-state,var(--v-border));outline-offset:2px;border-radius:20%}
 @keyframes desk-portrait-pulse{50%{outline-color:transparent}}
-@media(prefers-reduced-motion:no-preference){.desk-rail-card:is([data-state=working],[data-state=waiting]) .desk-rail-agent>.desk-agent-face{animation:desk-portrait-pulse 3.2s ease-in-out infinite}}
+@media(prefers-reduced-motion:no-preference){:root:not([data-motion=reduce]) .desk-rail-card:is([data-state=working],[data-state=waiting]) .desk-rail-agent>.desk-agent-face{animation:desk-portrait-pulse 3.2s ease-in-out infinite}}

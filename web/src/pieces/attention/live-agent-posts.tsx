@@ -47,16 +47,18 @@ export function LiveAgentFeed({ agent, compact = false, go, onChange, showEmpty 
 export function LiveAgentHistory({ agent, thread, go }: {
   agent: string; thread: string; go(path: string): void;
 }) {
+  const previews = useDataQuery<{agentActivityFeed: AgentPostPreview[]}>(agentFeedQuery, {agent,limit:5,compact:false});
+  const title = previews.status === 'live' ? previews.data?.agentActivityFeed?.find(row=>row.thread===thread)?.title : undefined;
   const [cursors,setCursors] = useState(['0']);
   const after = cursors[cursors.length - 1];
   const query = useDataQuery<{agentActivityHistory: (AgentPost & {source: string})[]}>(agentHistoryQuery, {agent,thread,after,limit:pageSize+1});
   const posts = query.status === 'live' ? query.data?.agentActivityHistory : undefined;
   const now = usePostClock(!!posts?.length);
-  return <Section label="Activity thread">
+  return <Section label={title || "Activity thread"}>
     <Button variant="ghost" onClick={()=>go(agentPath(agent))}>Back to agent</Button>
     {query.status === 'loading' ? <Loading label="Opening activity…"/> :
       !posts?.length ? <Body quiet>Activity unavailable.</Body> :
-      <AgentPostHistory title="Activity posts" posts={posts.slice(0,pageSize)} now={now} go={go}/>}
+      <AgentPostHistory continued={after!=='0'} title="Activity posts" posts={posts.slice(0,pageSize)} now={now} go={go}/>}
     {cursors.length>1 && <Button variant="ghost" onClick={()=>setCursors(c=>c.slice(0,-1))}>Earlier posts</Button>}
     {posts && posts.length>pageSize && <Button variant="ghost" onClick={()=>setCursors([...cursors,posts[pageSize-1].id])}>Later posts</Button>}
   </Section>;

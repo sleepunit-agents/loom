@@ -114,3 +114,7 @@
   .desk-solo{overflow:auto;overscroll-behavior:contain;grid-template-rows:max-content max-content}
   .desk-solo-columns,.desk-solo-columns>section{overflow:visible}
 }
+.desk-agent-app{container-type:inline-size}
+.desk-agent-columns{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:clamp(1rem,3cqw,3rem);align-items:start}
+.desk-agent-context{display:grid;min-width:0;gap:1rem}
+@container(max-width:720px){.desk-agent-columns{grid-template-columns:minmax(0,1fr)}}

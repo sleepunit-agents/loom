@@ -40,16 +40,22 @@ function AgentReader({ agent, selectedThread, names, go }: { agent: Agent; selec
   return <Reader aria-label={`${agent.name} agent window`} className="desk-agent-page">
     <div className="desk-agent-who"><AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(shownState(status?.state,count),!!needs)} size={96}/>
       <Meta>{agentStateLine(status?.state,count,needs)}</Meta></div>
-    {selectedThread
-      ? <LiveAgentHistory key={selectedThread} agent={agent.id} thread={selectedThread} go={go}/>
-      : <LiveAgentFeed agent={agent.id} go={go}/>}
-    <Section label="Doing now"><Doing doing={doing} name={agent.name} agent={agent.id} names={names} go={go}/></Section>
+    <div className="desk-agent-columns">
+      <div className="desk-agent-feed-column">
+        {selectedThread
+          ? <LiveAgentHistory key={selectedThread} agent={agent.id} thread={selectedThread} go={go}/>
+          : <LiveAgentFeed agent={agent.id} go={go} showEmpty/>}
+      </div>
+      <div className="desk-agent-context">
+        <Section label="Doing now"><Doing doing={doing} name={agent.name} agent={agent.id} names={names} go={go}/></Section>
+        <LastAnswerSection talk={talk} go={go}/>
+        <ConversationsSection talk={talk} name={agent.name} unread={summary?.unread} firstUnread={summary?.first?.thread} go={go}/>
+      </div>
+    </div>
     {profiles.status==='live'&&(profile?.description||profile?.requestedAt)&&<Section label="About">{profile.description&&<Body>{profile.description}</Body>}{profile.requestedAt&&<Body quiet>A description has been asked for.</Body>}</Section>}
     {statuses.status==='live'&&status?.work&&<Section label="Its own report"><Body>{status.work}</Body><Meta><time dateTime={new Date(status.changedAt).toISOString()}>{stamp(status.changedAt, zone)}</time></Meta></Section>}
     <Section label="Needs you">{waiting.status==='loading'?<Body quiet>Checking…</Body>:waiting.status!=='live'?<Body quiet>Can’t tell what is waiting on you right now.</Body>:needs?<><List label={`${agent.name} first waiting item`}><WaitingRow agent={agent.id} go={go}/></List>{needs>1&&<LinkButton onClick={()=>go(waitingPath())}>{`+${needs-1} more in Inbox`}</LinkButton>}</>:<Body quiet>Nothing.</Body>}</Section>
     <AgentJobs agent={agent.id} name={agent.name}/>
-    <LastAnswerSection talk={talk} go={go}/>
-    <ConversationsSection talk={talk} name={agent.name} unread={summary?.unread} firstUnread={summary?.first?.thread} go={go}/>
     <LastSteps agent={agent.id} name={agent.name} activity={activity} go={go}/>
     <Section label="Explore"><List label={`${agent.name} apps`}>{links.map(link=><Row key={link.title} title={link.title} meta={link.meta} onClick={()=>go(link.href)}/>)}</List></Section>
   </Reader>;

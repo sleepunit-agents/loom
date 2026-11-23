@@ -31,14 +31,16 @@ function excerpt(words: string, limit: number) {
 
 function PostWork({ post, go }: { post: AgentPost; go?(href: string): void }) {
   if (!post.work?.length) return null;
-  return <details className="desk-agent-post-receipts"><summary>Show the work</summary>
+  return <details className="desk-agent-post-receipts">
+    <summary>Show the work</summary>
     <ul className="desk-agent-post-work" aria-label="Related work">
-    {post.work.map(link => <li key={link.id}><a href={link.href} onClick={event=>{
-      if (!go || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-      event.preventDefault();
-      go(link.href);
-    }}>{link.title} · {link.state}</a></li>)}
-  </ul></details>;
+      {post.work.map(link => <li key={link.id}><a href={link.href} onClick={event=>{
+        if (!go || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        go(link.href);
+      }}>{link.title} · {link.state}</a></li>)}
+    </ul>
+  </details>;
 }
 
 /** Both desk surfaces receive the viewer's authorized thread previews, newest post first. */
@@ -67,27 +69,28 @@ export function AgentPostFeed({ threads, compact = false, open, go, now }: {
     {shown.map(({ thread, title, latest, parent }) =>
       <li key={thread}>
         <button type="button" onClick={() => open(thread)}>
-          {compact && <span className="desk-agent-post-words">{excerpt(latest.words, 160)}</span>}
+          {compact && <span className="desk-agent-post-words" data-post-id={latest.id}>{excerpt(latest.words, 160)}</span>}
           <span className="desk-agent-post-heading">
             <strong>{title}</strong>
             <time dateTime={latest.at}>{age(latest.at, now)}</time>
           </span>
           {!compact && parent && <small className="desk-agent-post-parent">{excerpt(parent.words, 64)}</small>}
-          {!compact && <span className="desk-agent-post-words">{latest.words}</span>}
+          {!compact && <span className="desk-agent-post-words" data-post-id={latest.id}>{latest.words}</span>}
         </button>
         {!compact && <PostWork post={latest} go={go}/>}
       </li>)}
   </ul>;
 }
 
-export function AgentPostHistory({ title, posts, now, go }: {
+export function AgentPostHistory({ title, posts, now, go, continued = false }: {
   title: string;
   posts: readonly AgentPost[];
+  continued?: boolean;
   go?(href: string): void;
   now: number;
 }) {
   return <ol className="desk-agent-history" aria-label={title}>
-    {posts.map((post,index) => <li key={post.id} data-reply={index > 0 || undefined}>
+    {posts.map((post,index) => <li key={post.id} data-reply={continued || index > 0 || undefined}>
       <time dateTime={post.at}>{age(post.at, now)}</time>
       <p>{post.words}</p>
       <PostWork post={post} go={go}/>
