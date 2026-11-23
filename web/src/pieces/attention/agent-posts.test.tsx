@@ -26,3 +26,16 @@ it('shows both activities on the card and the selected thread in reading order',
   expect(history.indexOf(boot.words)).toBeLessThan(history.indexOf(reply.words));
   expect(history).not.toContain(disk.words);
 });
+
+it('shows the confirmed work link beside the update and keeps the rail compact', () => {
+  const work = [{id:'t-17',title:'Fix disk cleanup',state:'closed',href:'/p/tasks-preview/task/t-17'}];
+  const latest = {...reply,work};
+  const rows = [{...threads[0],latest}];
+  const feed = renderToStaticMarkup(h(AgentPostFeed,{threads:rows,open(){},now}));
+  const history = renderToStaticMarkup(h(AgentPostHistory,{title:'Disk',posts:[latest],now}));
+  for (const view of [feed,history]) {
+    expect(view).toContain('Fix disk cleanup · closed');
+    expect(view).toContain('href="/p/tasks-preview/task/t-17"');
+  }
+  expect(renderToStaticMarkup(h(AgentPostFeed,{threads:rows,compact:true,open(){},now}))).not.toContain('Fix disk cleanup');
+});

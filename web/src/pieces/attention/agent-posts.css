@@ -39,3 +39,15 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.desk-agent-post-work {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .25rem .65rem;
+  padding-inline: .5rem;
+  list-style: none;
+  font-size: .8em;
+}
+.desk-agent-post-work a {
+  text-decoration: underline;
+  text-underline-offset: .15em;
+}

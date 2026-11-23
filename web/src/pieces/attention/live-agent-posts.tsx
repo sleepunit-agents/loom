@@ -5,11 +5,11 @@ import { AgentPostFeed, AgentPostHistory, type AgentPost, type AgentPostPreview 
 import { threadPath } from './home-comms-data';
 import { agentPath } from './home-model';
 
-export const agentFeedQuery = `query AgentActivityFeed($agent:String!,$limit:Int!){
-  agentActivityFeed(agent:$agent,limit:$limit){thread title latest{id at words} parent{id words}}
+export const agentFeedQuery = `query AgentActivityFeed($agent:String!,$limit:Int!,$compact:Boolean!){
+  agentActivityFeed(agent:$agent,limit:$limit){thread title latest{id at words work @skip(if:$compact){id title state href}} parent{id words}}
 }`;
 export const agentHistoryQuery = `query AgentActivityHistory($agent:String!,$thread:String!,$after:String!,$limit:Int!){
-  agentActivityHistory(agent:$agent,thread:$thread,after:$after,limit:$limit){id at words source}
+  agentActivityHistory(agent:$agent,thread:$thread,after:$after,limit:$limit){id at words source work{id title state href}}
 }`;
 const pageSize = 25;
 
@@ -27,7 +27,7 @@ function usePostClock(active: boolean) {
 export function LiveAgentFeed({ agent, compact = false, go, onChange }: {
   agent: string; compact?: boolean; go(path: string): void; onChange?(): void;
 }) {
-  const query = useDataQuery<{agentActivityFeed: AgentPostPreview[]}>(agentFeedQuery, {agent,limit:compact?1:5});
+  const query = useDataQuery<{agentActivityFeed: AgentPostPreview[]}>(agentFeedQuery, {agent,limit:compact?1:5,compact});
   const threads = query.status === 'live' ? query.data?.agentActivityFeed : undefined;
   const latest = threads?.[0];
   const previous = useRef(latest);
@@ -37,7 +37,7 @@ export function LiveAgentFeed({ agent, compact = false, go, onChange }: {
   }, [latest, onChange]);
   const now = usePostClock(!!threads?.length);
   if (!threads?.length) return null;
-  return <AgentPostFeed threads={threads} now={now} compact={compact}
+  return <AgentPostFeed threads={threads} now={now} compact={compact} go={go}
     open={id=>go(agentPath(agent)+'?activity='+encodeURIComponent(id))}/>;
 }
 
@@ -53,7 +53,7 @@ export function LiveAgentHistory({ agent, thread, go }: {
     <Button variant="ghost" onClick={()=>go(agentPath(agent))}>Back to agent</Button>
     {query.status === 'loading' ? <Loading label="Opening activity…"/> :
       !posts?.length ? <Body quiet>Activity unavailable.</Body> :
-      <AgentPostHistory title="Activity posts" posts={posts.slice(0,pageSize)} now={now}/>}
+      <AgentPostHistory title="Activity posts" posts={posts.slice(0,pageSize)} now={now} go={go}/>}
     {posts?.length ? <Button variant="ghost" onClick={()=>go(threadPath(posts[0].source))}>Source conversation</Button> : null}
     {cursors.length>1 && <Button variant="ghost" onClick={()=>setCursors(c=>c.slice(0,-1))}>Earlier posts</Button>}
     {posts && posts.length>pageSize && <Button variant="ghost" onClick={()=>setCursors([...cursors,posts[pageSize-1].id])}>Later posts</Button>}

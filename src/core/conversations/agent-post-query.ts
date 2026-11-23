@@ -1,3 +1,4 @@
+import { agentPostWork } from './agent-post-work.js';
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
@@ -9,7 +10,12 @@ import type { WordsKey } from './words.js';
 export function agentPostFields(db: DataDatabase, key: WordsKey, allowed: (viewer: Viewer) => SQL):
 GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
   const string = new GraphQLNonNull(GraphQLString);
+  const workLink = new GraphQLObjectType({ name: 'AgentActivityWorkLink', fields: {
+    id: { type: string }, title: { type: string }, state: { type: string }, href: { type: string },
+  } });
   const post = new GraphQLObjectType({ name: 'AgentActivityPost', fields: {
+    work: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(workLink))),
+      resolve: (row, _args, {viewer}) => agentPostWork(db, viewer, row.words, row.refs) },
     source: { type: string }, id: { type: string }, at: { type: string }, words: { type: string },
   } });
   const excerpt = new GraphQLObjectType({ name: 'AgentActivityExcerpt', fields: {

@@ -419,3 +419,32 @@ it('serves the activity card and history under the current source conversation v
   f.onOpen(f.revoke);
   expect((await read(alice,thread)).data).toEqual({agentActivityFeed:[],agentActivityHistory:[]});
 });
+
+it('attaches current work states to a post without requiring the IDs in its words', async () => {
+  const f = await fixture();
+  const { changes, tasks } = await import('../data/schema.js');
+  const { prepareAgentPost } = await import('./agent-posts.js');
+  const at = '2026-11-14T18:00:00Z', id = 'github:house/loom#7';
+  f.db.insert(memberAgents).values({member:'alice',agent:'art'}).run();
+  f.db.insert(tasks).values({id:'t-17',title:'Fix disk cleanup',ownerKind:'member',owner:'alice',
+    createdByKind:'member',createdBy:'alice',createdAt:at,changedAt:at}).run();
+  f.db.insert(changes).values({id,repository:'house/loom',number:7,title:'Remove test homes',body:'',url:'https://github.com/house/loom/pull/7',
+    state:'open',draft:false,authorLogin:'art',agent:'art',branch:'fix',headCommit:'a'.repeat(40),baseBranch:'next',
+    checks:'passing',review:'approved',mergeable:'yes',waitingOn:'author',openedAt:at,updatedAt:at}).run();
+  const thread=(await prepareAgentPost(f.db,f.key,f.thread.id,{action:'open',words:'Oh right, it was me. Fixed.',refs:['t-17',id]}))(at);
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:commsQueryFields(f.service)})});
+  const read=async()=> {
+    const result=await graphql({schema,source:'{agentActivityFeed(agent:"art"){latest{words work{id title state href}}}}',contextValue:{viewer:alice}});
+    expect(result.errors).toBeUndefined();
+    return (result.data!.agentActivityFeed as {latest:{work:unknown[];words:string}}[])[0].latest;
+  };
+  const task={id:'t-17',title:'Fix disk cleanup',state:'open',href:'/p/tasks-preview/task/t-17'};
+  const change={id,title:'Remove test homes',state:'open',href:'/p/changes-preview/change/github%3Ahouse%2Floom%237'};
+  expect(await read()).toEqual({words:'Oh right, it was me. Fixed.',work:[task,change]});
+  f.db.update(changes).set({state:'merged'}).where(eq(changes.id,id)).run();
+  expect((await read()).work).toEqual([task,{...change,state:'merged'}]);
+  (await prepareAgentPost(f.db,f.key,f.thread.id,{action:'reply',thread,words:'See t-17 and https://github.com/house/loom/pull/7.'}))(at);
+  expect((await read()).work).toEqual([task,{...change,state:'merged'}]);
+  f.db.delete(memberAgents).run();
+  expect((await read()).work).toEqual([task]);
+});

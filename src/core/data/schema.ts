@@ -2387,6 +2387,7 @@ export const agentPosts = sqliteTable('agent_posts', {
   thread: text('thread').notNull().references(() => agentPostThreads.id, { onDelete: 'cascade' }),
   at: text('at').notNull(),
   words: blob('words', { mode: 'buffer' }).notNull(),
+  workRefs: blob('work_refs', { mode: 'buffer' }),
 }, t => [check('agent_posts_at_utc', utc(t.at)), index('agent_posts_thread_seq').on(t.thread, t.seq)]);
 
 export const plumbing = {

@@ -408,7 +408,7 @@ const upgrades: readonly (readonly string[])[] = [
   // 37: deliberate agent posts and the source thread that owns their audience.
   ["CREATE TABLE `agent_post_threads` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`source` text NOT NULL,\n\t`title` blob NOT NULL,\n\tFOREIGN KEY (`source`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade\n);",
    "CREATE INDEX `agent_post_threads_source` ON `agent_post_threads` (`source`);",
-   "CREATE TABLE `agent_posts` (\n\t`seq` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`thread` text NOT NULL,\n\t`at` text NOT NULL,\n\t`words` blob NOT NULL,\n\tFOREIGN KEY (`thread`) REFERENCES `agent_post_threads`(`id`) ON UPDATE no action ON DELETE cascade,\n\tCONSTRAINT \"agent_posts_at_utc\" CHECK(\"agent_posts\".\"at\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"agent_posts\".\"at\") = \"agent_posts\".\"at\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"agent_posts\".\"at\") = \"agent_posts\".\"at\", 0))\n);",
+   "CREATE TABLE `agent_posts` (\n\t`seq` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`thread` text NOT NULL,\n\t`at` text NOT NULL,\n\t`words` blob NOT NULL,\n\t`work_refs` blob,\n\tFOREIGN KEY (`thread`) REFERENCES `agent_post_threads`(`id`) ON UPDATE no action ON DELETE cascade,\n\tCONSTRAINT \"agent_posts_at_utc\" CHECK(\"agent_posts\".\"at\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"agent_posts\".\"at\") = \"agent_posts\".\"at\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"agent_posts\".\"at\") = \"agent_posts\".\"at\", 0))\n);",
    "CREATE INDEX `agent_posts_thread_seq` ON `agent_posts` (`thread`,`seq`);"],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */

@@ -1,3 +1,4 @@
+import { TASK_ID } from '../../slug.js';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { and, desc, eq, gt, sql, type SQL } from 'drizzle-orm';
@@ -9,9 +10,11 @@ import { MESSAGE_WORDS_MAX, type WordsKey } from './words.js';
 
 const words = z.string().min(1).max(MESSAGE_WORDS_MAX).refine(text => !!text.trim(), 'Activity post needs text');
 const thread = z.string().min(1).max(200);
+const ref = z.string().max(200).regex(new RegExp('^(?:' + TASK_ID + '|github:[A-Za-z0-9._-]+/[A-Za-z0-9._-]+#[1-9][0-9]{0,9})$'));
+const refs = z.array(ref).max(20).optional();
 export const agentPostEdit = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('open'), words, title: threadTitle.optional() }).strict(),
-  z.object({ action: z.literal('reply'), thread, words }).strict(),
+  z.object({ action: z.literal('open'), words, refs, title: threadTitle.optional() }).strict(),
+  z.object({ action: z.literal('reply'), thread, words, refs }).strict(),
   z.object({ action: z.literal('rename'), thread, title: threadTitle }).strict(),
 ]);
 type Edit = z.infer<typeof agentPostEdit>;
@@ -29,9 +32,10 @@ export async function prepareAgentPost(db: DataDatabase, key: WordsKey, source: 
     title = threadTitle.parse(edit.title ?? [...firstLine].slice(0, 60).join(''));
   }
   if (edit.action === 'rename') title = threadTitle.parse(edit.title);
-  const [sealedTitle, sealedWords] = await Promise.all([
+  const [sealedTitle, sealedWords, workRefs] = await Promise.all([
     title === undefined ? undefined : key.seal(title),
     words === undefined ? undefined : key.seal(words),
+    edit.action !== 'rename' && edit.refs?.length ? key.seal(JSON.stringify(edit.refs)) : null,
   ]);
   return (at: string) => db.transaction(() => {
     if (edit.action === 'open') {
@@ -42,7 +46,7 @@ export async function prepareAgentPost(db: DataDatabase, key: WordsKey, source: 
     if (edit.action === 'rename') {
       db.update(agentPostThreads).set({ title: sealedTitle! }).where(scoped).run();
     } else {
-      db.insert(agentPosts).values({ thread: id, at, words: sealedWords! }).run();
+      db.insert(agentPosts).values({ thread: id, at, workRefs, words: sealedWords! }).run();
     }
     return id;
   });
@@ -57,7 +61,7 @@ export async function agentPostPreviews(db: DataDatabase, key: WordsKey, visible
     where p.thread = ${agentPostThreads.id} and p.seq < ${agentPosts.seq})`;
   const rows = db.select({
     thread: agentPostThreads.id, source: agentPostThreads.source, title: agentPostThreads.title,
-    latest: { seq: agentPosts.seq, at: agentPosts.at, words: agentPosts.words },
+    latest: { seq: agentPosts.seq, at: agentPosts.at, words: agentPosts.words, workRefs: agentPosts.workRefs },
     parent: { seq: parent.seq, words: parent.words },
   }).from(agentPostThreads)
     .innerJoin(agentPosts, eq(agentPosts.seq, latest))
@@ -65,7 +69,7 @@ export async function agentPostPreviews(db: DataDatabase, key: WordsKey, visible
     .where(visibleSource).orderBy(desc(agentPosts.seq)).limit(limit).all();
   return Promise.all(rows.map(async row => ({
     thread: row.thread, title: await key.open(row.title),
-    latest: { source: row.source, id: String(row.latest.seq), at: row.latest.at, words: await key.open(row.latest.words) },
+    latest: { source: row.source, id: String(row.latest.seq), at: row.latest.at, refs: await openRefs(key,row.latest.workRefs), words: await key.open(row.latest.words) },
     parent: row.parent ? { id: String(row.parent.seq), words: await key.open(row.parent.words) } : null,
   })));
 }
@@ -73,9 +77,13 @@ export async function agentPostPreviews(db: DataDatabase, key: WordsKey, visible
 /** Page forward in insertion order so a new reply never shifts a reader's place. */
 export async function agentPostHistory(db: DataDatabase, key: WordsKey, visibleSource: SQL,
   thread: string, after: number, limit: number) {
-  const rows = db.select({ source: agentPostThreads.source, seq: agentPosts.seq, words: agentPosts.words, at: agentPosts.at })
+  const rows = db.select({ source: agentPostThreads.source, seq: agentPosts.seq, words: agentPosts.words, at: agentPosts.at, workRefs: agentPosts.workRefs })
     .from(agentPostThreads).innerJoin(agentPosts, eq(agentPosts.thread, agentPostThreads.id))
     .where(and(visibleSource, eq(agentPostThreads.id, thread), gt(agentPosts.seq, after)))
     .orderBy(agentPosts.seq).limit(limit).all();
-  return Promise.all(rows.map(async row => ({ source: row.source, id: String(row.seq), at: row.at, words: await key.open(row.words) })));
+  return Promise.all(rows.map(async row => ({ source: row.source, id: String(row.seq), at: row.at, refs: await openRefs(key,row.workRefs), words: await key.open(row.words) })));
+}
+
+async function openRefs(key: WordsKey, sealed: Buffer | null): Promise<string[]> {
+  return sealed ? z.array(ref).max(20).parse(JSON.parse(await key.open(sealed))) : [];
 }
