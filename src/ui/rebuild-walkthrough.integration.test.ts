@@ -174,6 +174,11 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('memory-revisions');
   expect(step.value.actions.memoryRevisions,JSON.stringify(step.value.actions.memoryRevisions)).toMatchObject({ok:true,originalVersionsRestoredPerType:10,restoreCallsPerType:11});
  });
+ it('measures browser lifetime, owner revocation and credential storage through the sign-in door',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('signin-door');
+  const door=step.value.actions.signinDoor;
+  expect(door,door.error).toMatchObject({ok:true,checks:{memberIdentityBound:true,sixHourAutomatedSession:true,personSessionRetained:true,ownerHouseholdList:true,ownerSessionRevocation:true,ownerTokenRevocation:true,tokenCookieLinkFingerprints:true,rawSecretsNeverPersisted:true,closed:true}});
+ });
  it('upgrades every shipped database and checks its migration ledger on reopen',{retry:0,timeout:300_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('migrations');
   expect(step.value.actions.dataMigrations,JSON.stringify(step.value.actions.dataMigrations)).toMatchObject({ok:true,from:1});

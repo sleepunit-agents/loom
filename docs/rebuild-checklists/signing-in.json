@@ -93,7 +93,11 @@
     {
       "id": "signing-in-010",
       "promise": "A person's browser holds a session, which stands for one of their tokens. An agent driving a browser gets a session that lasts six hours.",
-      "source": "docs/how-it-works/site/signing-in.html#how-h"
+      "source": "docs/how-it-works/site/signing-in.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "signinDoor"
+      }
     },
     {
       "id": "signing-in-011",
@@ -121,12 +125,20 @@
     {
       "id": "signing-in-014",
       "promise": "b Owners. Household owners see the household's tokens and sessions and can revoke them.",
-      "source": "docs/how-it-works/site/signing-in.html#see-h"
+      "source": "docs/how-it-works/site/signing-in.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "signinDoor"
+      }
     },
     {
       "id": "signing-in-015",
       "promise": "c Never the token. Loom stores a one-way fingerprint of each token, session cookie and sign-in link.",
-      "source": "docs/how-it-works/site/signing-in.html#see-h"
+      "source": "docs/how-it-works/site/signing-in.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "signinDoor"
+      }
     },
     {
       "id": "signing-in-016",
