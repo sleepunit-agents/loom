@@ -30,6 +30,14 @@ export function readModelAccounts(db: DataDatabase, viewer: Viewer) {
         .sort((a, b) => text(a.box.name, b.box.name) || text(a.box.id, b.box.id) || text(a.harness, b.harness) || text(a.place, b.place)),
       signedInOn: modelAccountBoxesByAccount.map(link => link.boxRow!).filter(Boolean).sort((a,b) => Buffer.compare(Buffer.from(a.name), Buffer.from(b.name)) || Buffer.compare(Buffer.from(a.id), Buffer.from(b.id))) }])) };
 }
+/** Internal scheduler projection, ordered for deterministic account selection. */
+export function readPlacementAccounts(db: DataDatabase) {
+  return db.query.modelAccounts.findMany({
+    columns: { id: true, owner: true, provider: true, usageReadSucceeded: true, hasRoom: true },
+    orderBy: f => asc(f.id), with: { modelAccountWindowsByAccount: true },
+  }).sync();
+}
+
 /** One current-authority statement for every private account witnessed by a read. */
 export function allowedModelAccounts(db: DataDatabase, viewer: Viewer, ids: readonly string[]) {
   if (!ids.length) return new Set<string>();

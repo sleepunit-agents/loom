@@ -4,7 +4,7 @@ import { sharedSharing } from '../shared-sharing.js';
 import { LOGIN_ENDING_MS, loginMachineReporting } from './account-logins.js';
 import { holds, rules, type Viewer } from '../policy.js';
 import type { DataDatabase } from '../core/data/database.js';
-import { accountCapacity } from './quota.js';
+import { reportedAccountCapacity } from './account-windows.js';
 import { allowedModelAccounts, modelAccountAuthority, readModelAccounts } from '../core/data/model-account-read.js';
 
 import {accountWeeklyUsage} from './account-weekly-usage.js';
@@ -66,10 +66,7 @@ export function modelAccountQueries(db: DataDatabase, now: () => string, usageSc
       const current = modelAccountAuthority(db, viewer);
       let sharing: ReturnType<typeof sharedSharing> | undefined;
       return selected.rows.map(row => {
-        let capacity;
-        try { capacity = accountCapacity(row.modelAccountWindowsByAccount.map(window => ({ name: window.window, usage: window.usage, readAt: window.usageReadAt, resetsAt: window.resetsAt, durationMs: window.durationMs, reserve: window.reserve })), at); }
-        catch { capacity = accountCapacity([], at); }
-        capacity.hasRoom = row.hasRoom && capacity.hasRoom;
+        const capacity = reportedAccountCapacity(row.hasRoom, row.modelAccountWindowsByAccount, at);
         const publicFields = { label: row.label, level: capacity.hasRoom ? capacity.level : 'almost full' };
         const privateRow = selected.privateRows.get(row.id);
         if (!privateRow) return { __typename: summary.name, ...publicFields };
