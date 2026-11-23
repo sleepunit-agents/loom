@@ -17,6 +17,7 @@ vi.mock('./agent-status',()=>({useDeskAgentStatuses:()=>useSyncExternalStore(fn=
 vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:Record<string,any>)=>{useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>document.includes('DeskWaiting')||document.includes('DeskAgentWaiting')?f.snapshots['attention.ask']:document.includes('DeskAgentDisplays')?f.snapshots['household.agentDisplay']:document.includes('DeskAgentDirectory')?f.snapshots.person:document.includes('DeskRoster')?f.snapshots['attention.ownedAgent']:document.includes('DeskHomeComms')?f.snapshots.thread:f.snapshots['generated.jobs']);return useMemo(()=>document.includes('AgentActivityFeed')?{status:f.queryStatus,data:{agentActivityFeed:(f.snapshots.posts?.records??[]).filter((p:any)=>p.agent===variables?.agent)}}:document.includes('DeskWaiting')||document.includes('DeskAgentWaiting')?deskWaitingFixture(document,variables,f.snapshots['attention.ask'],'owner'):document.includes('DeskAgentDisplays')?{status:f.snapshots['household.agentDisplay'].status,data:{agents:f.snapshots['household.agentDisplay'].records.map((r:any)=>({id:r.id,markBg:r.mark.bg,markFg:r.mark.fg,faceShape:r.face.shape,faceEyes:r.face.eyes}))}}:document.includes('DeskAgentDirectory')?{status:f.snapshots.person.status,data:{memoryPeopleAccess:{directory:true},memoryPeople:f.snapshots.person.records.map((p:any)=>({...p,agent:p.agent??null}))}}:document.includes('DeskHomeComms')?homeFixture():document.includes('DeskDoing')?{status:f.snapshots['generated.jobs'].status,data:{agentDoing:{more:(f.snapshots['generated.jobs'] as any).more??0,claimed:54,items:f.snapshots['generated.jobs'].records.filter((row:any)=>row.agent===variables?.agent).map((row:any)=>({kind:'job',title:null,with:null,place:null,direct:null,ref:null,machine:null,href:null,since:row.queuedAt??'2026-11-14T01:00:00Z',state:'running',...row}))}}}:({status:f.snapshots['attention.ownedAgent'].status!=='live'?f.snapshots['attention.ownedAgent'].status:f.queryStatus,data:{homeComms:{member:'owner',agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>a.id)},agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ask'],f.snapshots['household.agentDisplay'],f.snapshots.person,f.snapshots.thread,f.snapshots['attention.ownedAgent'],f.snapshots['generated.jobs'],f.snapshots['conversation.summary'],document,variables?.agent,f.queryStatus]);}}));
 vi.mock('../../data',()=>({useRecords:(type:string)=>(expect(['attention.ask','household.agentDisplay','person','thread','attention.agent','attention.ownedAgent']).not.toContain(type),useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type]))}));
 import Rail from './rail';
+import { WithDoing } from './doing';
 import { RailContext } from '../../desk-rail';
 import DeskSignals from './desk-signals';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
@@ -68,9 +69,12 @@ it('folds measured overflow, keeps current working state before asks/unread, and
   expect(dot().props).toMatchObject({'data-state':'working','aria-label':'Working'});
   await publish('generated.jobs','live',[]);
   expect(dot().props['aria-label']).toBe('Quiet');
+  const markReader=()=>tree.root.findAllByType(WithDoing).find((node:any)=>node.props.agent==='mark');
+  const beforePromotion=markReader();
   // Current working state takes priority over Art's ask.
   await publish('attention.agent','live',[{id:'mark',agent:'mark',state:'working',work:'In flight',changedAt:2}]);
   expect(tree.root.findByProps({className:'desk-rail-card'}).props['data-agent']).toBe('mark');
+  expect(markReader()===beforePromotion).toBe(true);
   await act(async()=>tree.root.findByProps({'aria-label':'Open Art conversation'}).props.onClick());
   expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/abc');
   // Conversation loss clears unread independently; status loss clears working priority.
