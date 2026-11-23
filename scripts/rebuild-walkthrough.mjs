@@ -37,6 +37,7 @@ import {homeActions} from './rebuild-home-actions.mjs';
 import {mkdirSync,writeFileSync,mkdtempSync,rmSync,readdirSync} from 'node:fs';
 import {approvalInbox} from './rebuild-approval-inbox.mjs';
 import {conversationCallers} from './rebuild-conversation-callers.mjs';
+import {inboxDiscussion} from './rebuild-inbox-discussion.mjs';
 import {inboxCallers} from './rebuild-inbox-callers.mjs';
 import {inboxDocumentation,inboxVolume} from './rebuild-inbox-volume.mjs';
 import {scheduledInbox} from './rebuild-scheduled-inbox.mjs';
@@ -372,6 +373,9 @@ export async function* walkthroughSteps(output) {
   report.actions.inboxDocumentation=await inboxDocumentation(browser);
   report.actions.inboxVolume=await inboxVolume({browser,home:join(parent,'volume-home'),out});
   save();yield {phase:'inbox-volume',actions:safeReport(report.actions)};
+  try {report.actions.inboxDiscussion=await inboxDiscussion({browser,home:join(parent,'discussion-home'),out});}
+  catch(error){report.actions.inboxDiscussion={ok:false,error:String(error)};}
+  save();yield {phase:'inbox-discussion',actions:safeReport(report.actions)};
   report.actions.homeJobs=await homeJobs({page,tile:await openApp('Home'),app,example:report.example,out});
   save();yield {phase:'home-jobs',actions:safeReport(report.actions)};
   phase='native worker and reply';

@@ -125,7 +125,24 @@
     {
       "id": "conversations-014",
       "promise": "An inbox item links to the conversation it came from. On a standalone FYI, Discuss opens a private chat with your default agent about that notice. Open it again to continue the same chat. A digest points to the question it raised.inbox.conversation · digests.inbox_item",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "privateConversationQuestion"
+          },
+          {
+            "kind": "action",
+            "action": "inboxDiscussion"
+          },
+          {
+            "kind": "action",
+            "action": "conversationDigest"
+          }
+        ]
+      }
     },
     {
       "id": "conversations-015",

@@ -82,6 +82,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('Each incoming message goes into one conversation.'):row['probe']={'kind':'action','action':'bridgeMail'}
    if row['promise'].startswith('d Checked at the door.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':name} for name in ['conversationCallers','conversationVisibility']]}
    if row['promise'].startswith('A request for a secret records the conversation'):row['probe']={'kind':'action','action':'conversationSecretSource'}
+   if row['promise'].startswith('An inbox item links to the conversation it came from.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':name} for name in ['privateConversationQuestion','inboxDiscussion','conversationDigest']]}
    if row['promise'].startswith('A task names the conversation it came from.'):row['probe']={'kind':'action','action':'conversationTaskSource'}
    if row['promise'].startswith('An approval records the conversation it was asked in.'):row['probe']={'kind':'action','action':'conversationApprovalSource'}
    if row['promise'].startswith(('A conversation is one agent talking in one place.', 'One table Every conversation', 'One per place An agent')):row['probe']={'kind':'action','action':'conversationRecords'}

@@ -222,6 +222,11 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('inbox-volume');
   for(const name of ['inboxDocumentation','inboxVolume'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
  });
+ it('opens a standalone FYI in Comms, reopens it and sends a question with the notice in context',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('inbox-discussion');
+  const action=step.value.actions.inboxDiscussion;
+  expect(action,JSON.stringify(action)).toMatchObject({ok:true,item:expect.any(String),thread:expect.any(String),conversation:expect.any(String)});
+ });
  it('updates each Home card independently as terminal jobs start and end',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('home-jobs');
   expect(step.value.actions.homeJobs).toMatchObject({ok:true});
