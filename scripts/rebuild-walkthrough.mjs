@@ -279,6 +279,13 @@ export async function* walkthroughSteps(output) {
    report.actions.semanticRecall=JSON.parse(stdout);
   } catch(error) { report.actions.semanticRecall={ok:false,error:String(error)}; }
   save();yield {phase:'semantic-recall',actions:safeReport(report.actions)};
+  phase='memory temperature';
+  try {
+   const script=fileURLToPath(new URL('./rebuild-memory-temperature.mjs',import.meta.url));
+   const {stdout}=await promisify(execFile)(process.execPath,[script],{timeout:30_000});
+   report.actions.memoryTemperature=JSON.parse(stdout);
+  } catch(error) { report.actions.memoryTemperature={ok:false,error:String(error)}; }
+  save();yield {phase:'memory-temperature',actions:safeReport(report.actions)};
   phase='knowledge due delivery';
   try {
    const {dueKnowledgeDelivery}=await import('./rebuild-knowledge-due.mjs');

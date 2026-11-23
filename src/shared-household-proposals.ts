@@ -1,3 +1,4 @@
+import {readMachineSettings} from './core/data/machine-settings-read.js';
 /** Household changes an agent asks for: a project, retiring or reviving one, being let onto one, a member, an agent's
  * description, the household's own settings, a standing approval rule, or how
  * an agent treats outside people and which tools its body is not given.
@@ -48,7 +49,7 @@ import {holds,householdChangePrincipal,rules as policyRules,type Viewer} from '.
 import {householdOwner,householdOwners,sharedSharing} from './shared-sharing.js';
 import {tokenLive} from './core/data/authentication.js';
 import type {DataDatabase} from './core/data/database.js';
-import {agentKitProjects,projectOutsidePeople,agents,agentAccounts,agentBoxes,agentHousePorts,agentModels,agentRunSettings,approvals,boxAgents,boxFacts,bridgeConnections,memberAgents,members,projects as projectRows,secrets,tokens,boxes,sessions} from './core/data/schema.js';
+import {agentKitProjects,projectOutsidePeople,agents,agentAccounts,agentBoxes,agentHousePorts,agentModels,agentRunSettings,approvals,bridgeConnections,memberAgents,members,projects as projectRows,secrets,tokens,boxes,sessions} from './core/data/schema.js';
 import {boxSettingsInput,applyBoxSettings,applyMachineReader} from './shared-box-settings.js';
 import {agentRunSettingsInput,applyAgentRunSettings} from './shared-agent-run-settings.js';
 import {agentModelsInput,applyAgentModels} from './shared-agent-models.js';
@@ -256,12 +257,16 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  const browsers=(input:{member:string;device:string})=>db.select({id:sessions.id}).from(sessions).innerJoin(tokens,eq(sessions.token,tokens.fingerprint)).where(and(eq(tokens.member,input.member),eq(sessions.device,input.device))).all();
  const liveToken=(label:string)=>db.select().from(tokens).where(eq(tokens.label,label)).all().find(row=>tokenLive(row,Date.parse(now())));
  const appliedCards=new Set<string>();
+ type MachineProposal=Extract<Proposal,{change:'machineReader'|'boxSettings'}>;
+ const machineBefore=(value:MachineProposal,row:ReturnType<typeof readMachineSettings>)=>{
+  if(!row||row.id!==value.input.box)return null;
+  if(value.change==='machineReader')return {box:row.id,owner:row.owner,allow:(row.readers??[]).includes(value.input.agent)};
+  return sorted({...(value.input.readers===undefined?{}:{readers:row.readers??[]}),box:row.id,name:row.name,
+   hostsAny:row.hostsAny,reportOnly:row.reportOnly,alwaysOn:row.alwaysOn,agents:row.boxAgentsByBox,facts:row.boxFactsByBox.map(entry=>entry.fact)});
+ };
  // What the change would replace, in the same shape as the input, or null when it would be new.
  const before=(value:Proposal):unknown=>{
-  if(value.change==='machineReader'){
-   const box=db.select().from(boxes).where(and(eq(boxes.id,value.input.box),isNull(boxes.revokedAt))).get();
-   return box?{box:box.id,owner:box.owner,allow:(box.readers??[]).includes(value.input.agent)}:null;
-  }
+  if(value.change==='machineReader'||value.change==='boxSettings')return machineBefore(value,readMachineSettings(db,value.input.box));
   if(kitChange(value))return kitBefore(db,value);
   if(value.change==='project'){const row=projects.read().projects.find(row=>row.id===value.input.id);const kits=projectKitDefinitions(db,value.input.id);return row?sorted({...(kits.length?{kits}:{}),id:row.id,name:row.name,members:[...row.members].sort(),agents:[...row.agents].sort(),repositories:[...row.repositories].sort()}):null;}
   if(value.change==='projectMerge')return sorted({from:projects.describe(value.input.from),into:projects.describe(value.input.into)});
@@ -292,12 +297,6 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   if(value.change==='bridge'){const row=parts.bridges.read(value.input);return row?sorted(row):null;}
   if(value.change==='tempoTimings'){const now=parts.tempo().timings(value.input.who) as Record<string,number>;return sorted({who:value.input.who,...Object.fromEntries(Object.keys(value.input).filter(key=>key!=='who').map(key=>[key,now[key]]))});}
   if(value.change==='measuring')return sorted({...parts.measuring.read()});
-  if(value.change==='boxSettings'){
-   const row=db.select().from(boxes).where(and(eq(boxes.id,value.input.box),isNull(boxes.revokedAt))).get();if(!row)return null;
-   return sorted({...(value.input.readers === undefined ? {} : {readers:row.readers ?? []}),box:row.id,name:row.name,hostsAny:row.hostsAny,reportOnly:row.reportOnly,alwaysOn:row.alwaysOn,
-    agents:db.select({agent:boxAgents.agent,lent:boxAgents.lent}).from(boxAgents).where(eq(boxAgents.box,row.id)).orderBy(asc(boxAgents.agent)).all(),
-    facts:db.select({fact:boxFacts.fact}).from(boxFacts).where(and(eq(boxFacts.box,row.id),eq(boxFacts.fromOwner,true))).orderBy(asc(boxFacts.fact)).all().map(entry=>entry.fact)});
-  }
   if(value.change==='runSettings'){
    const row=db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,value.input.agent)).get();if(!row)return null;
    return sorted({agent:row.agent,houseRepository:row.houseRepository,houseFile:row.houseFile,houseBranch:row.houseBranch,nestedContainers:row.nestedContainers,gpu:row.gpu,
@@ -596,18 +595,19 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    const ownedMachine=(viewer:Viewer,id:string)=>viewer.kind==='member'&&!!db.select({id:boxes.id}).from(boxes)
     .where(and(eq(boxes.id,id),eq(boxes.owner,viewer.id),isNull(boxes.revokedAt))).get();
    const cardId=z.string().min(1).max(200);
-   const readerCard=(id:string,owner?:string)=>{
-    const card=db.select().from(approvals).where(eq(approvals.id,id)).get();
-    if(!card||card.operation!==operation)return;
+   const readerCard=(card:Approval|undefined,owner?:string,machine?:ReturnType<typeof readMachineSettings>)=>{
+    if(!card)return;
     const {kept,value}=read(card);
+    if(value.change!=='machineReader'&&(value.change!=='boxSettings'||value.input.readers===undefined))return;
+    if(machine&&machine.id!==value.input.box)return;
+    const was=machineBefore(value,machine??readMachineSettings(db,value.input.box));
     const readerReview=(was:unknown)=>owner&&seal(value,kept.seal.nonce,was)!==kept.seal.digest
      ?{review:reviewOf(card,owner,value,was)}:{};
-    if(value.change==='machineReader')return {machine:value.input.box,words:readerWords(value.input),...readerReview(before(value))};
-    if(value.change!=='boxSettings'||value.input.readers===undefined)return;
-    const prior=before(value) as typeof value.input|null;
+    if(value.change==='machineReader')return {machine:value.input.box,words:readerWords(value.input),...readerReview(was)};
+    const prior=was as typeof value.input|null;
     // Through this door an ordinary machine owner decides read grants alone.
     if(!prior||JSON.stringify(sorted({...prior,readers:[]}))!==JSON.stringify(sorted({...value.input,readers:[]})))return;
-    return {machine:value.input.box,words:readerChanges(prior.readers??[],value.input.readers)||card.ask,...readerReview(prior)};
+    return {machine:value.input.box,words:readerChanges(prior.readers??[],value.input.readers??[])||card.ask,...readerReview(prior)};
    };
    operations.register({name:'machine.proposeReader',doors:['http'],write:true,recheckPolicy:true,
     input:kinds.machineReader,output:z.object({id:z.string(),state:z.string()}),
@@ -625,18 +625,24 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
     may:(viewer,input)=>ownedMachine(viewer,input.machine),
     run(ctx,input){
      const prefix='household:machineReader:'+input.machine+':';
-     const rows=db.select({id:approvals.id}).from(approvals).where(and(eq(approvals.operation,operation),eq(approvals.state,'pending'),
+     const machine=readMachineSettings(db,input.machine);
+     if(!machine)return [];
+     const rows=db.select().from(approvals).where(and(eq(approvals.operation,operation),eq(approvals.state,'pending'),
       sql`(substr(${approvals.target},1,length(${prefix})) = ${prefix} or ${approvals.target} = ${'household:boxSettings:'+input.machine})`)).all();
-     return rows.flatMap(({id})=>{const card=readerCard(id,isProgram(ctx.viewer)?undefined:ctx.viewer.id);return card?.machine===input.machine?[{id,ask:card.words,...(card.review?{review:card.review}:{})}]:[];});
+     const owner=isProgram(ctx.viewer)?undefined:ctx.viewer.id;
+     return rows.flatMap(row=>{
+      const card=readerCard(row,owner,machine);
+      return card?[{id:row.id,ask:card.words,...(card.review?{review:card.review}:{})}]:[];
+     });
     },
    });
    operations.register({name:'machine.answerReader',doors:['http'],write:true,recheckPolicy:true,
     input:z.object({id:cardId,answer:z.enum(['allow','deny']),review:z.string().regex(SHA256_HEX).optional()}).strict(),output:z.object({id:z.string()}),
-    may:(viewer,input)=>{const card=readerCard(input.id);return !!card&&ownedMachine(viewer,card.machine)&&(!input.review||!isProgram(viewer));},
+    may:(viewer,input)=>{const card=readerCard(stored(input.id));return !!card&&ownedMachine(viewer,card.machine)&&(!input.review||!isProgram(viewer));},
     run(ctx,input){
      if(input.answer==='allow')service.allow(input.id,ctx.viewer.id,undefined,input.review);
      else service.deny(input.id,ctx.viewer.id);
-     ctx.changed('approvals',input.id);ctx.changed('boxes',readerCard(input.id)!.machine);return {id:input.id};
+     ctx.changed('approvals',input.id);ctx.changed('boxes',readerCard(stored(input.id))!.machine);return {id:input.id};
     },
    });
    // A waiting card as its owner reads it: the same sentence and facts as the card (proposal-words.ts), now with

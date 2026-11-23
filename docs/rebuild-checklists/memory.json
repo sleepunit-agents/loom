@@ -85,7 +85,20 @@
     {
       "id": "memory-011",
       "promise": "Each memory has a temperature. Writing it heats it fully, recalling it adds heat, and it cools with time: an episode within a day, what an agent knows about a person over months. The hottest fill the agent's top of mind. Recall finds memories by meaning. A memory can be given a time to live, and is archived when that runs out. A lesson the agent was taught can be confirmed or contradicted later, which raises or lowers how much it is trusted.",
-      "source": "docs/how-it-works/site/memory.html#how-h"
+      "source": "docs/how-it-works/site/memory.html#how-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "semanticRecall"
+          },
+          {
+            "kind": "action",
+            "action": "memoryTemperature"
+          }
+        ]
+      }
     },
     {
       "id": "memory-012",

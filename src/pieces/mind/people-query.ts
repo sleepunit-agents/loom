@@ -25,6 +25,7 @@ const field=new GraphQLObjectType({name:'MemoryPersonField',fields:{key:required
 const project=new GraphQLObjectType({name:'MemoryPersonProject',fields:{agent:requiredText,slug:requiredText,name:requiredText,status:requiredText,href:text}});
 const evidence=new GraphQLObjectType({name:'MemoryPersonEvidence',fields:{created:requiredText,category:requiredText,title:requiredText,content:requiredText}});
 const ownership=new GraphQLObjectType({name:'MemoryPersonOwnership',fields:{owner:{type:GraphQLBoolean},agents:{type:new GraphQLList(new GraphQLNonNull(GraphQLString))}}});
+const sighting=new GraphQLObjectType({name:'MemoryAccountSighting',fields:{platform:requiredText,workspace:requiredText,account:requiredText,label:text,seenAt:requiredText}});
 const revision=new GraphQLObjectType({name:'MemoryPersonRevision',fields:{id:{type:GraphQLInt},op:requiredText,replacedAt:requiredText,actor:text,card:{type:card}}});
 const conversation=new GraphQLObjectType({name:'MemoryPersonConversation',fields:{id:requiredText,title:requiredText,href:requiredText}});
 const conversations=new GraphQLObjectType({name:'MemoryPersonConversations',fields:{available:{type:new GraphQLNonNull(GraphQLBoolean)},rows:{type:list(conversation)}}});
@@ -39,6 +40,7 @@ export function peopleQueryFields(options:PeopleReaderOptions & {conversations?:
  const person=new GraphQLObjectType<PersonRecord,MemoryQueryContext>({name:'MemoryPerson',fields:{
   id:requiredText,slug:requiredText,agent:text,name:requiredText,card:{type:new GraphQLNonNull(card)},updated:requiredText,synthesizedAt:text,kind:requiredText,
   evidence:{type:list(evidence)},newer:{type:GraphQLInt},fields:{type:list(field)},projects:{type:list(project)},ownership:{type:ownership},mergedFrom:text,
+  sightings:{type:list(sighting),resolve:(source,_args,context)=>!source.agent&&visible(context)?safe(()=>reader?.sightings(context.viewer,source.slug)??[]):[]},
   history:{type:list(revision),resolve:(source,_args,context)=>visible(context,source.agent)?safe(()=>reader?.history(source.id,context.viewer)??[]):[]},
   conversations:{type:conversations,resolve:(source,_args,context)=>{
    if(!visible(context,source.agent))return {available:false,rows:[]};

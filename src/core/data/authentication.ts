@@ -60,12 +60,14 @@ export function presentedCredential(request: Request): { bearer: string; cookie?
 /** Reuse only the SQL program. Each call binds its own key and reads the current transaction. */
 function prepareCredentialReads(db: DataDatabase) {
   const key = placeholder('key');
+  const holder = { token: tokens, member: members.id, agent: agents.id };
+  const activeMember = and(eq(tokens.kind, 'owner'), eq(members.id, tokens.member), isNull(members.removedAt));
+  const activeAgent = and(eq(tokens.kind, 'agent'), eq(agents.id, tokens.agent), isNull(agents.removedAt));
   return {
-    token: db.select({ token: tokens, member: members.id, agent: agents.id }).from(tokens)
-      .leftJoin(members, and(eq(tokens.kind, 'owner'), eq(members.id, tokens.member), isNull(members.removedAt)))
-      .leftJoin(agents, and(eq(tokens.kind, 'agent'), eq(agents.id, tokens.agent), isNull(agents.removedAt)))
+    token: db.select(holder).from(tokens).leftJoin(members, activeMember).leftJoin(agents, activeAgent)
       .where(eq(tokens.fingerprint, key)).prepare(),
-    session: db.select().from(sessions).where(eq(sessions.id, key)).prepare(),
+    session: db.select({ session: sessions, ...holder }).from(sessions).innerJoin(tokens, eq(tokens.fingerprint, sessions.token))
+      .leftJoin(members, activeMember).leftJoin(agents, activeAgent).where(eq(sessions.id, key)).prepare(),
     machine: db.select({ id: boxes.id }).from(boxes).innerJoin(members, eq(members.id, boxes.owner))
       .where(and(eq(boxes.id, key), isNull(boxes.revokedAt), isNull(members.removedAt))).prepare(),
   };
@@ -88,10 +90,14 @@ export function machineCurrent(db: DataDatabase, box: string): boolean {
  * while that job is this agent's current work on a machine that is current. A token enrolled from
  * another (a body's, from its machine's) is current only while that one is: revoking a machine's token
  * ends the bodies it started. */
-export function currentToken(db: DataDatabase, id: string, now: number): { token: typeof tokens.$inferSelect; viewer: Exclude<Viewer, { kind: 'service' }>; job?: string } | undefined {
+export function currentToken(db: DataDatabase, id: string, now: number) {
   const found = credentialReadsFor(db).token.get({ key: id });
-  const token = found?.token;
-  if (!token || !tokenLive(token, now)) return;
+  return found && currentHolder(db, found, now);
+}
+
+function currentHolder(db: DataDatabase, found: { token: typeof tokens.$inferSelect; member: string | null; agent: string | null }, now: number): { token: typeof tokens.$inferSelect; viewer: Exclude<Viewer, { kind: 'service' }>; job?: string } | undefined {
+  const { token } = found;
+  if (!tokenLive(token, now)) return;
   // One step, never a chain: only a machine's own token enrols another (shared-body-enrollment.ts).
   if (token.madeFrom !== null && !tokenLive(credentialReadsFor(db).token.get({ key: token.madeFrom })?.token ?? { revokedAt: 'gone', expiresAt: null }, now)) return;
   if (token.kind === 'owner' && token.member) {
@@ -124,9 +130,10 @@ export function currentToken(db: DataDatabase, id: string, now: number): { token
 }
 /** A browser session that has not run out, on a token that is current. `ends` is when it stops. */
 export function currentSession(db: DataDatabase, id: string, now: number) {
-  const session = credentialReadsFor(db).session.get({ key: id });
-  if (!session || sessionEnds(session) <= now) return;
-  const held = currentToken(db, session.token, now);
+  const found = credentialReadsFor(db).session.get({ key: id });
+  if (!found || sessionEnds(found.session) <= now) return;
+  const { session } = found;
+  const held = currentHolder(db, found, now);
   if (!held) return;
   return { ...held, session, ends: Math.min(sessionEnds(session), held.token.expiresAt ? Date.parse(held.token.expiresAt) : Infinity) };
 }
@@ -157,23 +164,22 @@ export function dataAuthentication(db: DataDatabase, now: () => number = Date.no
     const presented = presentedCredential(request);
     if (!presented) return;
     const sessionId = presented.cookie === undefined ? undefined : credentialFingerprint(presented.cookie);
-    const tokenId = presented.bearer !== undefined ? credentialFingerprint(presented.bearer) : db.select({ token: sessions.token }).from(sessions).where(eq(sessions.id, sessionId!)).get()?.token;
-    if (!tokenId) return;
+    const bearerId = presented.bearer === undefined ? undefined : credentialFingerprint(presented.bearer);
     const current = () => {
       const time = now();
-      if (restricted(tokenId)) return;
-      if (sessionId) {
+      if (sessionId !== undefined) {
         const found = currentSession(db, sessionId, time);
-        return found && found.token.fingerprint === tokenId ? { viewer: found.viewer, job: found.job, expiresAt: found.ends } : undefined;
+        return found && { token: found.token.fingerprint, viewer: found.viewer, job: found.job, expiresAt: found.ends };
       }
-      const found = currentToken(db, tokenId, time);
-      return found && { viewer: found.viewer, job: found.job, expiresAt: found.token.expiresAt ? Date.parse(found.token.expiresAt) : undefined };
+      const found = currentToken(db, bearerId!, time);
+      return found && { token: found.token.fingerprint, viewer: found.viewer, job: found.job, expiresAt: found.token.expiresAt ? Date.parse(found.token.expiresAt) : undefined };
     };
     const admitted = current();
-    if (!admitted) return;
-    return { ...admitted, window: !!sessionId, credential: Object.freeze({ token: tokenId, session: sessionId }), valid() {
+    if (!admitted || restricted(admitted.token)) return;
+    const { token, ...identity } = admitted;
+    return { ...identity, window: !!sessionId, credential: Object.freeze({ token, session: sessionId }), valid() {
       const live = current();
-      return !!live && live.viewer.kind === admitted.viewer.kind && live.viewer.id === admitted.viewer.id && live.job === admitted.job
+      return !!live && live.token === token && !restricted(token) && live.viewer.kind === admitted.viewer.kind && live.viewer.id === admitted.viewer.id && live.job === admitted.job
         && (live.viewer.kind === 'agent' ? live.viewer.workingFor : undefined) === (admitted.viewer.kind === 'agent' ? admitted.viewer.workingFor : undefined)
         && (live.viewer.kind === 'agent' ? live.viewer.atTerminalOf : undefined) === (admitted.viewer.kind === 'agent' ? admitted.viewer.atTerminalOf : undefined);
     } };

@@ -36,6 +36,43 @@ describe('PeopleStore', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('records each account separately and ignores older, ambiguous, or unmatched sightings', () => {
+    const where = {slack_workspace:{value:'T1'}, slack:{value:['U1','U2'], source:'confirmed accounts'}};
+    store.write({slug:'robin', name:'Robin', where});
+    const earlier = new Date(now - DAY).toISOString(), later = new Date(now).toISOString();
+    expect(store.observeAccount('slack','T1','U1',later,'Robin')).toBe(true);
+    expect(store.observeAccount('slack','T1','U2',earlier,'Robin at work')).toBe(true);
+    expect(store.observeAccount('slack','T1','U1',earlier,'Old name')).toBe(false);
+    expect(store.observeAccount('slack','T1','U1',later,'Robin')).toBe(false);
+    expect(store.observeAccount('slack','T2','U1',later,'Robin')).toBe(false);
+    store.write({slug:'another', name:'Another', where});
+    expect(store.observeAccount('slack','T1','U2',later,'Ambiguous')).toBe(false);
+    const reader = new BetterSqlite3(join(dir,'memories.db'), {readonly:true});
+    try {
+      expect(reader.prepare('SELECT account,label,seen_at FROM person_account_sightings ORDER BY account').all()).toEqual([
+        {account:'U1',label:'Robin',seen_at:later}, {account:'U2',label:'Robin at work',seen_at:earlier},
+      ]);
+      expect(JSON.parse((reader.prepare("SELECT card_json FROM people WHERE slug='robin'").get() as {card_json:string}).card_json).where).toEqual(where);
+    } finally { reader.close(); }
+  });
+
+  it('orders Slack postings inside one millisecond, despite clock skew or a replay after reassignment',()=>{
+    const workspace='T1',account='U1',where={slack_workspace:{value:workspace},slack:{value:account}};
+    store.write({slug:'first',name:'First',where});
+    const instant = new Date(now+2000).toISOString().slice(0,-5);
+    const earlier=instant+'.123001Z',later=instant+'.123999Z';
+    expect(store.observeAccount('slack',workspace,account,earlier,'Before')).toBe(true);
+    expect(store.observeAccount('slack',workspace,account,later)).toBe(true);
+    expect(store.observeAccount('slack',workspace,account,later,'After')).toBe(true);
+    store.write({slug:'first',where:{slack:null}});
+    store.write({slug:'next',name:'Next',where});
+    expect(store.observeAccount('slack',workspace,account,later,'After')).toBe(false);
+    expect(store.observeAccount('slack',workspace,account,earlier,'Before')).toBe(false);
+    expect(store.database.prepare('SELECT slug,label,seen_at FROM person_account_sightings').all()).toEqual([{slug:'first',label:'After',seen_at:later}]);
+    expect(store.observeAccount('slack',workspace,account,instant+'.124001Z')).toBe(true);
+    expect(store.database.prepare('SELECT slug,label FROM person_account_sightings').all()).toEqual([{slug:'next',label:null}]);
+  });
+
   const seed = () =>
     store.write({
       slug: 'patrick-kells',

@@ -12,15 +12,15 @@
  * connection's bot is no agent's, so it is neither a peer that could be addressed, nor a household sender,
  * nor a second claim on a bot that another connection now holds. */
 import { discordBodyWords } from './discord-link.js';
-import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations, lateMailWaits, refreshConversationLabel } from '../../core/conversations/index.js';
 import { incomingId, inboxSourceId, outsidePersonKey, parseIncomingId } from './keys.js';
-import { conversationPlace, discordPlace } from './place.js';
+import { conversationPlace, discordPlace, slackRoomLabel } from './place.js';
 import { holds, inHousehold, rules } from '../../policy.js';
 import { unendedJobStates } from '../../core/data/job-states.js';
 import { sharedSharing } from '../../shared-sharing.js';
-import { agentPeople, conversations, jobs, bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, bridgeSendParts, bridgeSends, inbox, inboxRefs } from '../../core/data/schema.js';
+import { agentPeople, conversations, jobs, bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePersonSightings, bridgePeople, bridgeIncoming, bridgeSendParts, bridgeSends, inbox, inboxRefs } from '../../core/data/schema.js';
 
 // A held receipt keeps the reason nobody received it and the routing fact Discord supplied.
 const BOT_MENTION_HELD = '; the message explicitly mentioned a bot';
@@ -39,6 +39,10 @@ export interface IncomingMessage {
   /** Authenticated channel kind; group DMs are not private to one sender. */
   groupDm?: boolean;
   user: string;
+  /** Provider display text for a human sender in a room. Identity is resolved by account ID. */
+  authorLabel?: string;
+  /** The provider instant before conversion to the millisecond household clock. */
+  sightedAt?: string;
   text: string;
   postedAt: string;
   mentions: readonly string[];
@@ -91,12 +95,21 @@ export class BridgeIncoming {
    * the caller to announce and to answer once its transaction has committed. */
   takeStopped(): { job: string; incoming: string }[] { return this.stopped.splice(0); }
 
+  private queueSighting(id:string,connection:typeof bridgeConnections.$inferSelect,message:IncomingMessage) {
+    const values={incoming:id,platform:connection.platform,workspace:connection.workspace,
+      seenAt:message.sightedAt??message.postedAt,label:message.authorLabel};
+    const insert=this.db.insert(bridgePersonSightings).values(values);
+    if(!message.authorLabel){insert.onConflictDoNothing().run();return;}
+    insert.onConflictDoUpdate({target:bridgePersonSightings.incoming,set:{label:message.authorLabel},
+      where:and(isNull(bridgePersonSightings.label),eq(bridgePersonSightings.workspace,connection.workspace),eq(bridgePersonSightings.platform,connection.platform))}).run();
+  }
+
   /** Atomically records the event, turn, conversation and unified inbox item.
    * Duplicate events never append a second turn. A held event is tried again
    * only when asked: with the platform envelope while the raw-event adapter
    * still has it, and from its own row afterwards (retry). The trusted spool
    * supplies its original receipt time when processing was delayed. */
-  receive(message: IncomingMessage, retryHeld = false, receivedAt?: string): typeof bridgeIncoming.$inferSelect {
+  receive(message: IncomingMessage, retryHeld = false, receivedAt?: string, recordSighting = false): typeof bridgeIncoming.$inferSelect {
     return this.db.transaction(() => {
       const id = incomingId(message.connection, message.id);
       const connection = this.db.select().from(bridgeConnections).where(eq(bridgeConnections.id, message.connection)).get();
@@ -110,6 +123,14 @@ export class BridgeIncoming {
         if (!sameMessage(existing,message,connection.platform)) {
           if (samePosting(existing,message)) return existing;
           throw new Error('Incoming id reused for a different message');
+        }
+        // Slack may send a second subscription event for the same posting with a profile
+        // omitted from the first. Confirm the original delivery's workspace and sender kind.
+        if(recordSighting && existing.state==='delivered' && message.authorLabel && !message.isDm &&
+          !message.bot && !message.webhook && existing.bot===false && existing.webhook===false && existing.conversation){
+          const original=this.db.select({kind:inbox.fromKind}).from(inbox).where(and(eq(inbox.conversation,existing.conversation),
+            eq(inbox.source,connection.platform),eq(inbox.sourceId,inboxSourceId(connection.workspace,message.channel,message.id)))).get();
+          if(original&&original.kind!=='agent')this.queueSighting(id,connection,message);
         }
         if (existing.state !== 'held' || !retryHeld) return existing;
       }
@@ -192,6 +213,15 @@ export class BridgeIncoming {
         // What admission reads and nothing else keeps, so a held message can be tried again from this row.
         mentions: JSON.stringify(message.mentions), repliesTo: message.repliesTo ?? null, parent: message.parent ?? null,
         groupDm: !!message.groupDm, bot: !!message.bot, webhook: !!message.webhook }).returning().get();
+      const humanRoom = !message.isDm && !message.bot && !message.webhook && !sender && message.user !== connection.botUser;
+      if (existing && (state === 'dropped' || !humanRoom)) {
+        this.db.delete(bridgePersonSightings).where(eq(bridgePersonSightings.incoming,id)).run();
+      } else {
+        // In particular, a retained row alone cannot witness a renamed connection's workspace.
+        const retargeted=existing && this.db.delete(bridgePersonSightings).where(and(eq(bridgePersonSightings.incoming,id),
+          sql`(${bridgePersonSightings.workspace} <> ${connection.workspace} or ${bridgePersonSightings.platform} <> ${connection.platform})`)).run().changes;
+        if (!retargeted && recordSighting && humanRoom && state !== 'dropped') this.queueSighting(id,connection,message);
+      }
       let conversation: string | null = null;
       let deliveredAt = at;
       if (state === 'delivered') {
@@ -218,9 +248,13 @@ export class BridgeIncoming {
           // nobody in this household. A duplicate delivery (above) keeps its original recorded scope.
           const member = message.isDm && !message.groupDm && !sender ? matchedMember : null;
           const place = conversationPlace(connection.workspace, message, member);
-          const label = connection.platform === 'discord' ? discordPlace(message, member) : message.thread ?? message.channel;
+          const slackLabel = connection.platform === 'slack' && !message.isDm && message.channelName
+            ? slackRoomLabel + message.channelName : undefined;
+          const label = connection.platform === 'discord' ? discordPlace(message, member) : slackLabel ?? message.thread ?? message.channel;
           const cv = this.conversations.open({ agent: connection.agent, venue: connection.platform, place, label, member, direct: message.isDm });
           conversation = cv.id;
+          if (slackLabel && cv.label !== slackLabel && (cv.label === message.thread || cv.label === message.channel || cv.label.startsWith(slackRoomLabel)))
+            refreshConversationLabel(this.db, cv, slackLabel);
           if (connection.platform === 'discord' && label !== cv.label && (cv.label === message.channel || (message.channelName && /^(Discord channel #|Discord thread #)/.test(cv.label)
             && (!message.parent || message.parentName || cv.label.endsWith(' under #' + message.parent)))))
             refreshConversationLabel(this.db, cv, label);

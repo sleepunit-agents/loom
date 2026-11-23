@@ -71,3 +71,16 @@ export function insertKnowledgeCitation(db: Database, pageId: number, citation: 
   ).run(pageId, citation.claim, citation.source_kind, citation.source_locator ?? null, citation.excerpt, at, at);
   return true;
 }
+
+/** Count each page returned by one deliberate tool read once, on the caller's source transaction. */
+export function countKnowledgeConsultations(db: Database, slugs: readonly string[], actor: string, at: string): void {
+  const stamp = db.prepare(`UPDATE pages SET hit_count=hit_count+1,last_accessed=max(coalesce(last_accessed,''),?)
+    WHERE slug=? AND status='active' RETURNING id`);
+  const attribute = db.prepare(`INSERT INTO knowledge_access(page_id,identity,hit_count,last_accessed) VALUES(?,?,1,?)
+    ON CONFLICT(page_id,identity) DO UPDATE SET hit_count=knowledge_access.hit_count+1,
+    last_accessed=max(coalesce(knowledge_access.last_accessed,''),excluded.last_accessed)`);
+  for (const slug of new Set(slugs)) {
+    const row = stamp.get(at, slug) as { id: number } | undefined;
+    if (row) attribute.run(row.id, actor, at);
+  }
+}

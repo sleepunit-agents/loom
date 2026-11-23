@@ -1378,6 +1378,35 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `agent_post_threads` (
+	`id` text PRIMARY KEY NOT NULL,
+	`source` text NOT NULL,
+	`title` blob NOT NULL,
+	FOREIGN KEY (`source`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX `agent_post_threads_source` ON `agent_post_threads` (`source`);
+CREATE TABLE `agent_posts` (
+	`seq` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`thread` text NOT NULL,
+	`source` text NOT NULL,
+	`at` text NOT NULL,
+	`words` blob NOT NULL,
+	`work_refs` blob,
+	FOREIGN KEY (`thread`) REFERENCES `agent_post_threads`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`source`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "agent_posts_at_utc" CHECK("agent_posts"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "agent_posts"."at") = "agent_posts"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "agent_posts"."at") = "agent_posts"."at", 0))
+);
+
+CREATE INDEX `agent_posts_thread_seq` ON `agent_posts` (`thread`,`seq`);
+CREATE TABLE `agent_post_names` (
+	`thread` text PRIMARY KEY NOT NULL,
+	`source` text NOT NULL,
+	`title` blob NOT NULL,
+	FOREIGN KEY (`thread`) REFERENCES `agent_post_threads`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`source`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
 CREATE TABLE `guest_io_readings` (
 	`box` text NOT NULL,
 	`guest` text NOT NULL,
@@ -1415,17 +1444,6 @@ CREATE TABLE `worker_join_requests` (
 CREATE UNIQUE INDEX `worker_join_requests_fingerprint_unique` ON `worker_join_requests` (`fingerprint`);
 CREATE UNIQUE INDEX `worker_join_requests_code_unique` ON `worker_join_requests` (`code`);
 CREATE INDEX `worker_join_recent` ON `worker_join_requests` (`requested_at`);
-CREATE TABLE `job_session_limits` (
-	`job` text PRIMARY KEY NOT NULL,
-	`since` text NOT NULL,
-	`keep_until` text NOT NULL,
-	`invalidated` integer DEFAULT false NOT NULL,
-	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE cascade,
-	CONSTRAINT "job_session_limits_valid_flag" CHECK("job_session_limits"."invalidated" in (0, 1)),
-	CONSTRAINT "job_session_limits_since_utc" CHECK("job_session_limits"."since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "job_session_limits"."since") = "job_session_limits"."since" or strftime('%Y-%m-%dT%H:%M:%fZ', "job_session_limits"."since") = "job_session_limits"."since", 0)),
-	CONSTRAINT "job_session_limits_until_utc" CHECK("job_session_limits"."keep_until" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "job_session_limits"."keep_until") = "job_session_limits"."keep_until" or strftime('%Y-%m-%dT%H:%M:%fZ', "job_session_limits"."keep_until") = "job_session_limits"."keep_until", 0))
-);
-
 CREATE TABLE `archived_questions` (
 	`thread` text NOT NULL,
 	`source_member` text NOT NULL,
@@ -1802,7 +1820,6 @@ CREATE TABLE `conversation_sessions` (
 	`files` blob NOT NULL,
 	`bytes` integer NOT NULL,
 	`started_at` text NOT NULL,
-	`keep_until` text,
 	PRIMARY KEY(`conversation`, `harness`),
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "conversation_sessions_started_at_utc" CHECK("conversation_sessions"."started_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "conversation_sessions"."started_at") = "conversation_sessions"."started_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "conversation_sessions"."started_at") = "conversation_sessions"."started_at", 0))

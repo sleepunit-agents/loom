@@ -1,3 +1,4 @@
+import { agentPostFields } from './agent-post-query.js';
 import { noticeInfo } from './legacy-notice.js';
 import { legacyStepWords, legacyToolCard } from './legacy-tool-card.js';
 import { archivedQuestionsField } from './archived-questions.js';
@@ -29,6 +30,9 @@ export class CommsQueries {
     const allowed = this.policy(viewer, getTableColumns(conversations));
     if (!is(allowed, SQL)) throw new Error('SQL conversation visibility required');
     return allowed;
+  }
+  activityFields() {
+    return agentPostFields(this.db, this.key, viewer => this.allowed(viewer));
   }
   archivedHistory() {
     return archivedQuestionsField(this.db, this.key, viewer => this.allowed(viewer), this.now);
@@ -172,6 +176,7 @@ export function commsQueryFields(service: CommsQueries): GraphQLFieldConfigMap<u
     threads: { type: new GraphQLNonNull(GraphQLInt) }, archived: { type: new GraphQLNonNull(GraphQLInt) },
   } });
   return {
+    ...service.activityFields(),
     commsArchivedQuestions: service.archivedHistory(),
     homeComms: { type: home, resolve: (_row, _args, context) => service.home(context.viewer) },
     commsFolders: { type: new GraphQLNonNull(folders), resolve: (_row, _args, context) => service.folders(context.viewer) },

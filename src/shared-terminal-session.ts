@@ -1,3 +1,4 @@
+import { registerTerminalActivity } from './shared-terminal-activity.js';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
 import type { WordsKey } from './core/conversations/words.js';
@@ -10,6 +11,7 @@ type Scope = { agent: string; member: string; machine: string };
 export function registerTerminalSession(operations: Operations, db: DataDatabase, key: WordsKey,
   scope: (viewer: Viewer) => Scope | undefined, now: () => string) {
   const sessions = new TerminalSessions(db, key, now);
+  registerTerminalActivity(operations, db, key, scope, now);
   // A v1 reporter used its instance UUID as the receipt for its first open.
   // Reserving that same ID before retiring it makes a delayed first delivery
   // conflict, even when the original request never reached the coordinator.

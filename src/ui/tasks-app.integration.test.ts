@@ -122,7 +122,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     step('Priority');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Priority', exact: true }).click();
     form = a.getByRole('form', { name: 'Set priority', exact: true });
-    await form.getByLabel('Priority', { exact: true }).selectOption('0');
+    await form.getByRole('combobox', { name: 'Priority', exact: true }).selectOption('0');
     await form.getByRole('button', { name: 'Set priority', exact: true }).click();
     for (const page of [a,b]) await expect.poll(() => page.getByText('t-1 · P0 · open', { exact: true }).count()).toBe(1);
     await b.reload(); await expect.poll(() => b.getByText('Shared HTTP comment', { exact: true }).count()).toBe(1);
@@ -141,7 +141,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
         await a.getByRole('group', { name: 'More for this task', exact: true }).getByRole('button', { name: action, exact: true }).click();
         form = a.getByRole('form', { name: title, exact: true });
         if (remove) await form.getByRole('button', { name: /^Remove / }).click();
-        else { await form.getByLabel(label, { exact: true }).selectOption('t-2'); await form.getByRole('button', { name: add, exact: true }).click(); }
+        else { await form.getByRole('combobox', { name: label, exact: true }).selectOption('t-2'); await form.getByRole('button', { name: add, exact: true }).click(); }
         await expect.poll(() => app.db.select().from(s.taskLinks).where(and(eq(s.taskLinks.task, 't-1'), eq(s.taskLinks.dependsOn, 't-2'), eq(s.taskLinks.type, relation))).all().length).toBe(remove ? 0 : 1);
         for (const page of [a,b]) await expect.poll(() => page.getByRole('group', { name: title, exact: true }).count()).toBe(remove ? 0 : 1);
       }
@@ -150,7 +150,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
       step(`project ${project}`);
       await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Project', exact: true }).click();
       form = a.getByRole('form', { name: 'Set project', exact: true });
-      await form.getByLabel('Project', { exact: true }).selectOption(project);
+      await form.getByRole('combobox', { name: 'Project', exact: true }).selectOption(project);
       await form.getByRole('button', { name: 'Set project', exact: true }).click();
       for (const page of [a,b]) await expect.poll(() => page.getByText(`open · P0 · ${project}`, { exact: true }).count()).toBe(1);
     }
@@ -166,7 +166,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     await a.getByRole('button', { name: 'More for this task', exact: true }).click();
     await a.getByRole('group', { name: 'More for this task', exact: true }).getByRole('button', { name: 'Ask a person', exact: true }).click();
     form = a.getByRole('form', { name: 'Ask a person', exact: true });
-    await form.getByLabel('Person', { exact: true }).selectOption('lee');
+    await form.getByRole('combobox', { name: 'Person', exact: true }).selectOption('lee');
     for (const [label,text] of [['Question','Which pump?'],['If yes','Order it'],['If no','Wait']]) await form.getByLabel(label, { exact: true }).fill(text);
     await form.getByRole('button', { name: 'Ask', exact: true }).click();
     for (const page of [a,b]) await expect.poll(() => page.getByText('Which pump?', { exact: true }).count()).toBe(1);
@@ -186,8 +186,8 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     await a.getByRole('button', { name: 'Create task', exact: true }).click();
     form = a.getByRole('form', { name: 'Create task', exact: true });
     for (const [label,text] of [['Title','Browser planted task'],['Goal','Water moves'],['Why','Pond needs it']]) await form.getByLabel(label, { exact: true }).fill(text);
-    await form.getByLabel('Project', { exact: true }).selectOption('pond');
-    await form.getByLabel('Owner', { exact: true }).selectOption('agent:art');
+    await form.getByRole('combobox', { name: 'Project', exact: true }).selectOption('pond');
+    await form.getByRole('combobox', { name: 'Owner', exact: true }).selectOption('agent:art');
     expect(await form.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     await form.getByRole('button', { name: 'Create task', exact: true }).click();
     for (const page of [a,b]) await expect.poll(() => row(page, 'Browser planted task').count()).toBe(1);

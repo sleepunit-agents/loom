@@ -5,3 +5,5 @@
  * (repository.ts). It reads no file itself, so the code that sets triggers imports no file access. */
 export const laneFile = (file: string): boolean =>
   !!file && !file.includes('\\') && file.split('/').every(part => !!part && !part.startsWith('.') && !part.includes('\0'));
+
+export const FILE_READER_UNAVAILABLE = 'Loom needs a configured routine repository for file-based wakes. You can supply the instructions as text.';

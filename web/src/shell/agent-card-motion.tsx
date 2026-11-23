@@ -2,7 +2,7 @@ import { Component, type ReactNode, type RefObject } from 'react';
 import { motionQuery, reducedMotion } from '../access';
 
 type Props = { ground: RefObject<HTMLDivElement | null>; home: boolean; phone: boolean; children: ReactNode };
-type Position = { frame: DOMRect; face?: DOMRect };
+type Position = { frame: DOMRect; face?: DOMRect; line?: { id: string; rect: DOMRect } };
 type Positions = Map<string, Position>;
 const timing = { duration:760, easing:'cubic-bezier(.2,.74,.2,1)' };
 
@@ -12,8 +12,7 @@ function portrait(card: HTMLElement) {
 
 // Keep the portrait square while the card changes aspect ratio. Both travel
 // between their own measured positions on the same clock.
-function portraitFrames(start: Position, end: Position) {
-  const a = start.face!, b = end.face!;
+function childFrames(start: Position, end: Position, a: DOMRect, b: DOMRect) {
   const fromX = a.left-start.frame.left, fromY = a.top-start.frame.top;
   const toX = b.left-end.frame.left, toY = b.top-end.frame.top;
   return Array.from({length:17}, (_,i) => {
@@ -37,7 +36,11 @@ export class AgentCardMotion extends Component<Props, object, Positions | null> 
   getSnapshotBeforeUpdate(previous: Props) {
     const ground = this.props.ground.current;
     if (!ground || previous.home === this.props.home || previous.phone || this.props.phone || reducedMotion()) return null;
-    return new Map(cards(ground, previous.home).map(card => [card.dataset.agent!, {frame:card.getBoundingClientRect(),face:portrait(card)?.getBoundingClientRect()}]));
+    return new Map(cards(ground, previous.home).map(card => {
+      const words = card.querySelector<HTMLElement>('[data-post-id]');
+      const line = words?.dataset.postId ? {id:words.dataset.postId, rect:words.getBoundingClientRect()} : undefined;
+      return [card.dataset.agent!, {frame:card.getBoundingClientRect(), face:portrait(card)?.getBoundingClientRect(), line}] as const;
+    }));
   }
 
   componentDidUpdate(previous: Props, _state: object, from: Positions | null) {
@@ -57,7 +60,13 @@ export class AgentCardMotion extends Component<Props, object, Positions | null> 
         const x = start.frame.left - end.left, y = start.frame.top - end.top;
         const face = portrait(card), faceEnd = face?.getBoundingClientRect();
         if (face && start.face?.width && start.face.height && faceEnd?.width && faceEnd.height)
-          animations.push(face.animate(portraitFrames(start,{frame:end,face:faceEnd}), timing));
+          animations.push(face.animate(childFrames(start,{frame:end}, start.face, faceEnd), timing));
+        const words = card.querySelector<HTMLElement>('[data-post-id]');
+        if (words && start.line && words.dataset.postId === start.line.id) {
+          const box = words.getBoundingClientRect();
+          if (box.width && box.height && start.line.rect.width && start.line.rect.height)
+            animations.push(words.animate(childFrames(start,{frame:end},start.line.rect,box),timing));
+        }
         card.dataset.cardFlight = home ? 'expand' : 'collapse';
         const animation = card.animate([
           { transformOrigin:'top left', transform:`translate(${x}px,${y}px) scale(${start.frame.width/end.width},${start.frame.height/end.height})` },

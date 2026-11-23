@@ -17,6 +17,8 @@ export function discordPlace(message: { channel: string; thread?: string | null;
   return message.thread ? `Discord thread ${channel}${message.parent ? ' under ' + name(message.parentName, message.parent) : ''}` : `Discord channel ${channel}`;
 }
 
+export const slackRoomLabel = 'Slack conversation in #';
+
 /** The thread a Slack message sits in: the one it was posted to, or, in a shared place, the one it starts. */
 export function slackThread(kind: 'channel' | 'group' | 'im' | 'mpim', ts: string, threadTs: string | undefined): string | undefined {
   return threadTs ?? (kind === 'channel' || kind === 'group' ? ts : undefined);

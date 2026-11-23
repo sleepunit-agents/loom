@@ -2382,7 +2382,42 @@ export const jobSessionLimits = sqliteTable('job_session_limits', {
   invalidated: integer('invalidated', {mode:'boolean'}).notNull().default(false),
 }, t => [check('job_session_limits_valid_flag',sql`${t.invalidated} in (0, 1)`),check('job_session_limits_since_utc',utc(t.since)),check('job_session_limits_until_utc',utc(t.keepUntil))]);
 
+/** The source conversation determines the audience. Titles and posts carry private words. */
+export const agentPostThreads = sqliteTable('agent_post_threads', {
+  id: text('id').primaryKey().notNull(),
+  source: text('source').notNull().references(() => threads.id, { onDelete: 'cascade' }),
+  title: blob('title', { mode: 'buffer' }).notNull(),
+}, t => [index('agent_post_threads_source').on(t.source)]);
+
+/** A single sequence also orders same-clock replies across different threads. */
+export const agentPosts = sqliteTable('agent_posts', {
+  seq: integer('seq').primaryKey({ autoIncrement: true }),
+  thread: text('thread').notNull().references(() => agentPostThreads.id, { onDelete: 'cascade' }),
+  source: text('source').notNull().references(() => threads.id, { onDelete: 'cascade' }),
+  at: text('at').notNull(),
+  words: blob('words', { mode: 'buffer' }).notNull(),
+  workRefs: blob('work_refs', { mode: 'buffer' }),
+}, t => [check('agent_posts_at_utc', utc(t.at)), index('agent_posts_thread_seq').on(t.thread, t.seq)]);
+
+/** Removing the conversation that supplied a rename restores the original title. */
+export const agentPostNames = sqliteTable('agent_post_names', {
+  thread: text('thread').primaryKey().notNull().references(() => agentPostThreads.id, { onDelete: 'cascade' }),
+  source: text('source').notNull().references(() => threads.id, { onDelete: 'cascade' }),
+  title: blob('title', { mode: 'buffer' }).notNull(),
+});
+
+// Internal handoff to the separate People directory. Only retained until delivery is filed or dropped.
+export const bridgePersonSightings = sqliteTable('bridge_person_sightings', {
+  incoming: text('incoming').primaryKey().notNull().references(() => bridgeIncoming.id, { onDelete: 'cascade' }),
+  seenAt: text('seen_at').notNull(),
+  platform: text('platform', {enum:['discord','slack']}).notNull(),
+  workspace: text('workspace').notNull(),
+  label: text('label'),
+});
+
 export const plumbing = {
+  bridgePersonSightings,
+  agentPostThreads, agentPosts, agentPostNames,
   guestIoReadings,
   workerJoinRequests,
   jobSessionLimits,

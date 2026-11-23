@@ -10,7 +10,7 @@ import type { DiscordChannel, SlackChannel } from './normalize.js';
 
 const id = z.string().min(1).max(256);
 const discordEvidence = z.object({ id, type: z.number().int(), guild_id: id.nullish(), parent_id: id.nullish(), name: z.string().nullish() });
-const slackEvidence = z.object({ id, context_team_id: id.optional(), is_im: z.boolean().optional(), is_mpim: z.boolean().optional(), is_channel: z.boolean().optional(), is_group: z.boolean().optional() });
+const slackEvidence = z.object({ id, name: z.unknown().optional(), context_team_id: id.optional(), is_im: z.boolean().optional(), is_mpim: z.boolean().optional(), is_channel: z.boolean().optional(), is_group: z.boolean().optional() });
 type Binding = { platform: 'discord' | 'slack'; workspace: string };
 /** A role Discord made for a bot when it joined (`managed`, with the bot's id in its tags). */
 const discordRole = z.object({ id, managed: z.boolean().optional(), tags: z.object({ bot_id: id.nullish() }).passthrough().nullish() }).passthrough();
@@ -80,7 +80,9 @@ export class BridgeChannels implements BridgeChannelCache {
           else if (raw.is_channel && !raw.is_im && !raw.is_mpim && !raw.is_group) kind = 'channel';
           else if (raw.is_group && raw.is_im === false && raw.is_mpim === false && !raw.is_channel) kind = 'group';
           else throw Error('Slack channel kind is ambiguous');
-          life.channels.set(channel, { id: channel, kind });
+          const name = typeof raw.name === 'string' && /^[\p{L}\p{N}_-]{1,100}$/u.test(raw.name) && raw.name !== channel
+            && (kind === 'channel' || kind === 'group') ? raw.name : undefined;
+          life.channels.set(channel, { id: channel, kind, ...(name && { name }) });
         }
         return true;
       },

@@ -130,7 +130,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
       }
     });
     const citation=b.locator('article a[href^="https://loom.invalid/knowledge/"]');
-    await citation.scrollIntoViewIfNeeded();
+    await citation.click({trial:true});
     await expect.poll(()=>barRequests.some(route=>!route.request().failure())).toBe(true);
     const before=await b.locator('.next-ground').boundingBox(),hit=await citation.boundingBox();
     if(!before||!hit)throw Error('Knowledge fixture citation is not visible');

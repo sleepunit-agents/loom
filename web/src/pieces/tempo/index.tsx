@@ -1,3 +1,4 @@
+import { tempoFailureMessage } from './actions';
 import { NativeSelect } from '../../kit/native-select';
 import { useDataQuery } from '../../data/graphql';
 import type { TempoActions } from './actions';
@@ -19,16 +20,16 @@ export type { TempoActions } from './actions';
 function TriggerActions({ trigger, pauses, actions }: { trigger: Trigger; pauses: readonly AgentPause[]; actions: TempoActions }) {
   const busy = useRef(false);
   const [pending, setPending] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failure, setFailure] = useState('');
   const agent = triggerAgent(trigger);
   const paused = !!agent && pauses.some(item => item.agent === agent);
   async function run(action: () => Promise<void>) {
     if (busy.current) return;
     busy.current = true;
     setPending(true);
-    setFailed(false);
+    setFailure('');
     try { await action(); }
-    catch { setFailed(true); }
+    catch (error) { setFailure(tempoFailureMessage(error, 'Tempo could not complete that action. Try again.')); }
     finally { busy.current = false; setPending(false); }
   }
   return <section aria-label="Trigger actions" className="grid gap-2">
@@ -40,7 +41,7 @@ function TriggerActions({ trigger, pauses, actions }: { trigger: Trigger; pauses
       {agent && <Button disabled={pending} onClick={() => void run(() => paused ? actions.resume(agent) : actions.pause(agent))}>{paused ? 'Resume agent' : 'Pause agent'}</Button>}
     </div>
     {pending && <p role="status">Waiting for Tempo…</p>}
-    {failed && <p role="alert">Tempo could not complete that action. Try again.</p>}
+    {failure && <p role="alert">{failure}</p>}
   </section>;
 }
 

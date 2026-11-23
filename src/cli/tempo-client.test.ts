@@ -33,7 +33,7 @@ it('finds earlier matching history of a stopped wake across pages, with the agen
     db.insert(triggerLog).values({ seq, trigger: seq === 2 ? 'birch' : 'fern', event: seq <= 3 ? 'fired' : 'held',
       at: seq === 3 ? new Date(clock.now() - 7200000).toISOString() : at, note: 'entry ' + seq }).run();
   }
-  const app = sharedRoot({ db, clock, originAllowed: () => true });
+  const app = sharedRoot({ db, clock, tempo: { instructions: file => 'Fixture routine ' + file }, originAllowed: () => true });
   try {
     let out = '', err = '';
     const io = { env: { WAKE_AGENT: 'fern', LOOM_URL: 'http://localhost', LOOM_TOKEN_FILE: file }, stdin: Readable.from([]),
@@ -183,7 +183,7 @@ it('replays creation and pause after lost responses and delivers once to the res
     db.insert(agents).values({ id, about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
     db.insert(memberAgents).values({ member: 'director', agent: id }).run();
   }
-  const app = sharedRoot({ db, clock, originAllowed: () => true });
+  const app = sharedRoot({ db, clock, tempo: { instructions: file => 'Fixture routine ' + file }, originAllowed: () => true });
   try {
     let output = '', errors = '';
     const io = { env: { WAKE_LOCAL_AGENT: 'fern', LOOM_URL: 'http://localhost', LOOM_TOKEN_FILE: file },
@@ -237,6 +237,19 @@ it('replays creation and pause after lost responses and delivers once to the res
     expect(db.select().from(triggers).all().find(row=>row.id===fileWake.id)?.enabled).toBe(true);
     expect(await runTempoClient(['--agent=birch','cancel',fileWake.id], io, request)).toBe(1);
     expect(await runTempoClient(['cancel',fileWake.id], io, request)).toBe(0);
+    const routine = 'routines/nightly.md';
+    const schedule = app.services.tempo.triggers.set({ ownerKind:'agent', owner:'fern', toKind:'agent', to:'fern',
+      targetKind:'inbox', sourceKind:'time', times:'08:00', lifespan:'until-stopped', file:routine, note:'Nightly' });
+    const beforeRearm = db.select().from(triggers).all().length;
+    output = '';
+    expect(await runTempoClient(['at','08:00','-f',routine], io, request), errors).toBe(0);
+    expect(output).toContain('Already scheduled for ' + schedule.nextDueAt);
+    expect(db.select().from(triggers).all()).toHaveLength(beforeRearm);
+    expect(await runTempoClient(['--agent=birch','at','08:00','-f',routine], io, request), errors).toBe(0);
+    expect(db.select().from(triggers).all()).toHaveLength(beforeRearm + 1);
+    app.services.tempo.triggers.stop(schedule.id);
+    expect(await runTempoClient(['at','08:00','-f',routine], io, request), errors).toBe(0);
+    expect(db.select().from(triggers).all()).toHaveLength(beforeRearm + 2);
     const standing = app.services.tempo.triggers.set({ id:'cadence@fern', ownerKind:'agent', owner:'fern',
       sourceKind:'time', times:'09:00', lifespan:'until-stopped', targetKind:'inbox', toKind:'agent', to:'fern', note:'Standing' });
     output = '';
@@ -326,6 +339,10 @@ it('lists named household lanes across pages and returns stored UTF-8 instructio
         transport);
       return {code,out,err};
     };
+    const beforeFileWake = db.select().from(triggers).all().length;
+    const fileWake = await run(owner,'--agent','fern','in','1h','-f','routines/check.md');
+    expect(fileWake).toMatchObject({code:1,out:'',err:expect.stringContaining('configured routine repository')});
+    expect(db.select().from(triggers).all()).toHaveLength(beforeFileWake);
     const listed = await run(owner,'lane','list');
     expect(listed.code,listed.err).toBe(0);
     const names = listed.out.trimEnd().split('\n').map(line=>line.split(' ')[0]);

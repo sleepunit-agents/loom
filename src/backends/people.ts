@@ -17,6 +17,7 @@
  * one-writer rule is about *who* writes, so the transaction is what serializes concurrent bodies.
  */
 import BetterSqlite3, { type Database } from 'better-sqlite3';
+import { sightingHolder, type AccountPlatform } from './people-accounts.js';
 import { refuseNewerStore, runMigrationSteps } from './migrations.js';
 import {
   CardTable, fail, isPlainObject, assertNoNull, checkString, checkFieldName, checkVerifiedAt,
@@ -345,7 +346,7 @@ export function renderCard(card: PersonCard, nowMs: number, opts: { worstCase?: 
 
 // ─── Store ───────────────────────────────────────────────────────────────────
 
-const PEOPLE_MIGRATIONS = ['people_cards', 'person_revisions_actor', 'person_merges', 'people_outside_accounts'];
+const PEOPLE_MIGRATIONS = ['people_cards', 'person_revisions_actor', 'person_merges', 'people_outside_accounts', 'person_account_sightings'];
 
 type RawRow = CardRowBase;
 
@@ -557,6 +558,39 @@ export class PeopleStore {
 
       const c = this.table.commitWrite({ existing, current, next, passedSummary, merge, at });
       return { ...this.result(c.row, c.unchanged, c.revisionId), ...(asked !== input.slug ? { redirected_from: asked } : {}) };
+    });
+  }
+
+  /** The receiver supplies a delivered human room message. Resolve the exact account inside
+   * the write transaction so a concurrent card edit cannot redirect the observation. */
+  observeAccount(platform: AccountPlatform, workspace: string, account: string, seenAt: string, label?: string): boolean {
+    return this.mutate(() => {
+      const ms = Date.parse(seenAt);
+      if (!Number.isFinite(ms)) throw Error('Invalid account sighting timestamp');
+      // All inputs are UTC provider instants. Compare fractions as digits, so clock skew,
+      // sub-millisecond posts, and two equivalent spellings of one instant are harmless.
+      const fraction=seenAt.match(/\.(\d+)Z$/)?.[1]??'';
+      const order=new Date(ms).toISOString().slice(0,-5)+'.'+fraction.replace(/0+$/,'');
+      const slug=sightingHolder(this.db,platform,workspace,account);
+      if(!slug)return false;
+      const current=this.db.prepare(`SELECT slug,seen_order,label_order,label FROM person_account_sightings
+        WHERE platform=? AND workspace=? AND account=?`).get(platform,workspace,account) as
+        {slug:string;seen_order:string;label_order:string|null;label:string|null}|undefined;
+      if(current&&order<=current.seen_order){
+        // A richer delivery of the same message may fill in a name carried forward from an older one.
+        if(order<current.seen_order || current.slug!==slug || !label || (order===current.label_order && current.label!==null))return false;
+        this.db.prepare(`UPDATE person_account_sightings SET label=?,label_order=?
+          WHERE platform=? AND workspace=? AND account=?`).run(label,order,platform,workspace,account);
+        return true;
+      }
+      const sameHolder=current?.slug===slug;
+      const latestLabel=label??(sameHolder?current.label:null);
+      const labelOrder=label?order:sameHolder?current.label_order:current?order:null;
+      this.db.prepare(`INSERT INTO person_account_sightings (slug,platform,workspace,account,seen_at,seen_order,label,label_order)
+        VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (platform,workspace,account) DO UPDATE SET
+        slug=excluded.slug,seen_at=excluded.seen_at,seen_order=excluded.seen_order,label=excluded.label,label_order=excluded.label_order`)
+        .run(slug,platform,workspace,account,seenAt,order,latestLabel,labelOrder);
+      return true;
     });
   }
 

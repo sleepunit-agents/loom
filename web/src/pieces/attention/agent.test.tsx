@@ -111,3 +111,14 @@ it('says plainly what it cannot read, and shows no last answer and no stale word
  expect(text()).toContain('Can’t read jobs right now.');expect(text()).toContain('Can’t read conversations right now.');expect(text()).toContain('Can’t tell what it is doing right now.');
  await answer('DeskCardTalk',{status:'live',data:{recent:[],answered:[]}});expect(tree!.root.findAllByProps({'aria-label':'Last answer'})).toHaveLength(0);expect(text()).not.toMatch(/No retained agent answer|Answer unavailable/);
 });
+
+it('keeps the selected activity beside the agent identity, session details and Talk', async()=>{
+ const words='The console moves now.';
+ f.extra.AgentActivityHistory={status:'live',data:{agentActivityHistory:[
+  {id:'p1',at:'2026-11-22T12:02:00Z',words,work:[],source:'source-1'}
+ ]}};
+ await draw('/p/agents-preview/agent/art?activity=activity%3Aboot');
+ expect(text()).toContain(words);
+ for(const name of ['Art E Fish agent window','Activity thread','Doing now','Conversations · 1 unread'])
+  expect(tree!.root.findAllByProps({'aria-label':name}).length).toBeGreaterThan(0);
+});

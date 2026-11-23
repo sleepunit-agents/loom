@@ -144,3 +144,19 @@ it('shows how many readings the machine reported beyond retention',async()=>{
   expect(statuses).toContain('More than 24 things reported; 6 were left out.');
  } finally { f.feed=before; }
 });
+
+it.each(['machine.history','machine.readerCards'])('keeps the other machine panel usable when %s fails',async failed=>{
+ f.call.mockImplementation(async(name:string)=>{
+  if(name===failed)throw Error('Offline');
+  return name==='machine.history'?[]:[{id:'card',ask:'Grant reads to Fern?'}];
+ });
+ await act(async()=>{tree=create(h(OwnerMachines,{member:'lee'}));});
+ const button=(name:string)=>tree.root.findAllByType('button').find((b:{children:unknown[]})=>b.children.join('')===name);
+ await act(async()=>button('Workshop').props.onClick());
+ const words=JSON.stringify(tree.toJSON());
+ expect(words).toContain(failed==='machine.history'?'Grant reads to Fern?':'No machine reads recorded.');
+ expect(tree.root.findAllByProps({text:failed==='machine.history'?'Machine read history is unavailable.':'Pending read grants are unavailable.'})).toHaveLength(1);
+ f.call.mockResolvedValue([]);
+ await act(async()=>button('Refresh').props.onClick());
+ expect(JSON.stringify(tree.toJSON())).toContain('No machine reads recorded.');
+});

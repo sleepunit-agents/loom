@@ -1378,6 +1378,44 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `bridge_person_sightings` (
+	`incoming` text PRIMARY KEY NOT NULL,
+	`seen_at` text NOT NULL,
+	`platform` text NOT NULL,
+	`workspace` text NOT NULL,
+	`label` text,
+	FOREIGN KEY (`incoming`) REFERENCES `bridge_incoming`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE `agent_post_threads` (
+	`id` text PRIMARY KEY NOT NULL,
+	`source` text NOT NULL,
+	`title` blob NOT NULL,
+	FOREIGN KEY (`source`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX `agent_post_threads_source` ON `agent_post_threads` (`source`);
+CREATE TABLE `agent_posts` (
+	`seq` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`thread` text NOT NULL,
+	`source` text NOT NULL,
+	`at` text NOT NULL,
+	`words` blob NOT NULL,
+	`work_refs` blob,
+	FOREIGN KEY (`thread`) REFERENCES `agent_post_threads`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`source`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "agent_posts_at_utc" CHECK("agent_posts"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "agent_posts"."at") = "agent_posts"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "agent_posts"."at") = "agent_posts"."at", 0))
+);
+
+CREATE INDEX `agent_posts_thread_seq` ON `agent_posts` (`thread`,`seq`);
+CREATE TABLE `agent_post_names` (
+	`thread` text PRIMARY KEY NOT NULL,
+	`source` text NOT NULL,
+	`title` blob NOT NULL,
+	FOREIGN KEY (`thread`) REFERENCES `agent_post_threads`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`source`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
 CREATE TABLE `guest_io_readings` (
 	`box` text NOT NULL,
 	`guest` text NOT NULL,

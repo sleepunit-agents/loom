@@ -11,6 +11,8 @@ import {join} from 'node:path';
 import { dataQueries } from '../core/data/queries.js';
 import { withQueryFields } from '../core/data/query-fields.js';
 import { taskVisibility } from '../core/data/visibility.js';
+import {FakeClock} from '../core/clock.js';
+import {deskTimeFields} from '../desk-time.js';
 import {graphql} from 'graphql/index.js';
 import { KnowledgePages } from '../../test/fixtures/knowledge-pages.js';
 import Database from 'better-sqlite3';
@@ -54,7 +56,7 @@ it('reads all four Memory tiles on one canonical client, switches details and cl
  const thread=conversations.open({agent:'fiction',venue:'wake',place:'fiction',label:'Private fictional session'});
  const activity=createActivityReader({now:()=>now},{agents:sources.agents,sharing,conversations:sharedActivityConversations(db,{}),timezone:'America/Chicago'});
  const queries=memoryQueryFields(db,{sources,sharing,now:()=>now,projects,activity,conversationHref:id=>'/conversation/'+id,projectHref:(_agent,slug)=>'/project/'+slug});
- const schema=withQueryFields(dataQueries(dbClient,{tables:['agents'],visibility:taskVisibility({kind:'member',id:'sam'})}),queries.fields);
+ const schema=withQueryFields(dataQueries(dbClient,{tables:['agents'],visibility:taskVisibility({kind:'member',id:'sam'})}),{...queries.fields,...deskTimeFields(db,new FakeClock(now))});
  vi.stubGlobal('location',{protocol:'https:',host:'memory.invalid'});
  const selections=new Map<string,{query:string;variables:Record<string,unknown>;revision:number;sink:{next(value:unknown):void};stop:ReturnType<typeof vi.fn>}>();
  wire.subscribe.mockImplementation((request:{variables:{query:string;variables:Record<string,unknown>}},sink:{next(value:unknown):void})=>{

@@ -1,0 +1,75 @@
+.desk-agent-posts, .desk-agent-history {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.desk-agent-posts button {
+  display: grid;
+  gap: .2rem;
+  width: 100%;
+  padding: .4rem .5rem;
+  color: inherit;
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+.desk-agent-post-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .4rem;
+  min-width: 0;
+}
+.desk-agent-post-heading strong, .desk-agent-post-parent {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.desk-agent-post-heading time, .desk-agent-history time {
+  flex: none;
+  font-size: .75em;
+}
+.desk-agent-post-parent {
+  border-inline-start: 2px solid currentColor;
+  padding-inline-start: .4rem;
+  opacity: .75;
+}
+.desk-agent-post-words, .desk-agent-history p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.desk-agent-post-work {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .25rem .65rem;
+  padding-inline: .5rem;
+  list-style: none;
+  font-size: .8em;
+}
+.desk-agent-post-work a {
+  text-decoration: underline;
+  text-underline-offset: .15em;
+}
+.desk-agent-posts[data-compact] button {
+  border-inline-start: 2px solid var(--primary, currentColor);
+  padding: .45rem .65rem;
+  gap: .35rem;
+}
+.desk-agent-posts[data-compact] .desk-agent-post-words {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-height: 1.4;
+}
+.desk-agent-posts[data-compact] .desk-agent-post-heading {
+  font-size: .8em;
+  opacity: .8;
+}
+.desk-agent-post-receipts summary {
+  width: fit-content;
+  padding: .35rem .5rem;
+  cursor: pointer;
+  font-size: .85em;
+}
+.desk-agent-history li{padding-block:.65rem}
+.desk-agent-history [data-reply]{margin-inline-start:.9rem;padding-inline-start:.85rem;border-inline-start:1px solid var(--v-border);color:var(--v-text-2)}

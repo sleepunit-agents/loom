@@ -105,6 +105,18 @@ it('reports a failed operation without exposing server error text and permits re
   expect(JSON.stringify(tree.toJSON())).not.toContain('Tempo could not complete');
 });
 
+it('shows a missing routine repository refusal from the clock and clears it on a successful retry', async () => {
+  const {tempoActions} = await import('./commands');
+  const {FILE_READER_UNAVAILABLE} = await import('../../../../src/core/tempo/lane-file');
+  const request = vi.fn().mockResolvedValueOnce(Response.json({ok:false,code:'invalid',message:FILE_READER_UNAVAILABLE},{status:400}))
+    .mockResolvedValueOnce(Response.json({ok:true,value:{saved:true}}));
+  await act(async () => { tree = create(h(TempoCard, {snapshot,triggerId:'tr-1',actions:tempoActions(request)})); });
+  await act(async () => button('Run now').props.onClick());
+  expect(tree.root.findByProps({role:'alert'}).children).toEqual([FILE_READER_UNAVAILABLE]);
+  await act(async () => button('Run now').props.onClick());
+  expect(tree.root.findAllByProps({role:'alert'})).toHaveLength(0);
+});
+
 it.each(['loading', 'offline', 'denied', 'removed'] as const)('removes operation controls when %s', async state => {
   const callbacks = actions();
   await act(async () => { tree = create(h(TempoCard, { snapshot, triggerId: 'tr-1', actions: callbacks })); });

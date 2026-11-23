@@ -39,8 +39,8 @@ function MachineReadings({readings}: {readings:Reading[]}) {
 function MachineSettings({box, agents}: {box:Machine; agents:string[]}) {
  const zone=useHouseholdZone();
  const [revision, refresh] = useState(0);
- const [history, setHistory] = useState<Entry[]>();
- const [cards, setCards] = useState<Card[]>();
+ const [history, setHistory] = useState<Entry[] | null>();
+ const [cards, setCards] = useState<Card[] | null>();
  const [busy, setBusy] = useState(false);
  const [error, setError] = useState('');
  const [agent, select] = useState('');
@@ -49,12 +49,14 @@ function MachineSettings({box, agents}: {box:Machine; agents:string[]}) {
  useEffect(() => {
   let current = true;
   setHistory(undefined); setCards(undefined); setError('');
-  Promise.all([
-   memberOperation<Entry[]>('machine.history', {machine:box.id}),
-   box.revokedAt ? Promise.resolve([]) : memberOperation<Card[]>('machine.readerCards', {machine:box.id}),
-  ]).then(([entries, pending]) => {
-   if (current) {setHistory(entries); setCards(pending);}
-  }).catch(() => {if (current) setError('Machine settings and history are unavailable.');});
+  void memberOperation<Entry[]>('machine.history', {machine:box.id}).then(
+   entries => {if (current) setHistory(entries);},
+   () => {if (current) setHistory(null);},
+  );
+  if (!box.revokedAt) void memberOperation<Card[]>('machine.readerCards', {machine:box.id}).then(
+   pending => {if (current) setCards(pending);},
+   () => {if (current) setCards(null);},
+  );
   return () => {current = false;};
  }, [box.id, box.revokedAt, readerList, revision]);
  async function change(operation:string, input:object) {
@@ -75,14 +77,17 @@ function MachineSettings({box, agents}: {box:Machine; agents:string[]}) {
      {agents.filter(id=>!readers.includes(id)).map(id=><option key={id} value={id}>{id}</option>)}</NativeSelect></label>
     <Button type="submit" disabled={busy || !agent || readers.includes(agent)}>Request read grant</Button>
    </form>
+   {error&&<ErrorView text={error}/>}
+   {cards===undefined&&<Loading label="Opening pending read grants…"/>}
+   {cards===null&&<ErrorView text="Pending read grants are unavailable."/>}
    {cards?.map(card=><div key={card.id}><p>{card.ask}</p>{card.review&&<p>Updated to show the current readers.</p>}
     <Button disabled={busy} onClick={()=>void change('machine.answerReader',{id:card.id,answer:'allow',...(card.review?{review:card.review}:{})})}>Allow</Button>
     <Button disabled={busy} variant="outline" onClick={()=>void change('machine.answerReader',{id:card.id,answer:'deny'})}>Deny</Button></div>)}
   </section>}
   <section aria-label="Machine read history"><h4>Read history</h4>
    <Button variant="outline" disabled={busy} onClick={()=>refresh(n=>n+1)}>Refresh</Button>
-   {error&&<ErrorView text={error}/>}
-   {!history&&!error&&<Loading label="Opening machine history…"/>}
+   {history===null&&<ErrorView text="Machine read history is unavailable."/>}
+   {history===undefined&&<Loading label="Opening machine history…"/>}
    {history?.length===0&&<p>No machine reads recorded.</p>}
    <ol>{history?.map(row=><li key={row.id} className="rounded-xl border p-3">
     <strong>{row.read}</strong> · <time dateTime={row.askedAt}>{fullTime(row.askedAt,zone)}</time>
