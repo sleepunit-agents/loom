@@ -60,3 +60,44 @@ it.runIf(process.env.LOOM_TEST_CHROME)('moves the same agent between Home and ra
     await page.locator('.desk-solo[data-agent="moss"][data-card-flight="expand"]').waitFor();
   }finally{try{await browser?.close();await app?.close();}finally{await rm(dir,{recursive:true,force:true});}}
 },30000);
+
+it.runIf(process.env.LOOM_TEST_CHROME)('restores a minimized phone tile from its dock icon and honors reduced motion',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'loom-phone-restore-')),home=join(dir,'home');
+  let app:Awaited<ReturnType<typeof startSharedHome>>|undefined,browser:Awaited<ReturnType<typeof chromium.launch>>|undefined;
+  try {
+    await exampleHome(home);
+    app=await startSharedHome({home,port:0,webRoot:resolve('dist/web'),stdout(){}});
+    browser=await chromium.launch({executablePath:process.env.LOOM_TEST_CHROME});
+    for(const reducedMotion of ['no-preference','reduce'] as const){
+      const page=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true,reducedMotion});
+      await page.goto(app.signinLink('alex'));
+      await page.getByRole('button',{name:'Sign in',exact:true}).tap();
+      await page.locator('[data-shell="phone"]').waitFor();
+      await page.locator('.loom-desk-boot').waitFor({state:'hidden'});
+      const dock=page.locator('.next-dock [data-value="tasks"]'),tile=page.locator('[data-tile="tasks"]');
+      await dock.tap();
+      await tile.getByRole('button',{name:'Minimize Tasks'}).tap();
+      await tile.waitFor({state:'hidden'});
+      // Capture the actual first keyframe before a slow browser can finish the animation.
+      await page.evaluate(()=>{
+        const animate=Element.prototype.animate;
+        Element.prototype.animate=function(frames,options){
+          if(this.matches('[data-tile="tasks"]') && Array.isArray(frames) && frames[0]?.translate && frames[0]?.scale){
+            const frame=this.getBoundingClientRect();
+            const icon=document.querySelector('.next-dock [data-value="tasks"]')!.getBoundingClientRect();
+            const [dx,dy]=String(frames[0].translate).split(' ').map(parseFloat);
+            const error=Math.hypot(frame.x+frame.width/2+dx-icon.x-icon.width/2,frame.y+frame.height/2+dy-icon.y-icon.height/2);
+            this.setAttribute('data-test-restore-distance',String(error));
+          }
+          return animate.call(this,frames,options);
+        };
+      });
+      await dock.tap();
+      await tile.waitFor();
+      const distance=await tile.getAttribute('data-test-restore-distance');
+      if(reducedMotion==='reduce')expect(distance).toBeNull();
+      else {expect(distance).not.toBeNull();expect(Number(distance)).toBeLessThan(1);}
+      await page.close();
+    }
+  } finally {try{await browser?.close();await app?.close();}finally{await rm(dir,{recursive:true,force:true});}}
+},60000);
