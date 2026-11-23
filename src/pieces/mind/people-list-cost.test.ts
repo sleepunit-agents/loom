@@ -24,6 +24,9 @@ it('reads the sharing facts once for a whole listing, and afresh for each listin
     const people = peopleReader({ agents: [{ agent: 'fiction', memories }], sharing, now: () => Date.parse('2026-11-19T12:00:00Z') });
     const viewer: Viewer = { kind: 'member', id: 'owner' };
     try {
+      expect(people.access(viewer).agents).toEqual(['fiction']);
+      expect(asked).toBe(1);
+      asked=0;
       const listed = people.list(viewer);
       expect(listed).toHaveLength(12);
       expect(listed[0].projects).toEqual([expect.objectContaining({ slug: 'pond' })]);
