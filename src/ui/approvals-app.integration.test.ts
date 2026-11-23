@@ -1,4 +1,7 @@
 /** Shared Approvals reader proof. Browsers run in CI, never on loom's machine. */
+import { approveRequestedChange } from '../../scripts/rebuild-access-actions.mjs';
+import { generateX25519Identity } from 'age-encryption';
+import { wordsKey } from '../pieces/comms/crypto.js';
 import { it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
@@ -29,6 +32,12 @@ const hidden = 'Private request for another member', record = 'Shared request re
 const summary = 'Tempo for agent art: settle 5 → 60 seconds; dim 1 → 1 days; mute 7 → 7 days';
 const updatedSummary = 'Tempo for agent art: settle 5 → 90 seconds; dim 1 → 1 days; mute 7 → 7 days';
 
+function proposeTiming(app: Awaited<ReturnType<typeof fixture>>, seconds: number) {
+  return app.data.writes.run(() => app.data.services.setup.propose('art', {
+    change:'tempoTimings', input:{who:{kind:'agent',id:'art'},settleSeconds:seconds}, why:'Exercise an owner decision in the browser fixture.',
+  })).value;
+}
+
 async function fixture() {
   const client = new Database(':memory:');
   const at = '2026-11-14T20:00:00.000Z', clock = new FakeClock(Date.parse(at));
@@ -55,7 +64,8 @@ async function fixture() {
   const ownerCookie='d'.repeat(64), ownerFingerprint=createHash('sha256').update('disposable-owner-token').digest('hex');
   db.insert(s.tokens).values({fingerprint:ownerFingerprint,label:'Disposable owner',kind:'owner',member:'pat',createdAt:at}).run();
   db.insert(s.sessions).values({id:createHash('sha256').update(ownerCookie).digest('hex'),token:ownerFingerprint,device:'Owner fixture',via:'token',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
-  const data = sharedRoot({db,clock,originAllowed:request=>request.headers.origin === `http://${request.headers.host}`,reportError:error=>{throw error;}});
+  db.insert(s.memberAgents).values({member:'pat',agent:'art'}).run();
+  const data = sharedRoot({db,clock,commsKey:wordsKey(await generateX25519Identity()),originAllowed:request=>request.headers.origin === `http://${request.headers.host}`,reportError:error=>{throw error;}});
   await data.ready;
   const serveData = getRequestListener(request => data.http.fetch(request));
   const http = createServer((request, response) => {
@@ -86,11 +96,12 @@ it('serves the shipped Approvals selection with private requests, audit, rules a
     expect(result.data.approvalRecord.map((row: { note: string }) => row.note)).toEqual([record]);
     expect(result.data.approvalRules).toEqual([]); expect(result.data.approvalNotices).toEqual([]);
     expect(JSON.stringify(result)).not.toContain(hidden);
-    const answer=(cookie:string)=>fetch(`${app.url}/api/approvals/answer`,{method:'POST',headers:{'content-type':'application/json',cookie:`loom_ui=${cookie}`},body:JSON.stringify({id:'node-answer',input:{id:'shared',answer:'allow'}})});
+    const live=proposeTiming(app,60);
+    const answer=(cookie:string)=>fetch(`${app.url}/api/approvals/answer`,{method:'POST',headers:{'content-type':'application/json',cookie:`loom_ui=${cookie}`},body:JSON.stringify({id:'node-answer',input:{id:live.id,answer:'allow'}})});
     expect((await answer(app.cookie)).status).toBe(403);
     expect((await answer(app.ownerCookie)).status).toBe(200);
     expect((await answer(app.ownerCookie)).status).toBe(200);
-    expect(app.data.services.approvals.get('shared')).toMatchObject({state:'used',decidedBy:'pat'});
+    expect(app.data.services.approvals.get(live.id)).toMatchObject({state:'used',decidedBy:'pat'});
     expect(app.db.select().from(s.tempoSettings).all()).toEqual(expect.arrayContaining([expect.objectContaining({whoKind:'agent',who:'art',settleSeconds:60})]));
     app.data.writes.run(()=>app.db.update(s.members).set({role:'member'}).where(eq(s.members.id,'pat')).run());
     expect((await answer(app.ownerCookie)).status).toBe(403);
@@ -148,12 +159,13 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     await owners.addCookies([{name:'loom_ui',value:app.ownerCookie,url:app.url}]);
     const c=await owners.newPage(), d=await owners.newPage();
     for (const page of [c,d]) page.on('pageerror',error=>errors.push(error.message));
-    await Promise.all([c.goto(`${app.url}/p/approvals-preview/approval/shared`),d.goto(`${app.url}/p/approvals-preview/approval/shared`)]);
+    const live=proposeTiming(app,90);
+    await Promise.all([c,d].map(page=>page.goto(`${app.url}/p/approvals-preview/approval/${live.id}`)));
     for (const page of [c,d]) await expect.poll(()=>page.getByRole('button',{name:'Allow',exact:true}).count()).toBe(1);
     await c.getByRole('button',{name:'Allow',exact:true}).click();
     for (const page of [c,d]) await expect.poll(()=>page.getByText('setting · used',{exact:true}).count()).toBe(1);
     expect(app.db.select().from(s.tempoSettings).all()).toEqual(expect.arrayContaining([expect.objectContaining({whoKind:'agent',who:'art',settleSeconds:90})]));
-    expect(app.data.services.approvals.get('shared')).toMatchObject({state:'used',decidedBy:'pat'});
+    expect(app.data.services.approvals.get(live.id)).toMatchObject({state:'used',decidedBy:'pat'});
     await c.goto(`${app.url}/p/approvals-preview/approval/private`);
     await c.getByRole('button',{name:'Deny',exact:true}).click();
     await expect.poll(()=>app.data.services.approvals.get('private').state).toBe('denied');
@@ -174,9 +186,18 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     await c.getByRole('button',{name:'New rule',exact:true}).click();
     const form=c.getByRole('form',{name:'Standing rule',exact:true});
     await form.getByLabel('Scope',{exact:true}).fill('github:acme/*');
-    await form.getByLabel('Answer',{exact:true}).selectOption('tell');
+    await form.getByRole('combobox',{name:'Answer',exact:true}).selectOption('tell');
     expect(await form.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
-    await form.getByRole('button',{name:'Save rule',exact:true}).click();
+    const reviewRule=async(tier:'tell'|'do'|null)=>{
+      const input={kind:'merge',scope:'github:acme/*',person:'',tier};
+      await form.getByRole('button',{name:tier===null?'Review removal':'Review rule change',exact:true}).click();
+      await approveRequestedChange({page:c,app:{url:app.url,services:app.data.services,writes:app.data.writes},
+        owner:'pat',composer:c.getByRole('region',{name:'Standing approval rule request'}),change:'rule',input,
+        expectedWords:(words:string)=>words==='Please propose this standing approval rule change.\n'+JSON.stringify(input,null,2),
+        exists:()=>{const row=app.db.select().from(s.approvalRules).where(eq(s.approvalRules.scope,input.scope)).get();return tier===null?!row:row?.tier===tier;}});
+      await c.goto(app.url+'/p/approvals-preview/rules');
+    };
+    await reviewRule('tell');
     const ruleRow=(page:typeof c)=>page.locator('[data-split-row]').filter({hasText:'github:acme/*'});
     for(const page of [c,d])await expect.poll(()=>ruleRow(page).textContent()).toContain('Tell me after');
     expect(app.db.select().from(s.approvalRules).all()).toEqual(expect.arrayContaining([expect.objectContaining({kind:'merge',scope:'github:acme/*',person:'',tier:'tell',setBy:'pat'})]));
@@ -188,13 +209,15 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
       await d.evaluate(look => { document.documentElement.dataset.look = look; document.documentElement.dataset.mode = look === 'daylight' ? 'light' : 'dark'; }, look);
       await expect.poll(() => d.locator('.loom-split').getAttribute('data-mode')).toBe(width < 640 ? 'one' : 'three');
       expect(await d.locator('.loom-split').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-      await d.getByRole('form',{name:'Standing rule',exact:true}).getByRole('button',{name:'Save rule',exact:true}).scrollIntoViewIfNeeded();
+      await d.getByRole('form',{name:'Standing rule',exact:true}).getByRole('button',{name:'Review rule change',exact:true}).scrollIntoViewIfNeeded();
       await d.screenshot({ path: join(shots, `approvals-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
     }
-    await form.getByLabel('Answer',{exact:true}).selectOption('do');
-    await form.getByRole('button',{name:'Save rule',exact:true}).click();
+    await ruleRow(c).click();
+    await form.getByRole('combobox',{name:'Answer',exact:true}).selectOption('do');
+    await reviewRule('do');
     for(const page of [c,d])await expect.poll(()=>ruleRow(page).textContent()).toContain('Just do it');
-    await form.getByRole('button',{name:'Remove rule',exact:true}).click();
+    await ruleRow(c).click();
+    await reviewRule(null);
     for(const page of [c,d])await expect.poll(()=>ruleRow(page).count()).toBe(0);
     app.data.writes.run(()=>app.db.update(s.members).set({role:'member'}).where(eq(s.members.id,'pat')).run());
     for(const page of [c,d])await expect.poll(()=>page.getByRole('form',{name:'Standing rule',exact:true}).count()).toBe(0);
