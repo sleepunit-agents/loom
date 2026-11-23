@@ -89,6 +89,14 @@ it('deduplicates moved conversations and covered episodes; readers preserve stor
  expect(read(app,'d~art~dg-one')).toMatchObject({asked:['Show what happened'],decided:['Use the new role'],needs:'Ship it?',links:[{label:'What it needs you for',href:'/p/inbox-preview'}],more:[{id:'d~art~dg-two'}]});expect(read(app,'d~art~dg-one',partial)).toMatchObject({links:[]});expect((read(app,'d~art~dg-one',partial) as ActivityOpen).needs).toBeUndefined();expect(read(app,'d~art~private-run')).toMatchObject({steps:[{label:'Tool',state:'done',tool:'Read'}]});
  expect(read(app,'e~art~independent')).toMatchObject({title:'Weekly check',line:'all clear',story:expect.any(String)});
 });
+it('keeps a session note when a nearby digest belongs to a different conversation',async()=>{
+ const a=source(),other=conv('cv-222222222222');
+ a.add('gauge',{metadata:JSON.stringify({where:'terminal',conversation:other.id})});
+ const records=role([run('unrelated')]);
+ records.conversation=(_viewer,_agent,id)=>id===other.id?other:undefined;
+ const app=await fixture(a.path,undefined,records);
+ expect(list(app).entries.map(entry=>entry.id)).toEqual(['d~art~unrelated','e~art~gauge']);
+});
 it('scrubs spawn preambles using only the new role, and extracts fallback episode parts',async()=>{
  const a=source();a.add('prompt',{title:'You are art, in a conversation on wake: Daily review.',content:'Ask: You are art, in a conversation on wake: Daily review. Its conversation is cv-111111111111\nLast said: Checked the house\nShipped: t-12; loom#941\n(fallback episode, auto-extracted)',metadata:'{"where":"terminal","conversation":"cv-111111111111"}'});
  const r=role([run('dg-one',{conversation:conv(undefined,{label:'Daily review',venue:'wake'}),at:'2026-11-10T12:00:00Z'})]);const app=await fixture(a.path,undefined,r);expect(list(app).entries[0]).toMatchObject({title:'Daily review',venue:'wakes'});expect(read(app,'e~art~prompt')).toMatchObject({asked:[],story:'Checked the house',decided:['t-12','loom#941']});expect(JSON.stringify(list(app))).not.toContain('You are art');
