@@ -34,7 +34,7 @@ import {inboxActionSteps} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
 import {homeJobs} from './rebuild-home-jobs.mjs';
 import {homeActions} from './rebuild-home-actions.mjs';
-import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
+import {mkdirSync,writeFileSync,mkdtempSync,rmSync,readdirSync} from 'node:fs';
 import {approvalInbox} from './rebuild-approval-inbox.mjs';
 import {scheduledInbox} from './rebuild-scheduled-inbox.mjs';
 import {inboxSecretRequest} from './rebuild-inbox-secret.mjs';
@@ -62,6 +62,17 @@ import {FakeClock} from '../dist/core/clock.js';
 
 export const redact=text=>String(text).replace(/(\/login\/)[^\s"'<>\\)]+/g,'$1[redacted]').replace(/(Bearer\s+|loom_ui=)[^\s;"'<>\\)]+/gi,'$1[redacted]').replace(/AGE-SECRET-KEY-[A-Z0-9-]+/g,'[private key redacted]');
 export const safeReport=report=>JSON.parse(JSON.stringify(report,(_key,value)=>typeof value==='string'?redact(value):value));
+/** Save positions from shipped JavaScript, without page addresses or arbitrary stack text. */
+export function browserFrames(stack,origin,assets) {
+ const prefix=origin+'/app/assets/', frames=[];
+ for(const line of (stack??'').split('\n').slice(1)){
+  const match=/^\s*at (?:[^()]* \()?([^\s()]+):(\d+):(\d+)\)?$/.exec(line);
+  if(!match || !match[1].startsWith(prefix))continue;
+  const asset=match[1].slice(prefix.length);
+  if(assets.has(asset))frames.push({asset,line:Number(match[2]),column:Number(match[3])});
+ }
+ return frames;
+}
 /** Browser HTTP/WS may reach only this newly started loopback listener. */
 export function localRequest(url,origin){try{return new URL(url).origin===origin||/^(data:|blob:|about:)/.test(url);}catch{return false;}}
 /** A second disposable loopback listener proves both browser guards before
@@ -111,7 +122,12 @@ export async function* walkthroughSteps(output) {
   page.on('websocket',socket=>{const row={path:new URL(socket.url()).pathname,phase,navigation,closeObserved:false,errorObserved:false};sockets.push(row);socket.on('socketerror',()=>{row.errorObserved=true;});connections.add(socket);socket.on('close',()=>{row.closeObserved=true;connections.delete(socket);});});
 
   page.on('console',event=>{if(event.type()==='error')consoleErrors.push(event.text());});
-  page.on('pageerror',error=>pageErrors.push(error.message));
+  const assets=new Set(readdirSync(resolve('dist/web/assets')).filter(file=>file.endsWith('.js')));
+  report.pageFailures=[];
+  page.on('pageerror',error=>{
+   pageErrors.push(error.message);
+   report.pageFailures.push({phase,navigation,frames:browserFrames(error.stack,app.url,assets)});
+  });
   page.on('requestfailed',request=>{const url=new URL(request.url());networkErrors.push({path:url.pathname.startsWith('/login/')?'/login/[redacted]':url.pathname,error:request.failure()?.errorText});});
   page.on('websocket',socket=>{if(new URL(socket.url()).pathname!=='/graphql')return;socket.on('framesent',event=>{try{const frame=JSON.parse(String(event.payload));if(frame.type==='subscribe')subscriptions.push({id:frame.id,query:frame.payload?.variables?.query??frame.payload?.query});}catch{}});socket.on('framereceived',event=>{try{const frame=JSON.parse(String(event.payload));frames.push({type:frame.type,id:frame.id,hasData:!!frame.payload?.data,errors:frame.payload?.errors??(frame.type==='error'?frame.payload:undefined)});}catch{frames.push({type:'unparseable'});}});});
   const isolationErrors=consoleErrors.length;
@@ -349,8 +365,10 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'scheduled-inbox',actions:safeReport(report.actions)};
   report.actions.homeJobs=await homeJobs({page,tile:await openApp('Home'),app,example:report.example,out});
   save();yield {phase:'home-jobs',actions:safeReport(report.actions)};
+  phase='native worker and reply';
   Object.assign(report.actions,await nativeProtocolAction({page,open:openApp,out,app,example:report.example,clock,home}));
   save();yield {phase:'native-protocol',actions:safeReport(report.actions)};
+  phase='bridge delivery';
   try {report.actions.bridgeMail=await bridgeMail({app,clock});}
   catch(error){report.actions.bridgeMail={ok:false,error:String(error)};}
   try {report.actions.bridgeReceipts=await bridgeReceipts({app,clock,page,open:openApp});}
