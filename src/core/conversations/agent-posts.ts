@@ -8,6 +8,7 @@ import { agentPostNames, agentPosts, agentPostThreads, conversations, threads } 
 import { threadTitle } from './title.js';
 import { MESSAGE_WORDS_MAX, type WordsKey } from './words.js';
 
+const privateVenue = sql`${conversations.venue} in ('loom','terminal')`;
 const words = z.string().min(1).max(MESSAGE_WORDS_MAX).refine(text => !!text.trim(), 'Activity post needs text');
 const thread = z.string().min(1).max(200);
 const ref = z.string().max(200).regex(new RegExp('^(?:' + TASK_ID + '|github:[A-Za-z0-9._-]+/[A-Za-z0-9._-]+#[1-9][0-9]{0,9})$'));
@@ -38,7 +39,7 @@ export async function prepareAgentPost(db: DataDatabase, key: WordsKey, source: 
   const audience = (thread: string) => db.select({
     agent: conversations.agent, member: conversations.member, project: conversations.project,
   }).from(threads).innerJoin(conversations, eq(conversations.id, threads.conversation))
-    .where(and(eq(threads.id, thread), sql`${conversations.venue} in ('loom','terminal')`)).get();
+    .where(and(eq(threads.id, thread), privateVenue)).get();
   const words = edit.action === 'rename' ? undefined : edit.words;
   if (words !== undefined && (!words.trim() || words.length > MESSAGE_WORDS_MAX))
     throw new Error('Activity post needs text within the message limit');
@@ -59,7 +60,7 @@ export async function prepareAgentPost(db: DataDatabase, key: WordsKey, source: 
     } else {
       const writer = audience(source);
       if (!writer?.member) throw new Error('Activity thread unavailable');
-      const matching = activitySources(db, and(sql`${conversations.venue} in ('loom','terminal')`,
+      const matching = activitySources(db, and(privateVenue,
         eq(conversations.member, writer.member), eq(conversations.agent, writer.agent),
         writer.project === null ? isNull(conversations.project) : eq(conversations.project, writer.project))!);
       const available = db.select({ id: agentPostThreads.id }).from(agentPostThreads)

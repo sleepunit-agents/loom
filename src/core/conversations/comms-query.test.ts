@@ -487,3 +487,23 @@ it('resumes across matching sessions, keeps each source link and restores the op
     agentActivityHistory:[{words:'Boot console',source:f.thread.id}],
   });
 });
+
+it.each(['feed','history'] as const)('withholds removed source words during an independent %s read', async surface => {
+  const f=await fixture(), {prepareAgentPost}=await import('./agent-posts.js');
+  const at='2026-11-14T18:00:00Z';
+  const second=f.comms.threads.open({agent:'art',member:'alice',venue:'terminal',title:'Later session'});
+  const write=async (source:string,edit:Parameters<typeof prepareAgentPost>[3])=>(await prepareAgentPost(f.db,f.key,source,edit))(at);
+  const id=await write(f.thread.id,{action:'open',words:'Boot console'});
+  await write(second.id,{action:'reply',thread:id,words:'Later reply'});
+  await write(second.id,{action:'rename',thread:id,title:'Later title'});
+  f.onOpen(()=>{
+    f.onOpen(()=>{});
+    f.db.delete(threads).where(eq(threads.id,second.id)).run();
+  });
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:commsQueryFields(f.service)})});
+  const query=surface==='feed' ? '{agentActivityFeed(agent:"art"){title latest{words}}}'
+    : 'query($id:String!){agentActivityHistory(agent:"art",thread:$id){words}}';
+  const result=await graphql({schema,source:query,variableValues:{id},contextValue:{viewer:alice}});
+  expect(result.errors).toBeUndefined();
+  expect(result.data).toEqual(surface==='feed' ? {agentActivityFeed:[]} : {agentActivityHistory:[{words:'Boot console'}]});
+});
