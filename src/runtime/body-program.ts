@@ -322,6 +322,7 @@ export async function bodyProgram(input: {
     const native = harness(), afresh = resume ? harness() : undefined;
     tools?.config.fill(0);
     let answer: Awaited<ReturnType<typeof native>> | undefined;
+    let refusedReply=false;
     const room=policy&&job.run&&policy!==job.run.policy?{...job,run:{...job.run,policy}}:job;
     const harnessStarted=performance.now();
     try {
@@ -334,7 +335,7 @@ export async function bodyProgram(input: {
       }
       // No secret this body was handed is said in its answer: one it used, or one it was started with.
       // One check (body-secrets.ts, saysNoSecret): the tools know the startup values too, and with no tools there are only those.
-      if(!(tools??secrets).allowsReply(answer.text))throw new Error();
+      refusedReply=!(tools??secrets).allowsReply(answer.text);
     }
     catch { if(!stopped) throw new Error(); }
     finally {
@@ -350,6 +351,12 @@ export async function bodyProgram(input: {
     if(stopped && !jobSignal.aborted) { await tell(left); return BODY_EXIT.stopped; }
     if(unavailable || !answer) throw new Error();
     if (input.signal.aborted) throw new Error();
+    if(refusedReply){
+      // Keep only the outcome. A rejected answer may carry a secret even in
+      // its metadata. Report after the tools and startup inputs are retired.
+      await client.turn({kind:'refused',outcome:'failed'});
+      throw new Error();
+    }
     exit=BODY_EXIT.record;
     for (const action of answer.actions) await client.turn({ kind: 'action', model: action.model, outcome: 'progressed' });
     const repeated=progressReceipts.get(keyOf(answer.text));

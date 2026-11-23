@@ -117,6 +117,11 @@ it.each(['allow','stop','leak-text','leak-base64'] as const)('uses the default n
   const request=f.db.select().from(s.secretRequests).get()!;f.root.writes.run(()=>f.root.services.secrets.requests.answer(request.id,'alice',true));f.clock.advance(1000);
  }else{f.root.writes.run(()=>f.root.services.comms!.threads.requestStop(f.thread.id));tick();}
  expect(await running).toBe(decision.startsWith('leak-')?14:decision==='stop'?10:0);await actorDone;if(failure)throw failure;expect(errors).toHaveBeenCalledTimes(decision.startsWith('leak-')?1:0);expect(cancel).toHaveBeenCalledOnce();expect(bytes.every(byte=>byte===0)).toBe(true);expect(pipeBuffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(f.db.$client.serialize().includes(Buffer.from(token))).toBe(false);expect(f.db.$client.serialize().includes(Buffer.from(privateValue))).toBe(false);
+ const refusals=f.db.select().from(s.turns).where(eq(s.turns.kind,'refused')).all();
+ expect(refusals).toEqual(decision.startsWith('leak-')?[{
+  conversation:f.thread.conversation,seq:expect.any(Number),at:new Date(f.clock.now()).toISOString(),
+  kind:'refused',fromKind:'agent',fromId:'art',run:'job',model:null,outcome:'failed',latencyMs:null,
+ }]:[]);
  if(decision==='allow')expect(f.db.select().from(s.messages).where(eq(s.messages.sender,'art')).all()).toHaveLength(2);
  if(decision!=='stop'){expect(f.source).toHaveBeenCalledOnce();expect(f.db.select().from(s.secretUses).get()?.state).toBe('released');expect(f.db.select().from(s.turns).all().filter(row=>row.kind==='reply')).toMatchObject(decision.startsWith('leak-')?[]:[{model:'observed',run:'job'}]);}else{expect(f.source).not.toHaveBeenCalled();expect(f.db.select().from(s.secretUses).all()).toEqual([]);
   // The body leaves the Stop for loom to take when the worker next reports this job.
