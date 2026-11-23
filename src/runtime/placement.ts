@@ -1,8 +1,9 @@
-import { currentAccountCapacity } from './account-windows.js';
+import { readPlacementAccounts } from '../core/data/model-account-read.js';
+import { reportedAccountCapacity } from './account-windows.js';
 import { SILENCE_MS } from './silence.js';
 import { and, asc, count, eq, inArray, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentBoxes, agentModels, boxes, boxAgents, boxFacts, jobs, modelAccounts, modelAccountBoxes, modelAccountLogins } from '../core/data/schema.js';
+import { agentBoxes, agentModels, boxes, boxAgents, boxFacts, jobs, modelAccountBoxes, modelAccountLogins } from '../core/data/schema.js';
 import { claimedJobStates } from '../core/data/job-states.js';
 import { machineMayHost, namesCurrent } from '../policy.js';
 import { sharedSharing } from '../shared-sharing.js';
@@ -73,9 +74,9 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
   const models = input.programBoxes ? [] : db.select().from(agentModels).where(eq(agentModels.agent, input.agent)).orderBy(asc(agentModels.position), asc(agentModels.model)).all()
     .filter(row => !input.wants || row.model === input.wants || input.roles.some(role => role.model === row.model && role.tag === input.wants));
   // A removed member's account pays for nothing, like their machine runs nothing.
-  const accounts = input.programBoxes ? [] : db.select().from(modelAccounts).orderBy(asc(modelAccounts.id)).all()
+  const accounts = input.programBoxes ? [] : readPlacementAccounts(db)
     .filter(account => namesCurrent('member', account.owner, sharing))
-    .map(account => ({ ...account, capacity:currentAccountCapacity(db, account.id, input.now) }));
+    .map(account => ({ ...account, capacity: reportedAccountCapacity(account.hasRoom, account.modelAccountWindowsByAccount, input.now) }));
   const bindings = input.programBoxes ? [] : db.select().from(modelAccountBoxes).all();
   // Host and container logins can differ. Placement uses only reports from the houses.
   const logins = input.programBoxes ? [] : db.select().from(modelAccountLogins).where(eq(modelAccountLogins.place, 'containers')).all();

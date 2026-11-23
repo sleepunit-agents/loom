@@ -11,10 +11,18 @@ import { accountCapacity, type QuotaWindow } from './quota.js';
 type Identity = { account: string; owner: string; provider: string };
 export type UsageProvider = (identity: Readonly<Identity>) => Promise<readonly QuotaWindow[]>;
 
+type WindowReading = Pick<typeof modelAccountWindows.$inferSelect, 'window' | 'usage' | 'usageReadAt' | 'resetsAt' | 'durationMs' | 'reserve'>;
+function quotaWindow(row: WindowReading): QuotaWindow {
+  return { name: row.window, usage: row.usage, readAt: row.usageReadAt,
+    resetsAt: row.resetsAt, durationMs: row.durationMs, reserve: row.reserve };
+}
+
+function windowRows(db: DataDatabase, account: string) {
+  return db.select().from(modelAccountWindows).where(eq(modelAccountWindows.account, account)).all();
+}
+
 export function readAccountWindows(db: DataDatabase, account: string): QuotaWindow[] {
-  return db.select().from(modelAccountWindows).where(eq(modelAccountWindows.account, account)).all()
-    .map(row => ({ name: row.window, usage: row.usage, readAt: row.usageReadAt,
-      resetsAt: row.resetsAt, durationMs: row.durationMs, reserve: row.reserve }));
+  return windowRows(db, account).map(quotaWindow);
 }
 
 /** The summary on `model_accounts` (usage, read time, reset, has room) is worked out from the windows.
@@ -95,10 +103,16 @@ export function recordAccountWindows(db: DataDatabase, identity: Identity, windo
  * Failed provider reads latch hasRoom=false until a later successful reading. */
 export function currentAccountCapacity(db: DataDatabase, account: string, now: string) {
   const row = db.select().from(modelAccounts).where(eq(modelAccounts.id, account)).get();
-  let capacity;
-  try { capacity = accountCapacity(readAccountWindows(db, account), now); }
-  catch { capacity = accountCapacity([], now); }
-  return { ...capacity, hasRoom: Boolean(row?.hasRoom) && capacity.hasRoom };
+  try {
+    return reportedAccountCapacity(Boolean(row?.hasRoom), windowRows(db, account), now);
+  } catch { return accountCapacity([], now); }
+}
+
+export function reportedAccountCapacity(hasRoom: boolean, readings: readonly WindowReading[], now: string) {
+  try {
+    const capacity = accountCapacity(readings.map(quotaWindow), now);
+    return { ...capacity, hasRoom: hasRoom && capacity.hasRoom };
+  } catch { return accountCapacity([], now); }
 }
 
 export async function refreshAccountWindows(db: DataDatabase, account: string, provider: UsageProvider, now: () => string) {

@@ -263,3 +263,23 @@ it('reads a fixed number of statements as eligible workers and occupied-slot che
   }
   expect(measure(32)).toBe(baseline);
 });
+
+it('reads account windows in one batch and selects the first account with room', () => {
+  let selects = 0;
+  const { db, input } = fixture(sql => { if (/^select /i.test(sql)) selects++; });
+  const measure = () => {
+    selects = 0;
+    expect(selectPlacement(db, input)?.account).toBe('shared');
+    return selects;
+  };
+  const before = measure();
+  expect(before).toBeGreaterThan(0);
+  for (let i = 0; i < 31; i++) {
+    const id = 'busy-' + i;
+    db.insert(modelAccounts).values({ id, owner: 'owner', provider: 'provider', label: id, hasRoom: true }).run();
+    db.insert(modelAccountBoxes).values({ account: id, box: 'local' }).run();
+    db.insert(modelAccountWindows).values({ account: id, window: 'hour', usage: 1, usageReadAt: input.now,
+      resetsAt: '2026-11-14T21:00:00.000Z', durationMs: 3600000 }).run();
+  }
+  expect(measure()).toBe(before);
+});
