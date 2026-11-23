@@ -2,7 +2,7 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
-import {nativeProtocolAction} from './rebuild-native-protocol.mjs';
+import {nativeProtocolAction,scheduledWorker} from './rebuild-native-protocol.mjs';
 import {conversationLinks} from './rebuild-conversation-links.mjs';
 import {conversationMailSteps} from './rebuild-conversation-mail.mjs';
 import {machineRoster} from './rebuild-machine-roster.mjs';
@@ -376,6 +376,9 @@ export async function* walkthroughSteps(output) {
   phase='native worker and reply';
   Object.assign(report.actions,await nativeProtocolAction({page,open:openApp,out,app,example:report.example,clock,home}));
   save();yield {phase:'native-protocol',actions:safeReport(report.actions)};
+  try {report.actions.scheduledWorker=await scheduledWorker({browser,home:join(parent,'scheduled-worker-home')});}
+  catch(error){report.actions.scheduledWorker={ok:false,error:String(error)};}
+  save();yield {phase:'scheduled-worker',actions:safeReport(report.actions)};
   phase='bridge delivery';
   try {report.actions.bridgeMail=await bridgeMail({app,clock});}
   catch(error){report.actions.bridgeMail={ok:false,error:String(error)};}
