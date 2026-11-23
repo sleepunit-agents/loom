@@ -406,7 +406,7 @@ export class InboxQueries {
   }
 }
 
-export function inboxQueryFields(service: InboxQueries): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
+export function inboxQueryFields(service: InboxQueries, discussionAgent?: (viewer: Viewer, id: string) => string | null): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
   const body = new GraphQLObjectType({ name: 'InboxItemBody', fields: {
     words: { type: new GraphQLNonNull(GraphQLString) }, why: { type: GraphQLString },
     ifYes: { type: GraphQLString }, ifNo: { type: GraphQLString }, link: { type: GraphQLString },
@@ -415,6 +415,7 @@ export function inboxQueryFields(service: InboxQueries): GraphQLFieldConfigMap<u
     ...Object.fromEntries(['id', 'toKind', 'to', 'source', 'fromKind', 'at', 'state', 'volume', 'changedAt'].map(name => [name, { type: new GraphQLNonNull(GraphQLString) }])),
     ...Object.fromEntries(['quietUntil', 'firstAcceptedAt', 'conversation', 'sourceId', 'fromId', 'agent', 'project', 'member', 'answers', 'waitsOnKind', 'waitsOnId', 'thread', 'answer', 'answeredBy', 'answeredAt', 'resolution'].map(name => [name, { type: GraphQLString }])),
     seq: { type: GraphQLInt },
+    discussionAgent: {type: GraphQLString, resolve: (row, _args, context) => discussionAgent?.(context.viewer, row.id)},
     bodyKeepUntil: { type: GraphQLString, resolve: (row, _args, context) => display(row,'bodyKeepUntil',()=>service.bodyKeepUntil(context.viewer,row.id)) },
     answerKeepUntil: { type: GraphQLString, resolve: (row, _args, context) => display(row,'answerKeepUntil',()=>service.answerKeepUntil(context.viewer,row.id)) },
     answerText: { type: GraphQLString, resolve: (row, _args, context) => display(row,'answerText',()=>service.answerText(context.viewer,row.id,until=>keepReadUntil(context,until))) },

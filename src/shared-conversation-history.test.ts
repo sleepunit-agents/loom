@@ -226,3 +226,27 @@ it.each(['multiple','source','count'] as const)('rejects malformed history at th
  }});clean.push(()=>client.close());
  await expect(client.takeAndAccept(accept)).rejects.toThrow();expect(accept).not.toHaveBeenCalled();
 });
+
+it('hands a body the quoted FYI with the member’s first question in a discussion', async () => {
+ const f=await bodyFixture(clean);
+ const post=(path:string,input:object,id:string)=>f.root.http.request('/api/'+path,{
+  method:'POST',headers:{'content-type':'application/json',cookie:'loom_ui='+raw.memberCookie},body:JSON.stringify({input,id}),
+ });
+ const notice=f.root.services.comms!.threads.conversations.send({
+  toKind:'person',to:'alice',member:'alice',source:'notice',fromKind:'unknown',words:'The runner disconnected.',why:'Heartbeat expired.',
+ });
+ const opened=await post('inbox/discuss',{item:notice.id,expectedAgent:'art'},'open-discussion');
+ expect(opened.status).toBe(200);
+ const {value}=await opened.json() as {value:{thread:string;conversation:string}};
+ expect(f.db.select().from(s.inbox).all()).toEqual([notice]);
+ expect((await post('comms/send',{thread:value.thread,clientId:'ask',words:'Which runner?'},'send-question')).status).toBe(200);
+ f.db.update(s.jobs).set({conversation:value.conversation,project:null}).where(eq(s.jobs.id,'job')).run();
+ const client=sdk({...f,thread:f.root.services.comms!.threads.thread(value.thread)});
+ const accepted=vi.fn(async (item: Parameters<typeof bodyMailContext>[0])=>{
+  expect(JSON.parse(bodyMailContext(item)!)).toMatchObject({
+   input:'Which runner?',history:[{kind:'notice',sender:'loom',words:'The runner disconnected.\n\nHeartbeat expired.'}],
+  });
+ });
+ expect(await client.takeAndAccept(accepted)).toMatchObject({accepted:1});
+ expect(accepted).toHaveBeenCalledOnce();
+});

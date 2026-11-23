@@ -147,7 +147,7 @@
     <p>Each line names the column that makes the connection.</p></div>
   <ul class="ledger">
     <li><span class="key key--sm t-violet" aria-hidden="true">3</span><b><a href="tasks.html">Tasks</a></b><p>A task names the conversation it came from.<code>tasks.source_kind, source_id</code></p></li>
-    <li><span class="key key--sm t-cyan" aria-hidden="true">7</span><b><a href="inbox.html">Inbox</a></b><p>Every inbox item names its conversation, and a digest points at the question it raised.<code>inbox.conversation · digests.inbox_item</code></p></li>
+    <li><span class="key key--sm t-cyan" aria-hidden="true">7</span><b><a href="inbox.html">Inbox</a></b><p>An inbox item links to the conversation it came from. On a standalone FYI, Discuss opens a private chat with your default agent about that notice. Open it again to continue the same chat. A digest points to the question it raised.<code>inbox.conversation · digests.inbox_item</code></p></li>
     <li><span class="key key--sm t-pink" aria-hidden="true">4</span><b><a href="approvals.html">Approvals</a></b><p>An approval records the conversation it was asked in.<code>approvals.conversation</code></p></li>
     <li><span class="key key--sm t-violet" aria-hidden="true">5</span><b><a href="tempo.html">Tempo</a></b><p>A trigger drops an item into the conversation's inbox, and a non-empty inbox starts the agent.<code>inbox.source = trigger</code></p></li>
     <li><span class="key key--sm t-pink" aria-hidden="true">6</span><b><a href="changes.html">Changes</a></b><p>A thread keeps the pull requests it mentions and shows them as cards.<code>thread_refs.ref</code></p></li>

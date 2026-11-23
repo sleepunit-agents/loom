@@ -488,7 +488,7 @@ def conversations():
     <p>Each line names the column that makes the connection.</p></div>
   <ul class="ledger">
     <li>{key("Tasks", True)}<b><a href="tasks.html">Tasks</a></b><p>A task names the conversation it came from.<code>tasks.source_kind, source_id</code></p></li>
-    <li>{key("Inbox", True)}<b>{plink("Inbox")}</b><p>Every inbox item names its conversation, and a digest points at the question it raised.<code>inbox.conversation · digests.inbox_item</code></p></li>
+    <li>{key("Inbox", True)}<b>{plink("Inbox")}</b><p>An inbox item links to the conversation it came from. On a standalone FYI, Discuss opens a private chat with your default agent about that notice. Open it again to continue the same chat. A digest points to the question it raised.<code>inbox.conversation · digests.inbox_item</code></p></li>
     <li>{key("Approvals", True)}<b>{plink("Approvals")}</b><p>An approval records the conversation it was asked in.<code>approvals.conversation</code></p></li>
     <li>{key("Tempo", True)}<b>{plink("Tempo")}</b><p>A trigger drops an item into the conversation's inbox, and a non-empty inbox starts the agent.<code>inbox.source = trigger</code></p></li>
     <li>{key("Changes", True)}<b>{plink("Changes")}</b><p>A thread keeps the pull requests it mentions and shows them as cards.<code>thread_refs.ref</code></p></li>

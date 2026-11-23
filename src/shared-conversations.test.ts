@@ -1,3 +1,4 @@
+import { prepareHistoryContext } from './core/conversations/history-context.js';
 import { commsQuery, commsThreadQuery } from '../web/src/pieces/comms/shared-query.js';
 import { inboxItemQuery, inboxQuery } from '../web/src/pieces/attention/inbox-query.js';
 import Database from 'better-sqlite3';
@@ -391,4 +392,62 @@ it('keeps every started private decrypt alive until shutdown can safely close SQ
     expect(JSON.stringify(result.body)).not.toContain('PRIVATE');
     await closing; expect(closed).toBe(true);
   } finally { release(); await closing; }
+});
+
+it('opens an FYI with the default agent on demand and carries the quote into the first question', async () => {
+  const f = await fixture(), comms = f.root.services.comms!;
+  f.db.insert(agents).values({...f.db.select().from(agents).get()!,id:'birch'}).run();
+  f.db.insert(memberAgents).values({member:'alice',agent:'birch'}).run();
+  f.db.insert(household).values({defaultAgent:'birch'}).run();
+  const create = (words: string) => comms.threads.conversations.send({toKind:'person',to:'alice',member:'alice',source:'notice',fromKind:'unknown',words});
+  const first = comms.threads.conversations.send({toKind:'person',to:'alice',member:'alice',source:'notice',fromKind:'unknown',
+    words:'Fixture pump restarted',why:'Voltage dipped.',link:'/p/machines'}), second = create('Fixture log rotated');
+  const quote = 'Fixture pump restarted\n\nVoltage dipped.\n\n/p/machines';
+  const readAgent = async () => (await f.query('{inboxItem(id:'+JSON.stringify(first.id)+'){discussionAgent}}')).body.data?.inboxItem;
+  const discuss = async (id:string, item=first.id) => (await f.post('inbox.discuss',{item},id)).json();
+  expect(await readAgent()).toEqual({discussionAgent:'birch'});
+  expect(f.db.select().from(threads).all()).toEqual([]);
+  expect((await f.post('inbox.discuss',{item:first.id},'other','owner')).status).toBe(403);
+  expect((await f.post('inbox.discuss',{item:first.id,expectedAgent:'art'},'stale')).status).toBe(409);
+  const [open, retry] = await Promise.all([discuss('open-1'),discuss('open-2')]);
+  expect(open).toMatchObject({ok:true,value:{thread:expect.any(String),conversation:expect.any(String)}});
+  expect(retry).toEqual(open);
+  expect(f.db.select().from(inbox).all()).toEqual([first,second]);
+  expect(f.db.select().from(threads).all()).toHaveLength(1);
+  expect(f.db.select().from(conversations).get()).toMatchObject({member:'alice',agent:'birch',turnCount:0});
+  expect(f.db.select().from(messages).all()).toMatchObject([{seq:1,kind:'notice',sender:'loom',inboxItem:first.id}]);
+  expect(await comms.words(open.value.thread,1)).toBe(quote);
+  expect(JSON.stringify(f.db.select().from(operationResults).all())).not.toContain(first.words!);
+  f.db.update(household).set({defaultAgent:'art'}).run();
+  expect(await readAgent()).toEqual({discussionAgent:'birch'});
+  expect(await discuss('reopen')).toEqual(open);
+  expect((await discuss('other-fyi',second.id)).value.thread).not.toBe(open.value.thread);
+  expect((await f.post('comms.send',{thread:open.value.thread,clientId:'question',words:'What happened?'},'question')).status).toBe(200);
+  const send=f.db.select().from(inbox).where(eq(inbox.toKind,'agent')).all();
+  expect(send).toMatchObject([{to:'birch',conversation:open.value.conversation,source:'thread',messageSeq:2}]);
+  const history=await prepareHistoryContext(comms,open.value.conversation,2);
+  expect(history()).toMatchObject([{kind:'notice',sender:'loom',words:quote}]);
+  f.db.delete(memberAgents).where(eq(memberAgents.agent,'birch')).run();
+  expect(await readAgent()).toEqual({discussionAgent:null});
+  expect((await f.post('inbox.discuss',{item:first.id},'open-1')).status).toBe(403);
+  f.db.insert(memberAgents).values({member:'alice',agent:'birch'}).run();
+  expect((await f.post('comms.change',{change:'delete',thread:open.value.thread},'delete')).status).toBe(200);
+  expect((await f.post('inbox.discuss',{item:first.id},'open-1')).status).toBe(409);
+  const replacement=await discuss('after-delete');
+  expect(replacement.value.thread).not.toBe(open.value.thread);
+  expect((await f.post('inbox.discuss',{item:first.id},'open-1')).status).toBe(409);
+  expect(await readAgent()).toEqual({discussionAgent:'art'});
+});
+
+it('refuses questions, missing words and FYIs that change while the member opens them',async()=>{
+  const f=await fixture(),cvs=f.root.services.comms!.threads.conversations;
+  const seed={toKind:'person' as const,to:'alice',member:'alice',fromKind:'unknown' as const,source:'notice' as const};
+  for(const item of [cvs.send({...seed,words:'Respond?',answers:'words'}),cvs.send(seed)]) {
+    expect((await f.post('inbox.discuss',{item:item.id},'refuse-'+item.id)).status).toBe(403);
+  }
+  const item=cvs.send({...seed,source:'approval',words:'A standing grant was used'});
+  f.gate(async()=>{f.db.update(inbox).set({words:'Revised'}).where(eq(inbox.id,item.id)).run();});
+  expect((await f.post('inbox.discuss',{item:item.id},'changed')).status).toBe(409);
+  expect(f.db.select().from(threads).all()).toEqual([]);
+  expect(f.db.select().from(messages).all()).toEqual([]);
 });
