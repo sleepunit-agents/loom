@@ -1114,6 +1114,10 @@ it('tells a household owner who a card is for, and nobody else: the names loom h
   const expected=f.db.$client.prepare('SELECT waits_on_id FROM inbox WHERE [to]=? AND waits_on_id IN (?,?) ORDER BY julianday(at) DESC,id DESC').all('sam',id,colleague) as {waits_on_id:string}[];
   expect(await search('sam')).toEqual([expected[0].waits_on_id]);
   expect(await search('sam',1)).toEqual([expected[1].waits_on_id]);
+  f.db.update(inbox).set({source:'thread'}).where(eq(inbox.waitsOnId,id)).run();
+  expect(await search('sam')).toEqual([colleague]);
+  expect(await search('sam',1)).toEqual([]);
+  f.db.update(inbox).set({source:'approval'}).where(eq(inbox.waitsOnId,id)).run();
   expect(await search('lee')).toEqual([]);
   expect(await search('art')).toEqual([]);
   f.db.update(members).set({role:'owner'}).where(eq(members.id,'lee')).run();

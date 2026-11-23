@@ -187,31 +187,33 @@ export class InboxQueries {
       const titles=this.proposalTitles?.(viewer,[...cards]);
       const offset=filter.offset??0;
       const limit=filter.limit??50;
-      const page:{item:Item;until:number}[]=[];
+      const page:Item[]=[];
+      let deadline=Infinity;
       let seen=0;
       for(const item of candidates){
         const id=approvalId(item);
         const title=id?titles?.get(id):undefined;
         const until=title?.toLocaleLowerCase().includes(query)?Infinity:matches.get(item.id);
         if(until===undefined)continue;
-        if(seen++>=offset)page.push({item,until});
+        // Earlier matches determine which row appears at the requested offset.
+        deadline=Math.min(deadline,until);
+        if(seen++>=offset)page.push(item);
         if(page.length===limit)break;
       }
-      return page;
+      return {page,deadline};
     };
-    const retainPage=(page:ReturnType<typeof selectPage>)=>{
-      const deadlines=page.map(match=>match.until).filter(Number.isFinite);
-      if(deadlines.some(until=>until<=Date.parse(this.now())))return false;
-      for(const until of deadlines)retainedUntil?.(until);
+    const retainPage=(deadline:number)=>{
+      if(deadline<=Date.parse(this.now()))return false;
+      if(Number.isFinite(deadline))retainedUntil?.(deadline);
       return true;
     };
-    const page=selectPage();
-    if(!retainPage(page))return [];
+    const {page,deadline}=selectPage();
+    if(!retainPage(deadline))return [];
     if(cards.size&&this.proposalTitles)recheckTitles?.(()=>{
       const current=selectPage();
-      return current.length===page.length&&current.every((match,i)=>match.item.id===page[i].item.id)&&retainPage(current);
+      return current.page.length===page.length&&current.page.every((item,i)=>item.id===page[i].id)&&retainPage(current.deadline);
     });
-    return page.map(match=>match.item);
+    return page;
   }
   private async searchInSet(viewer: Viewer, query:string, candidates:Item[]): Promise<Map<string,number>> {
     const privateState = (item: Item, fromAnswer = false) => {
