@@ -76,7 +76,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   const [landed,setLanded] = useState<{id:string}>();
   const presented = presentedTiles(route,phone||oneWindow);
   const boxes = layout(router.asTiles(presented),workArea,width).apps;
-  useDockRestore(ground, boxes, phone, route.tiles);
+  useDockRestore(ground, boxes, route.tiles);
   const open = (id: string, tap = false) => {
     buzz(haptics,tap);
     const gone = router.open(id,phone ? undefined : workArea,phone ? 1920 : width,undefined,oneWindow);

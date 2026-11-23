@@ -9,6 +9,8 @@ type Asked = { query: string; variables: Record<string, unknown>; options?: { ke
 const f = vi.hoisted(() => ({ titles: [] as { approval: string; title: string }[], approvals: [] as unknown[], owner: false, status: 'live', item: 'live', hold: false, stray: undefined as unknown, last: undefined as unknown, data: {} as Record<string, unknown>, requests: [] as Asked[], call: vi.fn(), read: vi.fn(), records: vi.fn() }));
 vi.mock('../../data/graphql', () => ({ useDataQuery(query: string, variables: Record<string, unknown>, options?: Asked['options']) {
   // The household's zone, for the times the Inbox says (data/zone.ts): not one of the Inbox's own requests.
+  if (query.includes('query DeskAgentDirectory')) return { status: 'live', data: { memoryPeopleAccess: { directory: true },
+    memoryPeople: [{ id: 'commons:art', slug: 'art', name: 'Art E Fish', agent: null, kind: 'agent' }] } };
   if (query.includes('query DeskTime')) return { status: 'live', data: { deskTime: { at: 0, timezone: 'America/Chicago' } } };
   // The approvals an approval item's card is read from (data/work-views.ts): not one of the Inbox's own requests either.
   if (query.includes('query InboxProposalTitles')) return {status:'live', data:{inboxProposalTitles:f.owner?f.titles:[]}};
@@ -293,4 +295,26 @@ it.each([['Let it in','allow'],['Block','block']])('answers worker admission wit
   expect(button('Yes')).toBeUndefined();
   await act(async()=>{button(label).props.onClick();});
   expect(f.call).toHaveBeenCalledWith('runtime.workerJoinDecide',{request,code,decision});
+});
+
+it('opens the selected FYI’s private discussion on click, with retry after a failed request', async () => {
+  setup(row({ source: 'notice', agent: null, answers: null, body: { words: 'Workshop disk is full.' }, discussionAgent: 'art', read: true }));
+  const go = vi.fn();
+  await act(async () => { tree = create(h(InboxApp, { path: '/p/inbox-preview/ask/in-1', go })); });
+  const discuss = () => tree.root.findAllByType('LinkButton').find(link => link.props.children === 'Discuss with Art E Fish');
+  expect(discuss()).toBeDefined();
+  expect(f.call).not.toHaveBeenCalled();
+  f.call.mockImplementationOnce(() => ({ result: Promise.resolve({ ok: false }) }));
+  await act(async () => { discuss().props.onClick(); });
+  expect(text()).toContain('Could not open the conversation');
+  expect(go).not.toHaveBeenCalled();
+
+  f.call.mockImplementationOnce(() => ({ result: Promise.resolve({ ok: true, value: { thread: 'th:disk' } }) }));
+  await act(async () => { const link = discuss(); link.props.onClick(); link.props.onClick(); });
+  expect(f.call.mock.calls).toEqual([['inbox.discuss', { item: 'in-1', expectedAgent: 'art' }], ['inbox.discuss', { item: 'in-1', expectedAgent: 'art' }]]);
+  expect(go).toHaveBeenCalledExactlyOnceWith('/p/comms-preview/thread/disk');
+
+  setup(row({ answers: null, read: true, discussionAgent: null }));
+  await act(async () => { tree.update(h(InboxApp, { path: '/p/inbox-preview/ask/in-1', go })); });
+  expect(discuss()).toBeUndefined();
 });

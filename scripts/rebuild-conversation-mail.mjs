@@ -1,4 +1,5 @@
 /** Real normal-home HTTP and receiving SDK; current-job fixtures launch no provider. */
+import {conversationTurns} from './rebuild-conversation-turns.mjs';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {join} from 'node:path';
 import {and,eq,inArray} from 'drizzle-orm';
@@ -9,7 +10,7 @@ class ObservedMailFailure extends Error {}
 const check=(yes,message)=>{if(!yes)throw new ObservedMailFailure(message);};
 export async function* conversationMailSteps({page,app,clock,example,out,open}){
  const pending=()=>({inconclusive:true,reason:'The real conversation-mail observation did not complete.'});
- const evidence={privateConversationBatch:pending(),conversationSingleJob:pending(),nativeHandoff:pending(),conversationInboxIngress:pending(),conversationTempoDelivery:pending(),privateConversationQuestion:pending()};
+ const evidence={privateConversationBatch:pending(),conversationSingleJob:pending(),nativeHandoff:pending(),conversationInboxIngress:pending(),conversationTempoDelivery:pending(),conversationTurns:pending(),privateConversationQuestion:pending()};
  const db=app.services.comms.db,write=fn=>app.writes.run(fn).value,current=[],clients=[];let stage='privateConversationBatch';
  const now=()=>new Date(clock.now()).toISOString();
  const owner=async(name,input)=>{
@@ -28,7 +29,7 @@ export async function* conversationMailSteps({page,app,clock,example,out,open}){
   });current.push(id);
   const client=bodyConversationClient({url:app.url,token,job:id,conversation:cv.id,signal:new AbortController().signal,clock});clients.push(client);
   const call=async(name,input)=>{const response=await fetch(app.url+'/api/'+name.replace('.','/'),{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input,id:randomUUID()})});const result=await response.json();check(response.status===200&&result.ok===true,'Current body '+name+' was refused');return result.value;};
-  return {id,client,call};
+  return {id,token,client,call};
  };
  try{
   const opened=await owner('comms.open',{thread:'th:walkthrough-mail-'+randomUUID(),agent:'fern'}),parentCv=app.services.conversations.conversation(opened.conversation);
@@ -77,6 +78,8 @@ export async function* conversationMailSteps({page,app,clock,example,out,open}){
   const wakeBody=await body(wakeConversation);let wakeTaken=0;await wakeBody.client.takeAndAccept(async item=>{check(item.id===wake.id&&item.source==='trigger'&&item.words===wakeWords,'The real wake did not use the same receiving Inbox client');wakeTaken++;});await wakeBody.client.settle();check(wakeTaken===1,'The real wake did not arrive once');
   evidence.conversationTempoDelivery={ok:true,reason:'The household scheduled a real Tempo firing for Moss. It created an agent Inbox item in the conversation for that trigger, and Moss’s receiving client accepted the item once.',trigger:trigger.id,conversation:wake.conversation,item:wake.id,recipient:wake.to,queuedJob:admitted[0].id};
   evidence.conversationInboxIngress={ok:true,reason:'Actual Comms, time-trigger and native-handoff producers each delivered through the same current-body Inbox SDK.',sources:['thread','trigger','handoff'],currentJobFixtures:true,providerStarted:false};
+  try {evidence.conversationTurns=await conversationTurns({app,clock,parent,cv:parentCv,thread:opened.thread,box:example.runtime.box,owner,wake});}
+  catch(error){evidence.conversationTurns={ok:false,error:redactSignin(error)};}
   yield {phase:'conversation-mail',actions:evidence};
   stage='privateConversationQuestion';
   const question={to:'alex',answers:'yes-no',words:'May Moss inspect the fictitious delegated pump?',why:'The delegated comparison needs its owner.',ifYes:'Moss inspects the fictitious pump.',ifNo:'Moss leaves the fictitious pump alone.'};

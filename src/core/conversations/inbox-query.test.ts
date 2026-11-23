@@ -1,3 +1,4 @@
+import {readDeadline,readRetained} from '../data/read-lease.js';
 import { DataLive } from '../data/live.js';
 import {sealHandoff} from './handoff-words.js';
 import Database from 'better-sqlite3';
@@ -190,6 +191,57 @@ it('searches retained private wording without persisting it and never searches a
   const opened = f.opens();
   expect(await f.service.search(alice, { search: 'private' })).toEqual([]);
   expect(f.opens()).toBe(opened);
+});
+it('searches a guest question by the current name only while its private wording is retained',async()=>{
+  const f=await fixture();
+  f.db.update(inbox).set({onWordKind:'outside',onWord:'fictional-account'}).where(eq(inbox.id,f.ask.inboxItem!)).run();
+  let name:string|undefined='Casey Field';
+  let now=Date.parse('2026-11-14T19:00:00Z');
+  const service=new InboxQueries(f.db,f.key,(_viewer,fields)=>eq(fields.member,'alice'),
+    ()=>new Date(now).toISOString(),undefined,undefined,undefined,()=>name);
+  const deadlines:number[]=[];
+  let recheck:(()=>boolean)|undefined;
+  const search=()=>service.search(alice,{search:'Casey Field.\nOrder the private pump'},at=>deadlines.push(at),check=>{recheck=check;});
+  expect((await search()).map(row=>row.id)).toEqual([f.ask.inboxItem]);
+  const until=Date.parse('2026-11-28T18:00:00Z');
+  expect(deadlines).toContain(until);
+  f.time('2026-11-14T17:00:00.000Z');
+  const ordinary=f.comms.threads.conversations.send({toKind:'person',to:'alice',source:'notice',fromKind:'agent',member:'alice',words:'Ordinary notice'});
+  let ordinaryRecheck:(()=>boolean)|undefined;
+  expect((await service.search(alice,{search:'Ordinary notice'},undefined,check=>{ordinaryRecheck=check;})).map(row=>row.id)).toEqual([ordinary.id]);
+  f.db.update(inbox).set({volume:'dim'}).where(eq(inbox.id,f.ask.inboxItem!)).run();
+  expect(ordinaryRecheck?.()).toBe(true);
+  f.db.update(inbox).set({volume:'full'}).where(eq(inbox.id,f.ask.inboxItem!)).run();
+  f.comms.threads.conversations.read(f.ask.inboxItem!,'alice');
+  expect(recheck?.()).toBe(true);
+  name=undefined;
+  expect(recheck?.()).toBe(false);
+  expect(await search()).toEqual([]);
+  name='Casey Field';now=Date.parse('2026-11-16T18:00:00Z');
+  expect((await search()).map(row=>row.id)).toEqual([f.ask.inboxItem]);
+  f.db.insert(household).values({commsDays:1}).run();
+  expect(recheck?.()).toBe(false);
+  expect(await search()).toEqual([]);
+  f.db.update(household).set({commsDays:14}).run();
+  now=until;
+  expect(await search()).toEqual([]);
+});
+it('expires a page whose offset depends on a retained private match',async()=>{
+  const f=await fixture();
+  f.time('2026-11-14T17:00:00.000Z');
+  const notice=f.comms.threads.conversations.send({toKind:'person',to:'alice',source:'notice',fromKind:'agent',member:'alice',words:'Private reason in a plain notice'});
+  f.time('2026-11-14T19:00:00.000Z');
+  const context={viewer:alice};
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:inboxQueryFields(f.service)})});
+  const query='{ inboxItems(search:"private reason",offset:1,limit:1){id} }';
+  const first=await graphql({schema,source:query,contextValue:context});
+  expect(first.data?.inboxItems).toEqual([{id:notice.id}]);
+  const until=Date.parse('2026-11-28T18:00:00.000Z');
+  expect(readDeadline(context)).toBe(until);
+  expect(readRetained(context,until)).toBe(false);
+  f.time(new Date(until).toISOString());
+  const next=await graphql({schema,source:query,contextValue:{viewer:alice}});
+  expect(next.data?.inboxItems).toEqual([]);
 });
 it('withdraws earlier matches when later decrypts revoke access or let private matches expire', async () => {
   for (const change of ['policy', 'expiry', 'ciphertext', 'linkage', 'household', 'deadline'] as const) {

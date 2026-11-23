@@ -4,7 +4,7 @@ import { useDeskAgentDisplays } from './agent-displays';
 import { useDeskAgentDirectory } from './agent-directory';
 import { useHomeComms, threadPath } from './home-comms-data';
 import { useDeskAgentStatuses } from './agent-status';
-import { Doing, doingPhrase, WithDoing } from './doing';
+import { Doing, WithDoing } from './doing';
 import { useDeskRoster } from './roster';
 import { useCallback, useContext, useLayoutEffect, useRef, useState } from 'react';
 import AgentFace, { faceState } from './agent-face';
@@ -67,7 +67,7 @@ export default function AgentRail({ go }: { go(path: string): void }) {
       const summary=reading?.summaries.find(s=>s.agent===agent.id);
       const unread=summary?.unread??0,thread=summary?.first??summary?.last;
       const path=thread?threadPath(thread.thread):'/p/comms-preview';
-      return <WithDoing key={agent.id} agent={agent.id} onChange={jobsChanged}>{doing=>{
+      return <WithDoing key={'agent:'+agent.id} agent={agent.id} onChange={jobsChanged}>{doing=>{
         const state=shownState(status?.state,doing.items.length);
         const terminal = doing.items.find(item=>item.kind==='terminal');
         const word=agentStateLine(state,doing.items.length,needs);
@@ -83,8 +83,12 @@ export default function AgentRail({ go }: { go(path: string): void }) {
           {agent.id===companion?.id&&<p className="desk-rail-kicker desk-rail-with">With {agent.name} in Comms</p>}
           {agent.id===companion?.id&&rail?.shown&&rail.setScreen?<CompanionSlot agent={agent.id}/>:<button className="desk-rail-agent" aria-label={`Open ${agent.name} conversation`} onClick={()=>go(path)}>
             <AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(state,ask)} size={40} />
-            <span><strong>{agent.name}</strong><span className="desk-rail-state">{word}</span>{terminal && <small className="desk-rail-location">{doingPhrase(terminal)}</small>}</span>
+            <span><strong>{agent.name}</strong><span className="desk-rail-state">{word}</span></span>
           </button>}
+          {terminal && <div className="desk-rail-location">
+            <Doing doing={{...doing,items:[terminal],more:doing.items.length===1?doing.more:0}}
+              label={`${agent.name} terminal location`} name={agent.name} names={names} go={go} compact/>
+          </div>}
           <LiveAgentFeed agent={agent.id} compact go={go} onChange={waitingChanged}/>
           {(!terminal || doing.items.length > 1) && <Doing doing={terminal ? {...doing, items: doing.items.filter(item=>item!==terminal)} : doing} name={agent.name} names={names} go={go} compact />}
           <button className="desk-rail-thread" onClick={()=>go(path)}>{threadStatus!=='live'?'Conversations unavailable':unread?`${unread} unread ${unread===1?'thread':'threads'}`:thread?(summary?.last?.title||'Recent conversation'):'Start a conversation'}<span aria-hidden="true"> ↗</span></button>
@@ -92,13 +96,17 @@ export default function AgentRail({ go }: { go(path: string): void }) {
       }}</WithDoing>;
   };
   const first = companion ?? (fold ? agents.find(agent => agent.id === opened) : undefined) ?? agents[0];
-  return <div ref={box} className="desk-agent-rail" data-fold={fold||undefined}>
-    {first&&card(first)}
-    {(waiting.status!=='live'||!!waiting.total)&&<div className="desk-rail-needs">
+  // Keep every agent in one keyed list when folding promotes a different card.
+  // Moving between separate React child lists would restart its live reads.
+  const cards=agents.filter(agent=>agent.id!==first?.id).map(card);
+  if(waiting.status!=='live'||waiting.total)cards.unshift(<div key="waiting" className="desk-rail-needs">
       <span className="desk-rail-kicker">Needs you{waiting.status==='live'?` · ${waiting.total}`:''}</span>
       {waiting.status!=='live'?<span>Waiting items unavailable</span>:<WaitingRow go={go} onChange={waitingChanged}/>}
       <button type="button" className="desk-rail-kicker" onClick={()=>go(waitingPath())}>{waiting.status==='live'&&(waiting.total??0)>1?`${waiting.total!-1} more · Inbox ›`:'Inbox ›'}</button>
-    </div>}
-    {roster.status !== 'live' ? <p role="status">{roster.status==='loading'?'Opening your agents…':'Your agents are unavailable.'}</p> : !agents.length ? <p>No agents of your own.</p> : agents.filter(a=>a.id!==first?.id).map(card)}
+    </div>);
+  if(first)cards.unshift(card(first));
+  return <div ref={box} className="desk-agent-rail" data-fold={fold||undefined}>
+    {cards}
+    {roster.status!=='live'?<p role="status">{roster.status==='loading'?'Opening your agents…':'Your agents are unavailable.'}</p>:!agents.length&&<p>No agents of your own.</p>}
   </div>;
 }

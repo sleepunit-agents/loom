@@ -97,7 +97,7 @@ export async function activityWorkLinks({page,tile,example,out}) {
  }catch(error){return {ok:false,error:String(error)};}
 }
 
-export async function activityDays({page,tile,example,out}) {
+export async function activityDays({page,tile,example,out,now,householdZone}) {
  const screenshot='action-activity-days.png';
  try {
   const back=tile.locator('.loom-split__back:visible');
@@ -106,7 +106,8 @@ export async function activityDays({page,tile,example,out}) {
   const earlier=tile.getByRole('button',{name:'Earlier',exact:true});
   const current=tile.locator('[data-split-row]').filter({has:page.getByText('Repair the garden pump',{exact:true})}).first();
   await current.waitFor();
-  const today=await current.getAttribute('data-day');
+  const today=new Intl.DateTimeFormat('en-CA',{timeZone:householdZone,year:'numeric',month:'2-digit',day:'2-digit'}).format(now);
+  const pumpDay=await current.getAttribute('data-day');
   assert.equal(await picker.inputValue(),today);
   const old=tile.locator('[data-split-row]').filter({has:page.getByText('Previous shed inspection',{exact:true})});
   for(let i=0;i<10 && !await old.count();i++){
@@ -116,7 +117,7 @@ export async function activityDays({page,tile,example,out}) {
   }
   await old.waitFor();
   const day=await old.getAttribute('data-day');
-  assert.ok(day && today && day<today);
+  assert.ok(day && pumpDay && day<pumpDay && pumpDay<=today);
   await picker.selectOption(day);
   const chart=tile.getByRole('group',{name:'Activity per hour, '+day,exact:true});
   await chart.getByRole('button',{name:new RegExp('^'+await old.getAttribute('data-hour')+':00: [1-9]')}).waitFor();

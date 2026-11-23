@@ -1,4 +1,5 @@
 /** Retained ordinary dialogue, never a second store or a way around delivery volume. */
+import {standaloneFyi} from './inbox-discussion.js';
 import {and,desc,eq,lt} from 'drizzle-orm';
 import {conversations,inbox,messages,threads} from '../data/schema.js';
 import type {CommsMessages} from './messages.js';
@@ -6,7 +7,7 @@ import {wordsDeadline} from './retention.js';
 import { commsKeepDays } from '../data/comms-days.js';
 import { HISTORY_BYTES, HISTORY_LINES, threadInputKey, threadReplyKey } from './history-limit.js';
 /** `keepUntil` is when the words will be erased; null for words kept without limit (a bridge room's). */
-export type HistoryLine={sourceKey?:string;seq:number;kind:'message'|'reply';sender:string;at:string;words:string;keepUntil:string|null};
+export type HistoryLine={sourceKey?:string;seq:number;kind:'message'|'reply'|'notice';sender:string;at:string;words:string;keepUntil:string|null};
 export async function prepareHistoryContext(comms:CommsMessages,conversation:string,beforeSeq:number, identify=false):Promise<()=>HistoryLine[]>{
  const {db}=comms,thread=db.select().from(threads).where(eq(threads.conversation,conversation)).get();
  const cv=db.select().from(conversations).where(eq(conversations.id,conversation)).get();
@@ -16,6 +17,10 @@ export async function prepareHistoryContext(comms:CommsMessages,conversation:str
  // Questions and answers belong exclusively to the validated answer-context path.
  // Person words may recur only after an earlier body accepted their Full delivery.
  const deliveryFingerprint=(row:typeof messages.$inferSelect)=>{
+  if(row.kind==='notice' && row.sender==='loom' && row.seq===1 && row.inboxItem) {
+   const source=db.select().from(inbox).where(eq(inbox.id,row.inboxItem)).get();
+   return cv.venue==='loom' && !cv.project && source && standaloneFyi(source,cv.member) ? source.id : null;
+  }
   if(row.kind==='reply'&&row.sender===cv.agent&&!row.inboxItem)return 'reply';
   if(row.kind!=='message'||row.sender!==cv.member||!row.inboxItem)return null;
   const item=db.select().from(inbox).where(eq(inbox.id,row.inboxItem)).get();
@@ -44,7 +49,7 @@ export async function prepareHistoryContext(comms:CommsMessages,conversation:str
    // Optional old context that moved during preparation is omitted; the independently
    // retained current input can still proceed. Never publish the stale snapshot.
    if(!current?.words||!(deadline(current)>Date.parse(comms.now()))||JSON.stringify(current)!==JSON.stringify(snapshot)||deliveryFingerprint(current)!==acceptedFingerprint)return[];
-   if(current.kind!=='message'&&current.kind!=='reply')return[];
+   if(current.kind!=='message'&&current.kind!=='reply'&&current.kind!=='notice')return[];
    return[{...key(current),seq:current.seq,kind:current.kind,sender:current.sender,at:current.at,words,keepUntil:new Date(deadline(current)).toISOString()}];
   }).reverse();
  };

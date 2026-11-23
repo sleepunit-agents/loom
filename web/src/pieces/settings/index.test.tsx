@@ -41,7 +41,7 @@ it.each(['loading', 'offline', 'denied'] as const)('hides retained secret metada
 });
 it('requires the authenticated member from the same selection and discards the old reader after a principal change', async () => {
   const initial = data(); feed.query = { status: 'live', data: initial }; await draw('/p/settings-preview/item/secrets/API');
-  feed.query = { status: 'live', data: { ...initial, secretsReader: null } }; await draw('/p/settings-preview/item/secrets/API'); expect(text()).not.toContain('Reads the forge');
+  feed.query = { status: 'live', data: { ...initial, secretsReader: null } }; await draw('/p/settings-preview/item/secrets/API'); expect(text()).not.toContain('Reads the forge'); expect(text()).toContain('Household owners manage Settings'); expect(text()).not.toContain('Reconnect');
   feed.query = { status: 'live', data: { ...initial, secretsReader: { id: 'other', defaultAnswer: 'ask' }, secrets: [] } }; await draw('/p/settings-preview/item/secrets/API');
   expect(text()).not.toContain('Reads the forge'); expect(text()).toContain('This item is no longer available');
 });

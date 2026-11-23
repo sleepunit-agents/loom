@@ -124,7 +124,11 @@
     {
       "id": "desk-014",
       "promise": "Each agent has a drawn face: one of four shapes (pebble, trefoil, clover, drop) with dot or oval eyes. Its expression is its state: quiet, thinking, working, waiting on you, done, needs a look, talking.",
-      "source": "docs/how-it-works/site/desk.html#how-h"
+      "source": "docs/how-it-works/site/desk.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "deskFaces"
+      }
     },
     {
       "id": "desk-015",
@@ -138,7 +142,11 @@
     {
       "id": "desk-016",
       "promise": "a What you may see. The desk shows each person only what they may see. Every tile gets its rows through the same visibility check.",
-      "source": "docs/how-it-works/site/desk.html#see-h"
+      "source": "docs/how-it-works/site/desk.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "deskPanelVisibility"
+      }
     },
     {
       "id": "desk-017",

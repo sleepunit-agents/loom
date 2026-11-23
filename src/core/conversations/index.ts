@@ -103,6 +103,9 @@ export class Conversations {
         project: conversation?.project, agent: conversation?.agent, member: conversation?.member,
         ...values, id: `in-${randomUUID()}`, seq, at, changedAt: at, state: 'waiting',
       }).returning().get();
+      if (conversation && item.toKind === 'agent' && item.source === 'trigger' && item.fromKind === 'schedule') {
+        this.turn({ conversation: conversation.id, kind: 'wake', fromKind: item.fromKind, fromId: item.fromId }, at);
+      }
       for (const ref of new Set(refs)) this.db.insert(inboxRefs).values({ item: item.id, ref }).run();
       return item;
     });

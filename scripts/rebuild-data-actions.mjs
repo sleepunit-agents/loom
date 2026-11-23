@@ -89,11 +89,22 @@ export async function sharingGrowth({page,app,subscriptions,out}){
  }catch(error){result={inconclusive:true,reason:'The growth measurement did not complete: '+String(error)};}
  await page.screenshot({path:join(out,screenshot),fullPage:true});return{...result,screenshot};
 }
-export async function dataActions({page,app,example,apps,subscriptions,out,sharingSQL}){
+export function tileDoorEvidence(apps,devices) {
+ const bad=apps.filter(app=>!app.opened||app.dataDoor?.graphql!==1||app.dataDoor?.other?.length);
+ const unknown=apps.filter(app=>!app.dataDoor?.known||!app.dataDoor.selectionSeen);
+ const failed=devices?.find(device=>device.ok===false);
+ if(bad.length||failed)return {ok:false,error:failed?.error??'Expected one open GraphQL socket at '+bad.map(app=>app.title).join(', ')};
+ const titles=apps.map(app=>app.title).sort();
+ const complete=device=>devices?.some(row=>row.device===device&&row.ok&&Array.isArray(row.tiles)
+  &&JSON.stringify([...row.tiles].sort())===JSON.stringify(titles)&&row.liveReaderUpdate&&row.restoredSelection);
+ if(!apps.length||unknown.length||!['desktop','phone'].every(complete))
+  return {inconclusive:true,reason:'The app selections, both device runs and restored readers must all be observed.'};
+ return {ok:true,devices,reason:'Each launcher tile received its selection over the same GraphQL socket on desktop and phone. Folder and detail navigation used the same connection. Each document recovered its selected Inbox item on a replacement socket and received its next update there. The only row-related HTTP writes observed were read acknowledgments.'};
+}
+export async function dataActions({page,app,example,apps,subscriptions,out,sharingSQL,deskDevices}){
  const evidence={};
  const attempt=async(name,run)=>{const screenshot=`action-${name}.png`;try{evidence[name]={ok:true,...await run(),screenshot};}catch(error){evidence[name]={ok:false,error:String(error),screenshot};}await stop(page);await page.screenshot({path:join(out,screenshot),fullPage:true});};
- const unknown=apps.filter(a=>!a.dataDoor?.known||!a.dataDoor.selectionSeen),bad=apps.filter(a=>!a.opened||a.dataDoor?.graphql!==1||a.dataDoor?.other?.length);
- evidence.dataDoor=bad.length?{ok:false,error:'Expected one open GraphQL socket at '+bad.map(a=>a.title).join(', '),apps:apps.map(a=>a.dataDoor)}:unknown.length?{inconclusive:true,reason:'A current-document selection signature was not observed for '+unknown.map(a=>a.title).join(', '),apps:apps.map(a=>a.dataDoor)}:{ok:true,inconclusive:true,reason:'One active successful selection for every app used its current document’s GraphQL socket; complete attribution of every secondary selection and transient transport is not measured.',apps:apps.map(a=>a.dataDoor)};
+ evidence.dataDoor=tileDoorEvidence(apps,deskDevices);
  await attempt('dataCaller',async()=>{
   const query='{ account { member } }';
   const session=await watch(page,query);

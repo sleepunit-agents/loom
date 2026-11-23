@@ -77,14 +77,23 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if n.tag=='p' and any(n.within(c) for c in ('stages','hub','out','inbox-flow')):add(n.text(),'')
  if f.stem=='conversations':
   for row in rows:
+   if row['promise'].startswith('Each thing said or done is a turn:'):row['probe']={'kind':'action','action':'conversationTurns'}
    if row['promise'].startswith('A job works in one conversation, and a conversation points at the job working in it now.'):row['probe']={'kind':'action','action':'nativeProtocol'}
    if row['promise'].startswith('A private chat in Comms between one person and one agent.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['conversationPrivatePair','commsSend','commsPrivacy']]}
+   if row['promise']=='A channel or a direct message. A bot signed in to the server speaks for the agent.':row['probe']={'kind':'action','action':'discordConversations'}
+   if row['promise']=='The same, in a Slack workspace.':row['probe']={'kind':'action','action':'slackConversations'}
+   if row['promise'].startswith('Each incoming message goes into one conversation.'):row['probe']={'kind':'action','action':'bridgeMail'}
+   if row['promise'].startswith('d Checked at the door.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':name} for name in ['conversationCallers','conversationVisibility']]}
+   if row['promise'].startswith('A request for a secret records the conversation'):row['probe']={'kind':'action','action':'conversationSecretSource'}
+   if row['promise'].startswith('An inbox item links to the conversation it came from.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':name} for name in ['privateConversationQuestion','inboxDiscussion','conversationDigest']]}
    if row['promise'].startswith('A task names the conversation it came from.'):row['probe']={'kind':'action','action':'conversationTaskSource'}
    if row['promise'].startswith('An approval records the conversation it was asked in.'):row['probe']={'kind':'action','action':'conversationApprovalSource'}
    if row['promise'].startswith(('A conversation is one agent talking in one place.', 'One table Every conversation', 'One per place An agent')):row['probe']={'kind':'action','action':'conversationRecords'}
    if row['promise'].startswith('A thread keeps the pull requests it mentions'):row['probe']={'kind':'action','action':'conversationChangeCard'}
    if row['promise'].startswith('When an agent finishes a stretch of work'):row['probe']={'kind':'action','action':'conversationDigest'}
+   if row['promise'].startswith('A session leaves a short note'):row['probe']={'kind':'action','action':'sessionEpisode'}
    if row['promise'].startswith('One job at a time'):row['probe']={'kind':'action','action':'conversationSingleJob'}
+   if row['promise'].startswith('A trigger drops an item into the conversation'):row['probe']={'kind':'action','action':'scheduledWorker'}
    if row['promise'].startswith('A trigger from Tempo drops an item'):row['probe']={'kind':'action','action':'conversationTempoDelivery'}
    if row['promise'].startswith('A piece of work one agent hands to another.'):row['probe']={'kind':'action','action':'nativeHandoff'}
    if row['promise'].startswith('That need becomes a question in the inbox'):row['probe']={'kind':'action','action':'privateConversationQuestion'}
@@ -96,6 +105,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   add(text,'',probe)
  if f.stem=='tempo':
   for row in rows:
+   if row['promise'].startswith('Each recipient sets a volume on an inbox item.'):row['probe']={'kind':'action','action':'inboxVolume'}
    if row['promise'].startswith('Waiting on an approval is a once-only trigger on that answer.'):row['probe']={'kind':'action','action':'tempoResumed'}
   for check,text in [('held','An answer arriving while the agent is paused does not fire its trigger.'),('resumed','Resuming fires the held once-only answer trigger exactly once.'),('settled','Run now delivers one person Inbox item, then the whole waiting batch notifies after settling.'),('cancelled','Cancelling a future trigger prevents delivery beyond its deadline.')]:add(text,'',{'kind':'action','action':'tempo'+check.capitalize()})
  if f.stem=='conversations':
@@ -111,7 +121,12 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith(("A pending approval is an item in a person's Inbox", 'A pending approval arrives as an item')):row['probe']={'kind':'action','action':'approvalInbox'}
  if f.stem=='bridges':
   for row in rows:
-   if row['promise']=='It arrives in the inbox with discord or slack as its source.':row['probe']={'kind':'action','action':'bridgeMail'}
+   if row['promise']=='Records whether each reply arrived, and says so when it cannot tell.':row['probe']={'kind':'action','action':'bridgeReceipts'}
+   if row['promise'] in ('It arrives in the inbox with discord or slack as its source.', 'Decides which agent answers in a channel when nobody is addressed.',
+     'The message goes into one conversation: the agent in that channel.',
+     'A message from outside is kept as an incoming message, matched to a person and a channel rule, and passed into the right conversation. It can be held or dropped, with a reason.',
+     'A channel rule names the agent that answers in a channel. A connection can listen only to some channels, or ignore some.',
+     'Links an outside user to the household member they are.', 'A person link says which household member an outside user is.'):row['probe']={'kind':'action','action':'bridgeMail'}
  if f.stem=='bridges':add('The owner can save a Discord channel rule and a Slack person link in Bridges and inspect both after reload.','',{'kind':'action','action':'bridgeSettings'})
  if f.stem=='inbox':add('Answering Yes records who answered and adds exactly one item for the agent.','',{'kind':'action','action':'inboxAnswer'})
 
@@ -131,6 +146,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='desk':add('Every app discovered in the launcher opens a tile.','',{'kind':'launcher'})
  if f.stem=='inbox':
   for row in rows:
+   if row['promise']=='A pending request for a secret arrives as an item.':row['probe']={'kind':'action','action':'inboxSecretRequest'}
    if row['promise'].startswith("A task's question arrives as an item, with a link to the task."):row['probe']={'kind':'action','action':'inboxTaskArrival'}
    if row['promise'].startswith("A subagent's brief arrives as an item;"):row['probe']={'kind':'action','action':'nativeHandoff'}
    if row['promise'].startswith('The conversation it belongs to.'):row['probe']={'kind':'action','action':'conversationInboxIngress'}
@@ -146,10 +162,12 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith(('Each member keeps their own look','b Your own look.')):row['probe']={'kind':'action','action':'memberAppearance'}
    if row['promise'].startswith('A look is a set of colours'):row['probe']={'kind':'action','action':'deskAppearance'}
 
+   if row['promise'].startswith('Each agent has a drawn face:'):row['probe']={'kind':'action','action':'deskFaces'}
    if row['promise'].startswith('The desk is loom on a desktop screen.'):row['probe']={'kind':'action','action':'deskShell'}
    if row['promise'] in ("A rail card lists the agent's current jobs.", "Shows each agent's face, its state and what it is doing."):row['probe']={'kind':'action','action':'deskJobs'}
    if row['promise'].startswith('The ticker reads counts'):row['probe']={'kind':'action','action':'deskTicker'}
    if row['promise'].startswith('The count comes from the items waiting in your inbox.'):row['probe']={'kind':'action','action':'deskWaiting'}
+   if row['promise'].startswith('a What you may see.'):row['probe']={'kind':'action','action':'deskPanelVisibility'}
    if row['promise'].startswith('Places tiles by one rule'):row['probe']={'kind':'action','action':'deskGeometry'}
    if row['promise'].startswith('The first tile takes the big slot.'):row['probe']={'kind':'action','action':'deskLayout'}
    if row['promise'].startswith(('Keeps every installed app within reach', 'The launcher lists every app in groups')):row['probe']={'kind':'action','action':'deskLauncher'}
@@ -221,6 +239,10 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('c Private.'):row['probe']={'kind':'action','action':'commsPrivacy'}
  if f.stem=='inbox':
   for row in rows:
+   if row['promise'].startswith('c Checked at the door.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':name} for name in ['inboxCallers','inboxVisibility']]}
+   if row['promise'].startswith('The same inbox table is drawn'):row['probe']={'kind':'all','probes':[{'kind':'action','action':name} for name in ['inboxDocumentation','privateConversationBatch','inboxVolume']]}
+   if row['promise']=='Each incoming message becomes one item.':row['probe']={'kind':'action','action':'bridgeMail'}
+   if row['promise'].startswith(('One inbox for everything sent to anyone','Every item has a recipient. An agent')):row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['inboxRecipients','privateConversationBatch','privateConversationQuestion']]}
    if row['promise'].startswith(('Every item has one recipient:', 'a The recipient.')):row['probe']={'kind':'action','action':'inboxRecipients'}
    if row['promise'].startswith('b Who else sees it.'):row['probe']={'kind':'action','action':'inboxVisibility'}
  # Carry source hashes so a changed approved page cannot silently reuse old results.

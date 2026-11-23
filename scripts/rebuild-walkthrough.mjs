@@ -2,7 +2,7 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
-import {nativeProtocolAction} from './rebuild-native-protocol.mjs';
+import {nativeProtocolAction,scheduledWorker} from './rebuild-native-protocol.mjs';
 import {conversationLinks} from './rebuild-conversation-links.mjs';
 import {conversationMailSteps} from './rebuild-conversation-mail.mjs';
 import {machineRoster} from './rebuild-machine-roster.mjs';
@@ -19,6 +19,8 @@ import {secretValueAction} from './rebuild-secret-value-actions.mjs';
 import {secretDefaultAction,verifySecretDefaultAfterReload} from './rebuild-secret-actions.mjs';
 import {workVisibility} from './rebuild-work-visibility.mjs';
 import {changeActions,changeInline} from './rebuild-change-actions.mjs';
+import {bridgeReceipts} from './rebuild-bridge-receipts.mjs';
+import {providerConversations} from './rebuild-provider-conversations.mjs';
 import {bridgeMail} from './rebuild-bridge-mail.mjs';
 import {bridgeSettingsAction} from './rebuild-bridge-actions.mjs';
 import {taskStructure} from './rebuild-task-structure.mjs';
@@ -33,9 +35,14 @@ import {inboxActionSteps} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
 import {homeJobs} from './rebuild-home-jobs.mjs';
 import {homeActions} from './rebuild-home-actions.mjs';
-import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
+import {mkdirSync,writeFileSync,mkdtempSync,rmSync,readdirSync} from 'node:fs';
 import {approvalInbox} from './rebuild-approval-inbox.mjs';
+import {conversationCallers} from './rebuild-conversation-callers.mjs';
+import {inboxDiscussion} from './rebuild-inbox-discussion.mjs';
+import {inboxCallers} from './rebuild-inbox-callers.mjs';
+import {inboxDocumentation,inboxVolume} from './rebuild-inbox-volume.mjs';
 import {scheduledInbox} from './rebuild-scheduled-inbox.mjs';
+import {inboxSecretRequest} from './rebuild-inbox-secret.mjs';
 import {inboxTaskSource} from './rebuild-inbox-task-source.mjs';
 
 
@@ -43,14 +50,17 @@ import {tmpdir} from 'node:os';
 import {conversationVisibilityActions} from './rebuild-conversation-visibility.mjs';
 import {join,resolve} from 'node:path';
 import {prepareRetention,shortRetention} from './rebuild-retention.mjs';
+import {deskDataDoor} from './rebuild-desk-data-door.mjs';
 import {installDataProbe,auditDataDoor,dataActions,sharingGrowth,homeReadGrowth} from './rebuild-data-actions.mjs';
 
 import {exampleHome} from '../dist/example-home.js';
 import {conversationRecords} from './rebuild-conversation-records.mjs';
 import {startSharedHome} from '../dist/shared-startup.js';
+import {deskPanelVisibility} from './rebuild-desk-visibility.mjs';
 import {deskJobs} from './rebuild-desk-jobs.mjs';
 import {deskTicker} from './rebuild-desk-ticker.mjs';
 import {deskWaiting} from './rebuild-desk-waiting.mjs';
+import {deskFaces} from './rebuild-desk-faces.mjs';
 import {deskActions} from './rebuild-desk-actions.mjs';
 import {memberAppearance} from './rebuild-member-appearance.mjs';
 import {appearanceActions} from './rebuild-appearance-actions.mjs';
@@ -60,6 +70,17 @@ import {FakeClock} from '../dist/core/clock.js';
 
 export const redact=text=>String(text).replace(/(\/login\/)[^\s"'<>\\)]+/g,'$1[redacted]').replace(/(Bearer\s+|loom_ui=)[^\s;"'<>\\)]+/gi,'$1[redacted]').replace(/AGE-SECRET-KEY-[A-Z0-9-]+/g,'[private key redacted]');
 export const safeReport=report=>JSON.parse(JSON.stringify(report,(_key,value)=>typeof value==='string'?redact(value):value));
+/** Save positions from shipped JavaScript, without page addresses or arbitrary stack text. */
+export function browserFrames(stack,origin,assets) {
+ const prefix=origin+'/app/assets/', frames=[];
+ for(const line of (stack??'').split('\n').slice(1)){
+  const match=/^\s*at (?:[^()]* \()?([^\s()]+):(\d+):(\d+)\)?$/.exec(line);
+  if(!match || !match[1].startsWith(prefix))continue;
+  const asset=match[1].slice(prefix.length);
+  if(assets.has(asset))frames.push({asset,line:Number(match[2]),column:Number(match[3])});
+ }
+ return frames;
+}
 /** Browser HTTP/WS may reach only this newly started loopback listener. */
 export function localRequest(url,origin){try{return new URL(url).origin===origin||/^(data:|blob:|about:)/.test(url);}catch{return false;}}
 /** A second disposable loopback listener proves both browser guards before
@@ -109,7 +130,12 @@ export async function* walkthroughSteps(output) {
   page.on('websocket',socket=>{const row={path:new URL(socket.url()).pathname,phase,navigation,closeObserved:false,errorObserved:false};sockets.push(row);socket.on('socketerror',()=>{row.errorObserved=true;});connections.add(socket);socket.on('close',()=>{row.closeObserved=true;connections.delete(socket);});});
 
   page.on('console',event=>{if(event.type()==='error')consoleErrors.push(event.text());});
-  page.on('pageerror',error=>pageErrors.push(error.message));
+  const assets=new Set(readdirSync(resolve('dist/web/assets')).filter(file=>file.endsWith('.js')));
+  report.pageFailures=[];
+  page.on('pageerror',error=>{
+   pageErrors.push(error.message);
+   report.pageFailures.push({phase,navigation,frames:browserFrames(error.stack,app.url,assets)});
+  });
   page.on('requestfailed',request=>{const url=new URL(request.url());networkErrors.push({path:url.pathname.startsWith('/login/')?'/login/[redacted]':url.pathname,error:request.failure()?.errorText});});
   page.on('websocket',socket=>{if(new URL(socket.url()).pathname!=='/graphql')return;socket.on('framesent',event=>{try{const frame=JSON.parse(String(event.payload));if(frame.type==='subscribe')subscriptions.push({id:frame.id,query:frame.payload?.variables?.query??frame.payload?.query});}catch{}});socket.on('framereceived',event=>{try{const frame=JSON.parse(String(event.payload));frames.push({type:frame.type,id:frame.id,hasData:!!frame.payload?.data,errors:frame.payload?.errors??(frame.type==='error'?frame.payload:undefined)});}catch{frames.push({type:'unparseable'});}});});
   const isolationErrors=consoleErrors.length;
@@ -188,7 +214,7 @@ export async function* walkthroughSteps(output) {
     if(title==='Activity'){
      const input={page,tile,example:report.example,out};
      report.actions.activityWorkLinks=await activityWorkLinks(input);
-     report.actions.activityDays=await activityDays(input);
+     report.actions.activityDays=await activityDays({...input,now:clock.now(),householdZone});
     }
     if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out,app});report.actions={...report.actions,bridgeSettings:row.action};}
     if(['Your account','Household setup','Sharing'].includes(title))row.action=await accessAction({page,tile,title,app,out});
@@ -255,6 +281,8 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'desk-jobs',actions:safeReport(report.actions)};
   report.actions.deskTicker=await deskTicker({page,app,out});
   save();yield {phase:'desk-ticker',actions:safeReport(report.actions)};
+  report.actions.deskPanelVisibility=await deskPanelVisibility({browser,out});
+  save();yield {phase:'desk-panel-visibility',actions:safeReport(report.actions)};
   phase='conversation actions';
   report.actions={...report.actions,...await conversationActions({page,app,example:report.example,out,open:openApp,actions:['inboxAnswer','commsAnswer'],previous:report.actions})};
   save();yield {phase:'actions',actions:safeReport(report.actions)};
@@ -263,6 +291,8 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'desk',actions:safeReport(report.actions)};
   Object.assign(report.actions,await appearanceActions({page,app,out,open:openApp}));
   save();yield {phase:'appearance',actions:safeReport(report.actions)};
+  report.actions.deskFaces=await deskFaces({browser,home:join(parent,'face-home'),out});
+  save();yield {phase:'desk-faces',actions:safeReport(report.actions)};
   report.actions.memberAppearance=await memberAppearance({page,app,browser,out});
   save();yield {phase:'member-appearance',actions:safeReport(report.actions)};
   phase='agent memory files';
@@ -283,7 +313,9 @@ export async function* walkthroughSteps(output) {
   try {
    const script=fileURLToPath(new URL('./rebuild-memory-temperature.mjs',import.meta.url));
    const {stdout}=await promisify(execFile)(process.execPath,[script],{timeout:30_000});
-   report.actions.memoryTemperature=JSON.parse(stdout);
+   const {sessionEpisode,...temperature}=JSON.parse(stdout);
+   report.actions.memoryTemperature=temperature;
+   report.actions.sessionEpisode=sessionEpisode;
   } catch(error) { report.actions.memoryTemperature={ok:false,error:String(error)}; }
   save();yield {phase:'memory-temperature',actions:safeReport(report.actions)};
   phase='knowledge due delivery';
@@ -326,7 +358,15 @@ export async function* walkthroughSteps(output) {
    report.actions.dataMigrations=JSON.parse(stdout);
   } catch(error) { report.actions.dataMigrations={ok:false,error:String(error)}; }
   save();yield {phase:'migrations',actions:safeReport(report.actions)};
-  phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out,sharingSQL:report.actions.dataSharingSQL}));
+  const deskDevices=[];
+  for(const device of ['desktop','phone']){
+   phase=device+' tile reads';
+   try{deskDevices.push(await deskDataDoor({browser,home:join(parent,'tile-data-'+device),device,inventory:report.inventory}));}
+   catch(error){deskDevices.push({ok:false,device,error:String(error)});}
+   report.actions.deskTileReads=deskDevices;
+   save();yield {phase:'tile-reads-'+device,actions:safeReport(report.actions)};
+  }
+  phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out,sharingSQL:report.actions.dataSharingSQL,deskDevices}));
   try {
    const {writeReceiptEvidence}=await import('./rebuild-write-receipt.mjs');
    report.actions.dataWriteReceipt=await writeReceiptEvidence();
@@ -340,16 +380,39 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'approval-source',actions:safeReport(report.actions)};
   Object.assign(report.actions,await inboxTaskSource({page,tile:await openApp('Inbox'),app,example:report.example,out,approval:report.actions.approvalInbox,open:openApp}));
   save();yield {phase:'task-source',actions:safeReport(report.actions)};
+  report.actions.inboxSecretRequest=await inboxSecretRequest({page,tile:await openApp('Inbox'),app,out});
+  save();yield {phase:'secret-source',actions:safeReport(report.actions)};
   for await(const step of conversationMailSteps({page,app,clock,example:report.example,out,open:openApp})){Object.assign(report.actions,step.actions);save();yield {phase:step.phase,actions:safeReport(report.actions)};}
   report.actions.scheduledInbox=await scheduledInbox({browser,home:join(parent,'scheduled-home'),out});
   save();yield {phase:'scheduled-inbox',actions:safeReport(report.actions)};
+  report.actions.inboxDocumentation=await inboxDocumentation(browser);
+  report.actions.inboxVolume=await inboxVolume({browser,home:join(parent,'volume-home'),out});
+  save();yield {phase:'inbox-volume',actions:safeReport(report.actions)};
+  try {report.actions.inboxDiscussion=await inboxDiscussion({browser,home:join(parent,'discussion-home'),out});}
+  catch(error){report.actions.inboxDiscussion={ok:false,error:String(error)};}
+  save();yield {phase:'inbox-discussion',actions:safeReport(report.actions)};
   report.actions.homeJobs=await homeJobs({page,tile:await openApp('Home'),app,example:report.example,out});
   save();yield {phase:'home-jobs',actions:safeReport(report.actions)};
+  phase='native worker and reply';
   Object.assign(report.actions,await nativeProtocolAction({page,open:openApp,out,app,example:report.example,clock,home}));
   save();yield {phase:'native-protocol',actions:safeReport(report.actions)};
+  try {report.actions.scheduledWorker=await scheduledWorker({browser,home:join(parent,'scheduled-worker-home')});}
+  catch(error){report.actions.scheduledWorker={ok:false,error:String(error)};}
+  save();yield {phase:'scheduled-worker',actions:safeReport(report.actions)};
+  phase='bridge delivery';
+  for(const [platform,action] of [['discord','discordConversations'],['slack','slackConversations']]) {
+    try {report.actions[action]=await providerConversations(platform);}
+    catch(error){report.actions[action]={ok:false,error:String(error)};}
+  }
   try {report.actions.bridgeMail=await bridgeMail({app,clock});}
   catch(error){report.actions.bridgeMail={ok:false,error:String(error)};}
+  try {report.actions.bridgeReceipts=await bridgeReceipts({app,clock,page,open:openApp});}
+  catch(error){report.actions.bridgeReceipts={ok:false,error:String(error)};}
   save();yield {phase:'bridge-mail',actions:safeReport(report.actions)};
+  try {report.actions.conversationCallers=await conversationCallers({app,example:report.example});}
+  catch(error){report.actions.conversationCallers={ok:false,error:String(error)};}
+  report.actions.inboxCallers=await inboxCallers({app,example:report.example});
+  save();yield {phase:'inbox-callers',actions:safeReport(report.actions)};
 
 
  }catch(error){report.fatal=String(error);}

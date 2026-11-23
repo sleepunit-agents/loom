@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import BetterSqlite3 from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { MIGRATIONS, runMigrations, pendingMigrations } from './migrations.js';
+import { CONVERSATION_TABLES, createConversationTables } from '../../test/fixtures/legacy-memory-conversations.js';
 import { computeUniqKey } from './dedup.js';
 import { SqliteVecBackend } from './sqlite-vec.js';
 import type { EmbeddingProvider } from './types.js';
@@ -53,6 +54,12 @@ describe('MIGRATIONS registry', () => {
     expect(ids).toContain('add_archive_note');
     expect(ids).toContain('idx_memories_archived');
   });
+
+  it('retains the historical conversation step between project cards and person merges', () => {
+    const ids = MIGRATIONS.map(step => step.id);
+    const position = ids.indexOf('project_cards');
+    expect(ids.slice(position, position + 3)).toEqual(['project_cards', 'conversations', 'person_merges']);
+  });
 });
 
 describe('runMigrations', () => {
@@ -71,6 +78,46 @@ describe('runMigrations', () => {
     expect(applied).toContain('add_archived');
     expect(applied).toContain('add_archive_note');
     expect(applied).toContain('idx_memories_archived');
+  });
+
+  it('starts and reopens a usable memory store without the old conversation archive', async () => {
+    const path = join(tmpDir, 'memories.db');
+    const memory = new SqliteVecBackend({ dbPath: path }, makeEmbedder());
+    try {
+      await memory.remember({ title: 'My chair', category: 'project', content: 'Has a cushion.' });
+    } finally { memory.close(); }
+    new SqliteVecBackend({ dbPath: path }, makeEmbedder()).close();
+    const db = new BetterSqlite3(path, { readonly: true });
+    try {
+      const tables = db.prepare('SELECT name FROM sqlite_schema WHERE type = ?').pluck().all('table');
+      expect(CONVERSATION_TABLES.filter(table => tables.includes(table))).toEqual([]);
+      expect(db.prepare('SELECT content FROM memories').pluck().get()).toBe('Has a cushion.');
+      expect(db.pragma('user_version', { simple: true })).toBe(MIGRATIONS.length);
+    } finally { db.close(); }
+  });
+
+  it.each(['full', 'partial'])('preserves the %s historical conversation archive on Memory upgrade', shape => {
+    const db = openOldSchemaDb(join(tmpDir, 'memories.db'));
+    try {
+      createConversationTables(db);
+      db.exec(`INSERT INTO conversations(id,agent,venue,place,started,last) VALUES ('room','fern','loom','garden','then','later');
+        INSERT INTO conversation_turns(conversation,seq,at,from_json,kind,writer) VALUES ('room',1,'then','{}','reply','fern');
+        INSERT INTO conversation_days(conversation,day,counts_json,outcomes_json) VALUES ('room','today','{}','{}');
+        INSERT INTO conversation_digests(id,conversation,run,at,summary,asks_json,decisions_json,tasks_json,projects_json)
+          VALUES ('digest','room','job','later','The garden is watered','[]','[]','[]','[]')`);
+      if (shape === 'partial') db.exec('DROP TABLE conversation_days; DROP TABLE conversation_digests');
+      function snapshot() {
+        const schema = db.prepare(`SELECT type,name,tbl_name,sql FROM sqlite_schema
+          WHERE tbl_name IN (?,?,?,?) ORDER BY name`).all(...CONVERSATION_TABLES) as {type:string;name:string}[];
+        const rows = schema.filter(row => row.type === 'table').map(row => db.prepare('SELECT * FROM ' + row.name).all());
+        return { schema, rows };
+      }
+      const before = snapshot();
+      const results = runMigrations(db);
+      expect(results.find(step => step.id === 'conversations')?.status).toBe('skipped');
+      expect(snapshot()).toEqual(before);
+      expect(pendingMigrations(db)).toHaveLength(0);
+    } finally { db.close(); }
   });
 
   it('creates the proposals table on an old-schema DB', () => {
@@ -170,7 +217,7 @@ describe('pendingMigrations', () => {
   beforeEach(() => { tmpDir = mkdtempSync(join(tmpdir(), 'loom-pend-')); });
   afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }); });
 
-  it('returns every migration on an old-schema DB', () => {
+  it('returns all applicable migrations on an old-schema DB', () => {
     const db = openOldSchemaDb(join(tmpDir, 'old.db'));
     const pending = pendingMigrations(db);
     db.close();
@@ -182,7 +229,7 @@ describe('pendingMigrations', () => {
       'add_memory_deletions',
       'add_scope',
       'add_times_seen', 'add_uniq', 'rekey_uniq_unicode', 'uniq_active_unique', 'rekey_uniq_exact',
-      'people_cards', 'add_recall_heat', 'project_cards', 'conversations', 'person_merges', 'add_authored_at',
+      'people_cards', 'add_recall_heat', 'project_cards', 'person_merges', 'add_authored_at',
     ]);
   });
 
@@ -437,7 +484,7 @@ describe('rekey_uniq_exact migration (PR120 review, round 2)', () => {
     insert(db, 'project/p1', 'foo-bar', 'same', 'folded-project');
     insert(db, 'project/p2', 'foobar', 'same', null);
 
-    expect(pendingMigrations(db).map((m) => m.id)).toEqual(['rekey_uniq_exact', 'people_cards', 'add_recall_heat', 'project_cards', 'conversations', 'person_merges', 'add_authored_at']);
+    expect(pendingMigrations(db).map((m) => m.id)).toEqual(['rekey_uniq_exact', 'people_cards', 'add_recall_heat', 'project_cards', 'person_merges', 'add_authored_at']);
     runMigrations(db, { strict: true });
 
     const rows = db.prepare('SELECT ref, uniq FROM memories ORDER BY id').all() as

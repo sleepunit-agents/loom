@@ -220,7 +220,14 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
       person.parse(actor);
       return db.transaction(() => { requireUsable(project); return [...new Set(ids)].filter(id => moveOne(id, project, actor)); });
     },
-    reopen(id) { return db.transaction(() => touch(id, { status: 'open', closeReason: null, closedAt: null, startedAt: null, assigneeKind: null, assignee: null })); },
+    reopen(id) {
+      return db.transaction(() => {
+        const task = row(id);
+        if (task.status === 'open') return task;
+        if (task.status === 'in_progress') throw new Error('Task is in progress');
+        return touch(id, { status: 'open', closeReason: null, closedAt: null, startedAt: null, assigneeKind: null, assignee: null });
+      });
+    },
     comment(id, text, actor) { db.transaction(() => addComment(id, text, actor)); },
     link(id, dependsOn, type) { db.transaction(() => link(id, dependsOn, type)); },
     unlink(id, dependsOn, type) { taskLinkType.parse(type); db.transaction(() => { row(id); row(dependsOn); db.delete(taskLinks).where(and(eq(taskLinks.task, id), eq(taskLinks.dependsOn, dependsOn), eq(taskLinks.type, type))).run(); touch(id, {}); }); },

@@ -12,22 +12,35 @@ import { type CardNames } from './proposal-words.js';
 const titleRow = new GraphQLObjectType({ name: 'InboxProposalTitle', fields: {
   approval: { type: GraphQLString }, title: { type: GraphQLString },
 } });
-export function workQueryFields(db: DataDatabase, refreshConfigured: boolean, names: (viewer: Viewer) => CardNames, titleOf:(row: typeof approvals.$inferSelect,names:CardNames)=>string|undefined) {
+/** The Inbox and its search use the same current, viewer-visible card wording. */
+export function inboxProposalTitles(db:DataDatabase,names:(viewer:Viewer)=>CardNames,titleOf:(row:typeof approvals.$inferSelect,names:CardNames)=>string|undefined) {
+  return (viewer:Viewer, ids:string[]) => {
+    const titles=new Map<string,string>();
+    if (!ids.length || !workAnswersAllowed(db,viewer)) return titles;
+    const visibleNames=names(viewer);
+    const visible=workVisibility(viewer).approvals!(getTableColumns(approvals));
+    for(let offset=0;offset<ids.length;offset+=100){
+      const rows=db.select().from(approvals).where(and(inArray(approvals.id,ids.slice(offset,offset+100)),
+        eq(approvals.operation,'household.change'),visible)).all();
+      for(const row of rows){
+        const title=titleOf(row,visibleNames);
+        if(title)titles.set(row.id,title);
+      }
+    }
+    return titles;
+  };
+}
+
+export function workQueryFields(db: DataDatabase, refreshConfigured: boolean, titles: ReturnType<typeof inboxProposalTitles>) {
   return { ...conversationWorkFields(db), inboxProposalTitles: {
     type: new GraphQLList(titleRow),
     args: { ids: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))) } },
     resolve(_source: unknown, {ids}: {ids: string[]}, {viewer}: {viewer: Viewer}) {
-      // One page plus its separately opened item. Resolve owner-readable names only for visible cards.
-      if (!ids.length || !workAnswersAllowed(db,viewer)) return [];
-      if (ids.length > 100) throw Error('Too many approval titles requested');
-      const rows = db.select()
-        .from(approvals).where(and(inArray(approvals.id, ids), eq(approvals.operation,'household.change'),
-          workVisibility(viewer).approvals!(getTableColumns(approvals)))).all();
-      const visibleNames = names(viewer);
-      return rows.flatMap(row => {
-        const title = titleOf(row,visibleNames);
-        return title ? [{approval: row.id, title}] : [];
-      });
+      if (ids.length > 100) {
+        if (!workAnswersAllowed(db,viewer)) return [];
+        throw Error('Too many approval titles requested');
+      }
+      return Array.from(titles(viewer,ids),([approval,title])=>({approval,title}));
     },
   }, workAnswerOwner: { type:new GraphQLNonNull(GraphQLBoolean),
     resolve: (_source: unknown, _args: unknown, context: {viewer:Viewer}) => workAnswersAllowed(db,context.viewer),

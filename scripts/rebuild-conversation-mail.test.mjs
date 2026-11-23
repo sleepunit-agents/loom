@@ -13,6 +13,6 @@ it('delivers the actual example producer batch before the browser-only question 
  app.writes.run(()=>app.services.comms.db.$client.prepare("INSERT INTO boxes(id,name,owner,same_machine_as_loom,hosts_any,report_only,always_on,enrolled_at,revoked_at) VALUES('000-revoked-fixture','Old fictional box','alex',0,0,0,0,?,?)").run(example.createdAt,example.createdAt));
  const page={evaluate:async(_fn,{name,input,id})=>{const response=await fetch(app.url+'/api/'+name.replace('.','/'),{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({input,id})});return {status:response.status,body:await response.json()};}};
  const result=await conversationMail({page,app,clock,example,out:parent,open:async()=>{throw Error('Browser interaction intentionally excluded');}});
- for(const name of ['privateConversationBatch','nativeHandoff','conversationInboxIngress','conversationTempoDelivery','conversationSingleJob'])expect(result[name],JSON.stringify(result)).toMatchObject({ok:true,cleanup:{jobsStopped:true,credentialsRevoked:true}});
+ for(const name of ['privateConversationBatch','nativeHandoff','conversationInboxIngress','conversationTempoDelivery','conversationSingleJob','conversationTurns'])expect(result[name],JSON.stringify(result)).toMatchObject({ok:true,cleanup:{jobsStopped:true,credentialsRevoked:true}});
  }finally{await app?.close();rmSync(parent,{recursive:true,force:true});}
 });

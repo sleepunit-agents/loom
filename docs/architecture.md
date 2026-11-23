@@ -193,13 +193,12 @@ The offline Comms importer uses a temporary SQLite table named `reasons` to hold
 | `proposals`, `memory_revisions`, `memory_supersessions`, `memory_deletions` | `src/backends/migrations.ts` |
 | `people`, `person_revisions`, `person_merges`: the agent's relationship cards. The shared migration also creates empty `person_account_sightings` and `person_sighting_aliases` here | `src/backends/migrations.ts`, used by `src/backends/people.ts` |
 | `projects`, `project_revisions`, `project_names`: the agent's project cards | `src/backends/migrations.ts`, used by `src/backends/projects.ts` |
-| `conversation_turns`, `conversation_digests`, and this file's own `conversations` and `conversation_days` | `src/backends/conversations.ts`. Left from before conversations moved to `loom.db`. Still created, never read or written. |
 | `mind_operation_receipts`, `mind_source_migrations` | `src/pieces/mind/receipt-schema.ts`: retry receipts for writes to this file |
 | `memory_command_preparations`, `memory_command_receipts`, `memory_command_schema`, `memory_card_references`, `memory_card_schema` | `src/pieces/mind/semantic-schema-sql.ts` |
 
-Four names here (`projects`, `conversations`, `conversation_days`, and `people` in the
-commons) also exist in other stores with other columns. A table belongs to the file it is
-in; `src/core/data/schema.ts` describes `loom.db` and nothing else.
+New Memory stores leave conversation history to `loom.db`. Older stores keep their conversation
+tables, columns, indexes and rows in place for the offline import described in `docs/migration-plan.md`.
+The household, agent and commons stores each define their own project and people tables.
 
 ### `agents/<agent>/notes.db`: one per agent
 

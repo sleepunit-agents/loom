@@ -85,7 +85,7 @@ import { changeService, type PullRequestReader, type MergeRuleReader } from './a
 import { sharedChangesReader } from './shared-changes-reader.js';
 import { pollChanges } from './apps/changes-polling.js';
 import { registerWorkRefresh } from './shared-work-refresh.js';
-import { workQueryFields } from './shared-work-queries.js';
+import { inboxProposalTitles, workQueryFields } from './shared-work-queries.js';
 import { workLifetime } from './shared-work-lifetime.js';
 import { guardedResponse, isGuardedCommandRead } from './core/data/guarded-response.js';
 import { registerTriggerJournal } from './shared-trigger-journal.js';
@@ -213,6 +213,7 @@ export function sharedRoot(options: {
   // currentToken writes it where it reads the job (core/data/authentication.ts).
   const authenticateOutside=(request:Request,options?:Parameters<typeof credentials.authenticate>[1])=>{const auth=credentials.authenticate(request,options);return auth&&{...auth,valid:()=>auth.valid()&&householdQueries.valid(auth.viewer)&&projectQueries.valid(auth.viewer)&&programQueries.valid(auth.viewer)&&kitQueries.valid(auth.viewer)};};
   const bodyScope=conversationBodyScope(db,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
+  const readInboxTitles=inboxProposalTitles(db,proposalNames,householdProposals.inboxTitle);
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey, (viewer,account)=>{
     let identity:unknown;
     try { identity=JSON.parse(account); } catch { return undefined; }
@@ -221,7 +222,7 @@ export function sharedRoot(options: {
     const name=(...address:typeof parsed.data)=>memory.people.outsideName(viewer,...address);
     if(!holds(policyRules.householdOwner,viewer,{},sharedSharing(db)))return name(...parsed.data);
     return outsideNames(db,name).person(...parsed.data)?.name;
-  }) : undefined;
+  },readInboxTitles) : undefined;
   // Mail about a task goes into its conversation only for a person who reads that conversation (policy.ts, addressee).
   const tasks=taskService(db,now,(person,conversation)=>canReadSharedConversation(db,addressee(person),conversation));
   const memory=sharedMemory(db,clock,options.memory,options.memoryEmbedding,report);
@@ -231,7 +232,7 @@ export function sharedRoot(options: {
   startupCleanups.push(notices.close);
   let pushes:ReturnType<typeof sharedNotifications>|undefined;
   let memorySignals:ReturnType<typeof installMemorySignals>|undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {subscriptionSetup:subscriptionSetupField(db,roles), ...memory.fields, ...kitQueries.fields, ...programQueries.fields, ...householdQueries.fields, ...projectQueries.fields, ...sharedAccountFields(db, clock, member=>pushes?.read(member)??{publicKey:null,devices:[]}), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes,proposalNames,householdProposals.inboxTitle)}, () => !closing, authenticateOutside, work => meter?.enabled()
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {subscriptionSetup:subscriptionSetupField(db,roles), ...memory.fields, ...kitQueries.fields, ...programQueries.fields, ...householdQueries.fields, ...projectQueries.fields, ...sharedAccountFields(db, clock, member=>pushes?.read(member)??{publicKey:null,devices:[]}), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes,readInboxTitles)}, () => !closing, authenticateOutside, work => meter?.enabled()
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work(),viewer=>credentials.program(viewer)?.records,viewer=>{const work=bodyJob(viewer);return !work || !jobHeld(db,work.job);}, viewer => mayReadProgramWork(db, viewer, bodyJob(viewer)?.job));
   credentialWrite=action=>{if(db.$client.inTransaction)throw Error('Credential usage must own its transaction');if(db.transaction(action))data.credentialUsageChanged();};
   startupCleanups.push(()=>{void data.close().catch(()=>report(new Error('Data startup cleanup failed')));});
