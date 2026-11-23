@@ -218,6 +218,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const action=step.value.actions.scheduledInbox;
   expect(action,JSON.stringify(action)).toMatchObject({ok:true,recipients:2,delivered:2,unchangedAfterRestart:true});
  });
+ it('follows the Inbox documentation links and exercises recipient volume through restarts',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('inbox-volume');
+  for(const name of ['inboxDocumentation','inboxVolume'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
+ });
  it('updates each Home card independently as terminal jobs start and end',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('home-jobs');
   expect(step.value.actions.homeJobs).toMatchObject({ok:true});
