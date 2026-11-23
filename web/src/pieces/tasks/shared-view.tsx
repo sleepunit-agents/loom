@@ -30,6 +30,7 @@ export interface SharedTasksProps {
   tasks: readonly Task[];
   links: readonly Link[];
   comments: readonly Comment[];
+  loadingComments?: boolean;
   changes?: readonly SharedTaskChange[];
   /** IDs returned by the authorized ready query, never inferred from partial visible links. */
   ready: readonly string[];
@@ -158,6 +159,7 @@ export function SharedTasks(props: SharedTasksProps) {
         const href = repository && Number.isInteger(change.number) && change.number > 0 ? `https://github.com/${repository}/pull/${change.number}` : undefined;
         return <RefCard key={change.id} label={`Pull request ${label}`}><ChangeCard id={change.id} snapshot={{status:'live',changes:[change]}} open={props.openChange} link={{label,href}} name={name}/></RefCard>;
       })}</Section>}
+      {props.loadingComments && <Loading label="Loading comments…"/>}
       {comments.length > 0 && <Section label="Comments"><ol className="grid gap-2.5">{comments.map(c => <li key={c.seq} className="grid gap-0.5">
         <Body><strong>{name(c.actor)}</strong> <time className="loom-reader__meta" dateTime={c.at} title={fullTime(c.at,props.zone)}>{briefTime(c.at,props.zone)}</time></Body>
         <Body>{c.text}</Body></li>)}</ol></Section>}

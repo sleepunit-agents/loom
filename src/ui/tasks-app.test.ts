@@ -5,7 +5,7 @@ import type { DataQuerySnapshot } from '../../web/src/data/graphql';
 import type { TasksSelection, TaskSelection } from '../../web/src/pieces/tasks/query';
 import { tasksQuery } from '../../web/src/pieces/tasks/query';
 const f = vi.hoisted(() => ({snapshot: {status:'loading'} as DataQuerySnapshot<TasksSelection>, read: vi.fn()}));
-vi.mock('../../web/src/data/graphql', () => ({useDataQuery: (query: string) => { f.read(query); return f.snapshot; }}));
+vi.mock('../../web/src/data/graphql', () => ({useDataQuery: (query: string, variables: unknown) => { f.read(query, variables); return f.snapshot; }}));
 // The open form is handed to the view, which draws it in the reader.
 vi.mock('../../web/src/pieces/tasks/shared-view', () => ({SharedTasks: (props: {form?: {node: ReactNode}}) => h('Tasks',props,props.form?.node)}));
 vi.mock('../../web/src/pieces/tasks/shared-form', () => ({SharedTaskForm: (props: unknown) => h('Form',props)}));
@@ -13,15 +13,15 @@ import TasksApp from '../../web/src/pieces/tasks';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
 afterEach(async () => { await act(async () => tree?.unmount()); f.read.mockClear(); });
-const task = (id: string, isReady: boolean): TaskSelection => ({id,title:id,type:'task',status:'open',priority:2,position:1,ownerKind:'member',owner:'sam',project:'pond',assigneeKind:null,assignee:null,goal:'Goal',why:'Why',doneWhen:'',description:'',ask:null,ifYes:null,ifNo:null,closeReason:null,sourceKind:null,sourceId:null,commentCount:1,isReady,changeTasksByTask:[],taskLinksByTask:[],taskCommentsByTask:[{task:id,seq:1,actorKind:'member',actor:'sam',at:'2026-11-14T00:00:00Z',text:'Comment'}]});
+const task = (id: string, isReady: boolean): TaskSelection => ({id,title:id,type:'task',status:'open',priority:2,position:1,ownerKind:'member',owner:'sam',project:'pond',assigneeKind:null,assignee:null,goal:'Goal',why:'Why',doneWhen:'',description:'',ask:null,ifYes:null,ifNo:null,closeReason:null,sourceKind:null,sourceId:null,commentCount:1,isReady,changeTasksByTask:[],taskLinksByTask:[]});
 it('mounts the generated selection, authoritative readiness, comments and shell navigation without a record feed', async () => {
-  f.snapshot = {status:'live',data:{tasks:[task('a',false),task('b',true)]}};
+  f.snapshot = {status:'live',data:{tasks:[task('a',false),task('b',true)],selectedTask:{id:'a',taskCommentsByTask:[{task:'a',seq:1,actorKind:'member',actor:'sam',at:'2026-11-14T00:00:00Z',text:'Comment'}]}}};
   const go = vi.fn();
   await act(async () => {tree = create(h(TasksApp,{path:'/p/tasks-preview/task/~a',go,questionFor:'sam'}));});
-  expect(f.read).toHaveBeenCalledWith(tasksQuery);
+  expect(f.read).toHaveBeenCalledWith(tasksQuery, {selected:'a', withComments:true});
   const props = tree.root.findByType('Tasks').props;
   expect(props.ready).toEqual(['b']); expect(props.selected).toBe('a'); expect(props.questionFor).toBe('sam');
-  expect(props.comments).toHaveLength(2); expect(props.act).toBeUndefined();
+  expect(props.comments).toHaveLength(1); expect(props.act).toBeUndefined();
   await act(async () => props.select('b'));
   expect(go).toHaveBeenCalledWith('/p/tasks-preview/task/~b');
 });

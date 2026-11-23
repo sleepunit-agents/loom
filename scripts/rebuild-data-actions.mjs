@@ -136,15 +136,15 @@ export async function dataActions({page,app,example,apps,subscriptions,out,shari
  });
  await attempt('dataSelectionSQL',async()=>{
   const original=subscriptions.find(s=>/query\s+Tasks\b/.test(s.query))?.query;check(original,'The real Tasks selection was not observed');
-  const query=original.replace(/\btasks\s*\(/,'tasks(where:{id:{eq:'+JSON.stringify(example.tasks[0])+'}}, ');check(query!==original,'Could not add the ID filter to the actual tile selection');
-  const result=await sqlRead({page,app,query,task:example.tasks[0],match:/\b(?:from|join)\s+"?tasks"?\b/i});
+  const query=original.replace(/\btasks\s*\(/,'tasks(where:{id:{eq:'+JSON.stringify(example.tasks[1])+'}}, ');check(query!==original,'Could not add the ID filter to the actual tile selection');
+  const result=await sqlRead({page,app,query,task:example.tasks[1],match:/\b(?:from|join)\s+"?tasks"?\b/i});
   check(result.status===200&&!result.body.errors,'Generated selection failed: '+JSON.stringify(result.body.errors));
-  const rows=result.body.data.tasks;check(rows.length===1&&rows[0].id===example.tasks[0]&&rows[0].taskCommentsByTask.length>0,'Filtering or connected comment rows differed');
+  const rows=result.body.data.tasks;check(rows.length===1&&rows[0].id===example.tasks[1]&&rows[0].taskLinksByTask.length>0,'Filtering or connected task links differed');
   const root=parse(query).definitions.find(d=>d.kind==='OperationDefinition').selectionSet.selections.find(f=>f.kind==='Field'&&f.name.value==='tasks');
   const fields=selection=>[...new Set(selection.selections.filter(f=>f.kind==='Field').map(f=>f.alias?.value??f.name.value))].sort();
   check(JSON.stringify(Object.keys(rows[0]).sort())===JSON.stringify(fields(root.selectionSet)),'The result did not contain exactly the selected task fields');
-  const child=root.selectionSet.selections.find(f=>f.kind==='Field'&&f.name.value==='taskCommentsByTask');check(JSON.stringify(Object.keys(rows[0].taskCommentsByTask[0]).sort())===JSON.stringify(fields(child.selectionSet)),'Connected rows did not contain exactly the selected fields');
-  return{reason:'The observed Tasks selection named its fields and connected comments; its filtered browser replay returned exactly those selected fields.',statements:result.statements,factSQLExecutions:result.statements.length,fields:Object.keys(rows[0]),task:example.tasks[0]};
+  const child=root.selectionSet.selections.find(f=>f.kind==='Field'&&f.name.value==='taskLinksByTask');check(JSON.stringify(Object.keys(rows[0].taskLinksByTask[0]).sort())===JSON.stringify(fields(child.selectionSet)),'Connected rows did not contain exactly the selected fields');
+  return{reason:'The observed Tasks selection named its fields and connected task links; its filtered browser replay returned exactly those selected fields.',statements:result.statements,factSQLExecutions:result.statements.length,fields:Object.keys(rows[0]),task:example.tasks[1]};
  });
  evidence.dataSharingSQL=sharingSQL??{inconclusive:true,reason:'The early fresh-household growth measurement is unavailable.'};
  await attempt('dataTaskPatches',async()=>{
