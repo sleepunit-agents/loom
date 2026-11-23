@@ -13,6 +13,9 @@ import {httpWorkerControl,reportWorkerHealth} from '../dist/runtime/worker-http.
 import {workOnce} from '../dist/runtime/worker.js';
 import {bodyProgram} from '../dist/runtime/body-program.js';
 import {bodyInput} from '../dist/runtime/body-bootstrap.js';
+import {exampleHome} from '../dist/example-home.js';
+import {startSharedHome} from '../dist/shared-startup.js';
+import {FakeClock} from '../dist/core/clock.js';
 const nativeCallPaths=new Map([['digest','/api/conversation/digest'],['turn','/api/conversation/turn'],['status','/api/conversation/status'],['tasks.command','/api/tasks/command']]);
 export async function nativeProtocolSmoke({app,example,clock,home,signal,native,targets}){
  if(!example.fictional||!example.runtime)throw Error('Native protocol requires the new fictional household');
@@ -164,7 +167,24 @@ export async function nativeProtocolAction(context){
 }
 
 /** Follow one timed firing through admission and the ordinary worker poll. */
-export async function scheduledWorker(context) {
+export async function scheduledWorker({browser,home}) {
+ const example=await exampleHome(home);
+ const clock=new FakeClock(Date.parse(example.createdAt));
+ const app=await startSharedHome({home,clock,port:0,stdout(){}});
+ let page;
+ try {
+  page=await browser.newPage();
+  await page.goto(app.signinLink());
+  await page.getByRole('button',{name:'Sign in',exact:true}).click();
+  const context={app,clock,example,home,page};
+  // Finish the two example jobs before the timer fires. Only the scheduled job should be available.
+  await nativeProtocolSmoke(context);
+  return await observeScheduledWorker(context);
+ } finally {
+  try {await page?.close();} finally {await app.close();}
+ }
+}
+async function observeScheduledWorker(context) {
  const {app,clock,page}=context;
  const db=app.services.comms.db.$client;
  const words='Check the fictional rain gauge after the timer fires.';

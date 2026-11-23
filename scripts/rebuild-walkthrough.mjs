@@ -376,7 +376,7 @@ export async function* walkthroughSteps(output) {
   phase='native worker and reply';
   Object.assign(report.actions,await nativeProtocolAction({page,open:openApp,out,app,example:report.example,clock,home}));
   save();yield {phase:'native-protocol',actions:safeReport(report.actions)};
-  try {report.actions.scheduledWorker=await scheduledWorker({page,app,clock,home,example:report.example});}
+  try {report.actions.scheduledWorker=await scheduledWorker({browser,home:join(parent,'scheduled-worker-home')});}
   catch(error){report.actions.scheduledWorker={ok:false,error:String(error)};}
   save();yield {phase:'scheduled-worker',actions:safeReport(report.actions)};
   phase='bridge delivery';
