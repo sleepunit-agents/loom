@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {join} from 'node:path';
 
-export async function inboxSecretRequest({app,page,tile,out}) {
+export async function inboxSecretRequest({app,page,tile,out,clock}) {
   const name='walkthrough-irrigation', id=randomUUID(), why='Read the fictional irrigation schedule.';
   const db=app.services.comms.db.$client;
   // Only catalog metadata is needed to test the pending request and its denial.
@@ -21,6 +21,14 @@ export async function inboxSecretRequest({app,page,tile,out}) {
     const items=db.prepare('SELECT id,state FROM inbox WHERE source=? AND source_id=? AND to_kind=? AND "to"=?').all('secret-request',id,'person','alex');
     assert.equal(items.length,1);
     assert.equal(items[0].state,'waiting');
+    const instructions='Continue the fictional irrigation check.';
+    const trigger=app.writes.run(()=>app.services.tempo.triggers.set({
+      ownerKind:'agent',owner:'fern',sourceKind:'answer',watches:'secret-request:'+id,
+      lifespan:'once',targetKind:'inbox',toKind:'agent',to:'fern',instructions,note:'Wait for the irrigation request.',
+    })).value;
+    const resumes=()=>db.prepare("SELECT i.id,i.[to] recipient FROM inbox i JOIN inbox_refs r ON r.item=i.id WHERE i.source='trigger' AND r.ref=?").all(trigger.id);
+    clock.advance(0);
+    assert.deepEqual(resumes(),[]);
     const back=tile.locator('.loom-split__back:visible');
     if(await back.count())await back.click();
     await tile.getByRole('button',{name:/^Needs you(?:\s|$)/}).first().click();
@@ -41,7 +49,15 @@ export async function inboxSecretRequest({app,page,tile,out}) {
     assert.equal(answered.status(),200);
     assert.deepEqual(db.prepare('SELECT state,answered_by FROM secret_requests WHERE id=?').get(id),{state:'denied',answered_by:'alex'});
     assert.equal(db.prepare('SELECT state FROM inbox WHERE id=?').get(items[0].id).state,'resolved');
-    return {ok:true,screenshot,reason:'A pending request arrived once for Alex, displayed its reason, and opened the matching Settings request. Denying it there resolved the original Inbox item.'};
+    clock.advance(0);
+    const delivered=resumes();
+    assert.equal(delivered.length,1);
+    assert.equal(delivered[0].recipient,'fern');
+    assert.equal(app.services.conversations.item(delivered[0].id).words,instructions);
+    clock.advance(1);
+    app.services.tempo.triggers.tick();
+    assert.deepEqual(resumes(),delivered);
+    return {ok:true,screenshot,reason:'A pending request arrived once for Alex, displayed its reason, and opened the matching Settings request. Denying it there resolved the original Inbox item and delivered one continuation to Fern.'};
   } finally {
     app.writes.run(()=>app.services.signin.revoke(credential.fingerprint));
   }
