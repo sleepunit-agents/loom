@@ -46,7 +46,7 @@ import {inboxCallers} from './rebuild-inbox-callers.mjs';
 import {inboxDocumentation,inboxVolume} from './rebuild-inbox-volume.mjs';
 import {scheduledInbox} from './rebuild-scheduled-inbox.mjs';
 import {installedSecretHolder} from './rebuild-installed-secret-holder.mjs';
-import {inboxSecretRequest} from './rebuild-inbox-secret.mjs';
+import {inboxSecretRequest,settingsGrant} from './rebuild-inbox-secret.mjs';
 import {inboxTaskSource} from './rebuild-inbox-task-source.mjs';
 
 
@@ -402,6 +402,8 @@ export async function* walkthroughSteps(output) {
   Object.assign(report.actions,await inboxTaskSource({page,tile:await openApp('Inbox'),app,example:report.example,out,approval:report.actions.approvalInbox,open:openApp}));
   save();yield {phase:'task-source',actions:safeReport(report.actions)};
   report.actions.inboxSecretRequest=await inboxSecretRequest({page,tile:await openApp('Inbox'),app,out,clock});
+  try{report.actions.settingsGrant=await settingsGrant({app,page});}
+  catch(error){report.actions.settingsGrant={ok:false,error:String(error)};}
   try{report.actions.installedSecretHolder=await installedSecretHolder();}
   catch(error){report.actions.installedSecretHolder={ok:false,error:String(error)};}
   save();yield {phase:'secret-source',actions:safeReport(report.actions)};
