@@ -149,7 +149,8 @@ export class TriggerEngine {
   /** `member` is whom the trigger's work is for, when that is a member and not the agent itself; `asked` is
    * who asked for a trigger that names a conversation. Both are the door's to say (shared-tempo-access.ts,
    * shared-place-triggers.ts) and never part of what a caller sends. */
-  set(value: NewTrigger, member?: string, asked?: Asker): Trigger {
+  set(value: NewTrigger, member?: string, asked?: Asker,
+    coveringSchedule?: (agent: string, file: string, due: string) => Trigger | undefined): Trigger {
     this.open();
     const { execution, ...v } = triggerInput.parse(value);
     if (execution === 'host') throw new Error(HOST_SCHEDULE_REFUSAL);
@@ -180,6 +181,12 @@ export class TriggerEngine {
     if (v.parked && (!park || v.sourceKind !== 'answer' || v.lifespan !== 'once' || v.targetKind !== 'inbox' || v.toKind !== 'agent'
       || v.times || v.days || v.program)) throw Error('A parked wait resumes an agent once on an answer');
     const due = park ? new Date(this.clock.now() + DAY_MS).toISOString() : this.due(v.sourceKind, v.times, v.days, v.lifespan);
+    if (coveringSchedule && due && v.file && v.sourceKind === 'time' && v.lifespan === 'once' &&
+        v.targetKind === 'inbox' && v.toKind === 'agent' && v.to && v.ownerKind === 'agent' && v.owner === v.to &&
+        !member && !v.conversation && !v.project && !v.program && !v.needs && !v.prefers && !v.id) {
+      const schedule = coveringSchedule(v.to, v.file, due);
+      if (schedule) return schedule;
+    }
     const id = v.id ?? `tr-${randomUUID()}`;
     this.db.transaction(() => {
       this.db.insert(triggers).values({ ...v, id, member: member ?? null, conversation: v.conversation ?? null, ...(asked ? { askedByKind: asked.kind, askedBy: asked.id, askedAt: this.now() } : {}), enabled: true, state: 'standing', nextDueAt: due, createdAt: this.now(), changedAt: this.now() }).run();
