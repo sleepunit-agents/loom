@@ -191,34 +191,46 @@ export async function scheduledWorker({browser,home}) {
 async function observeScheduledWorker(context) {
  const {app,clock,page}=context;
  const db=app.services.comms.db.$client;
- const words='Check the fictional rain gauge after the timer fires.';
- const response=await page.request.post(app.url+'/api/tempo/set',{
-  headers:{origin:app.url},
-  data:{id:randomUUID(),input:{ownerKind:'household',sourceKind:'time',times:new Date(clock.now()+1000).toISOString(),
-   lifespan:'once',targetKind:'inbox',toKind:'agent',to:'moss',instructions:words,note:'Walkthrough rain gauge'}},
- });
- assert.equal(response.status(),200);
- const result=await response.json();
- assert.equal(result.ok,true);
- const trigger=result.value.id;
- const items=()=>db.prepare("SELECT i.id,i.conversation,i.state,i.job FROM inbox i JOIN inbox_refs r ON i.id=r.item WHERE i.source='trigger' AND r.ref=? AND i.to_kind='agent' AND i.[to]='moss'").all(trigger);
+ const examples=[
+  {note:'Walkthrough rain gauge',words:'Check the fictional rain gauge after the timer fires.'},
+  {note:'Walkthrough orchard gate',words:'Check the fictional orchard gate at the same time.'},
+ ];
+ const scheduled=[];
+ for(const {note,words} of examples){
+  const response=await page.request.post(app.url+'/api/tempo/set',{
+   headers:{origin:app.url},
+   data:{id:randomUUID(),input:{ownerKind:'household',sourceKind:'time',times:new Date(clock.now()+1000).toISOString(),
+    lifespan:'once',targetKind:'inbox',toKind:'agent',to:'moss',instructions:words,note}},
+  });
+  assert.equal(response.status(),200);
+  const result=await response.json();assert.equal(result.ok,true);
+  scheduled.push({trigger:result.value.id,words});
+ }
+ const items=db.prepare("SELECT i.id,i.conversation,i.state,i.job FROM inbox i JOIN inbox_refs r ON i.id=r.item WHERE i.source='trigger' AND r.ref=? AND i.to_kind='agent' AND i.[to]='moss'");
+ const jobs=db.prepare('SELECT id,state FROM jobs WHERE conversation=?');
  clock.advance(999);
- assert.deepEqual(items(),[]);
+ for(const {trigger} of scheduled)assert.deepEqual(items.all(trigger),[]);
  clock.advance(1);
- assert.equal(items().length,1);
- const [{id,conversation}]=items();
- assert.ok(conversation);
- const jobs=()=>db.prepare('SELECT id,state FROM jobs WHERE conversation=?').all(conversation);
- assert.deepEqual(jobs(),[]);
+ const deliveries=scheduled.map(({trigger,words})=>{
+  const rows=items.all(trigger);assert.equal(rows.length,1);
+  const {id,conversation}=rows[0];assert.ok(conversation);
+  assert.deepEqual(jobs.all(conversation),[]);
+  return {trigger,words,id,conversation};
+ });
+ assert.notEqual(deliveries[0].conversation,deliveries[1].conversation);
  clock.advance(app.services.tempo.volume.timings({kind:'agent',id:'moss'}).settleSeconds*1000);
- const queued=jobs();
- assert.equal(queued.length,1);
- assert.equal(queued[0].state,'queued');
- const job=queued[0].id;
- const {runs}=await nativeProtocolSmoke({...context,targets:[{id:job,words}]});
- assert.equal(runs.length,1);
- assert.equal(runs[0].conversation,conversation);
- assert.deepEqual(jobs(),[{id:job,state:'done'}]);
- assert.deepEqual(items(),[{id,conversation,state:'done',job}]);
- return {ok:true,reason:'A timed trigger delivered one Inbox item. After settling, the worker picked up its job, the running body received the scheduled instructions, and both the job and the Inbox item finished.',trigger,conversation,job};
+ const targets=deliveries.map(({conversation,words})=>{
+  const queued=jobs.all(conversation);
+  assert.equal(queued.length,1);assert.equal(queued[0].state,'queued');
+  return {id:queued[0].id,words};
+ });
+ const {runs}=await nativeProtocolSmoke({...context,targets});
+ assert.equal(runs.length,deliveries.length);
+ for(const [index,{id,trigger,conversation}] of deliveries.entries()){
+  const job=targets[index].id;
+  assert.equal(runs.find(run=>run.job===job)?.conversation,conversation);
+  assert.deepEqual(jobs.all(conversation),[{id:job,state:'done'}]);
+  assert.deepEqual(items.all(trigger),[{id,conversation,state:'done',job}]);
+ }
+ return {ok:true,reason:'Two simultaneous timers delivered to separate conversations for Moss. After the Inbox settled, the worker picked up both jobs. Each body received its scheduled instructions and finished the item belonging to its own conversation.',trigger:deliveries[0].trigger,conversation:deliveries[0].conversation,job:targets[0].id,completedConversations:deliveries.length};
 }
