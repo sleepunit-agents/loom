@@ -189,3 +189,17 @@ it('closes only waiting items, by source or by id, returns unconfirmed mail to w
   expect(service.item(mail[0].id)).toMatchObject({ state: 'waiting', job: 'job-1', takenAt: null });
   expect(service.item(mail[1].id).state).toBe('done');
 });
+
+it('records one wake turn per scheduled agent delivery and keeps the instructions in the Inbox', () => {
+  const { service, cv, advance, db } = fixture();
+  const delivery = { conversation: cv.id, toKind: 'agent', to: 'art', source: 'trigger', sourceId: 'firing-1', fromKind: 'schedule', fromId: 'garden', words: 'Fictional maintenance instructions' } as const;
+  advance();
+  const item = service.send(delivery);
+  service.send(delivery);
+  service.send({ ...delivery, toKind: 'person', to: 'jonathan' });
+  service.send({ ...delivery, sourceId: 'firing-2' });
+  const history = db.select().from(turns).where(eq(turns.conversation, cv.id)).all();
+  expect(history).toMatchObject([1, 2].map(seq => ({ seq, kind: 'wake', fromKind: 'schedule', fromId: 'garden', at: item.at })));
+  expect(JSON.stringify(history)).not.toContain(delivery.words);
+  expect(service.conversation(cv.id)).toMatchObject({ turnCount: 2, lastAt: item.at });
+});
