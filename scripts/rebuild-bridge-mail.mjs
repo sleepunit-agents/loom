@@ -6,13 +6,15 @@ import {normalizeDiscord,normalizeSlack} from '../dist/pieces/bridges/normalize.
 
 /** Provider-shaped events in the disposable household. The daemon only sees disabled fixture connections. */
 export async function bridgeMail({app,clock}) {
- const db=app.services.comms.db, agent='fern', member='alex', ch='example-intake-channel', user='fictional-gardener';
+ const db=app.services.comms.db, agent='fern', ch='example-intake-channel', user='fictional-gardener';
  const now=()=>new Date(clock.now()).toISOString();
  const ingress=new BridgeIncoming(db,now);
  const sent=app.writes.run(()=>{
   const tokenSecret='walkthrough-intake-placeholder';
-  db.insert(secrets).values({name:tokenSecret,description:'Fixture metadata',changedAt:now(),changedBy:member}).run();
+  db.insert(secrets).values({name:tokenSecret,description:'Fixture metadata',changedAt:now(),changedBy:'alex'}).run();
   return ['discord','slack'].map(platform=>{
+   // The same external user string must resolve through its own platform and workspace.
+   const member=platform==='discord'?'alex':'robin';
    const connection={id:'walkthrough-intake-'+platform,workspace:'walkthrough-space-'+platform}, words='Walkthrough intake from '+platform;
    db.insert(bridgeConnections).values({...connection,platform,agent,botUser:'fictional-bot',tokenSecret,enabled:true,state:'connected',stateAt:now()}).run();
    db.insert(bridgePeople).values({platform,workspace:connection.workspace,user,member}).run();
@@ -26,7 +28,7 @@ export async function bridgeMail({app,clock}) {
    assert.equal(delivered.state,'delivered');
    assert.equal(ingress.receive(message).id,delivered.id);
    db.update(bridgeConnections).set({enabled:false}).where(eq(bridgeConnections.id,connection.id)).run();
-   return {source:platform,words,conversation:delivered.conversation};
+   return {source:platform,member,words,conversation:delivered.conversation};
   });
  }).value;
  const credential=app.services.signin.issue({kind:'agent',agent,label:'Fictional bridge Inbox reader'});
@@ -38,11 +40,11 @@ export async function bridgeMail({app,clock}) {
   assert.equal(reply.errors,undefined);
   const rows=reply.data.inboxItems;
   assert.equal(rows.length,2);
-  for(const {source,words,conversation} of sent) {
+  for(const {source,member,words,conversation} of sent) {
    assert.ok(conversation);
    assert.deepEqual(rows.find(row=>row.source===source),{toKind:'agent',to:agent,source,fromKind:'person',fromId:member,conversation,body:{words}});
   }
   assert.notEqual(sent[0].conversation,sent[1].conversation);
-  return {ok:true,reason:'The receiving agent read one Discord and one Slack Inbox item through GraphQL. Each retained its source, linked sender, text and delivered conversation after a repeated provider event.'};
+  return {ok:true,reason:'The receiving agent read one Discord and one Slack Inbox item through GraphQL. The same outside ID resolved to Alex on Discord and Robin on Slack through their respective person links. Both items retained their text and delivered conversation after a repeated provider event.'};
  } finally {app.services.signin.revoke(credential.fingerprint);}
 }
