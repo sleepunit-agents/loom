@@ -169,7 +169,7 @@ export class InboxQueries {
 
   /** Search the recipient's whole mailbox before paging. Private text is opened
    * only through body(), and is never indexed or written back to the database. */
-  async search(viewer:Viewer,filter:InboxFilter={},retainedUntil?:(at:number)=>void,recheckTitles?:(check:()=>boolean)=>void):Promise<Item[]> {
+  async search(viewer:Viewer,filter:InboxFilter={},retainedUntil?:(at:number)=>void,recheckPage?:(check:()=>boolean)=>void):Promise<Item[]> {
     if(!filter.search?.trim())return this.list(viewer,filter);
     this.list(viewer,filter);
     if(viewer.kind!=='member'&&viewer.kind!=='agent')return [];
@@ -216,7 +216,8 @@ export class InboxQueries {
     };
     const {page,deadline}=selectPage();
     if(!retainPage(deadline))return [];
-    if((cards.size&&this.proposalTitles)||(questions.size&&this.questionAsker))recheckTitles?.(()=>{
+    if((cards.size&&this.proposalTitles)||(questions.size&&this.questionAsker))recheckPage?.(()=>{
+      if(questions.size&&readInboxSet(this.db,ids,this.allowed(viewer)).fingerprint!==before.fingerprint)return false;
       const current=selectPage();
       return current.page.length===page.length&&current.page.every((item,i)=>item.id===page[i].id)&&retainPage(current.deadline);
     });
@@ -446,11 +447,11 @@ export function inboxQueryFields(service: InboxQueries): GraphQLFieldConfigMap<u
     args: { folder: { type: GraphQLString }, search: { type: GraphQLString }, state: { type: GraphQLString }, source: { type: GraphQLString }, agent: { type: GraphQLString }, conversation: { type: GraphQLString }, limit: { type: GraphQLInt, defaultValue: 50 }, offset: { type: GraphQLInt, defaultValue: 0 } },
     resolve: async(_row,args,context,info)=>{
       const retain=(until:number)=>keepReadUntil(context,until);
-      let titlesStillMatch:(()=>boolean)|undefined;
+      let pageStillMatches:(()=>boolean)|undefined;
       const rows=args.search===undefined?service.list(context.viewer,args):
-        await service.search(context.viewer,args,retain,check=>{titlesStillMatch=check;});
+        await service.search(context.viewer,args,retain,check=>{pageStillMatches=check;});
       const result=await service.project(context.viewer,rows,info,retain);
-      if(titlesStillMatch&&!titlesStillMatch())throw Error('Inbox changed; retry the query');
+      if(pageStillMatches&&!pageStillMatches())throw Error('Inbox changed; retry the query');
       return result;
     },
   } };

@@ -208,7 +208,13 @@ it('searches a guest question by the current name only while its private wording
   name=undefined;
   expect(recheck?.()).toBe(false);
   expect(await search()).toEqual([]);
-  name='Casey Field';now=until;
+  name='Casey Field';now=Date.parse('2026-11-16T18:00:00Z');
+  expect((await search()).map(row=>row.id)).toEqual([f.ask.inboxItem]);
+  f.db.insert(household).values({commsDays:1}).run();
+  expect(recheck?.()).toBe(false);
+  expect(await search()).toEqual([]);
+  f.db.update(household).set({commsDays:14}).run();
+  now=until;
   expect(await search()).toEqual([]);
 });
 it('expires a page whose offset depends on a retained private match',async()=>{
