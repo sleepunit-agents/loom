@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 - People checks “Last seen” accounts together when a contact opens, and reads sharing permissions once for the agent filter.
 - Fixed phone dock icons moving under a tap before the selected app opened.
+- You can ask your agent in the same private Comms thread to cancel a scheduled role or Codex handoff before Loom admits its job.
 - Settings explains when a household owner is needed.
 - Discuss a standalone Inbox FYI with your default agent. The chat opens with the notice in context and stays linked for follow-up questions.
 - The Comms portrait signals and animates when a new reply arrives in the open thread. Reopening older replies stays quiet.
