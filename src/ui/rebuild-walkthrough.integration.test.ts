@@ -230,6 +230,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('native-protocol');
   expect(step.value.actions.nativeProtocol,JSON.stringify(step.value.actions.nativeProtocol)).toMatchObject({ok:true,runs:expect.arrayContaining([expect.objectContaining({running:true,state:'done',bootstrapErased:true})])});
   expect(step.value.actions.nativeProtocol.runs).toHaveLength(2);
+  expect(step.value.actions.conversationSecretSource).toMatchObject({ok:true});
   expect(step.value.actions.conversationDigest,JSON.stringify(step.value.actions.conversationDigest)).toMatchObject({ok:true});
   expect(step.value.actions.nativeReply).toMatchObject({ok:true,persistedAfterReload:true});
  });
