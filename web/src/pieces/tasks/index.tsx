@@ -30,7 +30,7 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
   const base = path.split('/task/')[0].replace(/\/$/, '');
   const selected = taskId(path);
   const [action, setAction] = useState<{ action: TaskAction; id?: string }>();
-  const snapshot = useDataQuery<TasksSelection>(tasksQuery);
+  const snapshot = useDataQuery<TasksSelection>(tasksQuery, { selected: selected ?? '', withComments: selected !== undefined }, { keep: true });
   const status = snapshot.status === 'offline' ? 'unavailable' : snapshot.status;
   const tasks = status === 'live' ? snapshot.data?.tasks ?? [] : [];
   // Claim, Unclaim and Reopen are sent at once: one at a time, and what the program says if it refuses is shown.
@@ -66,10 +66,12 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
     setAction({ action: next, id: task?.id });
   } : undefined;
   const open = !!submit && !!action && status === 'live' && (action.action === 'create' || !!target);
+  const detail = status === 'live' && !snapshot.settling ? snapshot.data?.selectedTask : undefined;
   const links = tasks.flatMap(task => task.taskLinksByTask);
   return <SharedTasks status={status} tasks={tasks} selected={selected} select={navigate} questionFor={questionFor} startFolder={startFolder} startAssignee={startAssignee} liveAgentIds={liveAgentIds}
     changes={tasks.flatMap(task => task.changeTasksByTask.flatMap(link => link.changeRow ? [{ ...link.changeRow, task: task.id }] : []))}
-    links={links} comments={tasks.flatMap(task => task.taskCommentsByTask)}
+    links={links} comments={detail && detail.id === selected ? detail.taskCommentsByTask : []}
+    loadingComments={snapshot.settling && selected !== undefined}
     ready={tasks.filter(task => task.isReady).map(task => task.id)} conversation={openConversation}
     openChange={go ? id => go(`/p/changes-preview/change/${encodeURIComponent(id)}`) : undefined}
     names={names} zone={zone} busy={sending} problem={problem || undefined} act={act}
