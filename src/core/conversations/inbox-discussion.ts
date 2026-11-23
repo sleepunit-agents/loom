@@ -15,7 +15,7 @@ type Item = typeof inbox.$inferSelect;
 export function standaloneFyi(item: Item, member: string | null) {
   return item.toKind === 'person' && item.to === member && (!item.member || item.member === member)
     && !item.conversation && !item.thread && !item.answers && !item.waitsOnKind && !item.waitsOnId
-    && (item.source === 'notice' || item.source === 'approval');
+    && (item.source === 'notice' || item.source === 'approval' || item.source === 'trigger');
 }
 
 function quotedFyi(item: Item) {

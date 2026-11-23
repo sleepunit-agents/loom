@@ -399,9 +399,8 @@ it('opens an FYI with the default agent on demand and carries the quote into the
   f.db.insert(agents).values({...f.db.select().from(agents).get()!,id:'birch'}).run();
   f.db.insert(memberAgents).values({member:'alice',agent:'birch'}).run();
   f.db.insert(household).values({defaultAgent:'birch'}).run();
-  const create = (words: string) => comms.threads.conversations.send({toKind:'person',to:'alice',member:'alice',source:'notice',fromKind:'unknown',words});
   const first = comms.threads.conversations.send({toKind:'person',to:'alice',member:'alice',source:'notice',fromKind:'unknown',
-    words:'Fixture pump restarted',why:'Voltage dipped.',link:'/p/machines'}), second = create('Fixture log rotated');
+    words:'Fixture pump restarted',why:'Voltage dipped.',link:'/p/machines'}), second = comms.threads.conversations.send({toKind:'person',to:'alice',member:'alice',source:'trigger',fromKind:'schedule',words:'Fixture log rotated'});
   const quote = 'Fixture pump restarted\n\nVoltage dipped.\n\n/p/machines';
   const readAgent = async () => (await f.query('{inboxItem(id:'+JSON.stringify(first.id)+'){discussionAgent}}')).body.data?.inboxItem;
   const discuss = async (id:string, item=first.id) => (await f.post('inbox.discuss',{item},id)).json();
