@@ -128,6 +128,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
     if row['promise'].endswith('Attachments fetched from Slack are kept for 14 days.'):actions.append('slackFileRetention')
     row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in actions]}
    if row['promise']=="An agent's run settings give each outside person a tier.":row['probe']={'kind':'action','action':'bridgeContactTiers'}
+   if row['promise']=="b An agent's owners. An agent's owners see their agent's connections.":row['probe']={'kind':'action','action':'deskPanelVisibility'}
    if row['promise']=='Records whether each reply arrived, and says so when it cannot tell.':row['probe']={'kind':'action','action':'bridgeReceipts'}
    if row['promise'] in ('It arrives in the inbox with discord or slack as its source.', 'Decides which agent answers in a channel when nobody is addressed.',
      'The message goes into one conversation: the agent in that channel.',
