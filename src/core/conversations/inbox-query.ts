@@ -183,26 +183,35 @@ export class InboxQueries {
     // displays its proposal title; an ordinary question can cite the same card.
     const approvalId=(item:Item)=>item.source==='approval'&&item.waitsOnKind==='approval'?item.waitsOnId:null;
     const cards=new Set(candidates.map(approvalId).filter((id): id is string=>!!id));
-    const matchingTitles=()=>{
+    const selectPage=()=>{
       const titles=this.proposalTitles?.(viewer,[...cards]);
-      return new Set(Array.from(titles??[]).filter(([,title])=>title.toLocaleLowerCase().includes(query)).map(([id])=>id));
+      const offset=filter.offset??0;
+      const limit=filter.limit??50;
+      const page:{item:Item;until:number}[]=[];
+      let seen=0;
+      for(const item of candidates){
+        const id=approvalId(item);
+        const title=id?titles?.get(id):undefined;
+        const until=title?.toLocaleLowerCase().includes(query)?Infinity:matches.get(item.id);
+        if(until===undefined)continue;
+        if(seen++>=offset)page.push({item,until});
+        if(page.length===limit)break;
+      }
+      return page;
     };
-    const named=matchingTitles();
+    const retainPage=(page:ReturnType<typeof selectPage>)=>{
+      const deadlines=page.map(match=>match.until).filter(Number.isFinite);
+      if(deadlines.some(until=>until<=Date.parse(this.now())))return false;
+      for(const until of deadlines)retainedUntil?.(until);
+      return true;
+    };
+    const page=selectPage();
+    if(!retainPage(page))return [];
     if(cards.size&&this.proposalTitles)recheckTitles?.(()=>{
-      const current=matchingTitles();
-      return current.size===named.size&&[...named].every(id=>current.has(id));
+      const current=selectPage();
+      return current.length===page.length&&current.every((match,i)=>match.item.id===page[i].item.id)&&retainPage(current);
     });
-    const visible=candidates.filter(item=>{
-      const id=approvalId(item);
-      if(id&&named.has(id))matches.set(item.id,Infinity);
-      return matches.has(item.id);
-    });
-    const offset=filter.offset??0;
-    const page=visible.slice(offset,offset+(filter.limit??50));
-    const deadlines=page.map(item=>matches.get(item.id)!).filter(Number.isFinite);
-    if(deadlines.some(until=>until<=Date.parse(this.now())))return [];
-    for(const until of deadlines)retainedUntil?.(until);
-    return page;
+    return page.map(match=>match.item);
   }
   private async searchInSet(viewer: Viewer, query:string, candidates:Item[]): Promise<Map<string,number>> {
     const privateState = (item: Item, fromAnswer = false) => {

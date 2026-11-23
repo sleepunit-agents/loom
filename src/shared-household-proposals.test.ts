@@ -1116,18 +1116,28 @@ it('tells a household owner who a card is for, and nobody else: the names loom h
   expect(await search('sam',1)).toEqual([expected[1].waits_on_id]);
   expect(await search('lee')).toEqual([]);
   expect(await search('art')).toEqual([]);
+  f.db.update(members).set({role:'owner'}).where(eq(members.id,'lee')).run();
+  expect(await titles('lee',[colleague])).toEqual([{approval:colleague,title:colleagueTitle}]);
+  expect(await search('lee')).toEqual([]);
+  f.db.update(members).set({role:'member'}).where(eq(members.id,'lee')).run();
   const project=InboxQueries.prototype.project;
-  const projection=vi.spyOn(InboxQueries.prototype,'project').mockImplementationOnce(async function(this:InboxQueries,...args){
+  const removeLinkDuringProjection=()=>vi.spyOn(InboxQueries.prototype,'project').mockImplementationOnce(async function(this:InboxQueries,...args){
     const rows=await project.apply(this,args);
     f.db.delete(bridgePeople).run();
     return rows;
   });
+  let projection=removeLinkDuringProjection();
   try {
     const changed=await searchResult('sam',0);
     expect(changed.data?.inboxItems).toBeUndefined();
     expect(changed.errors).toBeDefined();
   }finally{projection.mockRestore();}
   expect(await search('sam')).toEqual([]);
+  f.db.insert(bridgePeople).values({...gage,member:'gage'}).run();
+  // An independent match on the first row keeps that page valid when the second drops out.
+  f.db.update(inbox).set({why:'Gage (Slack) asked for a review.'}).where(eq(inbox.waitsOnId,expected[0].waits_on_id)).run();
+  projection=removeLinkDuringProjection();
+  try{expect(await search('sam')).toEqual([expected[0].waits_on_id]);}finally{projection.mockRestore();}
   f.db.insert(bridgePeople).values({...gage,member:'gage'}).run();
   expect(await titles('lee',[colleague])).toEqual([]);
   expect(await titles('art',[colleague])).toEqual([]);
