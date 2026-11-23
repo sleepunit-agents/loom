@@ -158,6 +158,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('knowledge-due');
   expect(step.value.actions.knowledgeDue,JSON.stringify(step.value.actions.knowledgeDue)).toMatchObject({ok:true,days:30});
  });
+ it('retains the project and private member on admitted jobs',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('job-labels');
+  expect(step.value.actions.jobLabels,JSON.stringify(step.value.actions.jobLabels)).toMatchObject({ok:true});
+ });
  it('keeps three linked worker start retries across coordinator restarts',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('worker-start-retries');
   expect(step.value.actions.workerRetries,JSON.stringify(step.value.actions.workerRetries)).toMatchObject({ok:true,attempts:4});
