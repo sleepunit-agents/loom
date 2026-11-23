@@ -27,7 +27,10 @@ async function setup(hold:Hold=async f=>f()){
  const viewer={kind:'member',id:'jonathan'} as const;
  let n=0;const call=(name:string,input:unknown,v=viewer,id=`test-${++n}`)=>app.operations.callAsync('socket',v,name,input,id,true);
  const r=await call('comms.open',{agent:'art',id:'aaaaaaaaaaaaaaaa',text:'Hello'});if(!r.ok)throw Error(r.message);
- const place=(r.value as {thread:string}).thread;
+ const {thread:place,seq}=r.value as {thread:string;seq:number};
+ // Opening the thread starts delivery asynchronously. Settle its receipt before
+ // tests take a snapshot of the messages or change the thread's state.
+ await comms.deliver('art',place,seq);
  const attention=attentionRole(app.operations);
  return {app,clock,key,sharing,comms,call,place,attention,viewer,deliveries};
 }
