@@ -20,7 +20,7 @@ describe.runIf(chrome)('kit row DOM activation', () => {
           actions: React.createElement('button', { onClick: () => window.operations.push('done') }, 'Done')
         }));`, resolveDir: web, loader: 'tsx' },
       bundle: true, write: false, format: 'iife', jsx: 'automatic',
-      alias: { '@': `${web}/src` }, loader: { '.css': 'empty' },
+      alias: { '@': `${web}/src` }, loader: { '.css': 'empty', '.png': 'dataurl' },
     });
     const browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
     try {
