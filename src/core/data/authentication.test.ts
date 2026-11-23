@@ -72,6 +72,9 @@ it('admits a member cookie in one holder read and rechecks the member of the pin
   const admitted=authenticate(incoming)!;
   expect(admitted.viewer.id).toBe('sam');
   expect(statements).toBe(1);
+  statements=0;
+  expect(admitted.valid()).toBe(true);
+  expect(statements).toBe(1);
   db.insert(members).values({id:'other',role:'member',joinedAt:at}).run();
   db.update(tokens).set({member:'other'}).where(eq(tokens.fingerprint,hash(raw))).run();
   expect(admitted.valid()).toBe(false);
