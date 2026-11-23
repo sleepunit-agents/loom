@@ -33,8 +33,8 @@ export function readSharing(db: DataDatabase) {
 function prepareSharingReads(db: DataDatabase) {
   return {
     ownership: db.query.memberAgents.findMany({columns:{member:true,agent:true}}).prepare(),
-    people: db.query.projectMembers.findMany({columns:{project:true,member:true}}).prepare(),
-    bodies: db.query.projectAgents.findMany({columns:{project:true,agent:true}}).prepare(),
+    projectMemberLinks: db.query.projectMembers.findMany({columns:{project:true,member:true}}).prepare(),
+    projectAgentLinks: db.query.projectAgents.findMany({columns:{project:true,agent:true}}).prepare(),
     members: db.query.members.findMany({columns:{id:true,role:true},where:(f,{isNull})=>isNull(f.removedAt)}).prepare(),
     projects: db.query.projects.findMany({columns:{id:true},where:(f,{isNull})=>isNull(f.removedAt)}).prepare(),
     agents: db.query.agents.findMany({columns:{id:true},where:(f,{isNull})=>isNull(f.removedAt)}).prepare(),
@@ -52,8 +52,8 @@ export function readSharingPolicy(db: DataDatabase) {
     sharingReads.set(db, reads);
   }
   const ownership = reads.ownership.all();
-  const people = reads.people.all();
-  const bodies = reads.bodies.all();
+  const memberLinks = reads.projectMemberLinks.all();
+  const agentLinks = reads.projectAgentLinks.all();
   const members = reads.members.all();
   const projects = reads.projects.all();
   const agents = reads.agents.all();
@@ -62,7 +62,7 @@ export function readSharingPolicy(db: DataDatabase) {
     for(const row of rows){const id=key(row),items=result.get(id)??[];items.push(value(row));result.set(id,items);}
     return result;
   };
-  const owned=group(ownership,r=>r.member,r=>r.agent),projectPeople=group(people,r=>r.project,r=>r.member),projectBodies=group(bodies,r=>r.project,r=>r.agent);
+  const owned=group(ownership,r=>r.member,r=>r.agent),projectPeople=group(memberLinks,r=>r.project,r=>r.member),projectBodies=group(agentLinks,r=>r.project,r=>r.agent);
   return {agents:agents.map(row=>row.id),members:Object.fromEntries(members.map(row=>[row.id,{owner:row.role==='owner',agents:owned.get(row.id)??[]}])),
     projects:Object.fromEntries(projects.map(row=>[row.id,{members:projectPeople.get(row.id)??[],agents:projectBodies.get(row.id)??[]}]))};
 }
