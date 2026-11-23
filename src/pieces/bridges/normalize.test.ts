@@ -200,3 +200,27 @@ it('treats only whole normalized lines as attachment hints',()=>{
  expect(discordBodyWords(raw)).toBe('[attachment: x (image/png, 3 bytes)]');
  expect(discordBodyWords('website: https://example.com')).toBe('website: https://example.com');
 });
+
+describe('provider labels for contact sightings', () => {
+  it('keeps Slack room profile text and tolerates absent or unusable labels', () => {
+    const message = (changes: object) => normalizeSlack(slack, sl(changes));
+    const user_profile = { display_name: '  Robin  ', real_name: 'Robin Example' };
+    expect(message({user_profile})).toMatchObject({user: 'U1', authorLabel: 'Robin'});
+    expect(message({user_profile: {...user_profile, display_name: ''}})?.authorLabel).toBe('Robin Example');
+    for (const changes of [{user_profile: 1}, {user_profile: {display_name: 'a\nb'}},
+      {user_profile, bot_id: 'B1'}, {user_profile, channel_type: 'im'}, {user_profile, channel_type: 'mpim'}]) {
+      expect(message(changes)).toMatchObject({user: 'U1'});
+      expect(message(changes)?.authorLabel).toBeUndefined();
+    }
+  });
+
+  it('keeps Discord display text scoped to human room senders', () => {
+    const channel = {id: 'channel', guild: 'guild', kind: 'channel'} as const;
+    const author = {id: 'person', global_name: 'Robin', username: 'robin1'};
+    expect(normalizeDiscord(discord, dc({author}), channel)?.authorLabel).toBe('Robin');
+    expect(normalizeDiscord(discord, dc({author: {...author, global_name: null}}), channel)?.authorLabel).toBe('robin1');
+    expect(normalizeDiscord(discord, dc({author, webhook_id: 'hook'}), channel)?.authorLabel).toBeUndefined();
+    expect(normalizeDiscord(discord, dc({author: {...author, bot: true}}), channel)?.authorLabel).toBeUndefined();
+    expect(normalizeDiscord(discord, dc({author, guild_id: undefined}), {id: 'channel', kind: 'dm'})?.authorLabel).toBeUndefined();
+  });
+});

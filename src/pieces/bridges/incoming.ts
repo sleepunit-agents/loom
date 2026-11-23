@@ -39,6 +39,8 @@ export interface IncomingMessage {
   /** Authenticated channel kind; group DMs are not private to one sender. */
   groupDm?: boolean;
   user: string;
+  /** Provider display text for a human sender in a room. Identity is resolved by account ID. */
+  authorLabel?: string;
   text: string;
   postedAt: string;
   mentions: readonly string[];
