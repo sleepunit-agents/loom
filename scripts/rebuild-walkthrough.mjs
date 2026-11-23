@@ -324,7 +324,11 @@ export async function* walkthroughSteps(output) {
    const {sessionEpisode,...temperature}=JSON.parse(stdout);
    report.actions.memoryTemperature=temperature;
    report.actions.sessionEpisode=sessionEpisode;
-  } catch(error) { report.actions.memoryTemperature={ok:false,error:String(error)}; }
+  } catch(error) {
+   const failed={ok:false,error:String(error)};
+   report.actions.memoryTemperature=failed;
+   report.actions.sessionEpisode=failed;
+  }
   save();yield {phase:'memory-temperature',actions:safeReport(report.actions)};
   phase='knowledge due delivery';
   try {
