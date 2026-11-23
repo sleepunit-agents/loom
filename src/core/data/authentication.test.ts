@@ -52,6 +52,17 @@ it('revalidates session deletion, token revocation/expiry and identity rebinding
   db.update(tokens).set({ member: 'other' }).where(eq(tokens.fingerprint, hash(raw))).run();
   expect(bearer.valid()).toBe(false);
 });
+it('pins an admitted browser session to its original token even if both tokens name the same member', () => {
+  const { db, authenticate, request } = fixture();
+  const headers = { cookie: 'loom_ui=' + cookie };
+  const admitted = authenticate(request(headers))!;
+  const replacement = hash('replacement fixture token');
+  db.insert(tokens).values({fingerprint:replacement,label:'Second login',kind:'owner',member:'sam',createdAt:at}).run();
+  db.update(sessions).set({token:replacement}).where(eq(sessions.id,hash(cookie))).run();
+  expect(admitted.valid()).toBe(false);
+  expect(authenticate(request(headers))?.credential.token).toBe(replacement);
+});
+
 it('serves the HTTP door through actual shared credentials and rejects revoked ones', async () => {
   const { db, client } = fixture();
   const app = dataHttp(db);
@@ -219,7 +230,7 @@ it('prepares the repeated credential reads once per database and rechecks a roll
   for (let i = 0; i < 5; i++) {
     executed = 0;
     expect(session()?.viewer.id).toBe('sam');
-    expect(executed).toBe(2); // The browser session and its token with the current holder.
+    expect(executed).toBe(1); // The session, token and current holder share one fresh read.
     expect(machineCurrent(first.db, 'box')).toBe(true);
     expect(machineCurrent(other.db, 'box')).toBe(false);
   }

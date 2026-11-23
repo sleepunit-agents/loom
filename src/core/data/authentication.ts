@@ -60,12 +60,14 @@ export function presentedCredential(request: Request): { bearer: string; cookie?
 /** Reuse only the SQL program. Each call binds its own key and reads the current transaction. */
 function prepareCredentialReads(db: DataDatabase) {
   const key = placeholder('key');
+  const holder = { token: tokens, member: members.id, agent: agents.id };
+  const activeMember = and(eq(tokens.kind, 'owner'), eq(members.id, tokens.member), isNull(members.removedAt));
+  const activeAgent = and(eq(tokens.kind, 'agent'), eq(agents.id, tokens.agent), isNull(agents.removedAt));
   return {
-    token: db.select({ token: tokens, member: members.id, agent: agents.id }).from(tokens)
-      .leftJoin(members, and(eq(tokens.kind, 'owner'), eq(members.id, tokens.member), isNull(members.removedAt)))
-      .leftJoin(agents, and(eq(tokens.kind, 'agent'), eq(agents.id, tokens.agent), isNull(agents.removedAt)))
+    token: db.select(holder).from(tokens).leftJoin(members, activeMember).leftJoin(agents, activeAgent)
       .where(eq(tokens.fingerprint, key)).prepare(),
-    session: db.select().from(sessions).where(eq(sessions.id, key)).prepare(),
+    session: db.select({ session: sessions, ...holder }).from(sessions).innerJoin(tokens, eq(tokens.fingerprint, sessions.token))
+      .leftJoin(members, activeMember).leftJoin(agents, activeAgent).where(eq(sessions.id, key)).prepare(),
     machine: db.select({ id: boxes.id }).from(boxes).innerJoin(members, eq(members.id, boxes.owner))
       .where(and(eq(boxes.id, key), isNull(boxes.revokedAt), isNull(members.removedAt))).prepare(),
   };
@@ -88,10 +90,14 @@ export function machineCurrent(db: DataDatabase, box: string): boolean {
  * while that job is this agent's current work on a machine that is current. A token enrolled from
  * another (a body's, from its machine's) is current only while that one is: revoking a machine's token
  * ends the bodies it started. */
-export function currentToken(db: DataDatabase, id: string, now: number): { token: typeof tokens.$inferSelect; viewer: Exclude<Viewer, { kind: 'service' }>; job?: string } | undefined {
+export function currentToken(db: DataDatabase, id: string, now: number) {
   const found = credentialReadsFor(db).token.get({ key: id });
-  const token = found?.token;
-  if (!token || !tokenLive(token, now)) return;
+  return found && currentHolder(db, found, now);
+}
+
+function currentHolder(db: DataDatabase, found: { token: typeof tokens.$inferSelect; member: string | null; agent: string | null }, now: number): { token: typeof tokens.$inferSelect; viewer: Exclude<Viewer, { kind: 'service' }>; job?: string } | undefined {
+  const { token } = found;
+  if (!tokenLive(token, now)) return;
   // One step, never a chain: only a machine's own token enrols another (shared-body-enrollment.ts).
   if (token.madeFrom !== null && !tokenLive(credentialReadsFor(db).token.get({ key: token.madeFrom })?.token ?? { revokedAt: 'gone', expiresAt: null }, now)) return;
   if (token.kind === 'owner' && token.member) {
@@ -124,9 +130,10 @@ export function currentToken(db: DataDatabase, id: string, now: number): { token
 }
 /** A browser session that has not run out, on a token that is current. `ends` is when it stops. */
 export function currentSession(db: DataDatabase, id: string, now: number) {
-  const session = credentialReadsFor(db).session.get({ key: id });
-  if (!session || sessionEnds(session) <= now) return;
-  const held = currentToken(db, session.token, now);
+  const found = credentialReadsFor(db).session.get({ key: id });
+  if (!found || sessionEnds(found.session) <= now) return;
+  const { session } = found;
+  const held = currentHolder(db, found, now);
   if (!held) return;
   return { ...held, session, ends: Math.min(sessionEnds(session), held.token.expiresAt ? Date.parse(held.token.expiresAt) : Infinity) };
 }
