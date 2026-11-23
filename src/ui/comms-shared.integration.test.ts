@@ -31,30 +31,30 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Comms opens, s
     const a = await context.newPage(), b = await context.newPage();
     for(const page of [a,b]) { page.on('pageerror',error=>console.info('Fixture page error:',error.message)); page.on('console',msg=>{if(msg.type()==='error')console.info('Fixture console:',msg.text());}); }
     await a.goto(`${url}/p/comms-preview`); console.info('Comms: loaded registered screen');
-    await a.getByText('New conversation',{exact:true}).click();
-    await a.getByRole('button',{name:'Chat with art',exact:true}).click();
+    await a.getByRole('button',{name:/^New conversation with art$/i}).click();
     await expect.poll(() => db.select().from(threads).all().length).toBe(1);
     const thread = db.select().from(threads).get()!;
     expect(thread.title).toBe('New conversation');
-    await expect.poll(() => a.getByRole('textbox',{name:'Message art',exact:true}).count()).toBe(1);
+    await expect.poll(() => a.getByRole('textbox',{name:'Message Art',exact:true}).count()).toBe(1);
     await b.goto(`${url}/p/comms-preview/thread/${encodeURIComponent(thread.id.replace(/^th:/,''))}`);
-    await a.getByRole('textbox',{name:'Message art',exact:true}).fill('PRIVATE PERSON MESSAGE');
+    await a.getByRole('textbox',{name:'Message Art',exact:true}).fill('PRIVATE PERSON MESSAGE');
     // A reconnect/remount must retain the unsent device draft without sending it.
     expect(db.select().from(messages).all()).toHaveLength(0);
     await a.reload();
-    await expect.poll(() => a.getByRole('textbox',{name:'Message art',exact:true}).inputValue()).toBe('PRIVATE PERSON MESSAGE');
+    await expect.poll(() => a.getByRole('textbox',{name:'Message Art',exact:true}).inputValue()).toBe('PRIVATE PERSON MESSAGE');
     expect(db.select().from(messages).all()).toHaveLength(0);
     await a.getByRole('button',{name:'Send',exact:true}).click();
     for (const page of [a,b]) await expect.poll(() => page.getByText('PRIVATE PERSON MESSAGE',{exact:true}).count()).toBe(1);
     await composition.services.comms!.send({thread:thread.id,kind:'reply',sender:'art',words:'PRIVATE AGENT REPLY'}); composition.changed();
     for (const page of [a,b]) await expect.poll(() => page.getByText('PRIVATE AGENT REPLY',{exact:true}).count()).toBe(1);
     await composition.services.comms!.ask(thread.id,'art','question',{words:'PRIVATE PUMP QUESTION',answers:'yes-no'}); composition.changed();
-    for (const page of [a,b]) await expect.poll(() => page.getByRole('heading',{name:'PRIVATE PUMP QUESTION',exact:true}).count()).toBe(1); console.info('Inbox: private question visible');
-    await a.getByRole('button',{name:'Allow',exact:true}).click();
+    for (const page of [a,b]) await expect.poll(() => page.getByRole('article',{name:'Question',exact:true}).getByText('PRIVATE PUMP QUESTION',{exact:true}).count()).toBe(1); console.info('Inbox: private question visible');
+    await a.getByRole('button',{name:'Yes',exact:true}).click();
     for (const page of [a,b]) {
-      await expect.poll(() => page.getByRole('button',{name:'Allow',exact:true}).count()).toBe(0);
-      await expect.poll(() => page.getByRole('heading',{name:'Answer',exact:true}).count()).toBe(1);
+      await expect.poll(() => page.getByRole('button',{name:'Yes',exact:true}).count()).toBe(0);
+      await expect.poll(() => page.getByRole('article',{name:'Question',exact:true}).getByText(/Yes · alice/i).count()).toBe(1);
     }
+    await a.getByRole('button',{name:'More for this conversation',exact:true}).click();
     await a.getByRole('button',{name:'Pin',exact:true}).click();
     await expect.poll(() => db.select().from(threads).where(eq(threads.id,thread.id)).get()?.pinned).toBe(true);
     await expect.poll(() => db.select().from(threads).where(eq(threads.id,thread.id)).get()?.readSeq).toBe(4);
@@ -85,18 +85,26 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Comms opens, s
     });
     await context.addCookies([{name:'loom_ui',value:ownerCookie,url}]);
     await a.goto(url+'/p/comms-preview/thread/tempo-settings');
+    const who={kind:'person' as const,id:'settings-owner'};
+    const settingsCards=a.getByRole('article',{name:/Change Tempo’s timings for/i});
     for(const [allow,seconds] of [[true,60],[false,120]] as const){
-     const proposal=await context.request.post(url+'/api/tempo/proposeSettings',{headers:{authorization:'Bearer '+bodyToken},data:{id:'timing-'+seconds,input:{who:{kind:'person',id:'settings-owner'},patch:{settleSeconds:seconds}}}});expect(proposal.status()).toBe(200);
-     const card=a.getByRole('article',{name:'Inbox item',exact:true}).filter({has:a.getByText(seconds+' seconds',{exact:true})});
-     await expect.poll(()=>card.count()).toBe(1);
-     expect(await card.getByRole('heading',{name:'Before',exact:true}).count()).toBe(1);expect(await card.getByRole('heading',{name:'After',exact:true}).count()).toBe(1);
-     await card.getByRole('button',{name:allow?'Allow':'Deny',exact:true}).click();
-     await expect.poll(()=>card.getByRole('button',{name:'Allow',exact:true}).count()).toBe(0);
-     expect(composition.services.tempo.volume.timings({kind:'person',id:'settings-owner'}).settleSeconds).toBe(60);
+      const before=composition.services.tempo.volume.timings(who).settleSeconds;
+      const proposal=await context.request.post(url+'/api/household/propose',{
+        headers:{authorization:'Bearer '+bodyToken},
+        data:{id:'timing-'+seconds,input:{change:'tempoTimings',input:{who,settleSeconds:seconds},why:'Requested in this conversation.'}},
+      });
+      expect(proposal.status()).toBe(200);
+      const {value}=await proposal.json();
+      const card=settingsCards.filter({has:a.getByRole('button',{name:'Allow',exact:true})});
+      await card.getByRole('button',{name:'Details',exact:true}).click();
+      await expect.poll(()=>card.getByText(before+' seconds → '+seconds+' seconds',{exact:true}).count()).toBe(1);
+      await card.getByRole('button',{name:allow?'Allow':'Deny',exact:true}).click();
+      await expect.poll(()=>composition.services.approvals.get(value.id)?.state).toBe(allow?'used':'denied');
+      expect(composition.services.tempo.volume.timings(who).settleSeconds).toBe(60);
     }
-    await expect.poll(()=>a.getByRole('region',{name:'Tempo settings change',exact:true}).count()).toBe(2);
+    await expect.poll(()=>settingsCards.count()).toBe(2);
     composition.writes.run(()=>client.prepare('UPDATE tokens SET revoked_at=? WHERE fingerprint=?').run(now(),hash(ownerToken)));
-    await expect.poll(()=>a.getByRole('region',{name:'Tempo settings change',exact:true}).count()).toBe(0);
+    await expect.poll(()=>settingsCards.count()).toBe(0);
     expect(program.errors).toEqual([]);
   } finally {
     if(browser) for(const context of browser.contexts()) for(const page of context.pages()) console.info('Fixture visible text:',await page.locator('body').innerText().catch(()=>'')); console.info('Proof: closing browser'); try{await browser?.close();}finally{await program.close();}
