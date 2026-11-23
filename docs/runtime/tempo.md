@@ -51,6 +51,8 @@ loom-wake --agent art schedule set nightly --at 22:44 --days mon-fri -f routines
 
 The log prints the latest 2,000 matching entries by default. Use `log --all` to read every match in the requested interval. A selected agent scopes lane commands to that agent; without a selection, lane commands address visible household lanes.
 
+For file-based wakes, set `repository` in the coordinator’s `program.json` to the absolute path of its routine checkout, or provide a Tempo instructions reader. On a coordinator without one, supply the routine as text. Loom reads the current file contents when the wake fires.
+
 When a routine re-arms itself with `at` or `in` and a repository file, Loom checks the same agent's standing file schedules. If the next occurrence is within six hours of the requested time, the command prints the scheduled time and leaves that occurrence in place. A request further away creates an extra wake.
 
 Use the key from `list` with `cancel`. The key includes the due time so a rescheduled wake stays pending. Supplying only a one-off trigger ID explicitly cancels its current wake.

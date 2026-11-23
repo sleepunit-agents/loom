@@ -22,7 +22,7 @@ function fixture() {
   const mail = new Conversations(db, now);
   const conversation = mail.open({ agent: 'art', venue: 'loom', place: 'thread:test', label: 'Tempo settings' });
   const admissions: string[][] = [], accesses: TempoAccess[] = [];
-  const tempo = createTempo(db, clock, { conversations: mail,
+  const tempo = createTempo(db, clock, { conversations: mail, instructions: file => file,
     admit(_, items) { expect(client.inTransaction).toBe(false); admissions.push(items.map(i => i.id)); return true; }, operation(name) {
       if (name !== 'test.operation') throw new Error('Unknown operation');
       db.insert(inbox).values({ id: 'operation-result', state: 'waiting', toKind: 'person', to: 'jonathan', source: 'notice', fromKind: 'schedule', words: 'Operation committed', at: now(), changedAt: now() }).run();

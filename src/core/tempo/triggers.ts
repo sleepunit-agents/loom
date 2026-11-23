@@ -4,7 +4,7 @@ import { houseProgramSchema, type HouseProgram } from '../../runtime/house-progr
 import { machineFacts } from '../../runtime/machine-facts.js';
 import type { Asker } from '../../policy.js';
 import { randomUUID } from 'node:crypto';
-import { laneFile } from './lane-file.js';
+import { FILE_READER_UNAVAILABLE, laneFile } from './lane-file.js';
 import { and, eq, max, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../data/database.js';
@@ -130,6 +130,9 @@ export class TriggerEngine {
   private zoned?: string;
   constructor(private db: DataDatabase, private clock: Clock, private effects: TriggerEffects) {}
   private open() { if (this.closed) throw new Error('Tempo is closed'); }
+  private requireFileReader(trigger: Pick<NewTrigger, 'targetKind' | 'file'>) {
+    if (trigger.targetKind === 'inbox' && trigger.file && !this.effects.instructions) throw new Error(FILE_READER_UNAVAILABLE);
+  }
   private now() { return new Date(this.clock.now()).toISOString(); }
   private zone() { return householdTimezone(this.db); }
   private log(id: string, event: string, note = '') {
@@ -177,6 +180,7 @@ export class TriggerEngine {
         if (!producer.program || producer.to !== v.to || producer.project !== (v.project ?? null)) throw new Error('State must come from a program for the same agent and project');
       }
     }
+    this.requireFileReader(v);
     const park = parkedSource(v);
     if (v.parked && (!park || v.sourceKind !== 'answer' || v.lifespan !== 'once' || v.targetKind !== 'inbox' || v.toKind !== 'agent'
       || v.times || v.days || v.program)) throw Error('A parked wait resumes an agent once on an answer');
@@ -242,6 +246,7 @@ export class TriggerEngine {
       if (t.enabled) throw new Error('Trigger is already on');
       if (t.state !== 'stopped' && t.state !== 'failed') throw new Error('Only a stopped trigger can be started');
       if (this.expired(t)) throw new Error('No time left today');
+      this.requireFileReader(t);
       this.db.update(triggers).set({ enabled: true, state: this.paused(t) ? 'held' : 'standing', nextDueAt: this.due(t.sourceKind, t.times, t.days, t.lifespan), changedAt: this.now() }).where(eq(triggers.id, id)).run();
       this.log(id, 'started');
     });
@@ -273,6 +278,7 @@ export class TriggerEngine {
       // so no door can re-stamp a trigger whose words it sent back unchanged.
       if (asked && t.conversation && ('instructions' in before || 'file' in before || 'note' in before)) this.db.update(triggers).set({ askedByKind: asked.kind, askedBy: asked.id, askedAt: this.now() }).where(eq(triggers.id, id)).run();
       const next = { ...t, ...c };
+      if ('file' in before || (t.enabled && ('times' in before || 'days' in before))) this.requireFileReader(next);
       const due = t.enabled && ('times' in before || 'days' in before) ? this.due(t.sourceKind, next.times, next.days, t.lifespan) : t.nextDueAt;
       this.db.update(triggers).set({ instructions: next.instructions, file: next.file, times: next.times, days: next.days, note: next.note, wantsModel: next.wantsModel, needs: next.needs, prefers: next.prefers, nextDueAt: due, changedAt: this.now() }).where(eq(triggers.id, id)).run();
       const seq = (this.db.select({ seq: max(triggerEdits.seq) }).from(triggerEdits).get()?.seq ?? 0) + 1;
@@ -322,6 +328,7 @@ export class TriggerEngine {
     const t = this.get(id);
     if (parkedSource(t)) throw new Error('A parked wait resumes on its answer or deadline');
     if (!t.enabled || this.paused(t)) throw new Error('Trigger is stopped or held');
+    this.requireFileReader(t);
     this.fire(t, `manual:${randomUUID()}`); this.tick();
   }
   private active() { return this.db.select().from(triggers).where(eq(triggers.enabled, true)).all(); }

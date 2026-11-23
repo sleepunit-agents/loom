@@ -5,7 +5,7 @@ import { MESSAGE_WORDS_MAX } from '../core/conversations/words.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { datedWake, HH_MM, nextTime } from '../core/tempo/calendar.js';
-import { laneFile } from '../core/tempo/lane-file.js';
+import { FILE_READER_UNAVAILABLE, laneFile } from '../core/tempo/lane-file.js';
 import { DAY, DAY_MS } from '../core/day.js';
 import { onOneLine } from '../core/line-name.js';
 import { parseArgs } from 'node:util';
@@ -341,6 +341,11 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
           if (attempt >= 3) throw error;
           await delay(100 * attempt);
           continue;
+        }
+        if (response.status === 400 && path.startsWith('/api/tempo/')) {
+          const refusal = z.object({ ok: z.literal(false), code: z.literal('invalid'), message: z.literal(FILE_READER_UNAVAILABLE) });
+          if (refusal.safeParse(await response.json().catch(() => null)).success) throw new DoorRefusal(FILE_READER_UNAVAILABLE);
+          throw Error();
         }
         await response.body?.cancel();
         if (response.status === 401) throw new DoorRefusal('Loom rejected the credential.');

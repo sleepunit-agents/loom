@@ -202,6 +202,24 @@ it.each(['pause', 'restart'] as const)('fires a once-only trigger exactly once a
   engine.tick(); engine.close(); const again = new TriggerEngine(f.db, f.clock, f.effects); stops.push(() => again.close()); again.tick();
   expect(f.items()).toHaveLength(2);
 });
+it('refuses to arm file wakes without a reader and permits repairing stored wakes with text', () => {
+  const {engine,base,db,row,effects} = fixture();
+  const wake = engine.set({...base, instructions:null, file:'routines/check.md'});
+  effects.instructions = undefined;
+  expect(() => engine.runNow(wake.id)).toThrow('configured routine repository');
+  expect(() => engine.set({...base, instructions:null, file:'routines/other.md'})).toThrow('configured routine repository');
+  expect(() => engine.edit(wake.id,{times:'12:02'}, {kind:'agent',id:'art'})).toThrow('configured routine repository');
+  expect(db.select().from(triggers).all()).toHaveLength(1);
+  expect(row(wake.id)).toMatchObject({state:'standing',times:base.times});
+  engine.stop(wake.id);
+  engine.edit(wake.id,{file:wake.file,note:'Archived wake'}, {kind:'agent',id:'art'});
+  expect(() => engine.start(wake.id)).toThrow('configured routine repository');
+  expect(row(wake.id).enabled).toBe(false);
+  engine.edit(wake.id,{instructions:'Check the fixture'}, {kind:'agent',id:'art'});
+  engine.start(wake.id);
+  expect(row(wake.id)).toMatchObject({enabled:true,file:null});
+});
+
 it('says which step of a firing failed', () => {
   const failures = (f: ReturnType<typeof fixture>) => f.db.select().from(triggerLog).all().filter(l => l.event === 'failure').map(l => l.note);
   const file = fixture({ instructions: () => { throw new Error('ENOENT: routines/check.md\nstack line'); } });
