@@ -35,7 +35,11 @@
     {
       "id": "bridges-005",
       "promise": "Records whether each reply arrived, and says so when it cannot tell.",
-      "source": "docs/how-it-works/site/bridges.html"
+      "source": "docs/how-it-works/site/bridges.html",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeReceipts"
+      }
     },
     {
       "id": "bridges-006",
@@ -86,7 +90,11 @@
     {
       "id": "bridges-012",
       "promise": "The agent's reply goes out as a send. Loom records whether it arrived. Uncertain means loom could not confirm it, and a person reviews it. A held send waits for a person to release or dismiss it.",
-      "source": "docs/how-it-works/site/bridges.html#how-h"
+      "source": "docs/how-it-works/site/bridges.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeReceipts"
+      }
     },
     {
       "id": "bridges-013",

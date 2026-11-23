@@ -19,6 +19,7 @@ import {secretValueAction} from './rebuild-secret-value-actions.mjs';
 import {secretDefaultAction,verifySecretDefaultAfterReload} from './rebuild-secret-actions.mjs';
 import {workVisibility} from './rebuild-work-visibility.mjs';
 import {changeActions,changeInline} from './rebuild-change-actions.mjs';
+import {bridgeReceipts} from './rebuild-bridge-receipts.mjs';
 import {bridgeMail} from './rebuild-bridge-mail.mjs';
 import {bridgeSettingsAction} from './rebuild-bridge-actions.mjs';
 import {taskStructure} from './rebuild-task-structure.mjs';
@@ -349,6 +350,8 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'native-protocol',actions:safeReport(report.actions)};
   try {report.actions.bridgeMail=await bridgeMail({app,clock});}
   catch(error){report.actions.bridgeMail={ok:false,error:String(error)};}
+  try {report.actions.bridgeReceipts=await bridgeReceipts({app,clock,page,open:openApp});}
+  catch(error){report.actions.bridgeReceipts={ok:false,error:String(error)};}
   save();yield {phase:'bridge-mail',actions:safeReport(report.actions)};
 
 
