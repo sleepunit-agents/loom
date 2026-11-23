@@ -42,6 +42,9 @@ const joins = (message: CommsMessage) => message.kind !== 'card' && message.kind
 /** A step's and a delivery's stored state, in plain words. */
 function ArchivedNotice({ message, zone }: { message: CommsMessage; zone: Parameters<typeof fullTime>[1] }) {
   const info = message.notice;
+  if (message.inboxItem && message.sender === 'loom' && message.seq === 1 && !info) return <figure className="comms-fyi">
+    <figcaption>From your Inbox</figcaption><blockquote>{message.words ?? 'Message words are unavailable'}</blockquote>
+  </figure>;
   if (!info) return <>{message.words ?? 'Message words are unavailable'}</>;
   const labels: Record<string, string> = {
     'no-runtime': 'The runtime was unavailable', refused: 'Delivery refused', 'start-failed': 'The agent failed to start',

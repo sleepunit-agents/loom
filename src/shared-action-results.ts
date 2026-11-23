@@ -22,7 +22,7 @@ export function recordActionResult(options:{db:DataDatabase;writes:DataWrites;op
  try {
  const {viewer,name,id,result}=options;
  if(viewer.kind!=='member'||!options.window||!id)return;
- if(name==='inbox.read'||name==='inbox.dismissResult'||name==='comms.change'&&options.input&&typeof options.input==='object'&&'change' in options.input&&options.input.change==='read')return;
+ if(name==='inbox.discuss'||name==='inbox.read'||name==='inbox.dismissResult'||name==='comms.change'&&options.input&&typeof options.input==='object'&&'change' in options.input&&options.input.change==='read')return;
  if(!options.operations.offered('http').some(op=>op.name===name&&op.write))return;
  const prefix=name.split('.')[0];
  const [area,page]=name==='household.setPortrait'?['Household setup','/p/setup-preview']:Object.hasOwn(areas,prefix)?areas[prefix]:['Loom',''];

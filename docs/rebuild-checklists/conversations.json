@@ -2,7 +2,7 @@
   "page": "conversations",
   "title": "Conversations",
   "ownerTask": "t-2237",
-  "sourceSha256": "8b648df4915735aec451fa74f3e8d20dbadf7990fef9321ed7a5d414fdf7c9f8",
+  "sourceSha256": "882d27f67c5e0f73996ed374b6e358216bdcf69dcfebea40c6886482b68efd30",
   "promises": [
     {
       "id": "conversations-001",
@@ -124,7 +124,7 @@
     },
     {
       "id": "conversations-014",
-      "promise": "Every inbox item names its conversation, and a digest points at the question it raised.inbox.conversation · digests.inbox_item",
+      "promise": "An inbox item links to the conversation it came from. On a standalone FYI, Discuss opens a private chat with your default agent about that notice. Open it again to continue the same chat. A digest points to the question it raised.inbox.conversation · digests.inbox_item",
       "source": "docs/how-it-works/site/conversations.html#con-h"
     },
     {
