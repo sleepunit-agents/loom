@@ -15,7 +15,7 @@ export function verifyAccessChange(db,title){
 
 // Play the fictional agent in the disposable home. The owner sends the request
 // and answers the resulting card in the actual signed-in browser.
-export async function approveRequestedChange({page,app,composer,change,input,expectedWords,exists}){
+export async function approveRequestedChange({page,app,composer,change,input,expectedWords,exists,owner='alex'}){
  const db=app.services.comms.db.$client;
  const words=await composer.getByRole('textbox',{name:/^Message\b/}).inputValue();
  check(expectedWords(words),'The prepared message differs from the requested change');
@@ -26,7 +26,7 @@ export async function approveRequestedChange({page,app,composer,change,input,exp
  const {thread,seq}=body.value;
  await page.getByRole('region',{name:'Comms tile',exact:true}).getByText(words,{exact:true}).waitFor();
  const deliveries=db.prepare("SELECT i.[to] agent,i.conversation,c.member FROM inbox i JOIN conversations c ON c.id=i.conversation WHERE i.thread=? AND i.message_seq=? AND i.to_kind='agent'").all(thread,seq);
- check(deliveries.length===1&&deliveries[0].member==='alex','Expected one private delivery from the example owner');
+ check(deliveries.length===1&&deliveries[0].member===owner,'Expected one private delivery from the example owner');
  const {agent,conversation,member}=deliveries[0];
  const card=app.writes.run(()=>app.services.setup.propose(agent,{change,input,why:'Fictional request from the example owner.'},{conversation,member,project:null})).value;
  check(card.state==='pending','The fictional setting did not wait for approval');
