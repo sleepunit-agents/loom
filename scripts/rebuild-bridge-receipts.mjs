@@ -40,11 +40,14 @@ export async function bridgeReceipts({app,clock,page,open}) {
  try {
    for(const platform of ['discord','slack']){
      const connection='walkthrough-intake-'+platform;
-     const sources=db.select().from(bridgeIncoming).where(and(eq(bridgeIncoming.connection,connection),eq(bridgeIncoming.state,'delivered'))).all();
-     assert.equal(sources.length,2);
+     // Review a reply to the first delivered message in the original room.
+     const source=db.select({id:bridgeIncoming.id}).from(bridgeIncoming).where(and(
+       eq(bridgeIncoming.connection,connection),eq(bridgeIncoming.channel,'example-intake-channel'),eq(bridgeIncoming.state,'delivered'),
+     )).orderBy(bridgeIncoming.postedAt,bridgeIncoming.id).get();
+     assert.ok(source,'Missing delivered message in the reply fixture room');
      connections.push(connection);
      db.update(bridgeConnections).set({enabled:true}).where(eq(bridgeConnections.id,connection)).run();
-     const incoming=sources[0].id, held='example-held-'+platform, uncertain='example-uncertain-'+platform;
+     const incoming=source.id, held='example-held-'+platform, uncertain='example-uncertain-'+platform;
      queue.queue({id:held,incoming,text:'Held example reply',held:true});
      queue.queue({id:uncertain,incoming,text:'Unconfirmed example reply'});
      await queue.flush();
