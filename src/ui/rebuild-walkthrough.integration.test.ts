@@ -123,6 +123,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('appearance');
   for(const name of ['deskLooks','deskAppearance'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
  });
+ it('draws all fallback agent faces and follows a reply through its expressions',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('desk-faces');
+  expect(step.value.actions.deskFaces,JSON.stringify(step.value.actions.deskFaces)).toMatchObject({ok:true});
+ });
  it('keeps appearance choices separate across two signed-in members',{retry:0,timeout:60_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('member-appearance');
   expect(step.value.actions.memberAppearance,JSON.stringify(step.value.actions.memberAppearance)).toMatchObject({ok:true});

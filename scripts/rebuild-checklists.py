@@ -152,6 +152,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith(('Each member keeps their own look','b Your own look.')):row['probe']={'kind':'action','action':'memberAppearance'}
    if row['promise'].startswith('A look is a set of colours'):row['probe']={'kind':'action','action':'deskAppearance'}
 
+   if row['promise'].startswith('Each agent has a drawn face:'):row['probe']={'kind':'action','action':'deskFaces'}
    if row['promise'].startswith('The desk is loom on a desktop screen.'):row['probe']={'kind':'action','action':'deskShell'}
    if row['promise'] in ("A rail card lists the agent's current jobs.", "Shows each agent's face, its state and what it is doing."):row['probe']={'kind':'action','action':'deskJobs'}
    if row['promise'].startswith('The ticker reads counts'):row['probe']={'kind':'action','action':'deskTicker'}

@@ -53,6 +53,7 @@ import {startSharedHome} from '../dist/shared-startup.js';
 import {deskJobs} from './rebuild-desk-jobs.mjs';
 import {deskTicker} from './rebuild-desk-ticker.mjs';
 import {deskWaiting} from './rebuild-desk-waiting.mjs';
+import {deskFaces} from './rebuild-desk-faces.mjs';
 import {deskActions} from './rebuild-desk-actions.mjs';
 import {memberAppearance} from './rebuild-member-appearance.mjs';
 import {appearanceActions} from './rebuild-appearance-actions.mjs';
@@ -281,6 +282,8 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'desk',actions:safeReport(report.actions)};
   Object.assign(report.actions,await appearanceActions({page,app,out,open:openApp}));
   save();yield {phase:'appearance',actions:safeReport(report.actions)};
+  report.actions.deskFaces=await deskFaces({browser,home:join(parent,'face-home'),out});
+  save();yield {phase:'desk-faces',actions:safeReport(report.actions)};
   report.actions.memberAppearance=await memberAppearance({page,app,browser,out});
   save();yield {phase:'member-appearance',actions:safeReport(report.actions)};
   phase='agent memory files';
