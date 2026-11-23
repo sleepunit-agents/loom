@@ -96,6 +96,17 @@ async function verifyGrant(app, clock, owner, name, value) {
     };
     const requests = app.services.secrets.requests;
     assert.deepEqual(await command('secrets/request', request, token), { id, state: 'pending' });
+    const pendingResponse = await fetch(new URL('/graphql', app.url), {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + member.token, 'content-type': 'application/json' },
+      body: JSON.stringify({ query: '{ secretRequests { id why minutes state } }' }),
+    });
+    assert.equal(pendingResponse.status, 200);
+    const pending = await pendingResponse.json();
+    assert.deepEqual(
+      pending.data?.secretRequests.find((row) => row.id === id),
+      { id, why: request.why, minutes: 1, state: 'pending' },
+    );
     assert.equal(requests.grantFor(name, agent, job, id), undefined);
     reader = privateSecretClient({ url: app.url, token, signal: controller.signal, clock });
     await assert.rejects(reader.granted(name, id), /Private secret input unavailable/);
@@ -110,7 +121,7 @@ async function verifyGrant(app, clock, owner, name, value) {
         .prepare('SELECT secret,agent,job,at,state FROM secret_uses WHERE secret=? ORDER BY rowid')
         .all(name);
     assert.equal(uses().length, 0);
-    async function expectScopedRefusal(jobId, requestId) {
+    async function withJobReader(jobId, work) {
       const other = await control.enrollBody(jobId, controller.signal);
       const client = privateSecretClient({
         url: app.url,
@@ -120,17 +131,18 @@ async function verifyGrant(app, clock, owner, name, value) {
       });
       try {
         await control.started(jobId, 'fixture');
-        await assert.rejects(client.granted(name, requestId), /Private secret input unavailable/);
+        await work(client);
       } finally {
         client.close();
         other.erase();
       }
     }
-    await expectScopedRefusal('watering', id);
+    const refused = (requestId) => (client) =>
+      assert.rejects(client.granted(name, requestId), /Private secret input unavailable/);
     const expectedUses = [];
-    async function checkDelivery(requestId) {
+    async function checkDelivery(client, jobId, requestId) {
       clock.advance(1_000);
-      const bytes = await reader.granted(name, requestId);
+      const bytes = await client.granted(name, requestId);
       try {
         assert.ok(bytes.equals(Buffer.from(value)), 'Granted bytes differed from the fictional value');
       } finally {
@@ -139,35 +151,39 @@ async function verifyGrant(app, clock, owner, name, value) {
       expectedUses.push({
         secret: name,
         agent,
-        job,
+        job: jobId,
         at: new Date(clock.now()).toISOString(),
         state: 'released',
       });
       assert.deepEqual(uses(), expectedUses);
     }
-    assert.deepEqual(
-      await command('secrets/request', { ...request, id: agentRequestId, scope: 'agent' }, token),
-      { id: agentRequestId, state: 'allowed' },
-    );
-    const agentGrant = requests.grantFor(name, agent, undefined, agentRequestId);
-    assert.equal(agentGrant?.grantedBy, 'rule');
-    assert.equal(agentGrant.agent, agent);
-    assert.equal(agentGrant.job, null);
-    await expectScopedRefusal('sowing', agentRequestId);
+    await withJobReader('watering', async (watering) => {
+      await refused(id)(watering);
+      assert.deepEqual(
+        await command('secrets/request', { ...request, id: agentRequestId, scope: 'agent' }, token),
+        { id: agentRequestId, state: 'allowed' },
+      );
+      const agentGrant = requests.grantFor(name, agent, undefined, agentRequestId);
+      assert.equal(agentGrant?.grantedBy, 'rule');
+      assert.equal(agentGrant.agent, agent);
+      assert.equal(agentGrant.job, null);
+      await withJobReader('sowing', refused(agentRequestId));
+      await checkDelivery(reader, job, id);
+      await checkDelivery(watering, 'watering', agentRequestId);
+    });
     const unused = randomUUID();
     assert.deepEqual(await command('secrets/request', { ...request, id: unused }, token), {
       id: unused,
       state: 'allowed',
     });
     assert.ok(requests.grantFor(name, agent, job, unused));
-    await checkDelivery(id);
-    await checkDelivery(agentRequestId);
     clock.advance(57_999);
     assert.equal(requests.grantFor(name, agent, job, id)?.id, grant.id);
     assert.ok(requests.grantFor(name, agent, undefined, agentRequestId));
     clock.advance(1);
     assert.equal(requests.grantFor(name, agent, undefined, agentRequestId), undefined);
     assert.equal(requests.grantFor(name, agent, job, id), undefined);
+    clock.advance(2_000);
     await assert.rejects(reader.granted(name, unused), /Private secret input unavailable/);
     assert.deepEqual(uses(), expectedUses);
   } finally {
@@ -263,7 +279,7 @@ export async function installedSecretHolder() {
     return {
       ok: true,
       reason:
-        'A separate holder process stored an age-encrypted fixture value in its own database. The household database contained no fixture value. A new holder served the original bytes twice to one owner-approved job. Both releases recorded the agent, job and time. The grant expired at one minute and the owner removed the stored value.',
+        'A separate holder process stored an age-encrypted fixture value in its own database. The household database contained no fixture value. A new holder served the original bytes to two jobs of the approved agent. Both releases recorded the agent, job and time. The grant expired at one minute and the owner removed the stored value.',
     };
   } finally {
     try {
