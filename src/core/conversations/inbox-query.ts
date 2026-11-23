@@ -22,6 +22,7 @@ const projected=Symbol('Inbox display projection');
 type Item = typeof inbox.$inferSelect;
 type Projected=Item&{[projected]?:Record<string,unknown>};
 const display=(row:Projected,name:string,read:()=>unknown)=>row[projected]&&Object.hasOwn(row[projected],name)?row[projected][name]:read();
+export type ProposalTitles = (viewer: Viewer, ids: string[]) => Map<string,string>;
 export type QuestionAsker = (viewer:Viewer, account:string)=>string|undefined;
 type Body = { words: string; why?: string | null; ifYes?: string | null; ifNo?: string | null; link?: string | null };
 
@@ -37,7 +38,7 @@ export class InboxQueries {
     /** Who may answer an item, supplied by the door from the household's rule: called once for a viewer, it
      * returns the answer for each item on the household facts it read then. No default allow. */
     private readonly mayAnswer: (viewer: Viewer) => (item: Item) => boolean = () => () => false,
-    private readonly questionAsker?: QuestionAsker) {}
+    private readonly questionAsker?: QuestionAsker, private readonly proposalTitles?: ProposalTitles) {}
 
   private namedQuestion(viewer: Viewer, item: Item, body: Body): Body {
     if (!this.questionAsker || viewer.kind !== 'member' || viewer.id !== item.to || item.toKind !== 'person' ||
@@ -165,7 +166,7 @@ export class InboxQueries {
 
   /** Search the recipient's whole mailbox before paging. Private text is opened
    * only through body(), and is never indexed or written back to the database. */
-  async search(viewer:Viewer,filter:InboxFilter={},retainedUntil?:(at:number)=>void):Promise<Item[]> {
+  async search(viewer:Viewer,filter:InboxFilter={},retainedUntil?:(at:number)=>void,recheckTitles?:(check:()=>boolean)=>void):Promise<Item[]> {
     if(!filter.search?.trim())return this.list(viewer,filter);
     this.list(viewer,filter);
     if(viewer.kind!=='member'&&viewer.kind!=='agent')return [];
@@ -174,19 +175,47 @@ export class InboxQueries {
     const before=readInboxSet(this.db,ids,this.allowed(viewer));
     const service=new InboxQueries(this.db,this.key,this.policy,this.now,this.volumeAllowed);
     service.readSet=before;
-    const deadlines:number[]=[];
-    const result=await service.searchInSet(viewer,filter,at=>deadlines.push(at),candidates);
+    const query=filter.search.trim().toLocaleLowerCase();
+    const matches=await service.searchInSet(viewer,query,candidates);
     const after=readInboxSet(this.db,ids,this.allowed(viewer));
-    if(before.fingerprint!==after.fingerprint||deadlines.some(at=>at<=Date.parse(this.now())))return [];
-    for(const at of deadlines)retainedUntil?.(at);
-    return result;
+    if(before.fingerprint!==after.fingerprint)return [];
+    // Resolve presentation names after decryption. Only an actual approval request
+    // displays its proposal title; an ordinary question can cite the same card.
+    const approvalId=(item:Item)=>item.source==='approval'&&item.waitsOnKind==='approval'?item.waitsOnId:null;
+    const cards=new Set(candidates.map(approvalId).filter((id): id is string=>!!id));
+    const selectPage=()=>{
+      const titles=this.proposalTitles?.(viewer,[...cards]);
+      const offset=filter.offset??0;
+      const limit=filter.limit??50;
+      const page:Item[]=[];
+      let deadline=Infinity;
+      let seen=0;
+      for(const item of candidates){
+        const id=approvalId(item);
+        const title=id?titles?.get(id):undefined;
+        const until=title?.toLocaleLowerCase().includes(query)?Infinity:matches.get(item.id);
+        if(until===undefined)continue;
+        // Earlier matches determine which row appears at the requested offset.
+        deadline=Math.min(deadline,until);
+        if(seen++>=offset)page.push(item);
+        if(page.length===limit)break;
+      }
+      return {page,deadline};
+    };
+    const retainPage=(deadline:number)=>{
+      if(deadline<=Date.parse(this.now()))return false;
+      if(Number.isFinite(deadline))retainedUntil?.(deadline);
+      return true;
+    };
+    const {page,deadline}=selectPage();
+    if(!retainPage(deadline))return [];
+    if(cards.size&&this.proposalTitles)recheckTitles?.(()=>{
+      const current=selectPage();
+      return current.page.length===page.length&&current.page.every((item,i)=>item.id===page[i].id)&&retainPage(current.deadline);
+    });
+    return page;
   }
-  private async searchInSet(viewer: Viewer, filter: InboxFilter, retainedUntil: (at: number) => void, candidates:Item[]): Promise<Item[]> {
-    const query = filter.search?.trim().toLocaleLowerCase() ?? '';
-    // Validate the same page bounds even for an empty or unauthorized mailbox.
-    if (!query) return this.list(viewer, filter);
-    this.list(viewer, filter);
-    if (viewer.kind !== 'member' && viewer.kind !== 'agent') return [];
+  private async searchInSet(viewer: Viewer, query:string, candidates:Item[]): Promise<Map<string,number>> {
     const privateState = (item: Item, fromAnswer = false) => {
       const answer = fromAnswer ? this.answerState(viewer, item) : undefined;
       const message = fromAnswer ? answer?.message : this.readSet?this.readSet.message(item):item.thread ? this.db.select().from(messages).where(and(eq(messages.thread, item.thread),
@@ -224,7 +253,7 @@ export class InboxQueries {
     });
     // One item may match both its question and its independently retained
     // answer. Keep the longest still-valid witness, once, before paging.
-    const unique = new Map<string, typeof current[number]>();
+    const deadlines = new Map<string,number>();
     const deadline = (match: typeof current[number]) => {
       if(match.metadata)return Infinity;
       if(match.state?.standalone)return privateInboxDeadline(match.state.standalone,match.state.keep);
@@ -232,14 +261,10 @@ export class InboxQueries {
       return Infinity;
     };
     for (const match of current) {
-      const prior = unique.get(match.item.id);
-      if (!prior || deadline(match) > deadline(prior)) unique.set(match.item.id, match);
+      const until=deadline(match);
+      if(until>(deadlines.get(match.item.id)??-Infinity))deadlines.set(match.item.id,until);
     }
-    const page = [...unique.values()].slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 50));
-    for (const match of page) if (!match.metadata && match.state) {
-      const until=deadline(match);if(Number.isFinite(until))retainedUntil?.(until);
-    }
-    return page.map(({ item }) => item);
+    return deadlines;
   }
   results(viewer: Viewer, limit = 20): (typeof actionResults.$inferSelect)[] {
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error('Invalid action result limit');
@@ -409,6 +434,14 @@ export function inboxQueryFields(service: InboxQueries): GraphQLFieldConfigMap<u
   }, inboxItems: {
     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(item))),
     args: { folder: { type: GraphQLString }, search: { type: GraphQLString }, state: { type: GraphQLString }, source: { type: GraphQLString }, agent: { type: GraphQLString }, conversation: { type: GraphQLString }, limit: { type: GraphQLInt, defaultValue: 50 }, offset: { type: GraphQLInt, defaultValue: 0 } },
-    resolve: async(_row,args,context,info)=>service.project(context.viewer,args.search===undefined?service.list(context.viewer,args):await service.search(context.viewer,args,until=>keepReadUntil(context,until)),info,until=>keepReadUntil(context,until)),
+    resolve: async(_row,args,context,info)=>{
+      const retain=(until:number)=>keepReadUntil(context,until);
+      let titlesStillMatch:(()=>boolean)|undefined;
+      const rows=args.search===undefined?service.list(context.viewer,args):
+        await service.search(context.viewer,args,retain,check=>{titlesStillMatch=check;});
+      const result=await service.project(context.viewer,rows,info,retain);
+      if(titlesStillMatch&&!titlesStillMatch())throw Error('Inbox changed; retry the query');
+      return result;
+    },
   } };
 }

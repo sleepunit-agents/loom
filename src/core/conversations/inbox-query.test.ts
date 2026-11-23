@@ -1,3 +1,4 @@
+import {readDeadline,readRetained} from '../data/read-lease.js';
 import { DataLive } from '../data/live.js';
 import {sealHandoff} from './handoff-words.js';
 import Database from 'better-sqlite3';
@@ -190,6 +191,23 @@ it('searches retained private wording without persisting it and never searches a
   const opened = f.opens();
   expect(await f.service.search(alice, { search: 'private' })).toEqual([]);
   expect(f.opens()).toBe(opened);
+});
+it('expires a page whose offset depends on a retained private match',async()=>{
+  const f=await fixture();
+  f.time('2026-11-14T17:00:00.000Z');
+  const notice=f.comms.threads.conversations.send({toKind:'person',to:'alice',source:'notice',fromKind:'agent',member:'alice',words:'Private reason in a plain notice'});
+  f.time('2026-11-14T19:00:00.000Z');
+  const context={viewer:alice};
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:inboxQueryFields(f.service)})});
+  const query='{ inboxItems(search:"private reason",offset:1,limit:1){id} }';
+  const first=await graphql({schema,source:query,contextValue:context});
+  expect(first.data?.inboxItems).toEqual([{id:notice.id}]);
+  const until=Date.parse('2026-11-28T18:00:00.000Z');
+  expect(readDeadline(context)).toBe(until);
+  expect(readRetained(context,until)).toBe(false);
+  f.time(new Date(until).toISOString());
+  const next=await graphql({schema,source:query,contextValue:{viewer:alice}});
+  expect(next.data?.inboxItems).toEqual([]);
 });
 it('withdraws earlier matches when later decrypts revoke access or let private matches expire', async () => {
   for (const change of ['policy', 'expiry', 'ciphertext', 'linkage', 'household', 'deadline'] as const) {
