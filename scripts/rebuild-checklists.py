@@ -200,6 +200,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('A task is ready when it is open'):row['probe']={'kind':'all','probes':[{'kind':'action','action':'taskStructure'},{'kind':'action','action':'taskLifecycle'}]}
  if f.stem=='machines':
   for row in rows:
+   if row['promise'].startswith(('The agent it runs, the project it is for', 'a Jobs. A job carries its agent')):row['probe']={'kind':'action','action':'jobLabels'}
    if row['promise'].startswith(("Starts a job when an agent's inbox", "A non-empty inbox starts a job.", "A job works in one conversation")):row['probe']={'kind':'action','action':'scheduledWorker'}
    if row['promise']=="Shows each agent's current jobs on its card on Home.":row['probe']={'kind':'action','action':'homeJobs'}
    if row['promise'].startswith(('Records each machine with a worker', 'c Boxes. A box belongs')):row['probe']={'kind':'action','action':'machineRoster'}

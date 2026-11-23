@@ -329,6 +329,12 @@ export async function* walkthroughSteps(output) {
    report.actions.knowledgeDue=await dueKnowledgeDelivery();
   } catch(error) { report.actions.knowledgeDue={ok:false,error:String(error)}; }
   save();yield {phase:'knowledge-due',actions:safeReport(report.actions)};
+  phase='job labels';
+  try {
+   const {jobLabelsEvidence}=await import('./rebuild-job-labels.mjs');
+   report.actions.jobLabels=await jobLabelsEvidence();
+  } catch(error) { report.actions.jobLabels={ok:false,error:String(error)}; }
+  save();yield {phase:'job-labels',actions:safeReport(report.actions)};
   phase='worker start retries';
   try {
    const {workerRetryEvidence}=await import('./rebuild-worker-retries.mjs');

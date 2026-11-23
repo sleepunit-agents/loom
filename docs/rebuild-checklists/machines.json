@@ -48,7 +48,11 @@
     {
       "id": "machines-006",
       "promise": "The agent it runs, the project it is for, and a member when the work is private.",
-      "source": "docs/how-it-works/site/machines.html#con-h"
+      "source": "docs/how-it-works/site/machines.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "jobLabels"
+      }
     },
     {
       "id": "machines-007",
@@ -105,7 +109,11 @@
     {
       "id": "machines-015",
       "promise": "a Jobs. A job carries its agent, the project it is for, and a member when the work is private.",
-      "source": "docs/how-it-works/site/machines.html#see-h"
+      "source": "docs/how-it-works/site/machines.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "jobLabels"
+      }
     },
     {
       "id": "machines-016",
