@@ -16,8 +16,8 @@ class Authenticator {
  registration(challenge:string){return {label:'Laptop',id:this.id.toString('base64url'),clientDataJSON:Buffer.from(JSON.stringify({type:'webauthn.create',challenge,origin})).toString('base64url'),authenticatorData:this.data(true).toString('base64url'),publicKey:this.keys.publicKey.export({type:'spki',format:'der'}).toString('base64url'),publicKeyAlgorithm:-7};}
  assertion(challenge:string, forged=false){const cd=Buffer.from(JSON.stringify({type:'webauthn.get',challenge,origin})),ad=this.data();return {id:this.id.toString('base64url'),clientDataJSON:cd.toString('base64url'),authenticatorData:ad.toString('base64url'),signature:sign('sha256',forged?Buffer.from('forged'):Buffer.concat([ad,createHash('sha256').update(cd).digest()]),this.keys.privateKey).toString('base64url')};}
 }
-function fixture(){
- const client=new Database(':memory:');clean.push(()=>client.close());const clock=new FakeClock(),at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>new Date(clock.now()).toISOString());
+function fixture(verbose?: (statement: string) => void){
+ const client=new Database(':memory:', verbose ? {verbose} : {});clean.push(()=>client.close());const clock=new FakeClock(),at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>new Date(clock.now()).toISOString());
  const raw={sam:'a'.repeat(64),other:'b'.repeat(64)},cookies={sam:'c'.repeat(64),other:'d'.repeat(64)};
  for(const member of ['sam','other'] as const){db.insert(members).values({id:member,role:'member',joinedAt:at}).run();db.insert(tokens).values({fingerprint:hash(raw[member]),label:member,kind:'owner',member,createdAt:at}).run();db.insert(sessions).values({id:hash(cookies[member]),token:hash(raw[member]),device:member+' laptop',via:'link',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();}
  const root=sharedRoot({db,clock,publicOrigin:origin,originAllowed:()=>true,reportError:()=>{}});clean.push(()=>root.close());
@@ -26,6 +26,35 @@ function fixture(){
  const add=async()=>{const key=new Authenticator(),options=await(await post('/passkeys/options')).json();expect((await post('/passkeys',key.registration(options.challenge))).status).toBe(200);return key;};
  return{client,db,clock,root,raw,cookies,post,read,add};
 }
+it('lists only the member’s enrolled credential IDs with a fixed number of reads as the household grows',async()=>{
+ let reads=0;
+ const f=fixture(statement=>{if(/^select\b/i.test(statement))reads++;});
+ await f.root.ready;
+ await f.post('/passkeys/options');
+ const at=new Date(f.clock.now()).toISOString(), secondToken=hash('Sam’s second token');
+ f.db.insert(tokens).values({fingerprint:secondToken,label:'Tablet',kind:'owner',member:'sam',createdAt:at}).run();
+ const expected:string[]=[];
+ let firstCount:number|undefined;
+ for(let batch=0;batch<2;batch++){
+  for(const member of ['sam','other'] as const){
+   const count=batch===0?1:8;
+   for(let index=0;index<count;index++){
+    const id=Buffer.from(member+'-'+batch+'-'+index).toString('base64url');
+    const token=member==='sam' && batch===1 ? secondToken : hash(f.raw[member]);
+    f.db.insert(passkeys).values({id,token,label:'Sample',publicKey:'unused',counter:0,createdAt:at}).run();
+    if(member==='sam')expected.push(id);
+   }
+  }
+  reads=0;
+  const response=await f.post('/passkeys/options');
+  expect(response.status).toBe(200);
+  const {excludeCredentials}=await response.json() as {excludeCredentials:{type:string;id:string}[]};
+  expect(excludeCredentials.sort((a,b)=>a.id.localeCompare(b.id))).toEqual(expected.map(id=>({type:'public-key',id})).sort((a,b)=>a.id.localeCompare(b.id)));
+  expect(reads).toBeGreaterThan(0);
+  if(firstCount===undefined)firstCount=reads;
+  else expect(reads).toBe(firstCount);
+ }
+});
 it('registers a passkey on the actual shared door and signs in with verified single-use assertions',async()=>{
  const f=fixture(),key=await f.add();expect(f.db.select().from(passkeys).get()?.label).toBe('Laptop');
  const challenge=async()=> (await(await f.post('/login/passkey/options')).json()).challenge;
