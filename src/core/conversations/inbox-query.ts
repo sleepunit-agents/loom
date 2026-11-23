@@ -40,10 +40,13 @@ export class InboxQueries {
     private readonly mayAnswer: (viewer: Viewer) => (item: Item) => boolean = () => () => false,
     private readonly questionAsker?: QuestionAsker, private readonly proposalTitles?: ProposalTitles) {}
 
+  private questionAccount(viewer:Viewer,item:Item) {
+    return viewer.kind==='member'&&viewer.id===item.to&&item.toKind==='person'&&item.source==='thread'
+      &&item.answers&&item.onWordKind==='outside'?item.onWord:null;
+  }
   private namedQuestion(viewer: Viewer, item: Item, body: Body): Body {
-    if (!this.questionAsker || viewer.kind !== 'member' || viewer.id !== item.to || item.toKind !== 'person' ||
-        item.source !== 'thread' || !item.answers || item.onWordKind !== 'outside' || !item.onWord) return body;
-    const name = this.questionAsker(viewer,item.onWord);
+    const account=this.questionAccount(viewer,item);
+    const name=account?this.questionAsker?.(viewer,account):undefined;
     return name ? {...body,words:`Working for ${name}.\n${body.words}`} : body;
   }
 
@@ -176,7 +179,7 @@ export class InboxQueries {
     const service=new InboxQueries(this.db,this.key,this.policy,this.now,this.volumeAllowed);
     service.readSet=before;
     const query=filter.search.trim().toLocaleLowerCase();
-    const matches=await service.searchInSet(viewer,query,candidates);
+    const {matches,questions}=await service.searchInSet(viewer,query,candidates);
     const after=readInboxSet(this.db,ids,this.allowed(viewer));
     if(before.fingerprint!==after.fingerprint)return [];
     // Resolve presentation names after decryption. Only an actual approval request
@@ -193,7 +196,11 @@ export class InboxQueries {
       for(const item of candidates){
         const id=approvalId(item);
         const title=id?titles?.get(id):undefined;
-        const until=title?.toLocaleLowerCase().includes(query)?Infinity:matches.get(item.id);
+        let until=title?.toLocaleLowerCase().includes(query)?Infinity:matches.get(item.id);
+        const question=questions.get(item.id);
+        if(question&&until!==Infinity&&this.namedQuestion(viewer,item,question.body).words.toLocaleLowerCase().includes(query)){
+          until=Math.max(until??-Infinity,question.until);
+        }
         if(until===undefined)continue;
         // Earlier matches determine which row appears at the requested offset.
         deadline=Math.min(deadline,until);
@@ -209,13 +216,13 @@ export class InboxQueries {
     };
     const {page,deadline}=selectPage();
     if(!retainPage(deadline))return [];
-    if(cards.size&&this.proposalTitles)recheckTitles?.(()=>{
+    if((cards.size&&this.proposalTitles)||(questions.size&&this.questionAsker))recheckTitles?.(()=>{
       const current=selectPage();
       return current.page.length===page.length&&current.page.every((item,i)=>item.id===page[i].id)&&retainPage(current.deadline);
     });
     return page;
   }
-  private async searchInSet(viewer: Viewer, query:string, candidates:Item[]): Promise<Map<string,number>> {
+  private async searchInSet(viewer: Viewer, query:string, candidates:Item[]) {
     const privateState = (item: Item, fromAnswer = false) => {
       const answer = fromAnswer ? this.answerState(viewer, item) : undefined;
       const message = fromAnswer ? answer?.message : this.readSet?this.readSet.message(item):item.thread ? this.db.select().from(messages).where(and(eq(messages.thread, item.thread),
@@ -227,7 +234,7 @@ export class InboxQueries {
     };
     const metadata = (item: Item) => [item.id, item.source, item.sourceId, item.fromId, item.agent, item.project,
         item.answer, item.answeredBy, item.resolution, ...this.refs(viewer, item.id)].some(value => value?.toLocaleLowerCase().includes(query));
-    const matches: { item: Item; metadata?: true; fromAnswer?: true; state?: ReturnType<typeof privateState> }[] = [];
+    const matches: { item: Item; question?: Body; metadata?: true; fromAnswer?: true; state?: ReturnType<typeof privateState> }[] = [];
     for (const item of candidates) {
       if (metadata(item)) { matches.push({ item, metadata: true }); continue; }
       // Handoffs are agent mail. Their wording is delivered only by take,
@@ -235,6 +242,7 @@ export class InboxQueries {
       if(item.source==='handoff')continue;
       const state = item.thread||hasPrivateInboxPayload(this.db,item) ? privateState(item) : undefined;
       const body = await this.body(viewer, item.id);
+      if(body&&this.questionAccount(viewer,item))matches.push({item,state,question:body});
       if (body && [body.words, body.why, body.ifYes, body.ifNo, body.link].some(value => value?.toLocaleLowerCase().includes(query))) matches.push({ item, state });
       {
         const answerState = item.thread||isPrivateInboxQuestion(item) ? privateState(item, true) : undefined;
@@ -254,6 +262,7 @@ export class InboxQueries {
     // One item may match both its question and its independently retained
     // answer. Keep the longest still-valid witness, once, before paging.
     const deadlines = new Map<string,number>();
+    const questions=new Map<string,{body:Body;until:number}>();
     const deadline = (match: typeof current[number]) => {
       if(match.metadata)return Infinity;
       if(match.state?.standalone)return privateInboxDeadline(match.state.standalone,match.state.keep);
@@ -262,9 +271,10 @@ export class InboxQueries {
     };
     for (const match of current) {
       const until=deadline(match);
+      if(match.question){questions.set(match.item.id,{body:match.question,until});continue;}
       if(until>(deadlines.get(match.item.id)??-Infinity))deadlines.set(match.item.id,until);
     }
-    return deadlines;
+    return {matches:deadlines,questions};
   }
   results(viewer: Viewer, limit = 20): (typeof actionResults.$inferSelect)[] {
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error('Invalid action result limit');

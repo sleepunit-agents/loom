@@ -192,6 +192,25 @@ it('searches retained private wording without persisting it and never searches a
   expect(await f.service.search(alice, { search: 'private' })).toEqual([]);
   expect(f.opens()).toBe(opened);
 });
+it('searches a guest question by the current name only while its private wording is retained',async()=>{
+  const f=await fixture();
+  f.db.update(inbox).set({onWordKind:'outside',onWord:'fictional-account'}).where(eq(inbox.id,f.ask.inboxItem!)).run();
+  let name:string|undefined='Casey Field';
+  let now=Date.parse('2026-11-14T19:00:00Z');
+  const service=new InboxQueries(f.db,f.key,(_viewer,fields)=>eq(fields.member,'alice'),
+    ()=>new Date(now).toISOString(),undefined,undefined,undefined,()=>name);
+  const deadlines:number[]=[];
+  let recheck:(()=>boolean)|undefined;
+  const search=()=>service.search(alice,{search:'Casey Field.\nOrder the private pump'},at=>deadlines.push(at),check=>{recheck=check;});
+  expect((await search()).map(row=>row.id)).toEqual([f.ask.inboxItem]);
+  const until=Date.parse('2026-11-28T18:00:00Z');
+  expect(deadlines).toContain(until);
+  name=undefined;
+  expect(recheck?.()).toBe(false);
+  expect(await search()).toEqual([]);
+  name='Casey Field';now=until;
+  expect(await search()).toEqual([]);
+});
 it('expires a page whose offset depends on a retained private match',async()=>{
   const f=await fixture();
   f.time('2026-11-14T17:00:00.000Z');
