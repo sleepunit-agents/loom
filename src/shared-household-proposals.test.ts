@@ -20,14 +20,14 @@ afterEach(async () => { for (const close of clean.splice(0).reverse()) await clo
 const credentials = { sam: 'a'.repeat(64), lee: 'b'.repeat(64), art: 'c'.repeat(64) };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const visual = { about: 'Fixture agent', markBg: '#000000', markFg: '#ffffff', faceShape: 'pebble' as const, faceEyes: 'dot' as const };
-function fixture(memory?: SharedMemoryOptions, verbose?: (statement:string)=>void) {
+function fixture(memory?: SharedMemoryOptions, verbose?: (statement:string)=>void, commsKey?:Parameters<typeof sharedRoot>[0]['commsKey']) {
   const client = new Database(':memory:',{verbose}); clean.push(() => { client.close(); });
   const clock = new FakeClock(), at = new Date(clock.now()).toISOString(), db = createDataSchema(client, () => new Date(clock.now()).toISOString());
   db.insert(members).values([{ id: 'sam', role: 'owner', joinedAt: at }, { id: 'lee', role: 'member', joinedAt: at }]).run();
   db.insert(agents).values([{ id: 'art', ...visual }, { id: 'mark', ...visual }]).run();
   for (const member of ['sam', 'lee'] as const) db.insert(tokens).values({ fingerprint: hash(credentials[member]), label: member, kind: 'owner', member, createdAt: at }).run();
   db.insert(tokens).values({ fingerprint: hash(credentials.art), label: 'Art', kind: 'agent', agent: 'art', createdAt: at }).run();
-  const root = sharedRoot({ db, clock, memory, originAllowed: () => true, reportError: () => {} }); clean.push(() => root.close());
+  const root = sharedRoot({ db, clock, memory, commsKey, originAllowed: () => true, reportError: () => {} }); clean.push(() => root.close());
   let seq = 0;
   const call = async (path: string, input: unknown, actor: keyof typeof credentials, id = 'r'+(++seq)) => {
     const response = await root.http.request('http://loom/api/'+path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer '+credentials[actor] }, body: JSON.stringify({ input, id }) });
@@ -1056,7 +1056,7 @@ const preview = async (f: Fixture, id: string) => (await f.call('household/propo
 };
 
 it('tells a household owner who a card is for, and nobody else: the names loom holds are read for the owner when the card is read', async () => {
-  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  const f = fixture(undefined,undefined,{seal:async words=>Buffer.from(words),open:async bytes=>Buffer.from(bytes).toString(),hash}), at = new Date(f.clock.now()).toISOString();
   const gage = { platform: 'slack', workspace: 'T02AYL3QM', user: 'U07V8CZUC1J' };
   await f.call('household/propose', { change: 'kit', input: { agent: 'art', kit: 'pond-et-livonia', tools: [] }, why: 'Field scope' }, 'art').then(filed => f.call('approvals/answer', { id: filed.body.value!.id, answer: 'allow' }, 'sam'));
   f.db.insert(agentPeople).values({ agent: 'art', person: JSON.stringify([gage.platform, gage.workspace, gage.user]), tier: 2 }).run();
@@ -1100,6 +1100,19 @@ it('tells a household owner who a card is for, and nobody else: the names loom h
   const colleagueTitle=(await preview(f,colleague)).card!.title;
   expect(colleagueTitle).toBe('Set gage (Slack) to tier 3 with Art');
   expect(await titles('sam',[colleague])).toEqual([{approval:colleague,title:colleagueTitle}]);
+  const search=async(actor:keyof typeof credentials,offset=0)=>{
+    const response=await f.root.http.request('http://loom/graphql',{method:'POST',
+      headers:{'content-type':'application/json',authorization:'Bearer '+credentials[actor]},
+      body:JSON.stringify({query:'query($offset:Int!){inboxItems(folder:"needs",search:"GAGE (Slack)",limit:1,offset:$offset){waitsOnId}}',variables:{offset}})});
+    const result=await response.json();expect(result.errors).toBeUndefined();
+    return result.data.inboxItems.map((item:{waitsOnId:string})=>item.waitsOnId);
+  };
+  expect([...(await search('sam')),...(await search('sam',1))].sort()).toEqual([id,colleague].sort());
+  expect(await search('lee')).toEqual([]);
+  expect(await search('art')).toEqual([]);
+  f.db.delete(bridgePeople).run();
+  expect(await search('sam')).toEqual([]);
+  f.db.insert(bridgePeople).values({...gage,member:'gage'}).run();
   expect(await titles('lee',[colleague])).toEqual([]);
   expect(await titles('art',[colleague])).toEqual([]);
   await f.call('approvals/answer',{id:colleague,answer:'deny'},'sam');

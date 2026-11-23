@@ -22,6 +22,7 @@ const projected=Symbol('Inbox display projection');
 type Item = typeof inbox.$inferSelect;
 type Projected=Item&{[projected]?:Record<string,unknown>};
 const display=(row:Projected,name:string,read:()=>unknown)=>row[projected]&&Object.hasOwn(row[projected],name)?row[projected][name]:read();
+export type ProposalTitles = (viewer: Viewer, ids: string[]) => Map<string,string>;
 export type QuestionAsker = (viewer:Viewer, account:string)=>string|undefined;
 type Body = { words: string; why?: string | null; ifYes?: string | null; ifNo?: string | null; link?: string | null };
 
@@ -37,7 +38,7 @@ export class InboxQueries {
     /** Who may answer an item, supplied by the door from the household's rule: called once for a viewer, it
      * returns the answer for each item on the household facts it read then. No default allow. */
     private readonly mayAnswer: (viewer: Viewer) => (item: Item) => boolean = () => () => false,
-    private readonly questionAsker?: QuestionAsker) {}
+    private readonly questionAsker?: QuestionAsker, private readonly proposalTitles?: ProposalTitles) {}
 
   private namedQuestion(viewer: Viewer, item: Item, body: Body): Body {
     if (!this.questionAsker || viewer.kind !== 'member' || viewer.id !== item.to || item.toKind !== 'person' ||
@@ -174,19 +175,30 @@ export class InboxQueries {
     const before=readInboxSet(this.db,ids,this.allowed(viewer));
     const service=new InboxQueries(this.db,this.key,this.policy,this.now,this.volumeAllowed);
     service.readSet=before;
-    const deadlines:number[]=[];
-    const result=await service.searchInSet(viewer,filter,at=>deadlines.push(at),candidates);
+    const query=filter.search.trim().toLocaleLowerCase();
+    const matches=await service.searchInSet(viewer,query,candidates);
     const after=readInboxSet(this.db,ids,this.allowed(viewer));
-    if(before.fingerprint!==after.fingerprint||deadlines.some(at=>at<=Date.parse(this.now())))return [];
-    for(const at of deadlines)retainedUntil?.(at);
-    return result;
+    if(before.fingerprint!==after.fingerprint)return [];
+    // Resolve presentation names after decryption. Only an actual approval request
+    // displays its proposal title; an ordinary question can cite the same card.
+    const approvalId=(item:Item)=>item.source==='approval'&&item.waitsOnKind==='approval'?item.waitsOnId:null;
+    const cards=new Set(candidates.map(approvalId).filter((id): id is string=>!!id));
+    const titles=this.proposalTitles?.(viewer,[...cards]);
+    const now=Date.parse(this.now());
+    const visible=candidates.filter(item=>{
+      const id=approvalId(item);
+      if(id&&titles?.get(id)?.toLocaleLowerCase().includes(query))matches.set(item.id,Infinity);
+      return (matches.get(item.id)??-Infinity)>now;
+    });
+    const offset=filter.offset??0;
+    const page=visible.slice(offset,offset+(filter.limit??50));
+    for(const item of page){
+      const until=matches.get(item.id)!;
+      if(Number.isFinite(until))retainedUntil?.(until);
+    }
+    return page;
   }
-  private async searchInSet(viewer: Viewer, filter: InboxFilter, retainedUntil: (at: number) => void, candidates:Item[]): Promise<Item[]> {
-    const query = filter.search?.trim().toLocaleLowerCase() ?? '';
-    // Validate the same page bounds even for an empty or unauthorized mailbox.
-    if (!query) return this.list(viewer, filter);
-    this.list(viewer, filter);
-    if (viewer.kind !== 'member' && viewer.kind !== 'agent') return [];
+  private async searchInSet(viewer: Viewer, query:string, candidates:Item[]): Promise<Map<string,number>> {
     const privateState = (item: Item, fromAnswer = false) => {
       const answer = fromAnswer ? this.answerState(viewer, item) : undefined;
       const message = fromAnswer ? answer?.message : this.readSet?this.readSet.message(item):item.thread ? this.db.select().from(messages).where(and(eq(messages.thread, item.thread),
@@ -224,7 +236,7 @@ export class InboxQueries {
     });
     // One item may match both its question and its independently retained
     // answer. Keep the longest still-valid witness, once, before paging.
-    const unique = new Map<string, typeof current[number]>();
+    const deadlines = new Map<string,number>();
     const deadline = (match: typeof current[number]) => {
       if(match.metadata)return Infinity;
       if(match.state?.standalone)return privateInboxDeadline(match.state.standalone,match.state.keep);
@@ -232,14 +244,10 @@ export class InboxQueries {
       return Infinity;
     };
     for (const match of current) {
-      const prior = unique.get(match.item.id);
-      if (!prior || deadline(match) > deadline(prior)) unique.set(match.item.id, match);
+      const until=deadline(match);
+      if(until>(deadlines.get(match.item.id)??-Infinity))deadlines.set(match.item.id,until);
     }
-    const page = [...unique.values()].slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 50));
-    for (const match of page) if (!match.metadata && match.state) {
-      const until=deadline(match);if(Number.isFinite(until))retainedUntil?.(until);
-    }
-    return page.map(({ item }) => item);
+    return deadlines;
   }
   results(viewer: Viewer, limit = 20): (typeof actionResults.$inferSelect)[] {
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error('Invalid action result limit');
