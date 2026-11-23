@@ -165,7 +165,11 @@
     {
       "id": "bridges-016",
       "promise": "b An agent's owners. An agent's owners see their agent's connections.",
-      "source": "docs/how-it-works/site/bridges.html#see-h"
+      "source": "docs/how-it-works/site/bridges.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "deskPanelVisibility"
+      }
     },
     {
       "id": "bridges-017",

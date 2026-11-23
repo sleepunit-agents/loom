@@ -91,6 +91,9 @@ async function inspectPanels(browser,app,member,out){
    const [owner,peer,ownerAbsent=[],peerAbsent=[]]=panels[title],positive=member==='alex'?owner:peer;
    if(title==='Tasks')await tile.getByRole('button',{name:/^All open/}).click();
    await tile.getByText(positive,{exact:false}).first().waitFor();
+   if(title==='Bridges'&&member==='alex'){
+    await tile.getByText('moss sample workspace',{exact:false}).first().waitFor();
+   }
    if(title==='Appearance'){
     const selected=tile.getByRole('radiogroup',{name:'Desk background'}).getByRole('radio',{checked:true});
     assert.equal(await selected.innerText(),member==='alex'?'Depth':'Contours');
