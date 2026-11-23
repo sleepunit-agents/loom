@@ -9,13 +9,14 @@ import { operation, OperationError, type Operations } from './core/operations/in
 import { mayRunPrivateWork, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 
-const inputSchema = z.object({
-  harness: z.string().min(1).max(200), sessionId: z.string().min(1).max(200), post: agentPostEdit,
+const sessionSchema = z.object({
+  harness: z.string().min(1).max(200), sessionId: z.string().min(1).max(200),
 }).strict();
+const inputSchema = sessionSchema.extend({ binding: z.string().min(1), post: agentPostEdit }).strict();
 
 export function registerTerminalActivity(operations: Operations, db: DataDatabase, key: WordsKey,
   machine: (viewer: Viewer) => TerminalScope | undefined, now: () => string) {
-  const source = (viewer: Viewer, input: z.infer<typeof inputSchema>) => {
+  const source = (viewer: Viewer, input: z.infer<typeof sessionSchema>) => {
     const scope = machine(viewer);
     if (!scope) return;
     const cutoff = new Date(Date.parse(now()) - terminalSilenceMs).toISOString();
@@ -29,12 +30,23 @@ export function registerTerminalActivity(operations: Operations, db: DataDatabas
         eq(jobs.state,'running'),gt(jobs.heardAt,cutoff),eq(jobs.startedByKind,'terminal'),eq(jobs.box,scope.machine),
         eq(jobs.conversation,conversations.id),eq(jobs.member,scope.member),eq(jobs.agent,scope.agent),eq(jobs.harness,input.harness),
         eq(conversations.place,threads.id),eq(conversations.venue,'terminal'),eq(conversations.member,scope.member),eq(conversations.agent,scope.agent))).get();
-    if (row && row.project === row.jobProject && mayRunPrivateWork({...scope,project:row.project ?? undefined},sharedSharing(db))) return row;
+    if (row?.instance && row.project === row.jobProject && mayRunPrivateWork({...scope,project:row.project ?? undefined},sharedSharing(db))) return row;
   };
+  const binding = (row: NonNullable<ReturnType<typeof source>>) =>
+    key.hash(JSON.stringify(['terminal activity session',row.job,row.thread,row.instance,row.project]));
+  operations.register(operation({
+    name:'terminal.activityContext', write:false, doors:['http'],input:sessionSchema,
+    output:z.object({binding:z.string()}).strict(), may:(viewer,input)=>!!source(viewer,input),
+    run(ctx,input) {
+      const row=source(ctx.viewer,input);
+      if (!row) throw new OperationError('denied','Current terminal session required');
+      return {binding:binding(row)};
+    },
+  }));
   operations.register(operation({
     name:'terminal.activityPost', write:true, doors:['http'], input:inputSchema,
     output:z.object({thread:z.string()}).strict(),
-    may:(viewer,input)=>!!source(viewer,input),
+    may:(viewer,input)=>{const row=source(viewer,input);return !!row && binding(row)===input.binding;},
     inputHash:(canonical,{actor,input})=>key.hash(JSON.stringify(['terminal.activityPost',source(actor,input),canonical])),
     async prepare(input,{viewer}) {
       const before=source(viewer,input);

@@ -45,8 +45,9 @@ export async function prepareAgentPost(db: DataDatabase, key: WordsKey, source: 
       db.insert(agentPostThreads).values({ id, source, title: sealedTitle! }).run();
     } else {
       const original = db.select({ source: agentPostThreads.source }).from(agentPostThreads).where(eq(agentPostThreads.id,id)).get();
-      const here = audience(source), there = original && audience(original.source);
-      if (!here?.member || !there || here.agent !== there.agent || here.member !== there.member || here.project !== there.project)
+      const writingAudience = audience(source), openingAudience = original && audience(original.source);
+      if (!writingAudience?.member || !openingAudience || writingAudience.agent !== openingAudience.agent ||
+          writingAudience.member !== openingAudience.member || writingAudience.project !== openingAudience.project)
         throw new Error('Activity thread unavailable');
     }
     if (edit.action === 'rename') {

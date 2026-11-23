@@ -37,7 +37,10 @@ The tools are:
   access.
 
 An observed terminal can post to its agent card through `loom_command` using the
-same harness and native session ID its terminal hook registered. For example:
+same harness and native session ID its terminal hook registered. At session start,
+call `terminal.activityContext` with those two fields and keep `value.binding`
+for this terminal instance. A post carries that binding on its first call and on
+retry. For example:
 
 ```json
 {
@@ -46,6 +49,7 @@ same harness and native session ID its terminal hook registered. For example:
   "input": {
     "harness": "codex",
     "sessionId": "<current native session ID>",
+    "binding": "<binding from this instance>",
     "post": {"action": "open", "words": "Giving boot a scrolling console."}
   }
 }

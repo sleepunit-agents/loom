@@ -55,15 +55,19 @@ it('posts from the selected standalone terminal when two sessions are open on th
   };
   const sessions=[{harness:'claude',sessionId:'first'},{harness:'codex',sessionId:'second'}];
   const sources=[];
+  const bindings:string[]=[];
   for (const session of sessions) {
     const result=await command('terminal.session','open-'+session.sessionId,{
-      action:'open',machine:'box',...session,model:null,cwd:'/work',
+      action:'open',machine:'box',...session,instanceId:'process-'+session.sessionId,model:null,cwd:'/work',
     });
     expect(result.ok).toBe(true);
     sources.push(result.value.thread);
+    const context=await command('terminal.activityContext','context-'+session.sessionId,session);
+    expect(context.ok).toBe(true);
+    bindings.push(context.value.binding);
   }
   const post = (i:number, id:string, edit:unknown) =>
-    command('terminal.activityPost',id,{...sessions[i],post:edit});
+    command('terminal.activityPost',id,{...sessions[i],binding:bindings[i],post:edit});
   const first={action:'open',words:'Checking the disk.'};
   const opened=await post(1,'disk',first);
   expect(opened).toMatchObject({ok:true,value:{thread:expect.any(String)}});
@@ -73,7 +77,34 @@ it('posts from the selected standalone terminal when two sessions are open on th
   const response=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',
     cookie:'loom_ui='+bodyCredentials.memberCookie},body:JSON.stringify({query:'{agentActivityFeed(agent:"art"){latest{words source} parent{words}}}'})});
   expect(await response.json()).toEqual({data:{agentActivityFeed:[{latest:{words:reply.words,source:sources[1]},parent:{words:first.words}}]}});
-  await command('terminal.session','finished',{action:'end',machine:'box',...sessions[1]});
+  await command('terminal.session','finished',{action:'end',machine:'box',...sessions[1],instanceId:'process-second'});
+  expect((await post(1,'late',reply)).ok).toBe(false);
+  await command('terminal.session','next-process',{action:'open',machine:'box',...sessions[1],instanceId:'next',model:null,cwd:'/work'});
+  const next=await command('terminal.activityContext','next-context',sessions[1]);
+  expect(next.ok).toBe(true);
+  expect(next.value.binding).not.toBe(bindings[1]);
   expect((await post(1,'late',reply)).ok).toBe(false);
   expect(f.db.select().from(agentPosts).all()).toHaveLength(2);
+});
+
+it('withholds a card post when the job is working for another asker',async()=>{
+  const f=await bodyFixture(clean), at=new Date(f.clock.now()).toISOString();
+  f.db.insert(inbox).values({id:'mail',toKind:'agent',to:'art',conversation:f.thread.conversation,source:'thread',
+    fromKind:'person',fromId:'bob',at,changedAt:at,state:'taken',takenAt:at,job:'job'}).run();
+  expect((await f.call('activityPost',{action:'open',words:'Checking the disk.'},'disk')).status).toBe(403);
+  expect(f.db.select().from(agentPosts).all()).toEqual([]);
+});
+
+it('drops the prepared update when its job finishes before the post commits',async()=>{
+  const f=await bodyFixture(clean), { jobs }=await import('./core/data/schema.js');
+  let began!:()=>void, release!:()=>void;
+  const started=new Promise<void>(resolve=>{began=resolve;});
+  const resume=new Promise<void>(resolve=>{release=resolve;});
+  f.gate(async()=>{began();await resume;});
+  const pending=f.call('activityPost',{action:'open',words:'Checking the disk.'},'disk');
+  await started;
+  f.root.writes.run(()=>f.db.update(jobs).set({state:'done'}).run());
+  release();
+  expect([401,403]).toContain((await pending).status);
+  expect(f.db.select().from(agentPosts).all()).toEqual([]);
 });
