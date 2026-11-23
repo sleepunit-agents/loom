@@ -77,16 +77,21 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if n.tag=='p' and any(n.within(c) for c in ('stages','hub','out','inbox-flow')):add(n.text(),'')
  if f.stem=='conversations':
   for row in rows:
+   if row['promise'].startswith('Each thing said or done is a turn:'):row['probe']={'kind':'action','action':'conversationTurns'}
    if row['promise'].startswith('A job works in one conversation, and a conversation points at the job working in it now.'):row['probe']={'kind':'action','action':'nativeProtocol'}
    if row['promise'].startswith('A private chat in Comms between one person and one agent.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['conversationPrivatePair','commsSend','commsPrivacy']]}
+   if row['promise']=='A channel or a direct message. A bot signed in to the server speaks for the agent.':row['probe']={'kind':'action','action':'discordConversations'}
+   if row['promise']=='The same, in a Slack workspace.':row['probe']={'kind':'action','action':'slackConversations'}
    if row['promise'].startswith('Each incoming message goes into one conversation.'):row['probe']={'kind':'action','action':'bridgeMail'}
    if row['promise'].startswith('d Checked at the door.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':name} for name in ['conversationCallers','conversationVisibility']]}
    if row['promise'].startswith('A request for a secret records the conversation'):row['probe']={'kind':'action','action':'conversationSecretSource'}
+   if row['promise'].startswith('An inbox item links to the conversation it came from.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':name} for name in ['privateConversationQuestion','inboxDiscussion','conversationDigest']]}
    if row['promise'].startswith('A task names the conversation it came from.'):row['probe']={'kind':'action','action':'conversationTaskSource'}
    if row['promise'].startswith('An approval records the conversation it was asked in.'):row['probe']={'kind':'action','action':'conversationApprovalSource'}
    if row['promise'].startswith(('A conversation is one agent talking in one place.', 'One table Every conversation', 'One per place An agent')):row['probe']={'kind':'action','action':'conversationRecords'}
    if row['promise'].startswith('A thread keeps the pull requests it mentions'):row['probe']={'kind':'action','action':'conversationChangeCard'}
    if row['promise'].startswith('When an agent finishes a stretch of work'):row['probe']={'kind':'action','action':'conversationDigest'}
+   if row['promise'].startswith('A session leaves a short note'):row['probe']={'kind':'action','action':'sessionEpisode'}
    if row['promise'].startswith('One job at a time'):row['probe']={'kind':'action','action':'conversationSingleJob'}
    if row['promise'].startswith('A trigger drops an item into the conversation'):row['probe']={'kind':'action','action':'scheduledWorker'}
    if row['promise'].startswith('A trigger from Tempo drops an item'):row['probe']={'kind':'action','action':'conversationTempoDelivery'}

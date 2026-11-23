@@ -20,6 +20,7 @@ import {secretDefaultAction,verifySecretDefaultAfterReload} from './rebuild-secr
 import {workVisibility} from './rebuild-work-visibility.mjs';
 import {changeActions,changeInline} from './rebuild-change-actions.mjs';
 import {bridgeReceipts} from './rebuild-bridge-receipts.mjs';
+import {providerConversations} from './rebuild-provider-conversations.mjs';
 import {bridgeMail} from './rebuild-bridge-mail.mjs';
 import {bridgeSettingsAction} from './rebuild-bridge-actions.mjs';
 import {taskStructure} from './rebuild-task-structure.mjs';
@@ -37,6 +38,7 @@ import {homeActions} from './rebuild-home-actions.mjs';
 import {mkdirSync,writeFileSync,mkdtempSync,rmSync,readdirSync} from 'node:fs';
 import {approvalInbox} from './rebuild-approval-inbox.mjs';
 import {conversationCallers} from './rebuild-conversation-callers.mjs';
+import {inboxDiscussion} from './rebuild-inbox-discussion.mjs';
 import {inboxCallers} from './rebuild-inbox-callers.mjs';
 import {inboxDocumentation,inboxVolume} from './rebuild-inbox-volume.mjs';
 import {scheduledInbox} from './rebuild-scheduled-inbox.mjs';
@@ -307,7 +309,9 @@ export async function* walkthroughSteps(output) {
   try {
    const script=fileURLToPath(new URL('./rebuild-memory-temperature.mjs',import.meta.url));
    const {stdout}=await promisify(execFile)(process.execPath,[script],{timeout:30_000});
-   report.actions.memoryTemperature=JSON.parse(stdout);
+   const {sessionEpisode,...temperature}=JSON.parse(stdout);
+   report.actions.memoryTemperature=temperature;
+   report.actions.sessionEpisode=sessionEpisode;
   } catch(error) { report.actions.memoryTemperature={ok:false,error:String(error)}; }
   save();yield {phase:'memory-temperature',actions:safeReport(report.actions)};
   phase='knowledge due delivery';
@@ -372,6 +376,9 @@ export async function* walkthroughSteps(output) {
   report.actions.inboxDocumentation=await inboxDocumentation(browser);
   report.actions.inboxVolume=await inboxVolume({browser,home:join(parent,'volume-home'),out});
   save();yield {phase:'inbox-volume',actions:safeReport(report.actions)};
+  try {report.actions.inboxDiscussion=await inboxDiscussion({browser,home:join(parent,'discussion-home'),out});}
+  catch(error){report.actions.inboxDiscussion={ok:false,error:String(error)};}
+  save();yield {phase:'inbox-discussion',actions:safeReport(report.actions)};
   report.actions.homeJobs=await homeJobs({page,tile:await openApp('Home'),app,example:report.example,out});
   save();yield {phase:'home-jobs',actions:safeReport(report.actions)};
   phase='native worker and reply';
@@ -381,6 +388,10 @@ export async function* walkthroughSteps(output) {
   catch(error){report.actions.scheduledWorker={ok:false,error:String(error)};}
   save();yield {phase:'scheduled-worker',actions:safeReport(report.actions)};
   phase='bridge delivery';
+  for(const [platform,action] of [['discord','discordConversations'],['slack','slackConversations']]) {
+    try {report.actions[action]=await providerConversations(platform);}
+    catch(error){report.actions[action]={ok:false,error:String(error)};}
+  }
   try {report.actions.bridgeMail=await bridgeMail({app,clock});}
   catch(error){report.actions.bridgeMail={ok:false,error:String(error)};}
   try {report.actions.bridgeReceipts=await bridgeReceipts({app,clock,page,open:openApp});}

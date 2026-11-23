@@ -141,6 +141,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  });
  it('observes category cooling, archive expiry and lesson confidence across restarts',{retry:0,timeout:40_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('memory-temperature');
+  expect(step.value.actions.sessionEpisode).toMatchObject({ok:true,day:'2027-01-01'});
   expect(step.value.actions.memoryTemperature).toMatchObject({ok:true,episodeDay:0.5,personDay90:0.5,expiryAtDeadline:true,confidenceObservations:3});
  });
  it('delivers due Knowledge checks to the configured agents on the household clock',{retry:0},async()=>{
@@ -204,6 +205,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  });
  it('delivers private source replies, a native handoff and a wake through the one Inbox',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('conversation-mail');
+  expect(step.value.actions.conversationTurns,JSON.stringify(step.value.actions.conversationTurns)).toMatchObject({ok:true});
   expect(step.value.actions.conversationSingleJob).toMatchObject({ok:true,deliveries:3});
   expect(step.value.actions.conversationTempoDelivery).toMatchObject({ok:true,recipient:'moss'});
   for(const name of ['privateConversationBatch','nativeHandoff','conversationInboxIngress'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true,currentJobFixtures:true,providerStarted:false});
@@ -221,6 +223,11 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  it('follows the Inbox documentation links and exercises recipient volume through restarts',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('inbox-volume');
   for(const name of ['inboxDocumentation','inboxVolume'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
+ });
+ it('opens a standalone FYI in Comms, reopens it and sends a question with the notice in context',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('inbox-discussion');
+  const action=step.value.actions.inboxDiscussion;
+  expect(action,JSON.stringify(action)).toMatchObject({ok:true,item:expect.any(String),thread:expect.any(String),conversation:expect.any(String)});
  });
  it('updates each Home card independently as terminal jobs start and end',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('home-jobs');
@@ -241,6 +248,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  it('delivers Discord and Slack messages into the receiving agent Inbox',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('bridge-mail');
   expect(step.value.actions.bridgeReceipts,JSON.stringify(step.value.actions.bridgeReceipts)).toMatchObject({ok:true});
+  for(const platform of ['discordConversations','slackConversations'])expect(step.value.actions[platform],JSON.stringify(step.value.actions[platform])).toMatchObject({ok:true});
   expect(step.value.actions.bridgeMail,JSON.stringify(step.value.actions.bridgeMail)).toMatchObject({ok:true});
  });
  it('applies Inbox access to the actual HTTP caller',{retry:0},async()=>{
