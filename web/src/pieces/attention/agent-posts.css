@@ -20,11 +20,9 @@
   gap: .4rem;
   min-width: 0;
 }
-.desk-agent-post-heading strong, .desk-agent-post-parent,
-.desk-agent-posts[data-compact] .desk-agent-post-words {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+.desk-agent-post-heading strong, .desk-agent-post-parent {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .desk-agent-post-heading time, .desk-agent-history time {
   flex: none;
