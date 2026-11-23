@@ -7,12 +7,38 @@
     {
       "id": "bridges-001",
       "promise": "How agents talk to people in other apps. A connection is one bot signed in to one Discord server or Slack workspace, speaking for one agent.",
-      "source": "docs/how-it-works/site/bridges.html"
+      "source": "docs/how-it-works/site/bridges.html",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "discordConversations"
+          },
+          {
+            "kind": "action",
+            "action": "slackConversations"
+          }
+        ]
+      }
     },
     {
       "id": "bridges-002",
       "promise": "Connects a bot to a server or workspace for one agent.",
-      "source": "docs/how-it-works/site/bridges.html"
+      "source": "docs/how-it-works/site/bridges.html",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "discordConversations"
+          },
+          {
+            "kind": "action",
+            "action": "slackConversations"
+          }
+        ]
+      }
     },
     {
       "id": "bridges-003",
@@ -108,7 +134,24 @@
     {
       "id": "bridges-014",
       "promise": "A connection is one bot signed in to one Discord server or Slack workspace, speaking for one agent. Attachments fetched from Slack are kept for 14 days.",
-      "source": "docs/how-it-works/site/bridges.html#how-h"
+      "source": "docs/how-it-works/site/bridges.html#how-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "discordConversations"
+          },
+          {
+            "kind": "action",
+            "action": "slackConversations"
+          },
+          {
+            "kind": "action",
+            "action": "slackFileRetention"
+          }
+        ]
+      }
     },
     {
       "id": "bridges-015",

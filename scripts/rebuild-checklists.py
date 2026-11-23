@@ -121,6 +121,12 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith(("A pending approval is an item in a person's Inbox", 'A pending approval arrives as an item')):row['probe']={'kind':'action','action':'approvalInbox'}
  if f.stem=='bridges':
   for row in rows:
+   if row['promise'] in ('How agents talk to people in other apps. A connection is one bot signed in to one Discord server or Slack workspace, speaking for one agent.',
+                          'Connects a bot to a server or workspace for one agent.',
+                          'A connection is one bot signed in to one Discord server or Slack workspace, speaking for one agent. Attachments fetched from Slack are kept for 14 days.'):
+    actions=['discordConversations','slackConversations']
+    if row['promise'].endswith('Attachments fetched from Slack are kept for 14 days.'):actions.append('slackFileRetention')
+    row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in actions]}
    if row['promise']=='Records whether each reply arrived, and says so when it cannot tell.':row['probe']={'kind':'action','action':'bridgeReceipts'}
    if row['promise'] in ('It arrives in the inbox with discord or slack as its source.', 'Decides which agent answers in a channel when nobody is addressed.',
      'The message goes into one conversation: the agent in that channel.',
