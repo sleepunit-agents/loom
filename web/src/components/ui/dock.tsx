@@ -232,7 +232,8 @@ export function Dock({
     const seen = target.matches(":focus-visible");
     setFocusIndex(seen ? index : null);
     setScales(focusScales(seen ? index : pointerIndex));
-    if (!pointerPress.current)
+    // Touch focus can arrive after pointerup. Centering then moves the button before its click.
+    if (seen && !pointerPress.current)
       target.scrollIntoView({
         block: "nearest",
         inline: variant === "rail" ? "nearest" : "center",
