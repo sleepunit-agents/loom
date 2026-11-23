@@ -168,7 +168,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  });
  it('keeps and expires notes by path and lifespan across restarts',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('note-lifetimes');
-  expect(step.value.actions.noteLifetimes,JSON.stringify(step.value.actions.noteLifetimes)).toMatchObject({ok:true,after60Days:['keep']});
+  expect(step.value.actions.noteLifetimes,JSON.stringify(step.value.actions.noteLifetimes)).toMatchObject({ok:true,editedNoteExpiredAfterRenewal:true,onlyFactRecalled:true,after60Days:['keep']});
  });
  it('restores every retained version of memories, person cards and Knowledge pages',{retry:0,timeout:120_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('memory-revisions');
