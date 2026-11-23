@@ -16,7 +16,8 @@ import {bodyInput} from '../dist/runtime/body-bootstrap.js';
 import {exampleHome} from '../dist/example-home.js';
 import {startSharedHome} from '../dist/shared-startup.js';
 import {FakeClock} from '../dist/core/clock.js';
-const nativeCallPaths=new Map([['digest','/api/conversation/digest'],['turn','/api/conversation/turn'],['status','/api/conversation/status'],['tasks.command','/api/tasks/command']]);
+import {requestSourceObserver} from './rebuild-request-source.mjs';
+const nativeCallPaths=new Map([['digest','/api/conversation/digest'],['turn','/api/conversation/turn'],['status','/api/conversation/status'],['tasks.command','/api/tasks/command'],['secrets.request','/api/secrets/request']]);
 export async function nativeProtocolSmoke({app,example,clock,home,signal,native,targets}){
  if(!example.fictional||!example.runtime)throw Error('Native protocol requires the new fictional household');
  const supplied=targets===undefined?[{id:example.runtime.job.id,words:'Check the shed hinges before the example rain.'},{id:example.runtime.publicJob.id,words:'Inspect the shared garden path'}]:targets;
@@ -120,7 +121,10 @@ export async function nativeProtocolAction(context){
  const items=[{kind:'decision',text:'Use the blue tray'},{kind:'project',text:'garden'},{kind:'task',text:example.tasks[0]}];
  const question={to:'alex',answers:'yes-no',words:'Should Moss label the fictional seed tray?',ifYes:'Moss labels the tray.',ifNo:'Moss leaves it blank.'};
  let questionId;
+ const requests=requestSourceObserver(context);
  const native=async({job,call})=>{
+  try {await requests.observe(job,call);}
+  catch(error){actions.conversationSecretSource={ok:false,error:String(error)};}
   if(job.id===example.runtime.publicJob.id){
    const result=await call('digest',{summary,items,question});questionId=result.item;
   }
@@ -128,7 +132,7 @@ export async function nativeProtocolAction(context){
  };
  // Measure background work without every retained desk subscription competing
  // with the actual worker HTTP requests. The browser rejoins for reply proof.
- try{await page.goto('about:blank');actions.nativeProtocol={ok:true,...await nativeProtocolSmoke({...context,native})};}
+ try{await page.goto('about:blank');actions.nativeProtocol={ok:true,...await nativeProtocolSmoke({...context,native})};actions.conversationSecretSource??=requests.result();}
  catch{actions.nativeProtocol={ok:false,error:'The fictional native protocol could not complete or restore its temporary authority.'};}
  const screenshot='action-nativeReply.png';
  try{

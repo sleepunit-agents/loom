@@ -175,7 +175,11 @@
     {
       "id": "conversations-020",
       "promise": "A request for a secret records the conversation it was asked in.secret_requests.conversation",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "conversationSecretSource"
+      }
     },
     {
       "id": "conversations-021",

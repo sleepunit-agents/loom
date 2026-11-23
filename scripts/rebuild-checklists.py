@@ -80,6 +80,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('A job works in one conversation, and a conversation points at the job working in it now.'):row['probe']={'kind':'action','action':'nativeProtocol'}
    if row['promise'].startswith('A private chat in Comms between one person and one agent.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['conversationPrivatePair','commsSend','commsPrivacy']]}
    if row['promise'].startswith('Each incoming message goes into one conversation.'):row['probe']={'kind':'action','action':'bridgeMail'}
+   if row['promise'].startswith('A request for a secret records the conversation'):row['probe']={'kind':'action','action':'conversationSecretSource'}
    if row['promise'].startswith('A task names the conversation it came from.'):row['probe']={'kind':'action','action':'conversationTaskSource'}
    if row['promise'].startswith('An approval records the conversation it was asked in.'):row['probe']={'kind':'action','action':'conversationApprovalSource'}
    if row['promise'].startswith(('A conversation is one agent talking in one place.', 'One table Every conversation', 'One per place An agent')):row['probe']={'kind':'action','action':'conversationRecords'}
