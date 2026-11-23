@@ -113,6 +113,8 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   add('A question answered in Inbox becomes answered inline in Comms.','',{'kind':'action','action':'commsAnswer'})
  if f.stem=='secrets':
   evidence={
+   'A request records the conversation it was asked in.':'conversationSecretSource',
+   'Work can wait on the request with a trigger that fires when it is answered.':'inboxSecretRequest',
    "Credentials agents need, and who may use each one. A secret is a named credential, such as a GitHub token.":'secretValues',
    "A pending request waits in a person's Inbox.":'inboxSecretRequest',
    "A connection's bot token is one of the stored secrets.":'bridgeSettings',

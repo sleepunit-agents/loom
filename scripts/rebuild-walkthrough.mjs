@@ -400,7 +400,7 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'approval-source',actions:safeReport(report.actions)};
   Object.assign(report.actions,await inboxTaskSource({page,tile:await openApp('Inbox'),app,example:report.example,out,approval:report.actions.approvalInbox,open:openApp}));
   save();yield {phase:'task-source',actions:safeReport(report.actions)};
-  report.actions.inboxSecretRequest=await inboxSecretRequest({page,tile:await openApp('Inbox'),app,out});
+  report.actions.inboxSecretRequest=await inboxSecretRequest({page,tile:await openApp('Inbox'),app,out,clock});
   save();yield {phase:'secret-source',actions:safeReport(report.actions)};
   for await(const step of conversationMailSteps({page,app,clock,example:report.example,out,open:openApp})){Object.assign(report.actions,step.actions);save();yield {phase:step.phase,actions:safeReport(report.actions)};}
   report.actions.scheduledInbox=await scheduledInbox({browser,home:join(parent,'scheduled-home'),out});
