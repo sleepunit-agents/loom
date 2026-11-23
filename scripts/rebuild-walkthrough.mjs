@@ -36,6 +36,7 @@ import {homeJobs} from './rebuild-home-jobs.mjs';
 import {homeActions} from './rebuild-home-actions.mjs';
 import {mkdirSync,writeFileSync,mkdtempSync,rmSync,readdirSync} from 'node:fs';
 import {approvalInbox} from './rebuild-approval-inbox.mjs';
+import {inboxCallers} from './rebuild-inbox-callers.mjs';
 import {inboxDocumentation,inboxVolume} from './rebuild-inbox-volume.mjs';
 import {scheduledInbox} from './rebuild-scheduled-inbox.mjs';
 import {inboxSecretRequest} from './rebuild-inbox-secret.mjs';
@@ -381,6 +382,8 @@ export async function* walkthroughSteps(output) {
   try {report.actions.bridgeReceipts=await bridgeReceipts({app,clock,page,open:openApp});}
   catch(error){report.actions.bridgeReceipts={ok:false,error:String(error)};}
   save();yield {phase:'bridge-mail',actions:safeReport(report.actions)};
+  report.actions.inboxCallers=await inboxCallers({app,example:report.example});
+  save();yield {phase:'inbox-callers',actions:safeReport(report.actions)};
 
 
  }catch(error){report.fatal=String(error);}

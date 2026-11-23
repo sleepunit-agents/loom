@@ -238,6 +238,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   expect(step.value.actions.bridgeReceipts,JSON.stringify(step.value.actions.bridgeReceipts)).toMatchObject({ok:true});
   expect(step.value.actions.bridgeMail,JSON.stringify(step.value.actions.bridgeMail)).toMatchObject({ok:true});
  });
+ it('applies Inbox access to the actual HTTP caller',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('inbox-callers');
+  expect(step.value.actions.inboxCallers,JSON.stringify(step.value.actions.inboxCallers)).toMatchObject({ok:true});
+ });
  afterAll(async()=>{
   try{
    if(!ready)return;
