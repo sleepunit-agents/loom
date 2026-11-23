@@ -135,6 +135,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('semantic-recall');
   expect(step.value.actions.semanticRecall,JSON.stringify(step.value.actions.semanticRecall)).toMatchObject({ok:true,paraphrases:3});
  });
+ it('observes category cooling, archive expiry and lesson confidence across restarts',{retry:0,timeout:40_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('memory-temperature');
+  expect(step.value.actions.memoryTemperature).toMatchObject({ok:true,episodeDay:0.5,personDay90:0.5,expiryAtDeadline:true,confidenceObservations:3});
+ });
  it('delivers due Knowledge checks to the configured agents on the household clock',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('knowledge-due');
   expect(step.value.actions.knowledgeDue,JSON.stringify(step.value.actions.knowledgeDue)).toMatchObject({ok:true,days:30});
