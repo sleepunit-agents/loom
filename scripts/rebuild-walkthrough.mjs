@@ -342,6 +342,10 @@ export async function* walkthroughSteps(output) {
   } catch(error) {
    for(const name of ['namedNotes','namedKnowledge','sharedKnowledgeAudience'])report.actions[name]={ok:false,error:String(error)};
   }
+  try {
+   const {sharedHouseholdFiles}=await import('./rebuild-shared-household-files.mjs');
+   report.actions.sharedHouseholdFiles=await sharedHouseholdFiles();
+  } catch(error) { report.actions.sharedHouseholdFiles={ok:false,error:String(error)}; }
   save();yield {phase:'named-agent-tools',actions:safeReport(report.actions)};
   phase='note lifetimes';
   try {
