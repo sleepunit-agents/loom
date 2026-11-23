@@ -206,7 +206,7 @@ it('opens the latest activity by its stable thread ID from the mounted rail', as
   await act(async()=>{tree=create(h(Rail,{go}));});
   const card=tree.root.findByProps({'aria-label':'Art rail card'});
   const post=card.findByProps({'aria-label':'Activity threads'});
-  expect(words(post)).toContain('Console under LOOM//OS.');
+  expect(words(post)).toContain('Renamed boot thread');
   expect(words(post)).toContain('It scrolls!');
   await act(async()=>post.findByType('button').props.onClick());
   expect(go).toHaveBeenLastCalledWith('/p/agents-preview/agent/art?activity=activity%3Aboot');

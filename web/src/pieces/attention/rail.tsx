@@ -4,7 +4,7 @@ import { useDeskAgentDisplays } from './agent-displays';
 import { useDeskAgentDirectory } from './agent-directory';
 import { useHomeComms, threadPath } from './home-comms-data';
 import { useDeskAgentStatuses } from './agent-status';
-import { Doing, WithDoing } from './doing';
+import { Doing, doingPhrase, WithDoing } from './doing';
 import { useDeskRoster } from './roster';
 import { useCallback, useContext, useLayoutEffect, useRef, useState } from 'react';
 import AgentFace, { faceState } from './agent-face';
@@ -69,6 +69,7 @@ export default function AgentRail({ go }: { go(path: string): void }) {
       const path=thread?threadPath(thread.thread):'/p/comms-preview';
       return <WithDoing key={agent.id} agent={agent.id} onChange={jobsChanged}>{doing=>{
         const state=shownState(status?.state,doing.items.length);
+        const terminal = doing.items.find(item=>item.kind==='terminal');
         const word=agentStateLine(state,doing.items.length,needs);
         if(fold&&agent.id!==opened)return <section className="desk-rail-compact" data-agent={agent.id} aria-label={`${agent.name} rail card`}>
           <Row aria-label={`Open ${agent.name} conversation`} onClick={()=>go(path)} title={agent.name}
@@ -82,10 +83,10 @@ export default function AgentRail({ go }: { go(path: string): void }) {
           {agent.id===companion?.id&&<p className="desk-rail-kicker desk-rail-with">With {agent.name} in Comms</p>}
           {agent.id===companion?.id&&rail?.shown&&rail.setScreen?<CompanionSlot agent={agent.id}/>:<button className="desk-rail-agent" aria-label={`Open ${agent.name} conversation`} onClick={()=>go(path)}>
             <AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(state,ask)} size={40} />
-            <span><strong>{agent.name}</strong><span className="desk-rail-state">{word}</span></span>
+            <span><strong>{agent.name}</strong><span className="desk-rail-state">{word}</span>{terminal && <small className="desk-rail-location">{doingPhrase(terminal)}</small>}</span>
           </button>}
           <LiveAgentFeed agent={agent.id} compact go={go} onChange={waitingChanged}/>
-          <Doing doing={doing} name={agent.name} names={names} go={go} compact />
+          {(!terminal || doing.items.length > 1) && <Doing doing={terminal ? {...doing, items: doing.items.filter(item=>item!==terminal)} : doing} name={agent.name} names={names} go={go} compact />}
           <button className="desk-rail-thread" onClick={()=>go(path)}>{threadStatus!=='live'?'Conversations unavailable':unread?`${unread} unread ${unread===1?'thread':'threads'}`:thread?(summary?.last?.title||'Recent conversation'):'Start a conversation'}<span aria-hidden="true"> ↗</span></button>
         </section>;
       }}</WithDoing>;

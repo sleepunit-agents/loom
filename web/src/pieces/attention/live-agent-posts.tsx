@@ -23,8 +23,8 @@ function usePostClock(active: boolean) {
   return now;
 }
 
-export function LiveAgentFeed({ agent, compact = false, go, onChange }: {
-  agent: string; compact?: boolean; go(path: string): void; onChange?(): void;
+export function LiveAgentFeed({ agent, compact = false, go, onChange, showEmpty = false }: {
+  agent: string; compact?: boolean; go(path: string): void; onChange?(): void; showEmpty?: boolean;
 }) {
   const query = useDataQuery<{agentActivityFeed: AgentPostPreview[]}>(agentFeedQuery, {agent,limit:compact?1:5,compact});
   const threads = query.status === 'live' ? query.data?.agentActivityFeed : undefined;
@@ -35,7 +35,11 @@ export function LiveAgentFeed({ agent, compact = false, go, onChange }: {
     previous.current = latest;
   }, [latest, onChange]);
   const now = usePostClock(!!threads?.length);
-  if (!threads?.length) return null;
+  if (!threads?.length) {
+    if (!showEmpty) return null;
+    if (query.status === 'loading') return <Loading label="Opening activity…"/>;
+    return <Body quiet>{threads ? 'No updates yet.' : 'Activity unavailable.'}</Body>;
+  }
   return <AgentPostFeed threads={threads} now={now} compact={compact} go={go}
     open={id=>go(agentPath(agent)+'?activity='+encodeURIComponent(id))}/>;
 }
@@ -43,16 +47,18 @@ export function LiveAgentFeed({ agent, compact = false, go, onChange }: {
 export function LiveAgentHistory({ agent, thread, go }: {
   agent: string; thread: string; go(path: string): void;
 }) {
+  const previews = useDataQuery<{agentActivityFeed: AgentPostPreview[]}>(agentFeedQuery, {agent,limit:5,compact:false});
+  const title = previews.status === 'live' ? previews.data?.agentActivityFeed?.find(row=>row.thread===thread)?.title : undefined;
   const [cursors,setCursors] = useState(['0']);
   const after = cursors[cursors.length - 1];
   const query = useDataQuery<{agentActivityHistory: (AgentPost & {source: string})[]}>(agentHistoryQuery, {agent,thread,after,limit:pageSize+1});
   const posts = query.status === 'live' ? query.data?.agentActivityHistory : undefined;
   const now = usePostClock(!!posts?.length);
-  return <Section label="Activity thread">
+  return <Section label={title || "Activity thread"}>
     <Button variant="ghost" onClick={()=>go(agentPath(agent))}>Back to agent</Button>
     {query.status === 'loading' ? <Loading label="Opening activity…"/> :
       !posts?.length ? <Body quiet>Activity unavailable.</Body> :
-      <AgentPostHistory title="Activity posts" posts={posts.slice(0,pageSize)} now={now} go={go}/>}
+      <AgentPostHistory continued={after!=='0'} title="Activity posts" posts={posts.slice(0,pageSize)} now={now} go={go}/>}
     {cursors.length>1 && <Button variant="ghost" onClick={()=>setCursors(c=>c.slice(0,-1))}>Earlier posts</Button>}
     {posts && posts.length>pageSize && <Button variant="ghost" onClick={()=>setCursors([...cursors,posts[pageSize-1].id])}>Later posts</Button>}
   </Section>;

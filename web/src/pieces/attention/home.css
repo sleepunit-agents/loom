@@ -82,7 +82,7 @@
 .desk-solo-hero h2 a{color:inherit;text-decoration:none}
 .desk-solo-about{margin-top:8px;color:var(--v-text-2);}
 .desk-solo-state{margin-top:10px;color:var(--v-text-2);font:500 12px var(--font-data,monospace)}
-.desk-solo-columns{min-height:0;display:grid;grid-template-columns:minmax(0,4fr) minmax(0,6fr);gap:clamp(22px,4cqw,64px)}
+.desk-solo-columns{min-height:0;display:grid;grid-template-columns:minmax(0,6fr) minmax(0,4fr);gap:clamp(22px,4cqw,64px)}
 .desk-solo-columns>section{min-height:0;overflow:auto;overscroll-behavior:contain;display:grid;align-content:start;gap:12px;min-width:0}
 .desk-solo-columns h3{font:600 19px var(--font-display)}
 .desk-solo .desk-doing{--doing:var(--solo-accent);flex-direction:column}
@@ -94,7 +94,7 @@
 @container(max-width:1100px){.desk-solo{--face-size:120px;--face-scale:.625}}
 @container(max-width:759px){.desk-solo{--face-size:72px;--face-scale:.375}.desk-solo-columns{grid-template-columns:minmax(0,1fr)}}
 @container(max-width:480px){.desk-solo-hero{grid-template-columns:auto minmax(0,1fr);gap:10px 14px}.desk-solo-hero .desk-home-open{grid-column:2;justify-self:start;margin-left:0}}
-@container(max-width:759px){.desk-solo-talk .desk-home-compose{grid-row:2}}
+
 
 /* On shorter desks, spend the height on the conversation before scrolling its column. */
 @media(max-height:850px){
@@ -114,3 +114,7 @@
   .desk-solo{overflow:auto;overscroll-behavior:contain;grid-template-rows:max-content max-content}
   .desk-solo-columns,.desk-solo-columns>section{overflow:visible}
 }
+.desk-agent-app{container-type:inline-size}
+.desk-agent-columns{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:clamp(1rem,3cqw,3rem);align-items:start}
+.desk-agent-context{display:grid;min-width:0;gap:1rem}
+@container(max-width:720px){.desk-agent-columns{grid-template-columns:minmax(0,1fr)}}

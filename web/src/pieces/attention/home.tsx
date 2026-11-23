@@ -33,11 +33,12 @@ function HomeCard({ agent, names, needs, state, display, conversations, go, solo
   if (solo) return <AgentDesk agent={agent} display={display} state={shownState(state, count)} needs={needs} open={open}>
     <section className="desk-solo-now" aria-label="Right now">
       <h3>Right now</h3>
-      <LiveAgentFeed agent={agent.id} go={go}/>
+      <LiveAgentFeed agent={agent.id} go={go} showEmpty/>
+    </section>
+    <section className="desk-solo-talk" aria-label="Session and talk">
+      <h3>Where {agent.name} is</h3>
       <Doing doing={{ ...doing, items: doing.items.slice(0, 12), more: doing.more + Math.max(0, count - 12) }}
         name={agent.name} agent={agent.id} names={names} go={go} />
-    </section>
-    <section className="desk-solo-talk" aria-label="Talk">
       <h3>Talk</h3>
       <HomeTalk talk={talk} name={agent.name} unread={summary?.unread} firstUnread={summary?.first?.thread}
         all={page} go={go} composer={<HomeComposer agent={agent.id} name={agent.name} reading={conversations} go={go} />} />
