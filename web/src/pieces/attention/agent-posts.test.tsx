@@ -11,9 +11,10 @@ const threads = [
   { thread: 'boot', title: 'LOOM//OS boot', latest: reply, parent: boot },
   { thread: 'disk', title: 'Where did the disk go?', latest: disk, parent: null },
 ];
-it('keeps the returning activity and its reply context on the rail', () => {
+it('leads the rail with the latest words and labels their activity and age', () => {
   const html = renderToStaticMarkup(h(AgentPostFeed, { threads, compact: true, open() {}, now }));
-  expect(html).toContain(boot.words);
+  expect(html).not.toContain(boot.words);
+  expect(html.indexOf(reply.words)).toBeLessThan(html.indexOf(threads[0].title));
   expect(html).toContain(reply.words);
   expect(html).toContain('1m ago');
   expect(html).not.toContain(disk.words);

@@ -23,8 +23,8 @@ function usePostClock(active: boolean) {
   return now;
 }
 
-export function LiveAgentFeed({ agent, compact = false, go, onChange }: {
-  agent: string; compact?: boolean; go(path: string): void; onChange?(): void;
+export function LiveAgentFeed({ agent, compact = false, go, onChange, showEmpty = false }: {
+  agent: string; compact?: boolean; go(path: string): void; onChange?(): void; showEmpty?: boolean;
 }) {
   const query = useDataQuery<{agentActivityFeed: AgentPostPreview[]}>(agentFeedQuery, {agent,limit:compact?1:5,compact});
   const threads = query.status === 'live' ? query.data?.agentActivityFeed : undefined;
@@ -35,7 +35,11 @@ export function LiveAgentFeed({ agent, compact = false, go, onChange }: {
     previous.current = latest;
   }, [latest, onChange]);
   const now = usePostClock(!!threads?.length);
-  if (!threads?.length) return null;
+  if (!threads?.length) {
+    if (!showEmpty) return null;
+    if (query.status === 'loading') return <Loading label="Opening activity…"/>;
+    return <Body quiet>{threads ? 'No updates yet.' : 'Activity unavailable.'}</Body>;
+  }
   return <AgentPostFeed threads={threads} now={now} compact={compact} go={go}
     open={id=>go(agentPath(agent)+'?activity='+encodeURIComponent(id))}/>;
 }
