@@ -157,7 +157,8 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
     for(const {entry:e} of visibleEpisodes(query.iterate(...args),v,agent,MAX_ENTRIES+1)){
      const cv=e.conversationId;
      if(cv&&covered.has(`${agent}:${cv}`))continue;
-     if(runs.some(r=>r.agent===agent&&r.venue===e.venue&&Math.abs(r.at-Date.parse(e.at))<20*60000))continue;
+     // Use time and venue only for older notes that omit the conversation ID.
+     if(!cv&&runs.some(r=>r.agent===agent&&r.venue===e.venue&&Math.abs(r.at-Date.parse(e.at))<20*60000))continue;
      if(e.expires&&e.expires>now)deadlines.push(e.expires);
      const {asked:_a,decided:_d,story:_s,tasks:_t,prs:_p,links:_l,more:_m,conversationId:_cv,...entry}=e;entries.push(entry);
      if(++n>MAX_ENTRIES){truncated=true;break;}
