@@ -168,6 +168,12 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('migrations');
   expect(step.value.actions.dataMigrations,JSON.stringify(step.value.actions.dataMigrations)).toMatchObject({ok:true,from:1});
  });
+ for(const device of ['desktop','phone'])it('observes one data connection through all '+device+' tiles and a disconnect',{retry:0,timeout:180_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('tile-reads-'+device);
+  const confirmed=step.value.actions.deskTileReads.find(row=>row.device===device);
+  expect(confirmed,JSON.stringify(confirmed)).toMatchObject({ok:true,restoredSelection:true,liveReaderUpdate:true});
+  expect([...confirmed.tiles].sort()).toEqual([...titles].sort());
+ });
  it('measures the data door, fact queries and live changes',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('data');
   for(const name of ['dataDoor','dataSelectionSQL','dataInboxChange','dataWriteReceipt'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
