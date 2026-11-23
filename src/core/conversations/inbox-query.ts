@@ -186,7 +186,11 @@ export class InboxQueries {
     // displays its proposal title; an ordinary question can cite the same card.
     const approvalId=(item:Item)=>item.source==='approval'&&item.waitsOnKind==='approval'?item.waitsOnId:null;
     const cards=new Set(candidates.map(approvalId).filter((id): id is string=>!!id));
-    const selectPage=()=>{
+    const questionFacts=(set:InboxReadSet,item:Item,until:number)=>JSON.stringify([
+      set.item(item.id),Number.isFinite(until)?set.days:null,
+      item.thread?set.thread(item.thread)?.conversation:null,item.thread?set.message(item):null,
+    ]);
+    const selectPage=(latest?:InboxReadSet)=>{
       const titles=this.proposalTitles?.(viewer,[...cards]);
       const offset=filter.offset??0;
       const limit=filter.limit??50;
@@ -198,8 +202,13 @@ export class InboxQueries {
         const title=id?titles?.get(id):undefined;
         let until=title?.toLocaleLowerCase().includes(query)?Infinity:matches.get(item.id);
         const question=questions.get(item.id);
-        if(question&&until!==Infinity&&this.namedQuestion(viewer,item,question.body).words.toLocaleLowerCase().includes(query)){
-          until=Math.max(until??-Infinity,question.until);
+        if(question&&until!==Infinity){
+          // Only the question's source facts can invalidate its cached wording.
+          // A read mark on another item cannot change this page.
+          if(latest&&questionFacts(latest,item,question.until)!==questionFacts(before,item,question.until))return;
+          if(this.namedQuestion(viewer,item,question.body).words.toLocaleLowerCase().includes(query)){
+            until=Math.max(until??-Infinity,question.until);
+          }
         }
         if(until===undefined)continue;
         // Earlier matches determine which row appears at the requested offset.
@@ -214,12 +223,12 @@ export class InboxQueries {
       if(Number.isFinite(deadline))retainedUntil?.(deadline);
       return true;
     };
-    const {page,deadline}=selectPage();
+    const {page,deadline}=selectPage()!;
     if(!retainPage(deadline))return [];
     if((cards.size&&this.proposalTitles)||(questions.size&&this.questionAsker))recheckPage?.(()=>{
-      if(questions.size&&readInboxSet(this.db,ids,this.allowed(viewer)).fingerprint!==before.fingerprint)return false;
-      const current=selectPage();
-      return current.page.length===page.length&&current.page.every((item,i)=>item.id===page[i].id)&&retainPage(current.deadline);
+      const latest=questions.size?readInboxSet(this.db,[...questions.keys()],this.allowed(viewer)):undefined;
+      const current=selectPage(latest);
+      return !!current&&current.page.length===page.length&&current.page.every((item,i)=>item.id===page[i].id)&&retainPage(current.deadline);
     });
     return page;
   }

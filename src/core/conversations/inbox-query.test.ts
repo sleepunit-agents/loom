@@ -205,6 +205,8 @@ it('searches a guest question by the current name only while its private wording
   expect((await search()).map(row=>row.id)).toEqual([f.ask.inboxItem]);
   const until=Date.parse('2026-11-28T18:00:00Z');
   expect(deadlines).toContain(until);
+  f.comms.threads.conversations.read(f.ask.inboxItem!,'alice');
+  expect(recheck?.()).toBe(true);
   name=undefined;
   expect(recheck?.()).toBe(false);
   expect(await search()).toEqual([]);
