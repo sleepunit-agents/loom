@@ -243,7 +243,7 @@ export async function bodyProgram(input: {
       context.unshift(nativeBudget);continued.unshift(nativeBudget);
     }
     if(coordinating){
-      const activity = 'Post a short update to your agent card when you pick up work, discover something worth sharing, or finish. Use loom_command with operation "conversation.activityPost", a distinct id for each post (reuse it on retry), and input {"action":"open","words":"…"} for a new activity. Keep value.thread from the receipt. Reply with {"action":"reply","thread":"…","words":"…"} or rename with {"action":"rename","thread":"…","title":"…"}. Attach related work with optional refs such as ["t-17","github:house/loom#7"] on an opener or reply. Returning to an activity? Reply to its thread.';
+      const activity = 'Post a short update to your agent card when you pick up work, discover something worth sharing, or finish. Use loom_command with operation "conversation.activityPost", a distinct id for each post (reuse it on retry), and input {"action":"open","words":"…","title":"…"} for a new activity. Write the post in your own voice. Give it a short thread title that summarizes what you picked up. Rename it later if the work takes a clearer shape. Keep value.thread from the receipt. Reply with {"action":"reply","thread":"…","words":"…"} or rename with {"action":"rename","thread":"…","title":"…"}. Attach related work with optional refs such as ["t-17","github:house/loom#7"] on an opener or reply. Returning to an activity? Reply to its thread.';
       context.unshift(activity);continued.unshift(activity);
       const delegation = [
         'For a Loom subagent, use the loom_command MCP tool. Loom runs the child on an eligible worker.',

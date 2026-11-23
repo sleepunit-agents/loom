@@ -5,7 +5,7 @@ import { graphql, GraphQLObjectType, GraphQLSchema } from 'graphql/index.js';
 import { withQueryFields } from '../data/query-fields.js';
 import { conversationWorkFields } from '../../shared-conversation-work.js';
 import { createDataSchema } from '../data/database.js';
-import { agents, conversations, household, memberAgents, members, messages, threads } from '../data/schema.js';
+import { agents, conversations, household, memberAgents, members, messages, projects, threads } from '../data/schema.js';
 import { CommsMessages } from './messages.js';
 import { CommsQueries, commsQueryFields } from './comms-query.js';
 const clients: Database.Database[] = [];
@@ -459,6 +459,11 @@ it('resumes across matching sessions, keeps each source link and restores the op
   await write(second.id,{action:'reply',thread:id,words:'It scrolls!'});
   await write(second.id,{action:'rename',thread:id,title:'The scrolling console'});
   await expect(write(other.id,{action:'reply',thread:id,words:'Different audience'})).rejects.toThrow('unavailable');
+  f.db.insert(projects).values({id:'loom',name:'Loom'}).run();
+  for (const scope of [{agent:'mark',member:'alice'},{agent:'art',member:'alice',project:'loom'}]) {
+    const different=f.comms.threads.open({...scope,title:'Separate activity'});
+    await expect(write(different.id,{action:'reply',thread:id,words:'Different scope'})).rejects.toThrow('unavailable');
+  }
   const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:commsQueryFields(f.service)})});
   const read=async()=>{
     const result=await graphql({schema,contextValue:{viewer:alice},variableValues:{id},source:`query($id:String!){
@@ -474,6 +479,8 @@ it('resumes across matching sessions, keeps each source link and restores the op
   });
   f.db.update(conversations).set({member:'bob'}).where(eq(conversations.id,second.conversation)).run();
   expect(await read()).toEqual({agentActivityFeed:[],agentActivityHistory:[]});
+  await expect(write(f.thread.id,{action:'reply',thread:id,words:'Late reply'})).rejects.toThrow('unavailable');
+  await expect(write(f.thread.id,{action:'rename',thread:id,title:'Late rename'})).rejects.toThrow('unavailable');
   f.db.delete(threads).where(eq(threads.id,second.id)).run();
   expect(await read()).toEqual({
     agentActivityFeed:[{thread:id,title:'Boot console',latest:{words:'Boot console',source:f.thread.id},parent:null}],

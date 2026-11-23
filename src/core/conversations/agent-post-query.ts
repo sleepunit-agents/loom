@@ -1,10 +1,10 @@
 import { agentPostWork } from './agent-post-work.js';
-import { and, eq, inArray, notExists, notInArray, sql, type SQL } from 'drizzle-orm';
+import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
-import { agentPostNames, agentPosts, agentPostThreads, conversations, threads } from '../data/schema.js';
-import { agentPostHistory, agentPostPreviews } from './agent-posts.js';
+import { agentPostThreads, conversations, threads } from '../data/schema.js';
+import { activitySources, allActivitySourcesMatch, agentPostHistory, agentPostPreviews } from './agent-posts.js';
 import type { WordsKey } from './words.js';
 
 export function agentPostFields(db: DataDatabase, key: WordsKey, allowed: (viewer: Viewer) => SQL):
@@ -25,17 +25,9 @@ GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
     thread: { type: string }, title: { type: string },
     latest: { type: new GraphQLNonNull(post) }, parent: { type: excerpt },
   } });
-  const sources = (viewer: Viewer, agent: string) => db.select({ id: threads.id }).from(threads)
-    .innerJoin(conversations, eq(threads.conversation, conversations.id))
-    .where(viewer.kind === 'member' ? and(eq(conversations.agent, agent), allowed(viewer)) : sql`false`);
-  const source = (viewer: Viewer, agent: string) => {
-    const readable = sources(viewer,agent);
-    return and(inArray(agentPostThreads.source,readable),
-      notExists(db.select({id:agentPosts.seq}).from(agentPosts).where(and(
-        eq(agentPosts.thread,agentPostThreads.id),notInArray(agentPosts.source,readable)))),
-      notExists(db.select({id:agentPostNames.thread}).from(agentPostNames).where(and(
-        eq(agentPostNames.thread,agentPostThreads.id),notInArray(agentPostNames.source,readable)))))!;
-  };
+  const sources = (viewer: Viewer, agent: string) => activitySources(db,
+    viewer.kind === 'member' ? and(eq(conversations.agent, agent), allowed(viewer))! : sql`false`);
+  const source = (viewer: Viewer, agent: string) => allActivitySourcesMatch(db, sources(viewer, agent));
   const visibleThreads = (viewer: Viewer, agent: string, ids: string[]) => new Set(
     db.select({ id: agentPostThreads.id }).from(agentPostThreads)
       .where(and(source(viewer, agent), inArray(agentPostThreads.id, ids))).all().map(row => row.id));

@@ -1,7 +1,7 @@
 import { TASK_ID } from '../../slug.js';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq, gt, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, notExists, notInArray, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { DataDatabase } from '../data/database.js';
 import { agentPostNames, agentPosts, agentPostThreads, conversations, threads } from '../data/schema.js';
@@ -18,6 +18,19 @@ export const agentPostEdit = z.discriminatedUnion('action', [
   z.object({ action: z.literal('rename'), thread, title: threadTitle }).strict(),
 ]);
 type Edit = z.infer<typeof agentPostEdit>;
+
+export function activitySources(db: DataDatabase, predicate: SQL) {
+  return db.select({ id: threads.id }).from(threads)
+    .innerJoin(conversations, eq(threads.conversation, conversations.id)).where(predicate);
+}
+
+export function allActivitySourcesMatch(db: DataDatabase, sources: ReturnType<typeof activitySources>) {
+  return and(inArray(agentPostThreads.source, sources),
+    notExists(db.select({ id: agentPosts.seq }).from(agentPosts).where(and(
+      eq(agentPosts.thread, agentPostThreads.id), notInArray(agentPosts.source, sources)))),
+    notExists(db.select({ id: agentPostNames.thread }).from(agentPostNames).where(and(
+      eq(agentPostNames.thread, agentPostThreads.id), notInArray(agentPostNames.source, sources)))))!;
+}
 
 /** The operation authenticates the source and runs this prepared write inside its receipt transaction. */
 export async function prepareAgentPost(db: DataDatabase, key: WordsKey, source: string, edit: Edit) {
@@ -44,11 +57,14 @@ export async function prepareAgentPost(db: DataDatabase, key: WordsKey, source: 
     if (edit.action === 'open') {
       db.insert(agentPostThreads).values({ id, source, title: sealedTitle! }).run();
     } else {
-      const original = db.select({ source: agentPostThreads.source }).from(agentPostThreads).where(eq(agentPostThreads.id,id)).get();
-      const writingAudience = audience(source), openingAudience = original && audience(original.source);
-      if (!writingAudience?.member || !openingAudience || writingAudience.agent !== openingAudience.agent ||
-          writingAudience.member !== openingAudience.member || writingAudience.project !== openingAudience.project)
-        throw new Error('Activity thread unavailable');
+      const writer = audience(source);
+      if (!writer?.member) throw new Error('Activity thread unavailable');
+      const matching = activitySources(db, and(sql`${conversations.venue} in ('loom','terminal')`,
+        eq(conversations.member, writer.member), eq(conversations.agent, writer.agent),
+        writer.project === null ? isNull(conversations.project) : eq(conversations.project, writer.project))!);
+      const available = db.select({ id: agentPostThreads.id }).from(agentPostThreads)
+        .where(and(eq(agentPostThreads.id, id), allActivitySourcesMatch(db, matching))).get();
+      if (!available) throw new Error('Activity thread unavailable');
     }
     if (edit.action === 'rename') {
       db.insert(agentPostNames).values({thread:id,source,title:sealedTitle!}).onConflictDoUpdate({

@@ -50,12 +50,12 @@ retry. For example:
     "harness": "codex",
     "sessionId": "<current native session ID>",
     "binding": "<binding from this instance>",
-    "post": {"action": "open", "words": "Giving boot a scrolling console."}
+    "post": {"action": "open", "words": "Giving boot a scrolling console.", "title": "Desktop boot console"}
   }
 }
 ```
 
-Keep `value.thread` from the receipt. For a reply, send a new command ID and
+Summarize the opener in a short `title`. If omitted, the first 60 characters of the post supply an initial title. Keep `value.thread` from the receipt. For a reply, send a new command ID and
 `post: {"action":"reply","thread":"<activity ID>","words":"It scrolls!"}`. A
 rename takes `action: "rename"`, the same thread ID, and a `title`.
 An opener or reply can also carry `refs`, for example `["t-17","github:house/loom#7"]`.

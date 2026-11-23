@@ -42,6 +42,21 @@ describe('upgrading a household database', () => {
     expect(old.pragma('foreign_key_check')).toEqual([]);
   });
 
+  it('posts to an existing terminal conversation after schema 36 upgrades', async () => {
+    const old = household(36);
+    const db = dataDatabase(old, () => at);
+    old.prepare("insert into members (id,role,joined_at) values ('sam','member',?)").run(at);
+    old.exec("insert into agents (id,about,mark_bg,mark_fg,face_shape,face_eyes) values ('art','','','','pebble','dot')");
+    const { Threads } = await import('../conversations/threads.js');
+    const source = new Threads(db, () => at).open({ agent:'art', member:'sam', title:'Terminal', venue:'terminal' });
+    upgradeDataSchema(old, () => at);
+    const { prepareAgentPost } = await import('../conversations/agent-posts.js');
+    const key = { seal:async (s:string)=>Buffer.from(s), open:async (b:Uint8Array)=>Buffer.from(b).toString(), hash:(s:string)=>s };
+    const activity = (await prepareAgentPost(db,key,source.id,{action:'open',words:'Boot console'}))(at);
+    (await prepareAgentPost(db,key,source.id,{action:'reply',thread:activity,words:'Done'}))(at);
+    expect(old.prepare('select source from agent_posts order by seq').pluck().all()).toEqual([source.id,source.id]);
+  });
+
   it('preserves admission and leaves the last refresh outcome unknown for older accounts', () => {
     const old = household(30);
     old.prepare("INSERT INTO members (id, role, joined_at) VALUES ('sam', 'owner', ?)").run(at);
