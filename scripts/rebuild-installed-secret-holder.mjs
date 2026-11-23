@@ -5,6 +5,7 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import Database from 'better-sqlite3';
+import { Decrypter } from 'age-encryption';
 import { FakeClock } from '../dist/core/clock.js';
 import { agents, boxes, jobs } from '../dist/core/data/schema.js';
 import { httpWorkerControl } from '../dist/runtime/worker-http.js';
@@ -252,6 +253,19 @@ export async function installedSecretHolder() {
       mode: 'add',
     });
     const before = ciphertext();
+    const decrypt = new Decrypter();
+    const fixtureKey = await readFile(join(directory, 'identity'));
+    try {
+      decrypt.addIdentity(fixtureKey.toString('utf8').trim());
+    } finally {
+      fixtureKey.fill(0);
+    }
+    const recovered = await decrypt.decrypt(before);
+    try {
+      assert.ok(Buffer.from(value).equals(recovered), 'Stored age record differed from the fixture');
+    } finally {
+      recovered.fill(0);
+    }
     assert.equal(
       db.prepare("SELECT count(*) FROM sqlite_schema WHERE name='holder_values'").pluck().get(),
       0,
