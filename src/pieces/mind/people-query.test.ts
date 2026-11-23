@@ -250,6 +250,25 @@ it('labels each exact account in a workspace without selecting a destination fro
  expect(reader.outsideAccount(owner,'other','slack')).toBeUndefined();
 });
 
+it('uses a registry-confirmed Slack ID in an old card only to display sightings',()=>{
+ const h=home(),directory=store(join(h,'directory.db'));
+ const reader=peopleReader({directory:directory.database.name,agents:[],sharing:()=>({members:{owner:{owner:true,agents:[]}},projects:{}}),now:()=>0});
+ closes.push(reader.close);
+ const owner:Viewer={kind:'member',id:'owner'}, workspace='TLEGACY',account='ULEGACY001',seenAt=new Date(0).toISOString();
+ directory.write({slug:'friend',name:'Friend',where:{slack:{value:'Work contact ('+account+')'}}});
+ expect(directory.observeAccount('slack',workspace,account,seenAt,'Robin')).toBe(false);
+ directory.database.prepare('INSERT INTO person_sighting_aliases (workspace,account,slug) VALUES (?,?,?)').run(workspace,account,'friend');
+ expect(directory.observeAccount('slack',workspace,account,seenAt,'Robin')).toBe(true);
+ expect(reader.sightings(owner,'friend')).toEqual([{platform:'slack',workspace,account,seenAt,label:'Robin'}]);
+ expect(reader.outsideAccount(owner,'friend','slack')).toBeUndefined();
+ expect(reader.outsideName(owner,'slack',workspace,account)).toBeUndefined();
+ directory.write({slug:'other',name:'Other',where:{slack:{value:'Also mentions '+account}}});
+ expect(reader.sightings(owner,'friend')).toEqual([]);
+ directory.write({slug:'other',where:{slack:null}});
+ directory.write({slug:'friend',where:{slack:{value:'Longer token '+account+'1'}}});
+ expect(reader.sightings(owner,'friend')).toEqual([]);
+});
+
 it('reuses the deadline of each unchanged read-only file until its next boundary',()=>{
  const dir=home(),first=store(join(dir,'first.db')),second=store(join(dir,'second.db'));
  let now=Date.parse('2026-11-14T18:00:00Z');

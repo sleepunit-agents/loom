@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { DataWrites } from '../../core/data/writes.js';
 import { FakeClock } from '../../core/clock.js';
-import { members, agents, secrets, secretChanges, bridgeResume, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeRawEvents, inbox, bridgeSends, bridgeSendParts, bridgeFiles, bridgeFileMessages } from '../../core/data/schema.js';
+import { members, agents, secrets, secretChanges, bridgeResume, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeContactSightings, bridgeRawEvents, inbox, bridgeSends, bridgeSendParts, bridgeFiles, bridgeFileMessages } from '../../core/data/schema.js';
 import {BridgeSettings} from './settings.js';
 import { SharedBridges, type SharedBridgeOptions } from './shared-daemon.js';
 import type { bridgeSlackSocket } from './slack-socket.js';
@@ -70,7 +70,8 @@ it('retries a failed directory write after inbox delivery commits',async()=>{
  await f.transports[0].receive({},f.raw());
  f.clock.advance(0);await f.daemon.idle();
  expect(attempts).toBe(1);
- expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(1);
+ expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(0);
+ expect(f.db.select().from(bridgeContactSightings).all()).toHaveLength(1);
  f.clock.advance(5000);await f.daemon.idle();
  expect(attempts).toBe(2);
  expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(0);

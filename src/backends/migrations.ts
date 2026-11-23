@@ -524,6 +524,10 @@ export const MIGRATIONS: readonly Migration[] = [
       platform TEXT NOT NULL CHECK(platform IN ('slack','discord')),
       workspace TEXT NOT NULL, account TEXT NOT NULL, seen_at TEXT NOT NULL, label TEXT,
       PRIMARY KEY (slug, platform, workspace, account)
+    ) WITHOUT ROWID;
+    CREATE TABLE person_sighting_aliases (
+      workspace TEXT NOT NULL, account TEXT NOT NULL, slug TEXT NOT NULL REFERENCES people(slug) ON DELETE CASCADE,
+      PRIMARY KEY (workspace,account)
     ) WITHOUT ROWID`); },
   },
 ];

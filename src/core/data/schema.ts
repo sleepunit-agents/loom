@@ -2398,7 +2398,16 @@ export const agentPostNames = sqliteTable('agent_post_names', {
   title: blob('title', { mode: 'buffer' }).notNull(),
 });
 
+// Internal handoff to the separate People directory. Only retained until delivery is filed or dropped.
+export const bridgeContactSightings = sqliteTable('bridge_contact_sightings', {
+  incoming: text('incoming').primaryKey().notNull().references(() => bridgeIncoming.id, { onDelete: 'cascade' }),
+  platform: text('platform', {enum:['discord','slack']}).notNull(),
+  workspace: text('workspace').notNull(),
+  label: text('label'),
+});
+
 export const plumbing = {
+  bridgeContactSightings,
   agentPostThreads, agentPosts, agentPostNames,
   guestIoReadings,
   workerJoinRequests,

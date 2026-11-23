@@ -356,7 +356,7 @@ export class SharedBridges {
     if(!missing.length)return;
     pendingFiles.set(incoming.id,missing);return false;
    },this.options.observeAccount ? message=>{
-    if(this.options.observeAccount!(row.platform,row.workspace,message.user,message.postedAt,message.authorLabel))contactChanged=true;
+    if(this.options.observeAccount!(message.platform,message.workspace,message.user,message.postedAt,message.authorLabel))contactChanged=true;
    } : undefined)===64;}finally{
     // Drain owns its per-event transactions; even a later malformed receipt may
     // follow earlier successful commits. Publish and signal only committed ids.

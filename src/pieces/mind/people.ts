@@ -1,5 +1,5 @@
 import {evidenceExpiry,personEvidenceRows} from '../../backends/people.js';
-import {accountColumns,accountHolders,type AccountPlatform} from '../../backends/people-accounts.js';
+import {accountColumns,accountHolders,sightingHolder,type AccountPlatform} from '../../backends/people-accounts.js';
 /** Existing person cards, read in place. No schema initialization or path discovery. */
 import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
@@ -218,10 +218,7 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
       return db.transaction(()=>{
         const rows=db.prepare(`SELECT platform,workspace,account,label,seen_at AS seenAt
           FROM person_account_sightings WHERE slug=? ORDER BY seen_at DESC,platform,workspace,account`).all(slug) as AccountSighting[];
-        return rows.filter(row=>{
-          const holders=accountHolders(db,row.platform,row.workspace,row.account);
-          return holders.length===1&&holders[0].slug===slug;
-        });
+        return rows.filter(row=>sightingHolder(db,row.platform,row.workspace,row.account)===slug);
       })();
     },
     outsideAccount(viewer,slug,platform){

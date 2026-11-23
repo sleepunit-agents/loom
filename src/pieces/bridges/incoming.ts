@@ -12,7 +12,7 @@
  * connection's bot is no agent's, so it is neither a peer that could be addressed, nor a household sender,
  * nor a second claim on a bot that another connection now holds. */
 import { discordBodyWords } from './discord-link.js';
-import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations, lateMailWaits, refreshConversationLabel } from '../../core/conversations/index.js';
 import { incomingId, inboxSourceId, outsidePersonKey, parseIncomingId } from './keys.js';
@@ -20,7 +20,7 @@ import { conversationPlace, discordPlace, slackRoomLabel } from './place.js';
 import { holds, inHousehold, rules } from '../../policy.js';
 import { unendedJobStates } from '../../core/data/job-states.js';
 import { sharedSharing } from '../../shared-sharing.js';
-import { agentPeople, conversations, jobs, bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, bridgeSendParts, bridgeSends, inbox, inboxRefs } from '../../core/data/schema.js';
+import { agentPeople, conversations, jobs, bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgeContactSightings, bridgePeople, bridgeIncoming, bridgeSendParts, bridgeSends, inbox, inboxRefs } from '../../core/data/schema.js';
 
 // A held receipt keeps the reason nobody received it and the routing fact Discord supplied.
 const BOT_MENTION_HELD = '; the message explicitly mentioned a bot';
@@ -98,7 +98,7 @@ export class BridgeIncoming {
    * only when asked: with the platform envelope while the raw-event adapter
    * still has it, and from its own row afterwards (retry). The trusted spool
    * supplies its original receipt time when processing was delayed. */
-  receive(message: IncomingMessage, retryHeld = false, receivedAt?: string): typeof bridgeIncoming.$inferSelect {
+  receive(message: IncomingMessage, retryHeld = false, receivedAt?: string, recordSighting = false): typeof bridgeIncoming.$inferSelect {
     return this.db.transaction(() => {
       const id = incomingId(message.connection, message.id);
       const connection = this.db.select().from(bridgeConnections).where(eq(bridgeConnections.id, message.connection)).get();
@@ -194,6 +194,16 @@ export class BridgeIncoming {
         // What admission reads and nothing else keeps, so a held message can be tried again from this row.
         mentions: JSON.stringify(message.mentions), repliesTo: message.repliesTo ?? null, parent: message.parent ?? null,
         groupDm: !!message.groupDm, bot: !!message.bot, webhook: !!message.webhook }).returning().get();
+      const humanRoom = !message.isDm && !message.bot && !message.webhook && !sender && message.user !== connection.botUser;
+      if (!existing && recordSighting && humanRoom && state !== 'dropped') {
+        this.db.insert(bridgeContactSightings).values({incoming:id,platform:connection.platform,workspace:connection.workspace,label:message.authorLabel}).run();
+      } else if (existing && (state === 'dropped' || !humanRoom)) {
+        this.db.delete(bridgeContactSightings).where(eq(bridgeContactSightings.incoming,id)).run();
+      } else if (existing) {
+        // A connection that was retargeted while a message waited cannot witness that old account.
+        this.db.delete(bridgeContactSightings).where(and(eq(bridgeContactSightings.incoming,id),
+          sql`(${bridgeContactSightings.workspace} <> ${connection.workspace} or ${bridgeContactSightings.platform} <> ${connection.platform})`)).run();
+      }
       let conversation: string | null = null;
       let deliveredAt = at;
       if (state === 'delivered') {

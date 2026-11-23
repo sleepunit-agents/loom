@@ -21,3 +21,29 @@ export function accountHolders(db: Database, platform: AccountPlatform, workspac
        (SELECT 1 FROM json_each(card_json, ${path}) WHERE type='text' AND value=?))) LIMIT 2`)
     .all(workspace,user,user) as {slug:string;name:string}[];
 }
+
+/** An older Slack card may contain the account in prose. Only the explicit registry
+ * can supply its missing workspace. Multiple cards naming the same token veto a match. */
+export function legacySlackHolder(db:Database, workspace:string, user:string): string|undefined {
+  if(!/^[UW][A-Z0-9]{8,}$/.test(user))return;
+  const rows=db.prepare(`SELECT slug, json_extract(card_json,'$.where.slack_workspace.value') AS workspace,
+    json_extract(card_json,'$.where.slack.value') AS value FROM people
+    WHERE archived_at IS NULL AND json_valid(card_json) AND instr(json_extract(card_json,'$.where.slack.value'),?)>0`).all(user) as
+    {slug:string;workspace:string|null;value:string}[];
+  const token=new RegExp(`(?<![a-zA-Z0-9_])${user}(?![a-zA-Z0-9_])`);
+  const holders=rows.filter(row=>token.test(row.value));
+  if(holders.length===1&&(holders[0].workspace===null||holders[0].workspace===workspace))return holders[0].slug;
+}
+
+/** A registry-derived match applies only to sightings. Outgoing messages use accountHolders. */
+export function sightingHolder(db:Database, platform:AccountPlatform, workspace:string, user:string):string|undefined {
+  const scoped=accountHolders(db,platform,workspace,user);
+  if(platform==='slack'){
+    const alias=db.prepare('SELECT slug FROM person_sighting_aliases WHERE workspace=? AND account=?').get(workspace,user) as {slug:string}|undefined;
+    if(alias){
+      if(legacySlackHolder(db,workspace,user)!==alias.slug || scoped.some(row=>row.slug!==alias.slug))return;
+      return alias.slug;
+    }
+  }
+  return scoped.length===1?scoped[0].slug:undefined;
+}

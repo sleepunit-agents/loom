@@ -193,6 +193,27 @@ it('delivers a held message after its receipt has expired, once what held it is 
   f.receiver.drain('discord');
   expect(f.db.select().from(inbox).all()).toHaveLength(1);
 });
+it('files the original human account and name after the raw frame expires and the receiver restarts',()=>{
+  const f=fixture(), observed=vi.fn();
+  const frame=JSON.parse(f.discord().toString());
+  frame.d.author.global_name='Robin';
+  f.db.update(bridgeConnections).set({enabled:false}).where(eq(bridgeConnections.id,'discord')).run();
+  f.receiver.discord('discord',Buffer.from(JSON.stringify(frame)),f.checkpoint());
+  f.receiver.drain('discord',64,undefined,observed);
+  expect(observed).not.toHaveBeenCalled();
+  f.clock.advance(3_600_000);
+  expect(f.raw()).toEqual([]);
+  f.receiver.close();
+  const restarted=new BridgeReceiver(f.db,f.clock,f.channels);
+  try {
+    f.db.update(bridgeConnections).set({enabled:true}).where(eq(bridgeConnections.id,'discord')).run();
+    restarted.drain('discord',64,undefined,observed);
+    restarted.drain('discord',64,undefined,observed);
+    expect(observed.mock.calls).toEqual([[{platform:'discord',workspace:'w',user:'user',postedAt:frame.d.timestamp,authorLabel:'Robin'}]]);
+    expect(f.db.select().from(inbox).all()).toHaveLength(1);
+  }finally{restarted.close();}
+});
+
 it('closes a message held for a day, and one whose row cannot say what a retry needs, so nothing stays held for ever', () => {
   const f = fixture();
   f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'discord')).run();
