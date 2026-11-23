@@ -225,7 +225,20 @@
     {
       "id": "conversations-026",
       "promise": "d Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
-      "source": "docs/how-it-works/site/conversations.html#see-h"
+      "source": "docs/how-it-works/site/conversations.html#see-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "conversationCallers"
+          },
+          {
+            "kind": "action",
+            "action": "conversationVisibility"
+          }
+        ]
+      }
     },
     {
       "id": "conversations-027",
