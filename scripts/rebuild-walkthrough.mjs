@@ -50,11 +50,13 @@ import {tmpdir} from 'node:os';
 import {conversationVisibilityActions} from './rebuild-conversation-visibility.mjs';
 import {join,resolve} from 'node:path';
 import {prepareRetention,shortRetention} from './rebuild-retention.mjs';
+import {deskDataDoor} from './rebuild-desk-data-door.mjs';
 import {installDataProbe,auditDataDoor,dataActions,sharingGrowth,homeReadGrowth} from './rebuild-data-actions.mjs';
 
 import {exampleHome} from '../dist/example-home.js';
 import {conversationRecords} from './rebuild-conversation-records.mjs';
 import {startSharedHome} from '../dist/shared-startup.js';
+import {deskPanelVisibility} from './rebuild-desk-visibility.mjs';
 import {deskJobs} from './rebuild-desk-jobs.mjs';
 import {deskTicker} from './rebuild-desk-ticker.mjs';
 import {deskWaiting} from './rebuild-desk-waiting.mjs';
@@ -280,6 +282,8 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'desk-jobs',actions:safeReport(report.actions)};
   report.actions.deskTicker=await deskTicker({page,app,out});
   save();yield {phase:'desk-ticker',actions:safeReport(report.actions)};
+  report.actions.deskPanelVisibility=await deskPanelVisibility({browser,out});
+  save();yield {phase:'desk-panel-visibility',actions:safeReport(report.actions)};
   phase='conversation actions';
   report.actions={...report.actions,...await conversationActions({page,app,example:report.example,out,open:openApp,actions:['inboxAnswer','commsAnswer'],previous:report.actions})};
   save();yield {phase:'actions',actions:safeReport(report.actions)};
@@ -358,7 +362,15 @@ export async function* walkthroughSteps(output) {
    report.actions.dataMigrations=JSON.parse(stdout);
   } catch(error) { report.actions.dataMigrations={ok:false,error:String(error)}; }
   save();yield {phase:'migrations',actions:safeReport(report.actions)};
-  phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out,sharingSQL:report.actions.dataSharingSQL}));
+  const deskDevices=[];
+  for(const device of ['desktop','phone']){
+   phase=device+' tile reads';
+   try{deskDevices.push(await deskDataDoor({browser,home:join(parent,'tile-data-'+device),device,inventory:report.inventory}));}
+   catch(error){deskDevices.push({ok:false,device,error:String(error)});}
+   report.actions.deskTileReads=deskDevices;
+   save();yield {phase:'tile-reads-'+device,actions:safeReport(report.actions)};
+  }
+  phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out,sharingSQL:report.actions.dataSharingSQL,deskDevices}));
   try {
    const {writeReceiptEvidence}=await import('./rebuild-write-receipt.mjs');
    report.actions.dataWriteReceipt=await writeReceiptEvidence();

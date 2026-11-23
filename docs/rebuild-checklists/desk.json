@@ -142,7 +142,11 @@
     {
       "id": "desk-016",
       "promise": "a What you may see. The desk shows each person only what they may see. Every tile gets its rows through the same visibility check.",
-      "source": "docs/how-it-works/site/desk.html#see-h"
+      "source": "docs/how-it-works/site/desk.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "deskPanelVisibility"
+      }
     },
     {
       "id": "desk-017",
@@ -156,7 +160,24 @@
     {
       "id": "desk-018",
       "promise": "c The phone. The phone does what the desk does, built after the desk is right.",
-      "source": "docs/how-it-works/site/desk.html#see-h"
+      "source": "docs/how-it-works/site/desk.html#see-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "dataDoor"
+          },
+          {
+            "kind": "action",
+            "action": "deskPanelVisibility"
+          },
+          {
+            "kind": "action",
+            "action": "phoneTask"
+          }
+        ]
+      }
     },
     {
       "id": "desk-019",

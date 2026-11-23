@@ -13,7 +13,7 @@ export interface SecretRequestRow {
   minutes: number; answeredBy: string | null; always: boolean; askedAt: string; answeredAt: string | null;
 }
 export interface SecretsSnapshot {
-  status: 'loading' | 'live' | 'offline' | 'error';
+  status: 'loading' | 'live' | 'offline' | 'denied' | 'error';
   /** Authenticated query principal. Root must replace the whole snapshot on
    * authentication changes and enforce owner access at the query/command door. */
   member: string;
@@ -49,6 +49,7 @@ export function SecretsView({ snapshot, member, zone, folder, selected, select, 
   pieces?: readonly { id: string; label: string; description: string; open: () => void }[];
 }) {
   if (snapshot.member !== member || snapshot.status === 'loading') return <Loading label="Opening Settings…" />;
+  if (snapshot.status === 'denied') return <Empty title="Household owners manage Settings" text="Ask a household owner about secrets and their access rules." />;
   if (snapshot.status !== 'live') return <Error text="Settings is unavailable. Reconnect to continue." />;
   const active = selected?.folder === folder ? selected.id : undefined;
   const secret = folder === 'secrets' ? snapshot.secrets.find(row => row.name === active) : undefined;

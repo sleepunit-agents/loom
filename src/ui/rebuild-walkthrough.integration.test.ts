@@ -105,6 +105,12 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   expect(step.value.actions.deskTicker,JSON.stringify(step.value.actions.deskTicker)).toMatchObject({ok:true});
  });
 
+ it('reads every installed panel as an owner and a project member',{retry:0,timeout:180_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('desk-panel-visibility');
+  const result=step.value.actions.deskPanelVisibility;
+  expect(result,JSON.stringify(result)).toMatchObject({ok:true});
+  expect(result.projectMember).toEqual(result.owner);
+ });
  it('answers in Inbox and shows the answer in Comms',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('actions');
   for(const name of ['commsSend','inboxAnswer','commsAnswer'])expect(step.value.actions?.[name],JSON.stringify(step.value.actions)).toMatchObject({ok:true});
@@ -171,6 +177,12 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  it('upgrades every shipped database and checks its migration ledger on reopen',{retry:0,timeout:300_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('migrations');
   expect(step.value.actions.dataMigrations,JSON.stringify(step.value.actions.dataMigrations)).toMatchObject({ok:true,from:1});
+ });
+ for(const device of ['desktop','phone'])it('observes one data connection through all '+device+' tiles and a disconnect',{retry:0,timeout:180_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('tile-reads-'+device);
+  const confirmed=step.value.actions.deskTileReads.find(row=>row.device===device);
+  expect(confirmed,JSON.stringify(confirmed)).toMatchObject({ok:true,restoredSelection:true,liveReaderUpdate:true});
+  expect([...confirmed.tiles].sort()).toEqual([...titles].sort());
  });
  it('measures the data door, fact queries and live changes',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('data');

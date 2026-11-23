@@ -2,7 +2,7 @@ import {readFileSync} from 'node:fs';
 import {evaluate} from './rebuild-report.mjs';
 import {it,expect} from 'vitest';
 import Database from 'better-sqlite3';
-import {connectionEvidence,changedFields,sqlRead,readBoundEvidence,installDataProbe,auditDataDoor} from './rebuild-data-actions.mjs';
+import {tileDoorEvidence,connectionEvidence,changedFields,sqlRead,readBoundEvidence,installDataProbe,auditDataDoor} from './rebuild-data-actions.mjs';
 it('waits for the replacement selection result and keeps missing evidence on timeout',async()=>{
  const oldSocket=globalThis.WebSocket,oldState=globalThis.__loomDataProbe;
  try{
@@ -75,7 +75,7 @@ it('installed socket observer forwards exact IO and does not record authenticati
 
 it('keeps actual approved-promise mappings and classifies positive, negative and partial evidence',()=>{
  const pages=Object.fromEntries(['data','desk'].map(name=>[name,JSON.parse(readFileSync(new URL('../docs/rebuild-checklists/'+name+'.json',import.meta.url),'utf8'))]));
- for(const [page,id,action,success] of [['data','data-003','dataSelectionSQL','met'],['data','data-004','dataReadBounds','not checkable yet'],['data','data-005','dataTaskPatches','not checkable yet'],['data','data-009','dataInboxChange','met'],['data','data-011','dataReadBounds','not checkable yet'],['data','data-012','dataTaskPatches','not checkable yet'],['data','data-018','dataMigrations','met'],['desk','desk-006','dataDoor','not checkable yet']]){
+ for(const [page,id,action,success] of [['data','data-003','dataSelectionSQL','met'],['data','data-004','dataReadBounds','not checkable yet'],['data','data-005','dataTaskPatches','not checkable yet'],['data','data-009','dataInboxChange','met'],['data','data-011','dataReadBounds','not checkable yet'],['data','data-012','dataTaskPatches','not checkable yet'],['data','data-018','dataMigrations','met'],['desk','desk-006','dataDoor','met']]){
   const promise=pages[page].promises.find(p=>p.id===id);expect(promise.probe).toEqual({kind:'action',action});
   expect(evaluate(promise,{actions:{[action]:{ok:true,...(success==='met'?{}:{inconclusive:true})}}}).status).toBe(success);
   expect(evaluate(promise,{actions:{[action]:{ok:false,error:'Measured counterexample'}}}).status).toBe('not met');
@@ -93,4 +93,14 @@ it('keeps measured SQL growth failures independent of incomplete selections and 
   const action=readBoundEvidence(sharing,home),result=evaluate(promise,{actions:{dataReadBounds:action}});
   expect(result.status).toBe(expected);if(screenshot)expect(result.evidence).toBe(screenshot);
  }
+});
+
+it('requires the same launcher inventory and restored reader on each device before crediting tile reads',()=>{
+ const apps=[{title:'Inbox',opened:true,dataDoor:{known:true,graphql:1,other:[],selectionSeen:true}}];
+ const desktop={device:'desktop',ok:true,tiles:['Inbox'],restoredSelection:true,liveReaderUpdate:true},phone={...desktop,device:'phone'};
+ expect(tileDoorEvidence(apps,[desktop,phone])).toMatchObject({ok:true});
+ for(const missing of [[],[desktop],[desktop,{...phone,tiles:['Home']}],[desktop,{...phone,liveReaderUpdate:false}]]){
+  expect(tileDoorEvidence(apps,missing)).toMatchObject({inconclusive:true});
+ }
+ expect(tileDoorEvidence(apps,[desktop,{device:'phone',ok:false,error:'An additional socket opened'}])).toMatchObject({ok:false});
 });
