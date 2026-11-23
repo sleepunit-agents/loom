@@ -102,7 +102,11 @@
     {
       "id": "bridges-010",
       "promise": "An agent's run settings give each outside person a tier.",
-      "source": "docs/how-it-works/site/bridges.html#con-h"
+      "source": "docs/how-it-works/site/bridges.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeContactTiers"
+      }
     },
     {
       "id": "bridges-011",
