@@ -41,7 +41,7 @@ export async function bridgeReceipts({app,clock,page,open}) {
    for(const platform of ['discord','slack']){
      const connection='walkthrough-intake-'+platform;
      const sources=db.select().from(bridgeIncoming).where(and(eq(bridgeIncoming.connection,connection),eq(bridgeIncoming.state,'delivered'))).all();
-     assert.equal(sources.length,1);
+     assert.equal(sources.length,2);
      connections.push(connection);
      db.update(bridgeConnections).set({enabled:true}).where(eq(bridgeConnections.id,connection)).run();
      const incoming=sources[0].id, held='example-held-'+platform, uncertain='example-uncertain-'+platform;
