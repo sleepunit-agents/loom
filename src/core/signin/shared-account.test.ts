@@ -55,6 +55,21 @@ it('lists only the member’s enrolled credential IDs with a fixed number of rea
   else expect(reads).toBe(firstCount);
  }
 });
+it('reads personal credentials after a member accumulates more retired tokens than SQLite accepts as parameters',async()=>{
+ const f=fixture();
+ await f.add();
+ const at=new Date(f.clock.now()).toISOString(), retired=hash('retired tablet');
+ f.db.insert(tokens).values({fingerprint:retired,label:'Tablet',kind:'owner',member:'sam',createdAt:at,revokedAt:at}).run();
+ f.db.insert(passkeys).values({id:'tablet-key',token:retired,label:'Tablet key',publicKey:'unused',counter:0,createdAt:at}).run();
+ f.db.insert(sessions).values({id:hash('tablet session'),token:retired,device:'Tablet',via:'link',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
+ const before=await f.read();
+ expect(before.data.account.passkeys).toContainEqual(expect.objectContaining({label:'Tablet key',ended:true}));
+ expect(before.data.account.sessions).toContainEqual(expect.objectContaining({device:'Tablet',ended:true}));
+ f.client.prepare(`WITH RECURSIVE sequence(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM sequence WHERE n<33000)
+   INSERT INTO tokens(fingerprint,label,kind,member,created_at,revoked_at)
+   SELECT printf('%064x',n),'Retired','owner','sam',?,? FROM sequence`).run(at,at);
+ expect(await f.read()).toEqual(before);
+});
 it('registers a passkey on the actual shared door and signs in with verified single-use assertions',async()=>{
  const f=fixture(),key=await f.add();expect(f.db.select().from(passkeys).get()?.label).toBe('Laptop');
  const challenge=async()=> (await(await f.post('/login/passkey/options')).json()).challenge;
