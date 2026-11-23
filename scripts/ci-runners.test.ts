@@ -70,9 +70,12 @@ describe('CI runner fork safety', () => {
     expect(checkWorkflow(f, readFileSync(join(dir, f), 'utf8'))).toEqual([]);
   });
 
-  it('ci.yml uses the trusted expression for its tests and results', () => {
-    const lines = readFileSync(join(dir, 'ci.yml'), 'utf8').split('\n').map((l) => l.trim());
-    expect(lines.filter((l) => l === `runs-on: ${TRUSTED_RUNS_ON}`)).toHaveLength(2);
+  it('allows household runners for tests and always collects the required result on GitHub', () => {
+    const workflow = readFileSync(join(dir, 'ci.yml'), 'utf8');
+    const job = (name: string) => workflow.split('\n  ' + name + ':\n')[1]?.split(/\n  [\w-]+:\n/)[0];
+    expect(job('test')).toContain('    runs-on: ' + TRUSTED_RUNS_ON);
+    expect(job('results')?.match(/^    runs-on: (.+)$/m)?.[1]).toBe('ubuntu-latest');
+    expect(workflow.split('runs-on: ' + TRUSTED_RUNS_ON)).toHaveLength(2);
   });
 
   const wf = (job: string, on = 'on:\n  pull_request:\n') => `${on}jobs:\n  t:\n${job}`;
