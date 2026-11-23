@@ -43,7 +43,7 @@ it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live
   const tablet=a.getByRole('heading',{name:'Kitchen tablet',exact:true}).locator('..');
   await tablet.getByRole('button',{name:'Sign out browser',exact:true}).click();
   await expect.poll(()=>b.getByRole('heading',{name:'Kitchen tablet',exact:true}).count()).toBe(0);expect(db.select().from(sessions).all()).toHaveLength(1);
-  await a.getByRole('button',{name:'Make sign-in link',exact:true}).click();await a.locator('[data-signin-link]').waitFor();expect(await a.locator('[data-signin-link]').evaluate(el=>new URL(el.textContent!).pathname.startsWith('/login/'))).toBe(true);
+  await a.getByRole('button',{name:'Make sign-in link',exact:true}).click();await a.locator('[data-signin-link]').waitFor();expect(await a.locator('[data-signin-link]').evaluate(el=>{const link=new URL(el.textContent!);return link.origin===location.origin&&/^\/login\/[a-f0-9]{64}$/.test(link.pathname);})).toBe(true);
   await a.getByRole('button',{name:'Hide sign-in link',exact:true}).click();await a.locator('[data-signin-link]').waitFor({state:'hidden'});
   await a.getByRole('button',{name:'Enable notifications on this browser',exact:true}).click();
   await expect.poll(()=>b.getByRole('heading',{name:'Chrome on Android',exact:true}).count()).toBe(1);

@@ -20,19 +20,23 @@ export async function signinDoorEvidence(){
   const query=(source,headers={})=>request('/graphql',{query:source},headers);
   const bearer=value=>({authorization:'Bearer '+value});
   const bootstrap=root.writes.run(()=>root.services.signin.issue({kind:'owner',member:'owner',label:'Bootstrap owner'})).value;secrets.push(bootstrap.token);
+  const absentWhileActive=(raw,label)=>check(!client.serialize().includes(Buffer.from(raw)),label);
+  absentWhileActive(bootstrap.token,'live bootstrap token stored as fingerprint');
   check(bootstrap.fingerprint===await hash(bootstrap.token)&&db.select().from(tokens).all().some(row=>row.fingerprint===bootstrap.fingerprint),'bootstrap token fingerprint row');
   check((await query('{ tasks { id } }')).status===401,'unauthenticated request refused');
   const link=async token=>{
    const response=await request('/api/signin/link',{},bearer(token));check(response.status===200,'member link issued at HTTP door');
    const value=await response.json(),path=value.value?.path;check(typeof path==='string'&&path.startsWith('/login/'),'link response shape');
    const code=path.split('/').at(-1);secrets.push(code);
-   const fingerprint=await hash(code);check(db.select().from(signinLinks).all().some(row=>row.id===fingerprint),'link code fingerprint only');return path;
+   const fingerprint=await hash(code);check(db.select().from(signinLinks).all().some(row=>row.id===fingerprint),'link code fingerprint only');
+   absentWhileActive(code,'live link code stored as fingerprint');return path;
   };
   const redeem=async(path,userAgent)=>{
    const response=await root.http.request(origin+path,{method:'POST',headers:{origin,'user-agent':userAgent}});
    check(response.status===303,'one-time link redeemed');
    const cookie=response.headers.get('set-cookie')?.split(';')[0];check(cookie?.startsWith('loom_ui='),'browser cookie delivered');
    const raw=cookie.slice('loom_ui='.length);secrets.push(raw);const fingerprint=await hash(raw);check(db.select().from(sessions).all().some(row=>row.id===fingerprint),'browser cookie fingerprint only');
+   absentWhileActive(raw,'live browser cookie stored as fingerprint');
    return cookie;
   };
   const ownerLink=await link(bootstrap.token),ownerCookie=await redeem(ownerLink,'Mozilla/5.0 Safari/537.36'),ownerHeaders={cookie:ownerCookie};
@@ -40,7 +44,8 @@ export async function signinDoorEvidence(){
   const issue=async input=>{
    const response=await request('/api/signin/token',input,ownerHeaders);check(response.status===200,'owner creates caller at HTTP door');
    const value=(await response.json()).value;check(typeof value?.token==='string'&&typeof value?.fingerprint==='string','issued caller shape');
-   secrets.push(value.token);check(value.fingerprint===await hash(value.token)&&db.select().from(tokens).all().some(row=>row.fingerprint===value.fingerprint&&row.kind===input.kind),'issued token fingerprint row');return value;
+   secrets.push(value.token);check(value.fingerprint===await hash(value.token)&&db.select().from(tokens).all().some(row=>row.fingerprint===value.fingerprint&&row.kind===input.kind),'issued token fingerprint row');
+   absentWhileActive(value.token,'live issued token stored as fingerprint');return value;
   };
   const sam=await issue({kind:'owner',member:'sam',label:'Sam credential'}),agent=await issue({kind:'agent',agent:'art',label:'Agent credential'}),runner=await issue({kind:'runner',box:'worker',label:'Machine credential'});
   for(const [issued,kind,id,selection] of [[sam,'member','sam','{ tasks { id } }'],[agent,'agent','art','{ tasks { id } }'],[runner,'runner','worker',undefined]]){
