@@ -56,17 +56,26 @@ export async function bridgeMail({app,clock}) {
    db.insert(bridgeConnections).values({...connection,platform,agent,botUser:'fictional-bot',tokenSecret,enabled:true,state:'connected',stateAt:now()}).run();
    db.insert(bridgePeople).values({platform,workspace:connection.workspace,user,member}).run();
    db.insert(bridgeChannels).values({platform,workspace:connection.workspace,channel:ch,answers:agent,botsMayTalk:false}).run();
-   const message=platform==='discord'
-    ? normalizeDiscord(connection,{op:0,t:'MESSAGE_CREATE',d:{type:0,id:'fictional-discord-message',channel_id:ch,
+   const seconds=Math.floor(clock.now()/1000);
+   const normalize=sequence=>platform==='discord'
+    ? normalizeDiscord(connection,{op:0,t:'MESSAGE_CREATE',d:{type:0,id:'fictional-discord-message-'+sequence,channel_id:ch,
       guild_id:connection.workspace,author:{id:user},content:words,timestamp:now(),mentions:[]}}, {id:ch,guild:connection.workspace,kind:'channel'})
-    : normalizeSlack(connection,{type:'event_callback',team_id:connection.workspace,event:{type:'message',user,channel:ch,channel_type:'channel',ts:Math.floor(clock.now()/1000)+'.000001',text:words}});
-   assert.ok(message);
+    : normalizeSlack(connection,{type:'event_callback',team_id:connection.workspace,event:{type:'message',user,channel:ch,channel_type:'channel',ts:seconds+'.00000'+sequence,thread_ts:sequence===2?seconds+'.000001':undefined,text:words}});
+   const message=normalize(1), next=normalize(2);
+   assert.ok(message && next);
+   assert.notEqual(message.id,next.id);
    checkRoomRouting(db,ingress,connection,platform,message,tokenSecret,now,agent);
    const delivered=ingress.receive(message);
    assert.equal(delivered.state,'delivered');
    assert.equal(delivered.member,member);
    assert.equal(delivered.channel,ch);
+   // A second provider message can have identical words. Replay both after it arrives.
+   const second=ingress.receive(next);
+   assert.equal(second.state,'delivered');
+   assert.equal(second.conversation,delivered.conversation);
+   assert.notEqual(second.id,delivered.id);
    assert.equal(ingress.receive(message).id,delivered.id);
+   assert.equal(ingress.receive(next).id,second.id);
    db.update(bridgeConnections).set({enabled:false}).where(eq(bridgeConnections.id,connection.id)).run();
    const held=ingress.receive({...message,id:message.id+'-offline'});
    assert.equal(held.state,'held');
@@ -75,24 +84,24 @@ export async function bridgeMail({app,clock}) {
    const room=db.select().from(conversations).where(eq(conversations.id,delivered.conversation)).get();
    assert.equal(room.agent,agent);
    assert.equal(room.venue,platform);
-   assert.equal(db.select().from(inbox).where(eq(inbox.conversation,room.id)).all().length,1);
-   return {source:platform,member,words,conversation:delivered.conversation};
+   assert.equal(db.select().from(inbox).where(eq(inbox.conversation,room.id)).all().length,2);
+   return {source:platform,member,words,conversation:delivered.conversation,receipts:[delivered.id,second.id]};
   });
  }).value;
  const credential=app.services.signin.issue({kind:'agent',agent,label:'Fictional bridge Inbox reader'});
  try {
   const response=await fetch(new URL('/graphql',app.url),{method:'POST',headers:{authorization:'Bearer '+credential.token,'content-type':'application/json'},
-   body:JSON.stringify({query:'{inboxItems(folder:"all",search:"Walkthrough intake from",limit:20){toKind to source fromKind fromId conversation body{words}}}'})});
+   body:JSON.stringify({query:'{inboxItems(folder:"all",search:"Walkthrough intake from",limit:20){refs toKind to source fromKind fromId conversation body{words}}}'})});
   assert.equal(response.status,200);
   const reply=await response.json();
   assert.equal(reply.errors,undefined);
   const rows=reply.data.inboxItems;
-  assert.equal(rows.length,2);
-  for(const {source,member,words,conversation} of sent) {
+  assert.equal(rows.length,4);
+  for(const {source,member,words,conversation,receipts} of sent) {
    assert.ok(conversation);
-   assert.deepEqual(rows.find(row=>row.source===source),{toKind:'agent',to:agent,source,fromKind:'person',fromId:member,conversation,body:{words}});
+   for(const receipt of receipts)assert.deepEqual(rows.find(row=>row.refs.includes(receipt)),{refs:[receipt],toKind:'agent',to:agent,source,fromKind:'person',fromId:member,conversation,body:{words}});
   }
   assert.notEqual(sent[0].conversation,sent[1].conversation);
-  return {ok:true,reason:'The receiving agent read one Discord and one Slack Inbox item through GraphQL. The same outside ID resolved to Alex on Discord and Robin on Slack through their respective person links. Only the designated agent received the room message, once across replay. A second bot and room filters dropped other deliveries with reasons. A disabled connection held its message.'};
+  return {ok:true,reason:'The receiving agent read exactly one Inbox item for each of four messages, including two with identical words per platform, after replay. The same outside ID resolved to Alex on Discord and Robin on Slack through their respective person links. Only the designated agent received the room messages. A second bot and room filters dropped other deliveries with reasons. A disabled connection held its message.'};
  } finally {app.services.signin.revoke(credential.fingerprint);}
 }
