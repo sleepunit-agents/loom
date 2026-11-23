@@ -47,9 +47,18 @@ Deletion invalidates messages, Inbox and references as well as thread metadata.
 Agent production and worker delivery use the typed `CommsMessages` and
 `ConversationMail` interfaces, not these member-window operations. Never put
 decrypted worker deliveries in an Operations result or a persisted job brief.
-Generated read projections, decrypted query fields, root wiring, UI adoption,
-action-result notices and removal of the replaced paths remain on t-2237 and its
-coordinating rebuild tasks. No additional read endpoint belongs here.
+
+`src/shared-conversations.ts` installs the member operations and the GraphQL
+fields used by Comms and Inbox. It also installs `inbox.discuss`, which opens or
+reopens a private thread for a standalone FYI. The notice becomes context for
+the recipient’s question. The first message they send starts delivery.
+`src/shared-action-results.ts` records the member’s action outcomes for Inbox.
+
+The shared readers replaced the old Attention/Needs readers, the per-venue
+Comms, Discord and Slack inboxes, and the per-agent digest resolver and fold
+timer. New Memory stores keep conversation history in the household database.
+Older Memory stores retain their conversation tables and indexes for offline
+import. See [the migration plan](../migration-plan.md).
 
 `inbox.dismissResult({id})` acknowledges the current signed-in member's own
 `action_results` row. It cannot dismiss someone else's result, preserves the
