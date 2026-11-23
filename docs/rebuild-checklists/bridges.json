@@ -17,7 +17,11 @@
     {
       "id": "bridges-003",
       "promise": "Decides which agent answers in a channel when nobody is addressed.",
-      "source": "docs/how-it-works/site/bridges.html"
+      "source": "docs/how-it-works/site/bridges.html",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeMail"
+      }
     },
     {
       "id": "bridges-004",
@@ -50,7 +54,11 @@
     {
       "id": "bridges-008",
       "promise": "The message goes into one conversation: the agent in that channel.",
-      "source": "docs/how-it-works/site/bridges.html#con-h"
+      "source": "docs/how-it-works/site/bridges.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeMail"
+      }
     },
     {
       "id": "bridges-009",
@@ -69,7 +77,11 @@
     {
       "id": "bridges-011",
       "promise": "A message from outside is kept as an incoming message, matched to a person and a channel rule, and passed into the right conversation. It can be held or dropped, with a reason.",
-      "source": "docs/how-it-works/site/bridges.html#how-h"
+      "source": "docs/how-it-works/site/bridges.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeMail"
+      }
     },
     {
       "id": "bridges-012",
@@ -79,7 +91,11 @@
     {
       "id": "bridges-013",
       "promise": "A channel rule names the agent that answers in a channel. A connection can listen only to some channels, or ignore some.",
-      "source": "docs/how-it-works/site/bridges.html#how-h"
+      "source": "docs/how-it-works/site/bridges.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeMail"
+      }
     },
     {
       "id": "bridges-014",
