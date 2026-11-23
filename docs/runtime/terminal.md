@@ -56,7 +56,10 @@ Keep `value.thread` from the receipt. For a reply, send a new command ID and
 rename takes `action: "rename"`, the same thread ID, and a `title`.
 An opener or reply can also carry `refs`, for example `["t-17","github:house/loom#7"]`.
 These appear beside the post with the current task or PR state for viewers who
-can open the work. The source conversation link opens the terminal that posted it.
+can open the work. A later terminal or Comms session can continue the activity
+using its thread ID when the member, agent and project match. Each group of posts
+links to the conversation that supplied it. Removing a later source removes its
+posts and any current title it supplied. Removing the opening source removes the activity.
 
 A terminal session also gets the names it already calls. Each is a thin mapping
 onto one registered command or one query on this same door, so a named tool

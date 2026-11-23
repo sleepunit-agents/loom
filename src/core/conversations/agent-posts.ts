@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { and, desc, eq, gt, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { DataDatabase } from '../data/database.js';
-import { agentPosts, agentPostThreads } from '../data/schema.js';
+import { agentPostNames, agentPosts, agentPostThreads, conversations, threads } from '../data/schema.js';
 import { threadTitle } from './title.js';
 import { MESSAGE_WORDS_MAX, type WordsKey } from './words.js';
 
@@ -22,7 +22,10 @@ type Edit = z.infer<typeof agentPostEdit>;
 /** The operation authenticates the source and runs this prepared write inside its receipt transaction. */
 export async function prepareAgentPost(db: DataDatabase, key: WordsKey, source: string, edit: Edit) {
   const id = edit.action === 'open' ? 'activity:' + randomUUID() : edit.thread;
-  const scoped = and(eq(agentPostThreads.id, id), eq(agentPostThreads.source, source));
+  const audience = (thread: string) => db.select({
+    agent: conversations.agent, member: conversations.member, project: conversations.project,
+  }).from(threads).innerJoin(conversations, eq(conversations.id, threads.conversation))
+    .where(and(eq(threads.id, thread), sql`${conversations.venue} in ('loom','terminal')`)).get();
   const words = edit.action === 'rename' ? undefined : edit.words;
   if (words !== undefined && (!words.trim() || words.length > MESSAGE_WORDS_MAX))
     throw new Error('Activity post needs text within the message limit');
@@ -40,13 +43,18 @@ export async function prepareAgentPost(db: DataDatabase, key: WordsKey, source: 
   return (at: string) => db.transaction(() => {
     if (edit.action === 'open') {
       db.insert(agentPostThreads).values({ id, source, title: sealedTitle! }).run();
-    } else if (!db.select({ id: agentPostThreads.id }).from(agentPostThreads).where(scoped).get()) {
-      throw new Error('Activity thread unavailable');
+    } else {
+      const original = db.select({ source: agentPostThreads.source }).from(agentPostThreads).where(eq(agentPostThreads.id,id)).get();
+      const here = audience(source), there = original && audience(original.source);
+      if (!here?.member || !there || here.agent !== there.agent || here.member !== there.member || here.project !== there.project)
+        throw new Error('Activity thread unavailable');
     }
     if (edit.action === 'rename') {
-      db.update(agentPostThreads).set({ title: sealedTitle! }).where(scoped).run();
+      db.insert(agentPostNames).values({thread:id,source,title:sealedTitle!}).onConflictDoUpdate({
+        target:agentPostNames.thread,set:{source,title:sealedTitle!},
+      }).run();
     } else {
-      db.insert(agentPosts).values({ thread: id, at, workRefs, words: sealedWords! }).run();
+      db.insert(agentPosts).values({ thread: id, source, at, workRefs, words: sealedWords! }).run();
     }
     return id;
   });
@@ -60,16 +68,18 @@ export async function agentPostPreviews(db: DataDatabase, key: WordsKey, visible
   const previous = sql<number>`(select max(p.seq) from agent_posts p
     where p.thread = ${agentPostThreads.id} and p.seq < ${agentPosts.seq})`;
   const rows = db.select({
-    thread: agentPostThreads.id, source: agentPostThreads.source, title: agentPostThreads.title,
-    latest: { seq: agentPosts.seq, at: agentPosts.at, words: agentPosts.words, workRefs: agentPosts.workRefs },
-    parent: { seq: parent.seq, words: parent.words },
+    thread: agentPostThreads.id, source: agentPostThreads.source, title: agentPostThreads.title, rename: { source:agentPostNames.source, title:agentPostNames.title },
+    latest: { source: agentPosts.source, seq: agentPosts.seq, at: agentPosts.at, words: agentPosts.words, workRefs: agentPosts.workRefs },
+    parent: { source: parent.source, seq: parent.seq, words: parent.words },
   }).from(agentPostThreads)
+    .leftJoin(agentPostNames, eq(agentPostNames.thread,agentPostThreads.id))
     .innerJoin(agentPosts, eq(agentPosts.seq, latest))
     .leftJoin(parent, eq(parent.seq, previous))
     .where(visibleSource).orderBy(desc(agentPosts.seq)).limit(limit).all();
   return Promise.all(rows.map(async row => ({
-    thread: row.thread, title: await key.open(row.title),
-    latest: { source: row.source, id: String(row.latest.seq), at: row.latest.at, refs: await openRefs(key,row.latest.workRefs), words: await key.open(row.latest.words) },
+    thread: row.thread, sources: [row.source,row.latest.source,...(row.parent?[row.parent.source]:[]),...(row.rename?[row.rename.source]:[])],
+    title: await key.open(row.rename?.title ?? row.title),
+    latest: { source: row.latest.source, id: String(row.latest.seq), at: row.latest.at, refs: await openRefs(key,row.latest.workRefs), words: await key.open(row.latest.words) },
     parent: row.parent ? { id: String(row.parent.seq), words: await key.open(row.parent.words) } : null,
   })));
 }
@@ -77,7 +87,7 @@ export async function agentPostPreviews(db: DataDatabase, key: WordsKey, visible
 /** Page forward in insertion order so a new reply never shifts a reader's place. */
 export async function agentPostHistory(db: DataDatabase, key: WordsKey, visibleSource: SQL,
   thread: string, after: number, limit: number) {
-  const rows = db.select({ source: agentPostThreads.source, seq: agentPosts.seq, words: agentPosts.words, at: agentPosts.at, workRefs: agentPosts.workRefs })
+  const rows = db.select({ source: agentPosts.source, seq: agentPosts.seq, words: agentPosts.words, at: agentPosts.at, workRefs: agentPosts.workRefs })
     .from(agentPostThreads).innerJoin(agentPosts, eq(agentPosts.thread, agentPostThreads.id))
     .where(and(visibleSource, eq(agentPostThreads.id, thread), gt(agentPosts.seq, after)))
     .orderBy(agentPosts.seq).limit(limit).all();

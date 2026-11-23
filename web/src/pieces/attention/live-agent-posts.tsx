@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useDataQuery } from '../../data/graphql';
 import { Body, Button, Loading, Section } from '../../kit';
 import { AgentPostFeed, AgentPostHistory, type AgentPost, type AgentPostPreview } from './agent-posts';
-import { threadPath } from './home-comms-data';
 import { agentPath } from './home-model';
 
 export const agentFeedQuery = `query AgentActivityFeed($agent:String!,$limit:Int!,$compact:Boolean!){
@@ -54,7 +53,6 @@ export function LiveAgentHistory({ agent, thread, go }: {
     {query.status === 'loading' ? <Loading label="Opening activity…"/> :
       !posts?.length ? <Body quiet>Activity unavailable.</Body> :
       <AgentPostHistory title="Activity posts" posts={posts.slice(0,pageSize)} now={now} go={go}/>}
-    {posts?.length ? <Button variant="ghost" onClick={()=>go(threadPath(posts[0].source))}>Source conversation</Button> : null}
     {cursors.length>1 && <Button variant="ghost" onClick={()=>setCursors(c=>c.slice(0,-1))}>Earlier posts</Button>}
     {posts && posts.length>pageSize && <Button variant="ghost" onClick={()=>setCursors([...cursors,posts[pageSize-1].id])}>Later posts</Button>}
   </Section>;

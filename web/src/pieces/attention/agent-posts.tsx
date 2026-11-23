@@ -1,3 +1,5 @@
+import { threadPath } from './home-comms-data';
+import { Button } from '../../kit';
 import { age } from '../projects/model';
 import './agent-posts.css';
 
@@ -5,6 +7,7 @@ export interface AgentPost {
   id: string;
   at: string;
   words: string;
+  source?: string;
   work?: readonly { id: string; title: string; state: string; href: string }[];
 }
 
@@ -59,10 +62,12 @@ export function AgentPostHistory({ title, posts, now, go }: {
   now: number;
 }) {
   return <ol className="desk-agent-history" aria-label={title}>
-    {posts.map(post => <li key={post.id}>
+    {posts.map((post,index) => <li key={post.id}>
       <time dateTime={post.at}>{age(post.at, now)}</time>
       <p>{post.words}</p>
       <PostWork post={post} go={go}/>
+      {post.source && go && posts[index+1]?.source!==post.source &&
+        <Button variant="ghost" onClick={()=>go(threadPath(post.source!))}>Source conversation</Button>}
     </li>)}
   </ol>;
 }

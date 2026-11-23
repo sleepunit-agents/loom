@@ -2385,13 +2385,21 @@ export const agentPostThreads = sqliteTable('agent_post_threads', {
 export const agentPosts = sqliteTable('agent_posts', {
   seq: integer('seq').primaryKey({ autoIncrement: true }),
   thread: text('thread').notNull().references(() => agentPostThreads.id, { onDelete: 'cascade' }),
+  source: text('source').notNull().references(() => threads.id, { onDelete: 'cascade' }),
   at: text('at').notNull(),
   words: blob('words', { mode: 'buffer' }).notNull(),
   workRefs: blob('work_refs', { mode: 'buffer' }),
 }, t => [check('agent_posts_at_utc', utc(t.at)), index('agent_posts_thread_seq').on(t.thread, t.seq)]);
 
+/** Removing the conversation that supplied a rename restores the original title. */
+export const agentPostNames = sqliteTable('agent_post_names', {
+  thread: text('thread').primaryKey().notNull().references(() => agentPostThreads.id, { onDelete: 'cascade' }),
+  source: text('source').notNull().references(() => threads.id, { onDelete: 'cascade' }),
+  title: blob('title', { mode: 'buffer' }).notNull(),
+});
+
 export const plumbing = {
-  agentPostThreads, agentPosts,
+  agentPostThreads, agentPosts, agentPostNames,
   guestIoReadings,
   workerJoinRequests,
   archivedQuestions,

@@ -38,7 +38,7 @@ it('keeps both activities in one session distinct across replies and renames', a
     expect(rows.map(r=>r.thread)).toEqual([boot,disk,boot]);
     expect(await Promise.all(rows.map(r=>key.open(r.words)))).toEqual(['Giving boot a console.','What filled the disk?','It scrolls.']);
     expect(rows[0].words.includes(Buffer.from('Giving boot'))).toBe(false);
-    expect(await key.open(db.select().from(agentPostThreads).where(eq(agentPostThreads.id,disk)).get()!.title)).toBe('The missing disk space');
+
     const foreign = await prepareAgentPost(db,key,'another-source',{action:'reply',thread:disk,words:'wrong thread'});
     expect(()=>foreign(at)).toThrow('unavailable');
     const invalid = await prepare({action:'open', words:'roll this one back'});

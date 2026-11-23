@@ -448,3 +448,35 @@ it('attaches current work states to a post without requiring the IDs in its word
   f.db.delete(memberAgents).run();
   expect((await read()).work).toEqual([task]);
 });
+
+it('resumes across matching sessions, keeps each source link and restores the opener after the second source is deleted', async () => {
+  const f=await fixture(), {prepareAgentPost}=await import('./agent-posts.js');
+  const at='2026-11-14T18:00:00Z';
+  const second=f.comms.threads.open({agent:'art',member:'alice',venue:'terminal',title:'Next terminal'});
+  const other=f.comms.threads.open({agent:'art',member:'bob',title:'Other reader'});
+  const write=async (source:string,edit:Parameters<typeof prepareAgentPost>[3])=>(await prepareAgentPost(f.db,f.key,source,edit))(at);
+  const id=await write(f.thread.id,{action:'open',words:'Boot console'});
+  await write(second.id,{action:'reply',thread:id,words:'It scrolls!'});
+  await write(second.id,{action:'rename',thread:id,title:'The scrolling console'});
+  await expect(write(other.id,{action:'reply',thread:id,words:'Different audience'})).rejects.toThrow('unavailable');
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:commsQueryFields(f.service)})});
+  const read=async()=>{
+    const result=await graphql({schema,contextValue:{viewer:alice},variableValues:{id},source:`query($id:String!){
+      agentActivityFeed(agent:"art"){thread title latest{words source} parent{words}}
+      agentActivityHistory(agent:"art",thread:$id){words source}
+    }`});
+    expect(result.errors).toBeUndefined();
+    return result.data;
+  };
+  expect(await read()).toEqual({
+    agentActivityFeed:[{thread:id,title:'The scrolling console',latest:{words:'It scrolls!',source:second.id},parent:{words:'Boot console'}}],
+    agentActivityHistory:[{words:'Boot console',source:f.thread.id},{words:'It scrolls!',source:second.id}],
+  });
+  f.db.update(conversations).set({member:'bob'}).where(eq(conversations.id,second.conversation)).run();
+  expect(await read()).toEqual({agentActivityFeed:[],agentActivityHistory:[]});
+  f.db.delete(threads).where(eq(threads.id,second.id)).run();
+  expect(await read()).toEqual({
+    agentActivityFeed:[{thread:id,title:'Boot console',latest:{words:'Boot console',source:f.thread.id},parent:null}],
+    agentActivityHistory:[{words:'Boot console',source:f.thread.id}],
+  });
+});
