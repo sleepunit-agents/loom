@@ -102,7 +102,7 @@ export class DataLive {
     const cache = guard && this.transportSchemas.get(guard);
     let schema = cache?.get(options.schema);
     if (!schema) {
-      const active = cache && guard ? guard : () => options.active?.() ?? true;
+      const active = cache ? guard : () => options.active?.() ?? true;
       schema = this.executions.schema(options.schema, () => !this.stopped && active());
       cache?.set(options.schema, schema);
     }
