@@ -29,6 +29,18 @@ export function dataDiff(before: unknown, after: unknown, path: (string | number
   return [{ path, value: after }];
 }
 
+interface LiveSelection {
+  schema: GraphQLSchema;
+  query: string;
+  variables?: Record<string, unknown>;
+  operationName?: string;
+  /** Trusted executor context; never derive this from query variables. */
+  contextValue?: unknown;
+  valid(): boolean;
+  /** Pure transport lifecycle check; authentication stays at read/release. */
+  active?(): boolean;
+}
+
 /** One committed-write signal for the shared database. No polling, per-row
  * resolvers or extra table reads. Composition calls changed() AFTER commit,
  * including changes to sharing facts. Rolled-back writes must not signal.
@@ -72,23 +84,27 @@ export class DataLive {
     return this.executions.run(() => initial && this.measure ? this.measure(read) : read());
   }
 
-  watch(options: {
-    schema: GraphQLSchema;
-    query: string;
-    variables?: Record<string, unknown>;
-    operationName?: string;
-    /** Trusted executor context; never derive this from query variables. */
-    contextValue?: unknown;
-    valid(): boolean;
-    /** Pure transport lifecycle check; authentication stays at read/release. */
-    active?(): boolean;
-  }): AsyncIterableIterator<DataDelta> {
+  watch(options: LiveSelection) {
+    return this.watchWithSchema(options, () => this.executions.schema(options.schema,
+      () => !this.stopped && (options.active?.() ?? true)));
+  }
+
+  /** A socket's subscription schema owns this closure. Its selections share the
+   * resolver wrappers, while each read still has its own context and valid check. */
+  selections(schema: GraphQLSchema, active: () => boolean) {
+    let tracked: GraphQLSchema | undefined;
+    const getSchema = () => tracked ??= this.executions.schema(schema, () => !this.stopped && active());
+    return (selection: Omit<LiveSelection, 'schema' | 'active'>) =>
+      this.watchWithSchema({ ...selection, schema }, getSchema);
+  }
+
+  private watchWithSchema(options: LiveSelection, getSchema: () => GraphQLSchema): AsyncIterableIterator<DataDelta> {
     if (this.stopped) throw new Error('Live data access ended');
     const document = parse(options.query);
     const errors = validate(options.schema, document);
     if (errors.length) throw errors[0];
     if (getOperationAST(document, options.operationName)?.operation !== 'query') throw new Error('A live selection must be a query');
-    const schema = this.executions.schema(options.schema, () => !this.stopped && (options.active?.() ?? true));
+    const schema = getSchema();
     let initial = true;
     let ended = false, dirty = true, previous: unknown, revision = 0, reading = false;
     let wake: (() => void) | undefined;

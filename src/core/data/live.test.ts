@@ -1,9 +1,11 @@
 import Database from 'better-sqlite3';
-import { GraphQLObjectType, GraphQLSchema, GraphQLString } from 'graphql/index.js';
-import { afterEach, expect, it } from 'vitest';
+import { GraphQLObjectType, GraphQLSchema, GraphQLString, parse, subscribe, type ExecutionResult } from 'graphql/index.js';
+import { afterEach, expect, it, vi } from 'vitest';
 import { createDataSchema } from './database.js';
 import { dataQueries } from './queries.js';
 import { taskVisibility } from './visibility.js';
+import { dataSubscriptions } from './subscriptions.js';
+import { ExecutionDrain } from './execution.js';
 import { DataLive, dataDiff } from './live.js';
 
 const clean: (() => void)[] = [];
@@ -193,4 +195,41 @@ it('drains initial read accounting after its consumer cancels', async () => {
   let drained = false; const closing = live.drain().then(() => { drained = true; });
   try { await Promise.resolve(); expect(drained).toBe(false); release(); await closing; expect(measured).toBe(true); }
   finally { release(); await closing; }
+});
+
+it('shares resolver wrappers only inside the same live subscription schema', async () => {
+  const live = new DataLive();
+  const source = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    label: { type: GraphQLString, resolve: (_source, _args, context) => context.label },
+  } }) });
+  let firstActive = true;
+  const build = vi.spyOn(ExecutionDrain.prototype, 'schema');
+  const first = dataSubscriptions(source, live, () => true, () => firstActive);
+  const second = dataSubscriptions(source, live, () => true);
+  const document = parse('subscription { observe(query:"{ label }") { patches { value } } }');
+  const open = async (schema: GraphQLSchema, label: string) => {
+    const stream = await subscribe({ schema, document, contextValue: { label } });
+    if (!(Symbol.asyncIterator in stream)) throw Error('Expected a live subscription');
+    return stream[Symbol.asyncIterator]();
+  };
+  const read = async (schema: GraphQLSchema, label: string) => {
+    const stream = await open(schema, label);
+    try {
+      const { value } = await stream.next();
+      expect((value as ExecutionResult).data).toEqual({ observe: { patches: [{ value: { label } }] } });
+    } finally { await stream.return?.(); }
+  };
+  try {
+    expect(build).not.toHaveBeenCalled();
+    await read(first, 'one');
+    await read(first, 'two');
+    expect(build).toHaveBeenCalledTimes(1);
+    await read(second, 'other socket');
+    expect(build).toHaveBeenCalledTimes(2);
+    firstActive = false;
+    const ended = await open(first, 'withheld');
+    await expect(ended.next()).rejects.toThrow('Data access ended');
+    await read(second, 'still active');
+    expect(build).toHaveBeenCalledTimes(2);
+  } finally { build.mockRestore(); live.close(); await live.drain(); }
 });
