@@ -449,6 +449,50 @@ it('attaches current work states to a post without requiring the IDs in its word
   expect((await read()).work).toEqual([task]);
 });
 
+it('loads linked work in a fixed number of statements for an activity page', async () => {
+  const f=await fixture(), {changes,tasks}=await import('../data/schema.js');
+  const {prepareAgentPost}=await import('./agent-posts.js');
+  const at='2026-11-14T18:00:00Z';
+  const change='github:house/loom#7';
+  f.db.insert(memberAgents).values({member:'alice',agent:'art'}).run();
+  f.db.insert(changes).values({id:change,repository:'house/loom',number:7,title:'Shared change',body:'',url:'',
+    state:'open',draft:true,authorLogin:'art',agent:'art',branch:'branch',headCommit:'a'.repeat(40),baseBranch:'next',
+    checks:'passing',review:'approved',mergeable:'yes',waitingOn:'author',openedAt:at,updatedAt:at}).run();
+  let first='';
+  for(let i=1;i<=10;i++){
+    const id='t-'+i;
+    f.db.insert(tasks).values({id,title:'Visible '+i,ownerKind:'member',owner:'alice',
+      createdByKind:'member',createdBy:'alice',createdAt:at,changedAt:at}).run();
+    const post={words:'Check '+id+' and house/loom#7'};
+    const thread=(await prepareAgentPost(f.db,f.key,f.thread.id,{action:'open',...post}))(at);
+    if(i===1) first=thread;
+    else (await prepareAgentPost(f.db,f.key,f.thread.id,{action:'reply',thread:first,...post}))(at);
+  }
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:commsQueryFields(f.service)})});
+  for(const surface of ['feed','history']){
+    const run=async(limit:number,compact:boolean)=>{
+      const selection='words work @skip(if:$compact){id title}';
+      const field=surface==='feed' ? 'agentActivityFeed(agent:"art",limit:$limit){latest{'+selection+'}}'
+        : 'agentActivityHistory(agent:"art",thread:'+JSON.stringify(first)+',limit:$limit){'+selection+'}';
+      f.statements.length=0;
+      const result=await graphql({schema,source:'query($limit:Int!,$compact:Boolean!){'+field+'}',contextValue:{viewer:alice},variableValues:{limit,compact}});
+      const count=f.statements.length;
+      expect(result.errors).toBeUndefined();
+      const rows=Object.values(result.data!)[0] as {latest?:unknown;words:string;work?:unknown[]}[];
+      expect(rows).toHaveLength(limit);
+      for(const row of rows){
+        const post=(row.latest??row) as {words:string;work?:unknown[]};
+        const id=post.words.split(' ')[1];
+        expect(post.work).toEqual(compact?undefined:[{id,title:'Visible '+id.slice(2)},{id:change,title:'Shared change'}]);
+      }
+      return count;
+    };
+    const compact=await run(10,true);
+    expect(await run(1,false)).toBe(compact+2);
+    expect(await run(10,false)).toBe(compact+2);
+  }
+});
+
 it('resumes across matching sessions, keeps each source link and restores the opener after the second source is deleted', async () => {
   const f=await fixture(), {prepareAgentPost}=await import('./agent-posts.js');
   const at='2026-11-14T18:00:00Z';
