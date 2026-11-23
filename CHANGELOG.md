@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > (2026-04-23) and this release ship together as `0.5.0`.
 
 ## [Unreleased]
+
+- Fixed phone dock icons moving under a tap before the selected app opened.
 - Discuss a standalone Inbox FYI with your default agent. The chat opens with the notice in context and stays linked for follow-up questions.
 - The Comms portrait signals and animates when a new reply arrives in the open thread. Reopening older replies stays quiet.
 - Activity records a wordless refusal when a body withholds a final reply containing a protected credential.

@@ -131,6 +131,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('member-appearance');
   expect(step.value.actions.memberAppearance,JSON.stringify(step.value.actions.memberAppearance)).toMatchObject({ok:true});
  });
+ it('answers a desktop task question through a single tap on the phone Inbox dock icon',{retry:0,timeout:60_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('phone-task');
+  expect(step.value.actions.phoneTask).toMatchObject({ok:true});
+ });
  it('keeps each agent’s memories in its own file across a restart',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('agent-memory-files');
   expect(step.value.actions.agentMemoryFiles,JSON.stringify(step.value.actions.agentMemoryFiles)).toMatchObject({ok:true});
