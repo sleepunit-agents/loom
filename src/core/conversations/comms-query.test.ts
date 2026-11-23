@@ -160,7 +160,8 @@ it('skips the mailbox scan when the desk only selects member or agents', async (
     const result = await graphql({ schema, source, variableValues: { summary }, contextValue: { viewer: alice } });
     expect(result.errors).toBeUndefined();
     expect(result.data?.homeComms).toEqual({ member: 'alice', teammates: ['art'], ...(summary ? { summaries: [{ unread: 1 }] } : {}) });
-    expect(f.statements.some(sql => sql.includes('home_unread'))).toBe(summary);
+    const readsHistory = f.statements.some(sql => /\b(?:from|join)\s+["`]?(?:threads|messages)\b/i.test(sql));
+    expect(readsHistory).toBe(summary);
   }
 });
 
