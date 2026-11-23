@@ -1,3 +1,4 @@
+import { tempoFailureMessage } from './actions';
 import { NativeSelect } from '../../kit/native-select';
 import { useRef, useState, type FormEvent } from 'react';
 import { Button, Input, Textarea } from '../../kit';
@@ -8,7 +9,7 @@ export function CreateTrigger({ timezone, submit, done }: { timezone: string; su
   const [owner, setOwner] = useState<NewTrigger['ownerKind']>('member');
   const [target, setTarget] = useState<NewTrigger['targetKind']>('inbox');
   const [content, setContent] = useState('words');
-  const [busy, setBusy] = useState(false), [failed, setFailed] = useState(false);
+  const [busy, setBusy] = useState(false), [failure, setFailure] = useState('');
   const pending = useRef(false);
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (pending.current) return;
@@ -20,9 +21,9 @@ export function CreateTrigger({ timezone, submit, done }: { timezone: string; su
       ...(source === 'time' ? { times: text('times'), days: text('days') || null } : { watches: text('watches') }),
       ...(to ? { toKind: text('toKind') as 'person' | 'agent', to } : {}),
       ...(target === 'operation' ? { target: text('target') } : content === 'file' ? { file: text('words') } : { instructions: text('words') }) };
-    pending.current = true; setBusy(true); setFailed(false);
+    pending.current = true; setBusy(true); setFailure('');
     try { await submit(input); done(); }
-    catch { setFailed(true); }
+    catch (error) { setFailure(tempoFailureMessage(error, 'Tempo could not create that trigger. Check the details and your access.')); }
     finally { pending.current = false; setBusy(false); }
   }
   return <form aria-label="Create trigger" onSubmit={save} className="grid gap-3 p-5">
@@ -48,7 +49,7 @@ export function CreateTrigger({ timezone, submit, done }: { timezone: string; su
       <label>Project<Input name="project" /></label>
       <Button variant="primary" type="submit">{busy ? 'Creating…' : 'Create trigger'}</Button>
     </fieldset>
-    {failed && <p role="alert">Tempo could not create that trigger. Check the details and your access.</p>}
+    {failure && <p role="alert">{failure}</p>}
     <Button type="button" variant="outline" onClick={done}>Back to Tempo</Button>
   </form>;
 }

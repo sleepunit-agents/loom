@@ -1,3 +1,4 @@
+import { FILE_READER_UNAVAILABLE } from '../../../../src/core/tempo/lane-file.js';
 import { newId } from '../../data/id.js';
 import type { TempoActions } from './actions.js';
 /** Cookie credentials identify the caller. A control supplies only its target. */
@@ -12,6 +13,10 @@ export function tempoActions(request: typeof fetch = fetch): TempoActions {
     const response = await request(`/api/tempo/${action}`, { method: 'POST', credentials: 'same-origin',
       headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: attempt.id, input }) });
     const result: unknown = await response.json();
+    if (response.status === 400 && result && typeof result === 'object' && 'ok' in result && result.ok === false &&
+        'code' in result && result.code === 'invalid' && 'message' in result && result.message === FILE_READER_UNAVAILABLE) {
+      throw new Error(FILE_READER_UNAVAILABLE);
+    }
     if (!response.ok || !result || typeof result !== 'object' || !('ok' in result) || result.ok !== true
       || !('value' in result) || !result.value || typeof result.value !== 'object'
       || (action === 'set' ? !('id' in result.value) || typeof result.value.id !== 'string' || !result.value.id : !('saved' in result.value) || result.value.saved !== true)) throw new Error('Tempo could not confirm the change.');
