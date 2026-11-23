@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { DataWrites } from '../../core/data/writes.js';
 import { FakeClock } from '../../core/clock.js';
-import { members, agents, secrets, secretChanges, bridgeResume, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeRawEvents, inbox, bridgeSends, bridgeSendParts, bridgeFiles, bridgeFileMessages } from '../../core/data/schema.js';
+import { members, agents, secrets, secretChanges, bridgeResume, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgePersonSightings, bridgeRawEvents, inbox, bridgeSends, bridgeSendParts, bridgeFiles, bridgeFileMessages } from '../../core/data/schema.js';
 import {BridgeSettings} from './settings.js';
 import { SharedBridges, type SharedBridgeOptions } from './shared-daemon.js';
 import type { bridgeSlackSocket } from './slack-socket.js';
@@ -45,6 +45,42 @@ it('authenticates the bot/app binding, durably accepts before drain and signals 
  expect(f.db.select().from(bridgeRawEvents).all()).toEqual([]);expect(f.db.select().from(bridgeIncoming).get()).toMatchObject({state:'delivered',member:'owner'});expect(f.signal).toHaveBeenCalledOnce();
  await f.transports[0].receive({},f.raw('event','different-ack'));f.clock.advance(0);await f.daemon.idle();expect(f.signal).toHaveBeenCalledOnce();expect(f.db.select().from(inbox).all()).toHaveLength(1);
  expect(f.buffers.every(buffer=>buffer.every(byte=>byte===0))).toBe(true);expect(f.client.serialize().includes(Buffer.from('synthetic:TOKEN'))).toBe(false);expect(f.errors).toEqual([]);
+});
+it('files a room sighting after delivery and skips a sender the bridge drops',async()=>{
+ const observeAccount=vi.fn(()=>true);
+ const f=fixture({observeAccount});await f.daemon.ready();await f.daemon.idle();
+ for(const [event,user] of [['known','UUSER'],['unknown','UOTHER']]){
+  const frame=JSON.parse(f.raw(event,event).toString());
+  Object.assign(frame.payload.event,{user,user_profile:{display_name:'Robin'},ts:user==='UUSER'?'1794432000.000001':'1794432001.000001'});
+  await f.transports[0].receive({},Buffer.from(JSON.stringify(frame)));
+ }
+ f.clock.advance(0);await f.daemon.idle();
+ expect(observeAccount.mock.calls).toEqual([['slack','TWORK','UUSER','2026-11-11T21:20:00.000001Z','Robin']]);
+ expect(f.errors).toEqual([]);
+});
+it('retries a failed directory write after inbox delivery commits',async()=>{
+ let attempts=0;
+ const f=fixture({observeAccount(){
+  expect(f.client.inTransaction).toBe(false);
+  expect(f.db.select().from(inbox).all()).toHaveLength(1);
+  if(++attempts===1)throw Error('Directory busy');
+  return true;
+ }});
+ await f.daemon.ready();await f.daemon.idle();
+ await f.transports[0].receive({},f.raw());
+ f.clock.advance(0);await f.daemon.idle();
+ expect(attempts).toBe(1);
+ expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(0);
+ expect(f.db.select().from(bridgePersonSightings).all()).toHaveLength(1);
+ await f.daemon.close();
+ f.db.update(bridgeConnections).set({enabled:false,removedAt:new Date(f.clock.now()).toISOString()}).run();
+ const restarted=new SharedBridges({db:f.db,clock:f.clock,writes:f.writes,source:f.source,effectsAllowed:()=>false,
+  changed(){},reportError(error){throw error;},observeAccount(){attempts++;return true;}});
+ clean.push(()=>restarted.close());
+ await restarted.ready();await restarted.idle();
+ expect(attempts).toBe(2);
+ expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(0);
+ expect(f.db.select().from(inbox).all()).toHaveLength(1);
 });
 it('fences old socket callbacks and state reports after a committed disable',async()=>{
  const f=fixture();await f.daemon.ready();await f.daemon.idle();const old=f.transports[0];

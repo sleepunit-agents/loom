@@ -411,6 +411,8 @@ const upgrades: readonly (readonly string[])[] = [
    "CREATE TABLE `agent_posts` (\n\t`seq` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`thread` text NOT NULL,\n\t`source` text NOT NULL,\n\t`at` text NOT NULL,\n\t`words` blob NOT NULL,\n\t`work_refs` blob,\n\tFOREIGN KEY (`thread`) REFERENCES `agent_post_threads`(`id`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`source`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade,\n\tCONSTRAINT \"agent_posts_at_utc\" CHECK(\"agent_posts\".\"at\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"agent_posts\".\"at\") = \"agent_posts\".\"at\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"agent_posts\".\"at\") = \"agent_posts\".\"at\", 0))\n);",
    "CREATE INDEX `agent_posts_thread_seq` ON `agent_posts` (`thread`,`seq`);",
    "CREATE TABLE `agent_post_names` (\n\t`thread` text PRIMARY KEY NOT NULL,\n\t`source` text NOT NULL,\n\t`title` blob NOT NULL,\n\tFOREIGN KEY (`thread`) REFERENCES `agent_post_threads`(`id`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`source`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade\n);"],
+  // 38: a delivered contact sighting can be retried after its raw receipt expires.
+  ["CREATE TABLE `bridge_person_sightings` (\n\t`incoming` text PRIMARY KEY NOT NULL,\n\t`seen_at` text NOT NULL,\n\t`platform` text NOT NULL,\n\t`workspace` text NOT NULL,\n\t`label` text,\n\tFOREIGN KEY (`incoming`) REFERENCES `bridge_incoming`(`id`) ON UPDATE no action ON DELETE cascade\n);"],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;
