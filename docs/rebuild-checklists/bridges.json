@@ -70,7 +70,11 @@
     {
       "id": "bridges-006",
       "promise": "The bot's token is a stored secret.",
-      "source": "docs/how-it-works/site/bridges.html#con-h"
+      "source": "docs/how-it-works/site/bridges.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeSettings"
+      }
     },
     {
       "id": "bridges-007",
@@ -160,7 +164,20 @@
     {
       "id": "bridges-015",
       "promise": "a Household things. Connections, channel rules and person links belong to the household. Household owners manage them and see them all.",
-      "source": "docs/how-it-works/site/bridges.html#see-h"
+      "source": "docs/how-it-works/site/bridges.html#see-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "bridgeSettings"
+          },
+          {
+            "kind": "action",
+            "action": "deskPanelVisibility"
+          }
+        ]
+      }
     },
     {
       "id": "bridges-016",

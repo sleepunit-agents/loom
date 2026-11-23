@@ -220,7 +220,7 @@ export async function* walkthroughSteps(output) {
      report.actions.activityWorkLinks=await activityWorkLinks(input);
      report.actions.activityDays=await activityDays({...input,now:clock.now(),householdZone});
     }
-    if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out,app});report.actions={...report.actions,bridgeSettings:row.action};}
+    if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out,app,home});report.actions={...report.actions,bridgeSettings:row.action};}
     if(['Your account','Household setup','Sharing'].includes(title))row.action=await accessAction({page,tile,title,app,out});
     if(title==='Subscriptions')Object.assign(report.actions,await modelAccountActions({page,tile,example:report.example,subscriptions,out}));
     if(title==='Knowledge'){
