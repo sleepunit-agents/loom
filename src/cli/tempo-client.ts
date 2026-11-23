@@ -456,8 +456,12 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
           return 2;
         }
       }
-      const result = await post('/api/tempo/set', { id: randomUUID(), input: { ...wake.input, owner: agent, to: agent, times } });
-      const { value } = z.object({ ok: z.literal(true), value: z.object({ id: z.string(), waits: z.string().optional() }) }).parse(result);
+      const result = await post('/api/tempo/set', { id: randomUUID(), input: { ...wake.input, reuseFileSchedule: wake.input.file ? true : undefined, owner: agent, to: agent, times } });
+      const { value } = z.object({ ok: z.literal(true), value: z.object({ id: z.string(), waits: z.string().optional(), scheduledAt: z.string().datetime().optional() }) }).parse(result);
+      if (value.scheduledAt) {
+        io.stdout('Already scheduled for ' + value.scheduledAt + '.\n');
+        return 0;
+      }
       io.stdout(onOneLine(value.waits ? 'Awaiting approval: ' + value.waits : encodeURIComponent(value.id) + ' will wake at ' + times) + '\n');
       return 0;
     }

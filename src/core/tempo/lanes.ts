@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, asc, eq, getTableColumns, gt, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, asc, between, eq, getTableColumns, gt, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import { rules, type Viewer } from '../../policy.js';
 import { sqlHolds, sqlVisibility } from '../../policy-sql.js';
 import type { DataDatabase } from '../data/database.js';
@@ -29,6 +29,21 @@ export function clockLaneText(db: DataDatabase, viewer: Viewer, id: string, agen
   const revision = viewer.kind === 'member' && sqlHolds(db, rules.householdOwner, viewer)
     ? createHash('sha256').update(JSON.stringify([id, digest, row.agent, row.project, row.member, row.conversation])).digest('hex') : null;
   return { text, digest, revision };
+}
+
+/** Read in the same write as a file wake, after the proposed wake passes normal validation. */
+export function coveringFileSchedule(db: DataDatabase, viewer: Viewer, agent: string, file: string, due: string) {
+  const window = 6 * 60 * 60 * 1000;
+  const at = Date.parse(due);
+  return db.select().from(triggers).where(and(
+    sqlVisibility(viewer, ['triggers']).triggers(getTableColumns(triggers)),
+    or(eq(triggers.ownerKind, 'household'), and(eq(triggers.ownerKind, 'agent'), eq(triggers.owner, agent))),
+    eq(triggers.sourceKind, 'time'), eq(triggers.lifespan, 'until-stopped'), eq(triggers.targetKind, 'inbox'),
+    eq(triggers.toKind, 'agent'), eq(triggers.to, agent), eq(triggers.file, file), eq(triggers.enabled, true),
+    isNull(triggers.member), isNull(triggers.conversation), isNull(triggers.project), isNull(triggers.program),
+    isNull(triggers.scheduleRemovedAt), between(triggers.nextDueAt,
+      new Date(at - window).toISOString(), new Date(at + window).toISOString()),
+  )).orderBy(asc(triggers.nextDueAt), asc(triggers.id)).limit(1).get();
 }
 
 /** Bind a household schedule replacement to the settings its owner just read. */

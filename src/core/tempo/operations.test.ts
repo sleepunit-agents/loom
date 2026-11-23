@@ -50,6 +50,28 @@ it('refuses an explicit host schedule or host edit without changing a trigger', 
   expect(f.db.select().from(triggers).get()?.note).toBe(f.trigger.note);
 });
 
+it('uses the next recurring file wake within six hours on either side, including both endpoints', () => {
+  const f = fixture();
+  const hour = 3600000;
+  const due = f.clock.now() + 24 * hour;
+  const when = (offset: number) => new Date(due + offset).toISOString();
+  const { id, instructions, ...wake } = f.trigger;
+  const fileWake = { ...wake, file:'routines/nightly.md' };
+  expect(f.call('tempo.set', { ...fileWake, id, lifespan:'until-stopped', times:when(0) }, 'schedule').ok).toBe(true);
+  for (const offset of [-6 * hour, 0, 6 * hour]) {
+    const input = { ...fileWake, times:when(offset), reuseFileSchedule:true };
+    const expected = {ok:true, value:{id, scheduledAt:when(0)}};
+    expect(f.call('tempo.set', input, String(offset))).toEqual(expected);
+    expect(f.call('tempo.set', input, String(offset))).toEqual(expected);
+  }
+  expect(f.db.select().from(triggers).all()).toHaveLength(1);
+  for (const offset of [-6 * hour - 1, 6 * hour + 1]) {
+    expect(f.call('tempo.set', { ...fileWake, times:when(offset), reuseFileSchedule:true }, String(offset)).ok).toBe(true);
+  }
+  expect(f.call('tempo.set', { ...fileWake, times:when(0) }, 'explicit').ok).toBe(true);
+  expect(f.db.select().from(triggers).all()).toHaveLength(4);
+});
+
 it('dispatches a due trigger atomically with its receipt, admits after commit and rechecks authority on replay', () => {
   const f = fixture();
   f.tempo.volume.setTimings({ kind: 'agent', id: 'art' }, { settleSeconds: 0 });

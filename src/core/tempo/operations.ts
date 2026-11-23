@@ -2,7 +2,7 @@
  * provenance come from composition; no service name or request field grants
  * authority here. The shared writer must call tempo.committed() after commit.
  */
-import { clockLaneText, clockScheduleRevision } from './lanes.js';
+import { clockLaneText, clockScheduleRevision, coveringFileSchedule } from './lanes.js';
 import { rules } from '../../policy.js';
 import { sqlHolds } from '../../policy-sql.js';
 import { SHA256_HEX } from '../sha256-hex.js';
@@ -66,16 +66,20 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
     const trigger = db.select().from(triggers).where(eq(triggers.id, target)).get();
     return !!trigger && options.authorize(viewer, { action, trigger });
   };
-  operations.register(operation({ ...common, name: 'tempo.set', input: triggerInput, output: z.object({ id: z.string(), waits }),
+  operations.register(operation({ ...common, name: 'tempo.set', input: triggerInput.extend({ reuseFileSchedule: z.literal(true).optional() }), output: z.object({ id: z.string(), waits, scheduledAt: z.string().optional() }),
     may: (viewer, trigger) => options.authorize(viewer, { action: 'set', trigger }),
-    run(ctx, trigger) {
+    run(ctx, { reuseFileSchedule, ...trigger }) {
       if (trigger.execution === 'host') throw new OperationError('denied', HOST_SCHEDULE_REFUSAL);
       const held = options.heldRefusal?.(ctx.viewer, 'set'); if (held) throw new OperationError('denied', held);
       const refused = options.wordRefusal?.(ctx.viewer, 'set', trigger); if (refused) throw new OperationError('denied', refused);
       const first = options.ownersFirst?.(ctx.viewer, { action: 'set', trigger });
       if (first) { ctx.changed('approvals', first.card); ctx.changed('inbox', first.card); return { id: first.id, waits: first.waits }; }
       const as = options.recorded?.(ctx.viewer, trigger) ?? { trigger };
-      const row = tempo.triggers.set(as.trigger, as.member, as.asked); options.stood?.(ctx.viewer, 'set', row); ctx.changed('triggers', row.id); return { id: row.id }; },
+      const row = tempo.triggers.set(as.trigger, as.member, as.asked, reuseFileSchedule
+        ? (agent, file, due) => coveringFileSchedule(db, ctx.viewer, agent, file, due) : undefined);
+      if (reuseFileSchedule && as.trigger.lifespan === 'once' && row.lifespan === 'until-stopped')
+        return { id: row.id, scheduledAt: row.nextDueAt! };
+      options.stood?.(ctx.viewer, 'set', row); ctx.changed('triggers', row.id); return { id: row.id }; },
   }));
   for (const action of ['stop', 'start', 'runNow'] as const) operations.register(operation({ ...common,
     name: `tempo.${action}`, input: id.extend({ occurrence: action === 'stop' ? occurrence.optional() : z.never().optional(),

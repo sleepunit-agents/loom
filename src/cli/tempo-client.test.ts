@@ -237,6 +237,19 @@ it('replays creation and pause after lost responses and delivers once to the res
     expect(db.select().from(triggers).all().find(row=>row.id===fileWake.id)?.enabled).toBe(true);
     expect(await runTempoClient(['--agent=birch','cancel',fileWake.id], io, request)).toBe(1);
     expect(await runTempoClient(['cancel',fileWake.id], io, request)).toBe(0);
+    const routine = 'routines/nightly.md';
+    const schedule = app.services.tempo.triggers.set({ ownerKind:'agent', owner:'fern', toKind:'agent', to:'fern',
+      targetKind:'inbox', sourceKind:'time', times:'08:00', lifespan:'until-stopped', file:routine, note:'Nightly' });
+    const beforeRearm = db.select().from(triggers).all().length;
+    output = '';
+    expect(await runTempoClient(['at','08:00','-f',routine], io, request), errors).toBe(0);
+    expect(output).toContain('Already scheduled for ' + schedule.nextDueAt);
+    expect(db.select().from(triggers).all()).toHaveLength(beforeRearm);
+    expect(await runTempoClient(['--agent=birch','at','08:00','-f',routine], io, request), errors).toBe(0);
+    expect(db.select().from(triggers).all()).toHaveLength(beforeRearm + 1);
+    app.services.tempo.triggers.stop(schedule.id);
+    expect(await runTempoClient(['at','08:00','-f',routine], io, request), errors).toBe(0);
+    expect(db.select().from(triggers).all()).toHaveLength(beforeRearm + 2);
     const standing = app.services.tempo.triggers.set({ id:'cadence@fern', ownerKind:'agent', owner:'fern',
       sourceKind:'time', times:'09:00', lifespan:'until-stopped', targetKind:'inbox', toKind:'agent', to:'fern', note:'Standing' });
     output = '';
