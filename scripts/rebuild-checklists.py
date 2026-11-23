@@ -79,6 +79,8 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   for row in rows:
    if row['promise'].startswith('A job works in one conversation, and a conversation points at the job working in it now.'):row['probe']={'kind':'action','action':'nativeProtocol'}
    if row['promise'].startswith('A private chat in Comms between one person and one agent.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['conversationPrivatePair','commsSend','commsPrivacy']]}
+   if row['promise']=='A channel or a direct message. A bot signed in to the server speaks for the agent.':row['probe']={'kind':'action','action':'discordConversations'}
+   if row['promise']=='The same, in a Slack workspace.':row['probe']={'kind':'action','action':'slackConversations'}
    if row['promise'].startswith('Each incoming message goes into one conversation.'):row['probe']={'kind':'action','action':'bridgeMail'}
    if row['promise'].startswith('d Checked at the door.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':name} for name in ['conversationCallers','conversationVisibility']]}
    if row['promise'].startswith('A request for a secret records the conversation'):row['probe']={'kind':'action','action':'conversationSecretSource'}

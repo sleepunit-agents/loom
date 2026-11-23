@@ -20,6 +20,7 @@ import {secretDefaultAction,verifySecretDefaultAfterReload} from './rebuild-secr
 import {workVisibility} from './rebuild-work-visibility.mjs';
 import {changeActions,changeInline} from './rebuild-change-actions.mjs';
 import {bridgeReceipts} from './rebuild-bridge-receipts.mjs';
+import {providerConversations} from './rebuild-provider-conversations.mjs';
 import {bridgeMail} from './rebuild-bridge-mail.mjs';
 import {bridgeSettingsAction} from './rebuild-bridge-actions.mjs';
 import {taskStructure} from './rebuild-task-structure.mjs';
@@ -385,6 +386,10 @@ export async function* walkthroughSteps(output) {
   catch(error){report.actions.scheduledWorker={ok:false,error:String(error)};}
   save();yield {phase:'scheduled-worker',actions:safeReport(report.actions)};
   phase='bridge delivery';
+  for(const [platform,action] of [['discord','discordConversations'],['slack','slackConversations']]) {
+    try {report.actions[action]=await providerConversations(platform);}
+    catch(error){report.actions[action]={ok:false,error:String(error)};}
+  }
   try {report.actions.bridgeMail=await bridgeMail({app,clock});}
   catch(error){report.actions.bridgeMail={ok:false,error:String(error)};}
   try {report.actions.bridgeReceipts=await bridgeReceipts({app,clock,page,open:openApp});}

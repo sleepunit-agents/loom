@@ -65,12 +65,20 @@
     {
       "id": "conversations-006",
       "promise": "A channel or a direct message. A bot signed in to the server speaks for the agent.",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "discordConversations"
+      }
     },
     {
       "id": "conversations-007",
       "promise": "The same, in a Slack workspace.",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "slackConversations"
+      }
     },
     {
       "id": "conversations-008",
