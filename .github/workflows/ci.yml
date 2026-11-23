@@ -45,7 +45,7 @@ jobs:
     name: build + test
     # Both pools at once: shards 1 and 2 go to our own runners and shards 3 and 4 stay on GitHub's, so a
     # pull request never waits on one queue alone. (A job's runs-on is fixed when it is created; there is
-    # no "whichever is free".) "CI results" has no shard and takes ours.
+    # no "whichever is free".)
     # Fork safety (the one runs-on that may name self-hosted; scripts/ci-runners.test.ts holds it to
     # exactly this). Our own runners take only trusted runs: a push or a merge-queue group, which only
     # people with write access can start, or a pull request from a branch in this repository that a person
@@ -193,16 +193,8 @@ jobs:
     name: CI results
     if: always()
     needs: [test, package]
-    # Fork safety (the one runs-on that may name self-hosted; scripts/ci-runners.test.ts holds it to
-    # exactly this). Our own runners take only trusted runs: a push or a merge-queue group, which only
-    # people with write access can start, or a pull request from a branch in this repository that a person
-    # opened (not Dependabot's package bumps). Everything else gets ubuntu-latest, and so does everything
-    # while the repository variable LOOM_SELF_HOSTED_RUNNERS isn't 'on' (the switch, and the way back to
-    # GitHub's runners when ours are down). A fork can edit this file in its own pull request, and its run
-    # is still this repository's, so neither this nor the runner group is the lock: the runners' own
-    # job-started hook (scripts/ci-runner-hook.sh) refuses a fork's code, behind the approval every outside
-    # contributor's run needs.
-    runs-on: ${{ vars.LOOM_SELF_HOSTED_RUNNERS == 'on' && matrix.shard != 3 && matrix.shard != 4 && (github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]')) && fromJSON('["self-hosted","Linux","X64","loom"]') || 'ubuntu-latest' }}
+    # Publish the required check even if the last household runner goes offline after tests finish.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
