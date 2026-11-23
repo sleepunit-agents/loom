@@ -1,4 +1,4 @@
-import { agentPostWork } from './agent-post-work.js';
+import { workForPage } from './agent-post-work.js';
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
@@ -14,8 +14,7 @@ GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
     id: { type: string }, title: { type: string }, state: { type: string }, href: { type: string },
   } });
   const post = new GraphQLObjectType({ name: 'AgentActivityPost', fields: {
-    work: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(workLink))),
-      resolve: (row, _args, {viewer}) => agentPostWork(db, viewer, row.words, row.refs) },
+    work: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(workLink))) },
     source: { type: string }, id: { type: string }, at: { type: string }, words: { type: string },
   } });
   const excerpt = new GraphQLObjectType({ name: 'AgentActivityExcerpt', fields: {
@@ -46,7 +45,9 @@ GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
         if (!rows.length) return [];
         const current = visibleThreads(viewer, agent, rows.map(row => row.thread));
         const stillReadable = visibleSources(viewer,agent,rows.flatMap(row=>row.sources));
-        return rows.filter(row => current.has(row.thread) && row.sources.every(id=>stillReadable.has(id)));
+        const visible = rows.filter(row => current.has(row.thread) && row.sources.every(id=>stillReadable.has(id)));
+        const work = workForPage(db, viewer, visible.map(row => row.latest));
+        return visible.map(row => ({ ...row, latest: { ...row.latest, work: () => work(row.latest) } }));
       },
     },
     agentActivityHistory: { type: new GraphQLList(new GraphQLNonNull(post)),
@@ -57,7 +58,9 @@ GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
         const rows = await agentPostHistory(db, key, source(viewer, agent), thread, cursor, size(limit));
         if (!rows.length || !visibleThreads(viewer, agent, [thread]).has(thread)) return [];
         const stillReadable = visibleSources(viewer,agent,rows.map(row=>row.source));
-        return rows.filter(row=>stillReadable.has(row.source));
+        const visible = rows.filter(row=>stillReadable.has(row.source));
+        const work = workForPage(db, viewer, visible);
+        return visible.map(row => ({ ...row, work: () => work(row) }));
       },
     },
   };
