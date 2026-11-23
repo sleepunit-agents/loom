@@ -28,7 +28,7 @@ export const houseMount = (relative: string): string => `${HOUSE_HOME}/${relativ
  * job, unless a mount is, holds, or is inside it; the worker checks that and says so to the body
  * (body-harness.ts, BODY_OWN_HARNESS), and a body keeps a session of a conversation only there
  * (body-session.ts). A harness not listed keeps no sessions loom knows of. */
-const HOUSE_SESSIONS: Readonly<Record<string, string>> = Object.freeze({ claude: `${HOUSE_HOME}/.claude` });
+const HOUSE_SESSIONS: Readonly<Record<string, string>> = Object.freeze({ claude: `${HOUSE_HOME}/.claude`, codex: `${HOUSE_HOME}/.codex` });
 export const houseSessions = (harness: string): string | undefined => Object.hasOwn(HOUSE_SESSIONS, harness) ? HOUSE_SESSIONS[harness] : undefined;
 /** Whether one path is the other or inside it, either way round: a mount at, above or under a place. */
 export const houseOverlap = (one: string, other: string): boolean => one === other || one.startsWith(other + '/') || other.startsWith(one + '/');
