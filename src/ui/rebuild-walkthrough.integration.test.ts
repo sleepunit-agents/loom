@@ -264,7 +264,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  });
  it('starts a worker body from a timed agent Inbox item',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('scheduled-worker');
-  expect(step.value.actions.scheduledWorker,JSON.stringify(step.value.actions.scheduledWorker)).toMatchObject({ok:true});
+  expect(step.value.actions.scheduledWorker,JSON.stringify(step.value.actions.scheduledWorker)).toMatchObject({ok:true,completedConversations:2});
  });
  it('delivers Discord and Slack messages into the receiving agent Inbox',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('bridge-mail');
