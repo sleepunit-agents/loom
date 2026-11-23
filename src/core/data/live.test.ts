@@ -239,3 +239,25 @@ it('shares resolver wrappers only inside the same live subscription schema', asy
     expect(build).toHaveBeenCalledTimes(2);
   } finally { build.mockRestore(); live.close(); await live.drain(); }
 });
+
+it('keeps distinct source schemas for a transport and preserves standalone method guards', async () => {
+  const live = new DataLive();
+  const schema = (value: string) => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    value: { type: GraphQLString, resolve: () => value },
+  } }) });
+  const a = schema('a'), b = schema('b');
+  const guard = live.transportGuard(() => true);
+  const build = vi.spyOn(ExecutionDrain.prototype, 'schema');
+  const query = '{ value }';
+  try {
+    for (const [source, expected] of [[a, 'a'], [b, 'b'], [a, 'a']] as const) {
+      const stream = live.watch({ schema: source, query, valid: () => true, active: guard });
+      expect((await stream.next()).value.patches[0].value).toEqual({ value: expected });
+      await stream.return?.();
+    }
+    expect(build).toHaveBeenCalledTimes(2);
+    const standalone = live.watch({ schema: a, query, valid: () => true, active() { return this.valid(); } });
+    expect((await standalone.next()).value.patches[0].value).toEqual({ value: 'a' });
+    await standalone.return?.();
+  } finally { build.mockRestore(); live.close(); await live.drain(); }
+});
