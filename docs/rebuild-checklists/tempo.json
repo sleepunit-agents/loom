@@ -37,7 +37,11 @@
     {
       "id": "tempo-007",
       "promise": "Holds an agent's triggers while the agent is paused.",
-      "source": "docs/how-it-works/site/tempo.html"
+      "source": "docs/how-it-works/site/tempo.html",
+      "probe": {
+        "kind": "action",
+        "action": "pausedWake"
+      }
     },
     {
       "id": "tempo-008",
