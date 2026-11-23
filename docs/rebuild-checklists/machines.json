@@ -75,12 +75,20 @@
     {
       "id": "machines-009",
       "promise": "An agent's body carries a token, and one can belong to a single job.",
-      "source": "docs/how-it-works/site/machines.html#con-h"
+      "source": "docs/how-it-works/site/machines.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "installedSecretHolder"
+      }
     },
     {
       "id": "machines-010",
       "promise": "A grant can be for one job only, and each use names the job.",
-      "source": "docs/how-it-works/site/machines.html#con-h"
+      "source": "docs/how-it-works/site/machines.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "installedSecretHolder"
+      }
     },
     {
       "id": "machines-011",

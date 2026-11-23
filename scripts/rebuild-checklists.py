@@ -238,6 +238,8 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('A task is ready when it is open'):row['probe']={'kind':'all','probes':[{'kind':'action','action':'taskStructure'},{'kind':'action','action':'taskLifecycle'}]}
  if f.stem=='machines':
   for row in rows:
+   if row['promise'] in ("An agent's body carries a token, and one can belong to a single job.", 'A grant can be for one job only, and each use names the job.'):
+    row['probe']={'kind':'action','action':'installedSecretHolder'}
    if row['promise'].startswith(('The agent it runs, the project it is for', 'a Jobs. A job carries its agent')):row['probe']={'kind':'action','action':'jobLabels'}
    if row['promise'].startswith(("Starts a job when an agent's inbox", "A non-empty inbox starts a job.", "A job works in one conversation")):row['probe']={'kind':'action','action':'scheduledWorker'}
    if row['promise']=="Shows each agent's current jobs on its card on Home.":row['probe']={'kind':'action','action':'homeJobs'}
