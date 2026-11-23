@@ -217,7 +217,7 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
       if(!allowed(viewer)||!db||!hasTable(db,'person_account_sightings'))return [];
       return db.transaction(()=>{
         const rows=db.prepare(`SELECT platform,workspace,account,label,seen_at AS seenAt
-          FROM person_account_sightings WHERE slug=? ORDER BY seen_at DESC,platform,workspace,account`).all(slug) as AccountSighting[];
+          FROM person_account_sightings WHERE slug=? ORDER BY seen_order DESC,platform,workspace,account`).all(slug) as AccountSighting[];
         return rows.filter(row=>sightingHolder(db,row.platform,row.workspace,row.account)===slug);
       })();
     },

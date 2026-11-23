@@ -20,7 +20,9 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
   const directory=new PeopleStore({dbPath:join(home,'commons/people.db'),now:()=>clock.now()});
   const relationship=new PeopleStore({dbPath:join(home,'agents/art/memories.db'),now:()=>clock.now()});
   const other=new PeopleStore({dbPath:join(home,'agents/other/memories.db'),now:()=>clock.now()});
-  directory.write({slug:'jonathan',name:'Jonathan Barket',where:{github:{value:'jbarket',source:'Owner supplied'}},how:{pronouns:'he/him'}});
+  directory.write({slug:'jonathan',name:'Jonathan Barket',where:{github:{value:'jbarket',source:'Owner supplied'},slack_workspace:{value:'TEXAMPLE'},slack:{value:['UEXAMPLE1','UEXAMPLE2']}},how:{pronouns:'he/him'}});
+  const seenAt=new Date(clock.now()-60_000).toISOString();
+  directory.observeAccount('slack','TEXAMPLE','UEXAMPLE2',seenAt,'Workshop account');
   directory.write({slug:'art',name:'Art E Fish',how:{kind:'agent'}});
   directory.write({slug:'casey',name:'Casey Smith'});
   relationship.write({slug:'jonathan',name:'Jonathan Barket',summary:'Builds the household',how:{mode:'direct'},may:[{text:'May discuss projects',source:'Jonathan'}]});
@@ -62,6 +64,10 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
     expect(await b.locator('article a[href="https://github.com/jbarket"]').count()).toBe(1);
     expect(await b.getByText('Owner supplied',{exact:false}).count()).toBe(1);
     expect(await b.getByText('May discuss projects',{exact:false}).count()).toBe(1);
+    for(const page of [a,b]){
+      expect(await page.getByText('Workshop account',{exact:false}).count()).toBe(1);
+      expect(await page.locator('time').evaluateAll(nodes=>nodes.some(node=>Date.parse(node.getAttribute('datetime')??'')===Date.parse('2026-11-13T11:59:00Z')))).toBe(true);
+    }
     const shots=resolve('artifacts/people-app');mkdirSync(shots,{recursive:true});
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
       const page=width<640?b:a;await page.setViewportSize({width,height:900});

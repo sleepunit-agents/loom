@@ -56,6 +56,22 @@ describe('PeopleStore', () => {
     } finally { reader.close(); }
   });
 
+  it('orders Slack postings inside one millisecond, despite clock skew or a replay after reassignment',()=>{
+    const workspace='T1',account='U1',where={slack_workspace:{value:workspace},slack:{value:account}};
+    store.write({slug:'first',name:'First',where});
+    const instant = new Date(now+2000).toISOString().slice(0,-5);
+    const earlier=instant+'.123001Z',later=instant+'.123999Z';
+    expect(store.observeAccount('slack',workspace,account,earlier,'Before')).toBe(true);
+    expect(store.observeAccount('slack',workspace,account,later,'After')).toBe(true);
+    store.write({slug:'first',where:{slack:null}});
+    store.write({slug:'next',name:'Next',where});
+    expect(store.observeAccount('slack',workspace,account,later,'After')).toBe(false);
+    expect(store.observeAccount('slack',workspace,account,earlier,'Before')).toBe(false);
+    expect(store.database.prepare('SELECT slug,label,seen_at FROM person_account_sightings').all()).toEqual([{slug:'first',label:'After',seen_at:later}]);
+    expect(store.observeAccount('slack',workspace,account,instant+'.124001Z')).toBe(true);
+    expect(store.database.prepare('SELECT slug,label FROM person_account_sightings').all()).toEqual([{slug:'next',label:null}]);
+  });
+
   const seed = () =>
     store.write({
       slug: 'patrick-kells',

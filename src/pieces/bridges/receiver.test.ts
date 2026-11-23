@@ -67,6 +67,48 @@ it('deduplicates Slack retries with changed ACK ids and app_mention duplicates',
   expect(f.db.select().from(turns).all()).toHaveLength(1);
 });
 
+it('recovers the name from a richer Slack duplicate without delivering again',()=>{
+  const f=fixture(),observed=vi.fn();
+  f.receiver.slack('slack',f.slack());
+  f.receiver.drain('slack',64,undefined,true);
+  f.receiver.fileSightings(observed);
+  const frame=JSON.parse(f.slack('ack2','ev2','app_mention').toString());
+  frame.payload.event.user_profile={display_name:'Robin'};
+  f.receiver.slack('slack',Buffer.from(JSON.stringify(frame)));
+  f.receiver.drain('slack',64,undefined,true);
+  f.receiver.fileSightings(observed);
+  expect(observed.mock.calls.map(([s])=>s.authorLabel)).toEqual([undefined,'Robin']);
+  expect(f.db.select().from(inbox).all()).toHaveLength(1);
+});
+it.each(['direct','bot'] as const)('files no sighting for an admitted %s message',kind=>{
+  const f=fixture(),observed=vi.fn(),frame=JSON.parse(f.discord().toString());
+  frame.d.author.global_name='Private name';
+  if(kind==='direct'){
+    delete frame.d.guild_id;
+    f.channels.discord=(_connection,id)=>({id,kind:'dm'});
+  }else{
+    frame.d.author.bot=true;
+    frame.d.content='<@bot> ping';frame.d.mentions=[{id:'bot'}];
+    f.db.update(bridgeChannels).set({botsMayTalk:true}).run();
+  }
+  f.receiver.discord('discord',Buffer.from(JSON.stringify(frame)),f.checkpoint());
+  f.receiver.drain('discord',64,undefined,true);
+  f.receiver.fileSightings(observed);
+  expect(f.db.select().from(bridgeIncoming).get()?.state).toBe('delivered');
+  expect(observed).not.toHaveBeenCalled();
+});
+it('files a held row created before sightings when its authenticated receipt still exists',()=>{
+  const f=fixture(),observed=vi.fn();
+  f.db.update(bridgeConnections).set({enabled:false}).where(eq(bridgeConnections.id,'discord')).run();
+  f.receiver.discord('discord',f.discord(),f.checkpoint());
+  f.receiver.drain('discord');
+  f.db.update(bridgeConnections).set({enabled:true}).where(eq(bridgeConnections.id,'discord')).run();
+  f.receiver.drain('discord',64,undefined,true);
+  f.receiver.fileSightings(observed);
+  expect(observed).toHaveBeenCalledOnce();
+  expect(f.db.select().from(inbox).all()).toHaveLength(1);
+});
+
 it.each(['discord', 'slack'] as const)('preserves %s receipt time across a delayed drain', platform => {
   const f = fixture(), receivedAt = f.now();
   if (platform === 'discord') f.receiver.discord(platform, f.discord(), f.checkpoint());
@@ -199,7 +241,7 @@ it('files the original human account and name after the raw frame expires and th
   frame.d.author.global_name='Robin';
   f.db.update(bridgeConnections).set({enabled:false}).where(eq(bridgeConnections.id,'discord')).run();
   f.receiver.discord('discord',Buffer.from(JSON.stringify(frame)),f.checkpoint());
-  f.receiver.drain('discord',64,undefined,observed);
+  f.receiver.drain('discord',64,undefined,true);
   expect(observed).not.toHaveBeenCalled();
   f.clock.advance(3_600_000);
   expect(f.raw()).toEqual([]);
@@ -207,8 +249,9 @@ it('files the original human account and name after the raw frame expires and th
   const restarted=new BridgeReceiver(f.db,f.clock,f.channels);
   try {
     f.db.update(bridgeConnections).set({enabled:true}).where(eq(bridgeConnections.id,'discord')).run();
-    restarted.drain('discord',64,undefined,observed);
-    restarted.drain('discord',64,undefined,observed);
+    restarted.drain('discord',64,undefined,true);
+    restarted.drain('discord',64,undefined,true);
+    restarted.fileSightings(observed);restarted.fileSightings(observed);
     expect(observed.mock.calls).toEqual([[{platform:'discord',workspace:'w',user:'user',postedAt:frame.d.timestamp,authorLabel:'Robin'}]]);
     expect(f.db.select().from(inbox).all()).toHaveLength(1);
   }finally{restarted.close();}

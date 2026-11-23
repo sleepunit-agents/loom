@@ -20,7 +20,7 @@ import { conversationPlace, discordPlace, slackRoomLabel } from './place.js';
 import { holds, inHousehold, rules } from '../../policy.js';
 import { unendedJobStates } from '../../core/data/job-states.js';
 import { sharedSharing } from '../../shared-sharing.js';
-import { agentPeople, conversations, jobs, bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgeContactSightings, bridgePeople, bridgeIncoming, bridgeSendParts, bridgeSends, inbox, inboxRefs } from '../../core/data/schema.js';
+import { agentPeople, conversations, jobs, bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePersonSightings, bridgePeople, bridgeIncoming, bridgeSendParts, bridgeSends, inbox, inboxRefs } from '../../core/data/schema.js';
 
 // A held receipt keeps the reason nobody received it and the routing fact Discord supplied.
 const BOT_MENTION_HELD = '; the message explicitly mentioned a bot';
@@ -41,6 +41,8 @@ export interface IncomingMessage {
   user: string;
   /** Provider display text for a human sender in a room. Identity is resolved by account ID. */
   authorLabel?: string;
+  /** The provider instant before conversion to the millisecond household clock. */
+  sightedAt?: string;
   text: string;
   postedAt: string;
   mentions: readonly string[];
@@ -93,6 +95,15 @@ export class BridgeIncoming {
    * the caller to announce and to answer once its transaction has committed. */
   takeStopped(): { job: string; incoming: string }[] { return this.stopped.splice(0); }
 
+  private queueSighting(id:string,connection:typeof bridgeConnections.$inferSelect,message:IncomingMessage) {
+    const values={incoming:id,platform:connection.platform,workspace:connection.workspace,
+      seenAt:message.sightedAt??message.postedAt,label:message.authorLabel};
+    const insert=this.db.insert(bridgePersonSightings).values(values);
+    if(!message.authorLabel){insert.onConflictDoNothing().run();return;}
+    insert.onConflictDoUpdate({target:bridgePersonSightings.incoming,set:{label:message.authorLabel},
+      where:and(isNull(bridgePersonSightings.label),eq(bridgePersonSightings.workspace,connection.workspace),eq(bridgePersonSightings.platform,connection.platform))}).run();
+  }
+
   /** Atomically records the event, turn, conversation and unified inbox item.
    * Duplicate events never append a second turn. A held event is tried again
    * only when asked: with the platform envelope while the raw-event adapter
@@ -112,6 +123,14 @@ export class BridgeIncoming {
         if (!sameMessage(existing,message,connection.platform)) {
           if (samePosting(existing,message)) return existing;
           throw new Error('Incoming id reused for a different message');
+        }
+        // Slack may send a second subscription event for the same posting with a profile
+        // omitted from the first. Confirm the original delivery's workspace and sender kind.
+        if(recordSighting && existing.state==='delivered' && message.authorLabel && !message.isDm &&
+          !message.bot && !message.webhook && existing.bot===false && existing.webhook===false && existing.conversation){
+          const original=this.db.select({kind:inbox.fromKind}).from(inbox).where(and(eq(inbox.conversation,existing.conversation),
+            eq(inbox.source,connection.platform),eq(inbox.sourceId,inboxSourceId(connection.workspace,message.channel,message.id)))).get();
+          if(original&&original.kind!=='agent')this.queueSighting(id,connection,message);
         }
         if (existing.state !== 'held' || !retryHeld) return existing;
       }
@@ -195,14 +214,13 @@ export class BridgeIncoming {
         mentions: JSON.stringify(message.mentions), repliesTo: message.repliesTo ?? null, parent: message.parent ?? null,
         groupDm: !!message.groupDm, bot: !!message.bot, webhook: !!message.webhook }).returning().get();
       const humanRoom = !message.isDm && !message.bot && !message.webhook && !sender && message.user !== connection.botUser;
-      if (!existing && recordSighting && humanRoom && state !== 'dropped') {
-        this.db.insert(bridgeContactSightings).values({incoming:id,platform:connection.platform,workspace:connection.workspace,label:message.authorLabel}).run();
-      } else if (existing && (state === 'dropped' || !humanRoom)) {
-        this.db.delete(bridgeContactSightings).where(eq(bridgeContactSightings.incoming,id)).run();
-      } else if (existing) {
-        // A connection that was retargeted while a message waited cannot witness that old account.
-        this.db.delete(bridgeContactSightings).where(and(eq(bridgeContactSightings.incoming,id),
-          sql`(${bridgeContactSightings.workspace} <> ${connection.workspace} or ${bridgeContactSightings.platform} <> ${connection.platform})`)).run();
+      if (existing && (state === 'dropped' || !humanRoom)) {
+        this.db.delete(bridgePersonSightings).where(eq(bridgePersonSightings.incoming,id)).run();
+      } else {
+        // In particular, a retained row alone cannot witness a renamed connection's workspace.
+        const retargeted=existing && this.db.delete(bridgePersonSightings).where(and(eq(bridgePersonSightings.incoming,id),
+          sql`(${bridgePersonSightings.workspace} <> ${connection.workspace} or ${bridgePersonSightings.platform} <> ${connection.platform})`)).run().changes;
+        if (!retargeted && recordSighting && humanRoom && state !== 'dropped') this.queueSighting(id,connection,message);
       }
       let conversation: string | null = null;
       let deliveredAt = at;

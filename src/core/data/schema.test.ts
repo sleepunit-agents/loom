@@ -49,7 +49,7 @@ describe('the approved data model', () => {
     actual.deleted_threads=actual.deleted_threads.slice(0,-3);
     expect(actual).toEqual(expected);
     const names = [...model.matchAll(/^ \("([a-z_]+)", /gm)].map(m => m[1]);
-    expect(Object.values(plumbing).filter(table => !described.includes(table)).map(getTableName).sort()).toEqual([...names,'bridge_contact_sightings','agent_post_names','agent_post_threads','agent_posts','guest_io_readings','worker_join_requests','archived_questions','account_week_readings','change_review_rounds','imported_task_sequence','bridge_send_jobs','agent_kits','agent_kit_projects','agent_kit_members','agent_kit_outside_people','project_outside_people','kit_uses','program_tokens','program_record_grants','program_operation_grants'].sort());
+    expect(Object.values(plumbing).filter(table => !described.includes(table)).map(getTableName).sort()).toEqual([...names,'bridge_person_sightings','agent_post_names','agent_post_threads','agent_posts','guest_io_readings','worker_join_requests','archived_questions','account_week_readings','change_review_rounds','imported_task_sequence','bridge_send_jobs','agent_kits','agent_kit_projects','agent_kit_members','agent_kit_outside_people','project_outside_people','kit_uses','program_tokens','program_record_grants','program_operation_grants'].sort());
     const { client } = fresh();
     for (const table of [...Object.values(tables), ...Object.values(plumbing)]) {
       const columns = client.prepare(`PRAGMA table_info("${getTableName(table)}")`).all() as { name: string }[];

@@ -522,8 +522,8 @@ export const MIGRATIONS: readonly Migration[] = [
     run: db => { db.exec(`CREATE TABLE person_account_sightings (
       slug TEXT NOT NULL REFERENCES people(slug) ON DELETE CASCADE,
       platform TEXT NOT NULL CHECK(platform IN ('slack','discord')),
-      workspace TEXT NOT NULL, account TEXT NOT NULL, seen_at TEXT NOT NULL, label TEXT,
-      PRIMARY KEY (slug, platform, workspace, account)
+      workspace TEXT NOT NULL, account TEXT NOT NULL, seen_at TEXT NOT NULL, seen_order INTEGER NOT NULL, label TEXT,
+      PRIMARY KEY (platform, workspace, account)
     ) WITHOUT ROWID;
     CREATE TABLE person_sighting_aliases (
       workspace TEXT NOT NULL, account TEXT NOT NULL, slug TEXT NOT NULL REFERENCES people(slug) ON DELETE CASCADE,

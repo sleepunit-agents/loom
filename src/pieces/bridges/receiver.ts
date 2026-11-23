@@ -15,7 +15,7 @@ import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Clock } from '../../core/clock.js';
 import type { DataDatabase } from '../../core/data/database.js';
-import { bridgeConnections, bridgeContactSightings, bridgeIncoming } from '../../core/data/schema.js';
+import { bridgeConnections, bridgePersonSightings, bridgeIncoming } from '../../core/data/schema.js';
 import { BridgeEvents, RAW_EVENT_LIFETIME, UNREAD_EVENT_LIFETIME, type BridgeCheckpoint, type Consumed } from './events.js';
 import { BridgeIncoming, type IncomingMessage, type StopJob } from './incoming.js';
 import { normalizeDiscord, normalizeSlack, type DiscordChannel, type SlackChannel } from './normalize.js';
@@ -48,7 +48,7 @@ export class BridgeReceiver {
   /** Where the last pass over each connection's held rows stopped, so a full page of rows that stay held
    * cannot keep later ones from being tried. */
   private readonly heldAfter = new Map<string, { at: string; id: string }>();
-  private readonly sightingAfter = new Map<string,string>();
+  private sightingAfter?:string;
   /** Frames already reported as unreadable, so each is reported once while it waits. */
   private readonly unreadable = new Set<string>();
   /** `lost` hears of what can no longer be delivered: `events` received and never read before their frames
@@ -125,7 +125,7 @@ export class BridgeReceiver {
    * stop the pass: its receipt and nothing else of it is kept, the rest of the
    * pass runs, and then the first such error is thrown, once per frame, for
    * composition to report. */
-  drain(connection: string, limit = 64, delivered?: (row: ReturnType<BridgeIncoming['receive']>, raw: Buffer) => boolean | void, observed?: (message:Pick<IncomingMessage,'user'|'postedAt'|'authorLabel'> & {platform:'discord'|'slack';workspace:string}) => void): number {
+  drain(connection: string, limit = 64, delivered?: (row: ReturnType<BridgeIncoming['receive']>, raw: Buffer) => boolean | void, recordSightings=false): number {
     const source = this.connection(connection);
     this.closeHeld();
     // Held messages whose receipt is gone are tried from their own rows. Such a delivery has no raw frame,
@@ -184,7 +184,7 @@ export class BridgeReceiver {
       let row;
       // Intake that refuses one message (an id reused for another, a row that cannot be written now) must
       // not end the pass for the frames behind it. The frame waits and is reported as an unreadable one is.
-      try { row=this.incoming.receive(message,true,receivedAt,!!observed); }
+      try { row=this.incoming.receive(message,true,receivedAt,recordSightings); }
       catch (error) { return unread(receipt,error); }
       // The row keeps what a retry needs, so the frame need not outlive its hour.
       if(row.state==='held')return 'recorded';
@@ -193,25 +193,34 @@ export class BridgeReceiver {
       const keepFiles=delivered?.(row,raw)===false;
       return keepFiles?'recorded':undefined;
     }, limit);
-    if(observed){
-      const read=(after?:string)=>this.db.select({id:bridgeContactSightings.incoming,platform:bridgeContactSightings.platform,
-        workspace:bridgeContactSightings.workspace,label:bridgeContactSightings.label,user:bridgeIncoming.user,postedAt:bridgeIncoming.postedAt})
-        .from(bridgeContactSightings).innerJoin(bridgeIncoming,eq(bridgeIncoming.id,bridgeContactSightings.incoming))
-        .where(and(eq(bridgeIncoming.connection,connection),eq(bridgeIncoming.state,'delivered'),after?sql`${bridgeContactSightings.incoming} > ${after}`:undefined))
-        .orderBy(asc(bridgeContactSightings.incoming)).limit(limit).all();
-      const after=this.sightingAfter.get(connection);
-      let waiting=read(after);
-      if(!waiting.length&&after){this.sightingAfter.delete(connection);waiting=read();}
-      for(const row of waiting){
-        this.sightingAfter.set(connection,row.id);
-        try{
-          observed({platform:row.platform,workspace:row.workspace,user:row.user,postedAt:row.postedAt,authorLabel:row.label??undefined});
-          this.db.delete(bridgeContactSightings).where(eq(bridgeContactSightings.incoming,row.id)).run();
-        }catch(error){unread(row.id,error);}
-      }
-    }
     if (failed) throw failure;
     return count;
+  }
+
+  /** After delivery commits, file the observation locally even if its bridge is offline.
+   * Returning a full page asks the caller for another pass; a failed row stays pending. */
+  fileSightings(observed:(message:Pick<IncomingMessage,'user'|'postedAt'|'authorLabel'> & {platform:'discord'|'slack';workspace:string})=>void,limit=64):boolean {
+    let failure:unknown;
+    const read=(after?:string)=>this.db.select({id:bridgePersonSightings.incoming,platform:bridgePersonSightings.platform,
+      workspace:bridgePersonSightings.workspace,label:bridgePersonSightings.label,user:bridgeIncoming.user,postedAt:bridgePersonSightings.seenAt})
+      .from(bridgePersonSightings).innerJoin(bridgeIncoming,eq(bridgeIncoming.id,bridgePersonSightings.incoming))
+      .where(and(eq(bridgeIncoming.state,'delivered'),after?sql`${bridgePersonSightings.incoming} > ${after}`:undefined))
+      .orderBy(asc(bridgePersonSightings.incoming)).limit(limit).all();
+    const after=this.sightingAfter;
+    let waiting=read(after);
+    if(!waiting.length&&after){this.sightingAfter=undefined;waiting=read();}
+    for(const row of waiting){
+      this.sightingAfter=row.id;
+      try{
+        observed({platform:row.platform,workspace:row.workspace,user:row.user,postedAt:row.postedAt,authorLabel:row.label??undefined});
+        this.db.delete(bridgePersonSightings).where(eq(bridgePersonSightings.incoming,row.id)).run();
+      }catch(error){failure??=error;}
+    }
+    if(failure)throw failure;
+    // A later page may have succeeded while an earlier page still needs retry.
+    return waiting.length>0 && this.db.select({id:bridgePersonSightings.incoming}).from(bridgePersonSightings)
+      .innerJoin(bridgeIncoming,eq(bridgeIncoming.id,bridgePersonSightings.incoming))
+      .where(eq(bridgeIncoming.state,'delivered')).limit(1).get()!==undefined;
   }
 
   /** The jobs that stop words ended in the passes since this was last asked (incoming.ts). */
@@ -237,7 +246,7 @@ export class BridgeReceiver {
     const before = (ms: number) => sql`julianday(${bridgeIncoming.receivedAt}) <= julianday(${new Date(this.clock.now() - ms).toISOString()})`;
     const expired=and(eq(bridgeIncoming.state,'held'),or(before(HELD_LIFETIME),and(isNull(bridgeIncoming.mentions),before(RAW_EVENT_LIFETIME))));
     return this.db.transaction(()=>{
-      this.db.delete(bridgeContactSightings).where(inArray(bridgeContactSightings.incoming,
+      this.db.delete(bridgePersonSightings).where(inArray(bridgePersonSightings.incoming,
         this.db.select({id:bridgeIncoming.id}).from(bridgeIncoming).where(expired))).run();
       return this.db.update(bridgeIncoming).set({state:'dropped',text:'',reason:sql`'Held too long to deliver: ' || coalesce(${bridgeIncoming.reason}, 'no reason recorded')`})
         .where(expired).run().changes;

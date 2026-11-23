@@ -158,6 +158,7 @@ export function normalizeSlack(connection: PlatformConnection, payload: unknown,
   const millis = Number(message.ts.split('.')[0]) * 1000 + Number(message.ts.split('.')[1].slice(0, 3));
   return {
     ...(authorLabel && { authorLabel }),
+    sightedAt:new Date(millis).toISOString().slice(0,-1)+message.ts.slice(-3)+'Z',
     // Slack timestamps are unique per channel, not across a workspace.
     id: JSON.stringify([message.channel, message.ts]), connection: connection.id,
     channel: message.channel, thread: slackThread(kind, message.ts, message.thread_ts),

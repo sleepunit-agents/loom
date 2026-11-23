@@ -566,16 +566,22 @@ export class PeopleStore {
   observeAccount(platform: AccountPlatform, workspace: string, account: string, seenAt: string, label?: string): boolean {
     return this.mutate(() => {
       const ms = Date.parse(seenAt);
-      if (!Number.isFinite(ms) || ms > this.now()) return false;
+      if (!Number.isFinite(ms)) throw Error('Invalid account sighting timestamp');
+      // The provider clock can lead the household clock. Order by the provider instant,
+      // including Slack's final three fractional digits, rather than the time of filing.
+      const subMillis = (seenAt.match(/\.(\d{1,6})Z$/)?.[1] ?? '').padEnd(6,'0').slice(3);
+      const order = BigInt(ms) * 1000n + BigInt(subMillis);
       const slug = sightingHolder(this.db, platform, workspace, account);
       if (!slug) return false;
-      return this.db.prepare(`INSERT INTO person_account_sightings (slug, platform, workspace, account, seen_at, label)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT (slug, platform, workspace, account) DO UPDATE SET
-          seen_at = excluded.seen_at, label = coalesce(excluded.label, person_account_sightings.label)
-        WHERE excluded.seen_at > person_account_sightings.seen_at
-          OR (excluded.seen_at = person_account_sightings.seen_at AND person_account_sightings.label IS NULL AND excluded.label IS NOT NULL)`)
-        .run(slug, platform, workspace, account, new Date(ms).toISOString(), label ?? null).changes > 0;
+      return this.db.prepare(`INSERT INTO person_account_sightings (slug, platform, workspace, account, seen_at, seen_order, label)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (platform, workspace, account) DO UPDATE SET
+          slug = excluded.slug, seen_at = excluded.seen_at, seen_order = excluded.seen_order,
+          label = CASE WHEN excluded.slug = person_account_sightings.slug
+            THEN coalesce(excluded.label, person_account_sightings.label) ELSE excluded.label END
+        WHERE excluded.seen_order > person_account_sightings.seen_order
+          OR (excluded.seen_order = person_account_sightings.seen_order AND excluded.slug = person_account_sightings.slug AND person_account_sightings.label IS NULL AND excluded.label IS NOT NULL)`)
+        .run(slug, platform, workspace, account, seenAt, order, label ?? null).changes > 0;
     });
   }
 

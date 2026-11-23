@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { DataWrites } from '../../core/data/writes.js';
 import { FakeClock } from '../../core/clock.js';
-import { members, agents, secrets, secretChanges, bridgeResume, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeContactSightings, bridgeRawEvents, inbox, bridgeSends, bridgeSendParts, bridgeFiles, bridgeFileMessages } from '../../core/data/schema.js';
+import { members, agents, secrets, secretChanges, bridgeResume, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgePersonSightings, bridgeRawEvents, inbox, bridgeSends, bridgeSendParts, bridgeFiles, bridgeFileMessages } from '../../core/data/schema.js';
 import {BridgeSettings} from './settings.js';
 import { SharedBridges, type SharedBridgeOptions } from './shared-daemon.js';
 import type { bridgeSlackSocket } from './slack-socket.js';
@@ -55,7 +55,7 @@ it('files a room sighting after delivery and skips a sender the bridge drops',as
   await f.transports[0].receive({},Buffer.from(JSON.stringify(frame)));
  }
  f.clock.advance(0);await f.daemon.idle();
- expect(observeAccount.mock.calls).toEqual([['slack','TWORK','UUSER',new Date(1794432000000).toISOString(),'Robin']]);
+ expect(observeAccount.mock.calls).toEqual([['slack','TWORK','UUSER','2026-11-11T21:20:00.000001Z','Robin']]);
  expect(f.errors).toEqual([]);
 });
 it('retries a failed directory write after inbox delivery commits',async()=>{
@@ -71,8 +71,13 @@ it('retries a failed directory write after inbox delivery commits',async()=>{
  f.clock.advance(0);await f.daemon.idle();
  expect(attempts).toBe(1);
  expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(0);
- expect(f.db.select().from(bridgeContactSightings).all()).toHaveLength(1);
- f.clock.advance(5000);await f.daemon.idle();
+ expect(f.db.select().from(bridgePersonSightings).all()).toHaveLength(1);
+ await f.daemon.close();
+ f.db.update(bridgeConnections).set({enabled:false,removedAt:new Date(f.clock.now()).toISOString()}).run();
+ const restarted=new SharedBridges({db:f.db,clock:f.clock,writes:f.writes,source:f.source,effectsAllowed:()=>false,
+  changed(){},reportError(error){throw error;},observeAccount(){attempts++;return true;}});
+ clean.push(()=>restarted.close());
+ await restarted.ready();await restarted.idle();
  expect(attempts).toBe(2);
  expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(0);
  expect(f.db.select().from(inbox).all()).toHaveLength(1);
