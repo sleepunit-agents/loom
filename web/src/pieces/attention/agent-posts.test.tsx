@@ -39,3 +39,14 @@ it('shows the confirmed work link beside the update and keeps the rail compact',
   }
   expect(renderToStaticMarkup(h(AgentPostFeed,{threads:rows,compact:true,open(){},now}))).not.toContain('Fix disk cleanup');
 });
+
+it('keeps the full activity name and limits only the rail excerpt of a long post', () => {
+  const title = 'Restore the console during desktop boot';
+  const words = 'The console is moving again. '.repeat(8) + 'Verified in Chrome.';
+  const rows = [{...threads[0],title,latest:{...reply,words}}];
+  const view = (compact:boolean) => renderToStaticMarkup(h(AgentPostFeed,{threads:rows,compact,open(){},now}));
+  expect(view(true)).toContain(title);
+  expect(view(true)).toContain('The console is moving again.');
+  expect(view(true)).not.toContain('Verified in Chrome.');
+  expect(view(false)).toContain(words);
+});

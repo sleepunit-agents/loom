@@ -46,6 +46,11 @@ it.runIf(process.env.LOOM_TEST_CHROME)('keeps live updates, their linked work an
     await page.locator('.next-dock [data-value="tasks"]').click();
     const rail=page.locator('.desk-rail-card[data-agent="fern"] .desk-agent-posts button');
     await expect.poll(()=>rail.textContent()).toContain('Giving boot a console.');
+    const title='Restore the scrolling console during the desktop boot cycle';
+    await post({action:'rename',thread:boot,title});
+    const heading=rail.locator('strong');
+    await expect.poll(()=>heading.textContent()).toBe(title);
+    expect(await heading.evaluate(el=>el.scrollWidth<=el.clientWidth+1 && getComputedStyle(el).whiteSpace!=='nowrap')).toBe(true);
     await rail.click();
     const history=page.getByRole('list',{name:'Activity posts'});
     await expect.poll(()=>history.locator('p').allTextContents()).toEqual(['Giving boot a console.','It scrolls now.']);

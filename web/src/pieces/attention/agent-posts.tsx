@@ -18,6 +18,15 @@ export interface AgentPostPreview {
   parent: Pick<AgentPost, 'id' | 'words'> | null;
 }
 
+function excerpt(words: string, limit: number) {
+  const line = words.trim().replace(/\s+/gu, ' ');
+  const characters = Array.from(line);
+  if (characters.length <= limit) return line;
+  const prefix = characters.slice(0, limit).join('');
+  const boundary = prefix.lastIndexOf(' ');
+  return (boundary > limit / 2 ? prefix.slice(0, boundary) : prefix) + '…';
+}
+
 function PostWork({ post, go }: { post: AgentPost; go?(href: string): void }) {
   if (!post.work?.length) return null;
   return <ul className="desk-agent-post-work" aria-label="Related work">
@@ -47,8 +56,8 @@ export function AgentPostFeed({ threads, compact = false, open, go, now }: {
             <strong>{title}</strong>
             <time dateTime={latest.at}>{age(latest.at, now)}</time>
           </span>
-          {parent && <small className="desk-agent-post-parent">{parent.words}</small>}
-          <span className="desk-agent-post-words">{latest.words}</span>
+          {parent && <small className="desk-agent-post-parent">{excerpt(parent.words, 64)}</small>}
+          <span className="desk-agent-post-words">{compact ? excerpt(latest.words, 96) : latest.words}</span>
         </button>
         {!compact && <PostWork post={latest} go={go}/>}
       </li>)}
