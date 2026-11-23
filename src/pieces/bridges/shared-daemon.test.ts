@@ -46,6 +46,36 @@ it('authenticates the bot/app binding, durably accepts before drain and signals 
  await f.transports[0].receive({},f.raw('event','different-ack'));f.clock.advance(0);await f.daemon.idle();expect(f.signal).toHaveBeenCalledOnce();expect(f.db.select().from(inbox).all()).toHaveLength(1);
  expect(f.buffers.every(buffer=>buffer.every(byte=>byte===0))).toBe(true);expect(f.client.serialize().includes(Buffer.from('synthetic:TOKEN'))).toBe(false);expect(f.errors).toEqual([]);
 });
+it('files a room sighting after delivery and skips a sender the bridge drops',async()=>{
+ const observeAccount=vi.fn(()=>true);
+ const f=fixture({observeAccount});await f.daemon.ready();await f.daemon.idle();
+ for(const [event,user] of [['known','UUSER'],['unknown','UOTHER']]){
+  const frame=JSON.parse(f.raw(event,event).toString());
+  Object.assign(frame.payload.event,{user,user_profile:{display_name:'Robin'},ts:user==='UUSER'?'1794432000.000001':'1794432001.000001'});
+  await f.transports[0].receive({},Buffer.from(JSON.stringify(frame)));
+ }
+ f.clock.advance(0);await f.daemon.idle();
+ expect(observeAccount.mock.calls).toEqual([['slack','TWORK','UUSER',new Date(1794432000000).toISOString(),'Robin']]);
+ expect(f.errors).toEqual([]);
+});
+it('retries a failed directory write after inbox delivery commits',async()=>{
+ let attempts=0;
+ const f=fixture({observeAccount(){
+  expect(f.client.inTransaction).toBe(false);
+  expect(f.db.select().from(inbox).all()).toHaveLength(1);
+  if(++attempts===1)throw Error('Directory busy');
+  return true;
+ }});
+ await f.daemon.ready();await f.daemon.idle();
+ await f.transports[0].receive({},f.raw());
+ f.clock.advance(0);await f.daemon.idle();
+ expect(attempts).toBe(1);
+ expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(1);
+ f.clock.advance(5000);await f.daemon.idle();
+ expect(attempts).toBe(2);
+ expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(0);
+ expect(f.db.select().from(inbox).all()).toHaveLength(1);
+});
 it('fences old socket callbacks and state reports after a committed disable',async()=>{
  const f=fixture();await f.daemon.ready();await f.daemon.idle();const old=f.transports[0];
  f.writes.run(()=>f.db.update(bridgeConnections).set({enabled:false}).run());f.daemon.changed();await f.daemon.idle();

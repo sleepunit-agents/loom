@@ -163,7 +163,14 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
   const activity=createActivityReader(clock,{get agents(){return listed.agents;},sharing,timezone,github:()=>householdSettings(db).githubOwner,conversations:sharedActivityConversations(db,{conversationHref})});closers.push(activity.close);
   const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),projects,activity,conversationHref,projectHref});closers.push(queries.close);
   const notes=sharedNotes({sources,sharing,now:()=>clock.now()});closers.push(notes.close);
-  return {people,projects,activity,checkingAgent:options?.checkingAgent,alternateCheckingAgent:options?.alternateCheckingAgent,fields:{...queries.fields,...notes.fields},nextDeadline:queries.nextDeadline,observeDeadlines:queries.observeDeadlines,sweep:queries.sweep,close,
+  let sightingStore:PeopleStore|undefined;
+  closers.push(()=>sightingStore?.close());
+  function observeAccount(...args:Parameters<PeopleStore['observeAccount']>) {
+    if(!sources)return false;
+    sightingStore??=new PeopleStore({dbPath:sources.commons.people,now:()=>clock.now()});
+    return sightingStore.observeAccount(...args);
+  }
+  return {people,projects,activity,observeAccount,checkingAgent:options?.checkingAgent,alternateCheckingAgent:options?.alternateCheckingAgent,fields:{...queries.fields,...notes.fields},nextDeadline:queries.nextDeadline,observeDeadlines:queries.observeDeadlines,sweep:queries.sweep,close,
    /** `held` says what the body of a job on anybody else's word is refused and what loom stamps on what it adds
     * (shared-root.ts, from shared-place-mail.ts): such a body adds a memory or a new note, and nothing else here. */
    register(operations:Operations,commands?:Pick<Parameters<typeof registerSemanticMemory>[1],'body'|'hash'|'committed'>&{mayReadFile(viewer:Viewer):boolean;mayAttachFile(viewer:Viewer):boolean},held?:{knowledge(viewer:Viewer):string|undefined;memory:NonNullable<Parameters<typeof registerSemanticMemory>[1]['addsOnly']>;note(viewer:Viewer):Readonly<{overwrite:string;by:string}>|undefined}){

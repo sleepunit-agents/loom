@@ -18,6 +18,10 @@ function Reader({person,relationships,conversations,conversationStatus,go}:{pers
   return <PageReader className="p-5"><header><Meta>{person.kind==='agent'?'Agent':'Person'}</Meta><Title as="h1">{person.name}</Title>{person.card.summary && <p>{person.card.summary}</p>}{person.mergedFrom && <p>{person.mergedFrom} was merged into {person.slug}.</p>}</header>
     {person.ownership && <Section label="Owns"><p>{person.ownership.owner?'The household and every agent':person.ownership.agents.join(', ')}</p><a className="underline" href="/p/sharing-preview" onClick={e=>internal(e,'/p/sharing-preview')}>Open Sharing</a></Section>}
     <Section label="How to reach them">{person.fields.length?fields(person):<p>No contact details recorded.</p>}</Section>
+    {!!person.sightings?.length&&<Section label="Last seen"><Facts>{person.sightings.map(s=><Fact key={JSON.stringify([s.platform,s.workspace,s.account])} label={s.platform==='slack'?'Slack':'Discord'}>
+      {s.label??s.account} · <time dateTime={s.seenAt}>{new Date(s.seenAt).toLocaleString()}</time>
+      <p>{s.workspace} · {s.account}</p>
+    </Fact>)}</Facts></Section>}
     {Object.keys(person.card.how??{}).length>0&&<Section label="Facts">{facts(person)}</Section>}
     <Section label="Relationships">{relationships.length?relationships.map(p=><section key={p.id} className="grid gap-3 border-t py-3"><h3>{p.agent}</h3>{p.card.summary && <p>{p.card.summary}</p>}<p>Updated {p.updated.slice(0,10)} · {p.newer} memories newer than this card</p>{facts(p)}{p.fields.length>0&&fields(p)}
       {p.card.may.length>0&&<div><h4>Recorded permissions</h4>{p.card.may.map((m,i)=><p key={i}>{m.text} · {m.source}</p>)}<p>These records do not grant access.</p></div>}

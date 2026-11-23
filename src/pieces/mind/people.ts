@@ -1,5 +1,5 @@
 import {evidenceExpiry,personEvidenceRows} from '../../backends/people.js';
-import {accountColumns,type AccountPlatform} from '../../backends/people-accounts.js';
+import {accountColumns,accountHolders,type AccountPlatform} from '../../backends/people-accounts.js';
 /** Existing person cards, read in place. No schema initialization or path discovery. */
 import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
@@ -7,7 +7,7 @@ import { AgentFiles } from './sources.js';
 import { maySee, mayAct, type Sharing, type Viewer } from '../../core/index.js';
 import {batchPersonEvidence,batchPersonMerges,batchPersonReferences,followPersonMerge} from './people-list-rows.js';
 import {resolveCardReference} from './card-references.js';
-import type { PersonRecord, PersonCard, PersonEvidence } from './people-model.js';
+import type { PersonRecord, PersonCard, PersonEvidence, AccountSighting } from './people-model.js';
 import {MAX_REVISIONS,fieldState,freshUntil} from '../../backends/cards.js';
 export type { PersonRecord } from './people-model.js';
 interface Row { slug: string; card_json: string; updated: string; synthesized_at: string | null; archived_at: string | null }
@@ -21,6 +21,7 @@ export interface PeopleReader {
  access(viewer:Viewer):{id:string;allowed:boolean;directory:boolean;agents:string[];canAdd:boolean};
  outsideAccount(viewer:Viewer,slug:string,platform:AccountPlatform):{workspace:string;user:string}|undefined;
  outsideName(viewer:Viewer, platform:AccountPlatform, workspace:string, user:string):string|undefined;
+ sightings(viewer:Viewer,slug:string):AccountSighting[];
  ownEvidence(viewer:Viewer,slug:string,since:string|null):PersonEvidence[]|null;
  nextDeadline():number|undefined;
  read(id:string,viewer:Viewer):PersonRecord|undefined;
@@ -34,18 +35,6 @@ export interface PeopleReader {
  close():void;
 }
 export const mayReadPerson=(viewer:Viewer,agent:string|undefined,sharing:Sharing)=>maySee(viewer,{type:'person',...(agent?{agent}:{})},sharing);
-// Scoped card values can name several accounts. Each can identify its holder on
-// an Inbox card; choosing where to send a message still requires a single text value.
-function accountHolders(db: Database, platform: AccountPlatform, workspace: string, user: string) {
-  const [space, account] = accountColumns(platform);
-  const path = `'$.where.${platform}.value'`;
-  return db.prepare(`SELECT slug, json_extract(card_json, '$.name') AS name FROM people
-    WHERE archived_at IS NULL AND json_valid(card_json) AND ${space}=? AND
-    ((json_type(card_json, ${path})='text' AND ${account}=?) OR
-     (json_type(card_json, ${path})='array' AND EXISTS
-       (SELECT 1 FROM json_each(card_json, ${path}) WHERE type='text' AND value=?))) LIMIT 2`)
-    .all(workspace,user,user) as {slug:string;name:string}[];
-}
 export function peopleReader(options:PeopleReaderOptions):PeopleReader {
   const failed=new Set<string>();
   const open=(id:string,path:string|undefined)=>{
@@ -223,6 +212,18 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
   return {
     access(v){const sharing=options.sharing();return {id:'people',allowed:allowed(v)||options.agents.some(a=>allowed(v,a.agent)),directory:allowed(v),
       agents:options.agents.filter(a=>allowed(v,a.agent)&&(sharing.agents?.includes(a.agent)??true)).map(a=>a.agent),canAdd:mayAct(v,{type:'person'},sharing,'act')};},
+    sightings(viewer,slug) {
+      const db=sources.get('commons');
+      if(!allowed(viewer)||!db||!hasTable(db,'person_account_sightings'))return [];
+      return db.transaction(()=>{
+        const rows=db.prepare(`SELECT platform,workspace,account,label,seen_at AS seenAt
+          FROM person_account_sightings WHERE slug=? ORDER BY seen_at DESC,platform,workspace,account`).all(slug) as AccountSighting[];
+        return rows.filter(row=>{
+          const holders=accountHolders(db,row.platform,row.workspace,row.account);
+          return holders.length===1&&holders[0].slug===slug;
+        });
+      })();
+    },
     outsideAccount(viewer,slug,platform){
       const [space,account]=accountColumns(platform);
       const visible:string[]=[];

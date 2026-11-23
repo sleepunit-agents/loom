@@ -17,7 +17,7 @@ import type { Clock } from '../../core/clock.js';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeIncoming } from '../../core/data/schema.js';
 import { BridgeEvents, RAW_EVENT_LIFETIME, UNREAD_EVENT_LIFETIME, type BridgeCheckpoint, type Consumed } from './events.js';
-import { BridgeIncoming, type StopJob } from './incoming.js';
+import { BridgeIncoming, type IncomingMessage, type StopJob } from './incoming.js';
 import { normalizeDiscord, normalizeSlack, type DiscordChannel, type SlackChannel } from './normalize.js';
 
 const id = z.string().min(1).max(256);
@@ -124,7 +124,7 @@ export class BridgeReceiver {
    * stop the pass: its receipt and nothing else of it is kept, the rest of the
    * pass runs, and then the first such error is thrown, once per frame, for
    * composition to report. */
-  drain(connection: string, limit = 64, delivered?: (row: ReturnType<BridgeIncoming['receive']>, raw: Buffer) => boolean | void): number {
+  drain(connection: string, limit = 64, delivered?: (row: ReturnType<BridgeIncoming['receive']>, raw: Buffer) => boolean | void, observed?: (message:Pick<IncomingMessage,'user'|'postedAt'|'authorLabel'>) => void): number {
     const source = this.connection(connection);
     this.closeHeld();
     // Held messages whose receipt is gone are tried from their own rows. Such a delivery has no raw frame,
@@ -188,7 +188,16 @@ export class BridgeReceiver {
       // The row keeps what a retry needs, so the frame need not outlive its hour.
       if(row.state==='held')return 'recorded';
       // A delivered message whose files are still to be fetched keeps its frame, which lists them, for that hour.
-      return row.state==='delivered'&&delivered?.(row,raw)===false?'recorded':undefined;
+      if(row.state!=='delivered')return;
+      const keepFiles=delivered?.(row,raw)===false;
+      if(observed&&!row.isDm&&row.bot===false&&row.webhook===false&&!message.bot&&!message.webhook){
+        return {afterCommit:()=>{
+          try { observed({user:row.user,postedAt:row.postedAt,authorLabel:message.authorLabel}); }
+          catch(error){ return unread(receipt,error); }
+          return !keepFiles;
+        }};
+      }
+      return keepFiles?'recorded':undefined;
     }, limit);
     if (failed) throw failure;
     return count;

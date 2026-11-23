@@ -36,6 +36,26 @@ describe('PeopleStore', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('records each account separately and ignores older, ambiguous, or unmatched sightings', () => {
+    const where = {slack_workspace:{value:'T1'}, slack:{value:['U1','U2'], source:'confirmed accounts'}};
+    store.write({slug:'robin', name:'Robin', where});
+    const earlier = new Date(now - DAY).toISOString(), later = new Date(now).toISOString();
+    expect(store.observeAccount('slack','T1','U1',later,'Robin')).toBe(true);
+    expect(store.observeAccount('slack','T1','U2',earlier,'Robin at work')).toBe(true);
+    expect(store.observeAccount('slack','T1','U1',earlier,'Old name')).toBe(false);
+    expect(store.observeAccount('slack','T1','U1',later,'Robin')).toBe(false);
+    expect(store.observeAccount('slack','T2','U1',later,'Robin')).toBe(false);
+    store.write({slug:'another', name:'Another', where});
+    expect(store.observeAccount('slack','T1','U2',later,'Ambiguous')).toBe(false);
+    const reader = new BetterSqlite3(join(dir,'memories.db'), {readonly:true});
+    try {
+      expect(reader.prepare('SELECT account,label,seen_at FROM person_account_sightings ORDER BY account').all()).toEqual([
+        {account:'U1',label:'Robin',seen_at:later}, {account:'U2',label:'Robin at work',seen_at:earlier},
+      ]);
+      expect(JSON.parse((reader.prepare("SELECT card_json FROM people WHERE slug='robin'").get() as {card_json:string}).card_json).where).toEqual(where);
+    } finally { reader.close(); }
+  });
+
   const seed = () =>
     store.write({
       slug: 'patrick-kells',

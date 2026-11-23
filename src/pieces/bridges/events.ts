@@ -21,7 +21,7 @@ export const UNREAD_EVENT_LIFETIME = DAY_MS;
 /** What a drain callback says became of one event: nothing or true, it is dealt with and its frame is
  * removed; false, it could not be read yet and waits; 'recorded', its message now has a record of its own
  * and the frame is kept only until RAW_EVENT_LIFETIME after it arrived. */
-export type Consumed = void | boolean | 'recorded';
+export type Consumed = void | boolean | 'recorded' | { afterCommit(): boolean };
 /** Trusted adapter spool. Receipt and Discord cursor commit before platform ack.
  * Drain callbacks are synchronous and use this same database connection, so
  * normalisation and receipt removal either both commit or both roll back.
@@ -97,15 +97,17 @@ export class BridgeEvents {
     let count = 0;
     for (const row of rows) {
       if (scan !== 'peek') cursors.set(scan, { at: row.receivedAt, row: row.position });
+      const key = and(eq(bridgeRawEvents.connection, connection), eq(bridgeRawEvents.id, row.id));
+      let deferred: { afterCommit(): boolean } | undefined;
       this.db.transaction(tx => {
         // Recheck after earlier callbacks; a callback may have consumed a row.
-        const key = and(eq(bridgeRawEvents.connection, connection), eq(bridgeRawEvents.id, row.id));
         const current = tx.select().from(bridgeRawEvents).where(key).get();
         if (!current || Date.parse(current.expiresAt) <= this.clock.now()) return;
-        const result: unknown = consume(current.id, current.event, current.receivedAt);
-        if (result && typeof (result as PromiseLike<unknown>).then === 'function') throw Error('Event consumer must be synchronous');
+        const result = consume(current.id, current.event, current.receivedAt);
+        if (result && typeof result === 'object' && 'then' in result && typeof result.then === 'function') throw Error('Event consumer must be synchronous');
         if (result === false) return;
-        if (result === 'recorded') {
+        if (result && typeof result === 'object') deferred = result;
+        if (result === 'recorded' || deferred) {
           const until = new Date(Date.parse(current.receivedAt) + RAW_EVENT_LIFETIME).toISOString();
           if (Date.parse(current.expiresAt) > Date.parse(until)) tx.update(bridgeRawEvents).set({ expiresAt: until }).where(key).run();
           return;
@@ -113,6 +115,9 @@ export class BridgeEvents {
         tx.delete(bridgeRawEvents).where(key).run();
         count++;
       });
+      // The People store has its own transaction. The frame survives a crash on either
+      // side of that write; retrying the same observation is idempotent.
+      if (deferred?.afterCommit()) count += this.db.delete(bridgeRawEvents).where(key).run().changes;
     }
     this.sweep();
     return count;

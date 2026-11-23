@@ -41,6 +41,7 @@ export interface SharedBridgeOptions {
  progressAllowed?:SendTransport['progressAllowed'];
  directAllowed?:SendTransport['directAllowed'];
  changed():void;
+ observeAccount?(platform:Connection['platform'], workspace:string, account:string, seenAt:string, label?:string):boolean;
  inboxCommitted?(ids:readonly string[]):void;
  /** The runtime's Stop, for the stop word (incoming.ts): ends the job, on that member's word, in the
   * caller's transaction. Without it the stop word is an ordinary message. */
@@ -339,6 +340,7 @@ export class SharedBridges {
    const changes=()=> (this.options.db.$client.prepare('SELECT total_changes() AS n').get() as {n:number}).n;
    const beforeChanges=changes();
    const before=this.options.db.select({row:sql<number>`coalesce(max(rowid),0)`}).from(inbox).get()!.row;
+   let contactChanged=false;
    try{more=this.receiver.drain(row.id,64,(incoming,raw)=>{
     if(row.platform!=='slack')return;
     const event=JSON.parse(raw.toString('utf8')).payload?.event;
@@ -353,12 +355,14 @@ export class SharedBridges {
     const missing=descriptors.filter((file:{id:unknown})=>typeof file.id!=='string'||unkept.has(file.id));
     if(!missing.length)return;
     pendingFiles.set(incoming.id,missing);return false;
-   })===64;}finally{
+   },this.options.observeAccount ? message=>{
+    if(this.options.observeAccount!(row.platform,row.workspace,message.user,message.postedAt,message.authorLabel))contactChanged=true;
+   } : undefined)===64;}finally{
     // Drain owns its per-event transactions; even a later malformed receipt may
     // follow earlier successful commits. Publish and signal only committed ids.
     // An empty drain has no new publication. Publishing after every ordinary
     // body write would revoke its still-streaming guarded mail response.
-    if(changes()!==beforeChanges)this.notify();
+    if(contactChanged||changes()!==beforeChanges)this.notify();
     // Noted while the pass was writing, so asked again of what was committed: a pass that was rolled back
     // stopped nothing and says nothing.
     const stopped=this.receiver.takeStopped().filter(stop=>

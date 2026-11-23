@@ -234,6 +234,10 @@ it('labels each exact account in a workspace without selecting a destination fro
  closes.push(reader.close);
  directory.write({slug:'friend',name:'Friend',where:{slack:{value:['UFIRST','USECOND']},slack_workspace:{value:'TWORK'}}});
  const owner:Viewer={kind:'member',id:'owner'};
+ const seenAt=new Date(0).toISOString();
+ expect(directory.observeAccount('slack','TWORK','UFIRST',seenAt,'Robin')).toBe(true);
+ expect(reader.sightings(owner,'friend')).toEqual([{platform:'slack',workspace:'TWORK',account:'UFIRST',label:'Robin',seenAt}]);
+ expect(reader.sightings({kind:'runner',id:'box'},'friend')).toEqual([]);
  expect(reader.outsideName(owner,'slack','TWORK','UFIRST')).toBe('Friend');
  expect(reader.outsideName(owner,'slack','TWORK','USECOND')).toBe('Friend');
  expect(reader.outsideName(owner,'slack','TOTHER','UFIRST')).toBeUndefined();
@@ -241,6 +245,7 @@ it('labels each exact account in a workspace without selecting a destination fro
  expect(reader.outsideName({kind:'runner',id:'box'},'slack','TWORK','UFIRST')).toBeUndefined();
  expect(reader.outsideAccount(owner,'friend','slack')).toBeUndefined();
  directory.write({slug:'other',name:'Other',where:{slack:{value:'UFIRST'},slack_workspace:{value:'TWORK'}}});
+ expect(reader.sightings(owner,'friend')).toEqual([]);
  expect(reader.outsideName(owner,'slack','TWORK','UFIRST')).toBeUndefined();
  expect(reader.outsideAccount(owner,'other','slack')).toBeUndefined();
 });
