@@ -309,7 +309,9 @@ export async function* walkthroughSteps(output) {
   try {
    const script=fileURLToPath(new URL('./rebuild-memory-temperature.mjs',import.meta.url));
    const {stdout}=await promisify(execFile)(process.execPath,[script],{timeout:30_000});
-   report.actions.memoryTemperature=JSON.parse(stdout);
+   const {sessionEpisode,...temperature}=JSON.parse(stdout);
+   report.actions.memoryTemperature=temperature;
+   report.actions.sessionEpisode=sessionEpisode;
   } catch(error) { report.actions.memoryTemperature={ok:false,error:String(error)}; }
   save();yield {phase:'memory-temperature',actions:safeReport(report.actions)};
   phase='knowledge due delivery';

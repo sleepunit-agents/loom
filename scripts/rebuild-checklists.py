@@ -90,6 +90,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith(('A conversation is one agent talking in one place.', 'One table Every conversation', 'One per place An agent')):row['probe']={'kind':'action','action':'conversationRecords'}
    if row['promise'].startswith('A thread keeps the pull requests it mentions'):row['probe']={'kind':'action','action':'conversationChangeCard'}
    if row['promise'].startswith('When an agent finishes a stretch of work'):row['probe']={'kind':'action','action':'conversationDigest'}
+   if row['promise'].startswith('A session leaves a short note'):row['probe']={'kind':'action','action':'sessionEpisode'}
    if row['promise'].startswith('One job at a time'):row['probe']={'kind':'action','action':'conversationSingleJob'}
    if row['promise'].startswith('A trigger drops an item into the conversation'):row['probe']={'kind':'action','action':'scheduledWorker'}
    if row['promise'].startswith('A trigger from Tempo drops an item'):row['probe']={'kind':'action','action':'conversationTempoDelivery'}

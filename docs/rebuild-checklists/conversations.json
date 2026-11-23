@@ -209,7 +209,11 @@
     {
       "id": "conversations-021",
       "promise": "A session leaves a short note for the next one, and Activity builds each day from them.in the agent's own files",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "sessionEpisode"
+      }
     },
     {
       "id": "conversations-022",

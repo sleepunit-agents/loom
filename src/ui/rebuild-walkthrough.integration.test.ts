@@ -141,6 +141,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  });
  it('observes category cooling, archive expiry and lesson confidence across restarts',{retry:0,timeout:40_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('memory-temperature');
+  expect(step.value.actions.sessionEpisode).toMatchObject({ok:true,day:'2027-01-01'});
   expect(step.value.actions.memoryTemperature).toMatchObject({ok:true,episodeDay:0.5,personDay90:0.5,expiryAtDeadline:true,confidenceObservations:3});
  });
  it('delivers due Knowledge checks to the configured agents on the household clock',{retry:0},async()=>{
@@ -246,6 +247,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  it('delivers Discord and Slack messages into the receiving agent Inbox',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('bridge-mail');
   expect(step.value.actions.bridgeReceipts,JSON.stringify(step.value.actions.bridgeReceipts)).toMatchObject({ok:true});
+  for(const platform of ['discordConversations','slackConversations'])expect(step.value.actions[platform],JSON.stringify(step.value.actions[platform])).toMatchObject({ok:true});
   expect(step.value.actions.bridgeMail,JSON.stringify(step.value.actions.bridgeMail)).toMatchObject({ok:true});
  });
  it('applies Inbox access to the actual HTTP caller',{retry:0},async()=>{
