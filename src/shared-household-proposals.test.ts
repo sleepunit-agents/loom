@@ -20,8 +20,8 @@ afterEach(async () => { for (const close of clean.splice(0).reverse()) await clo
 const credentials = { sam: 'a'.repeat(64), lee: 'b'.repeat(64), art: 'c'.repeat(64) };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const visual = { about: 'Fixture agent', markBg: '#000000', markFg: '#ffffff', faceShape: 'pebble' as const, faceEyes: 'dot' as const };
-function fixture(memory?: SharedMemoryOptions) {
-  const client = new Database(':memory:'); clean.push(() => { client.close(); });
+function fixture(memory?: SharedMemoryOptions, verbose?: (statement:string)=>void) {
+  const client = new Database(':memory:',{verbose}); clean.push(() => { client.close(); });
   const clock = new FakeClock(), at = new Date(clock.now()).toISOString(), db = createDataSchema(client, () => new Date(clock.now()).toISOString());
   db.insert(members).values([{ id: 'sam', role: 'owner', joinedAt: at }, { id: 'lee', role: 'member', joinedAt: at }]).run();
   db.insert(agents).values([{ id: 'art', ...visual }, { id: 'mark', ...visual }]).run();
@@ -1014,6 +1014,25 @@ it('requires the current machine owner to approve each explicit reader and revoc
   expect((await f.call('machine/answerReader',{id,answer:'allow'},'lee')).body.ok).toBe(true);
   expect(f.db.select().from(boxes).get()!.readers).toEqual(allow?['art']:[]);
  }
+});
+
+it('lists every pending reader with a fixed number of statements',async()=>{
+ let statements=0;
+ const f=fixture(undefined,()=>{statements++;}),machine='work';
+ f.db.insert(boxes).values({id:machine,name:'Workshop',owner:'lee',sameMachineAsLoom:false,hostsAny:false,
+  reportOnly:true,alwaysOn:false,enrolledAt:new Date(f.clock.now()).toISOString()}).run();
+ const ids:string[]=[],counts:number[]=[];
+ for(const agent of ['art','mark']){
+  const filed=await f.call('machine/proposeReader',{box:machine,agent,allow:true},'lee');
+  ids.push(filed.body.value!.id);
+  statements=0;
+  const response=await f.call('machine/readerCards',{machine},'lee');
+  counts.push(statements);
+  expect(response.body.value).toHaveLength(ids.length);
+  for(const id of ids)expect(response.body.value).toContainEqual(expect.objectContaining({id}));
+ }
+ expect(counts[0]).toBeGreaterThan(0);
+ expect(counts[1]).toBe(counts[0]);
 });
 
 it('shows an agent-proposed change to explicit readers on the machine owner’s pending cards',async()=>{
