@@ -1,3 +1,4 @@
+import {inboxDiscussions} from './core/conversations/inbox-discussion.js';
 import type {inbox as inboxTable} from './core/data/schema.js';
 import {privateInboxDeadline} from './core/conversations/private-inbox-words.js';
 import {commsKeepDays} from './core/data/comms-days.js';
@@ -15,13 +16,13 @@ import { tempoCommandAllowed } from './shared-tempo-access.js';
 import { sharedSharing } from './shared-sharing.js';
 import { CommsMessages } from './core/conversations/messages.js';
 import { CommsQueries, commsQueryFields } from './core/conversations/comms-query.js';
-import { InboxQueries, inboxQueryFields, type QuestionAsker } from './core/conversations/inbox-query.js';
+import { InboxQueries, inboxQueryFields, type ProposalTitles, type QuestionAsker } from './core/conversations/inbox-query.js';
 import { ConversationSummaries, conversationSummaryFields } from './core/conversations/summaries.js';
 import { registerConversationOperations } from './core/conversations/operations.js';
 import { lateMailJoins, tellOwners, currentDecisionGuest } from './shared-place-mail.js';
 import type { WordsKey } from './core/conversations/words.js';
 
-export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKey, questionAsker?:QuestionAsker) {
+export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKey, questionAsker?:QuestionAsker, proposalTitles?:ProposalTitles) {
   const now = () => new Date(clock.now()).toISOString();
   // Bodies take their mail through this service: mail a person writes after a job was admitted joins it only
   // when the same asker wrote it (shared-place-mail.ts, lateMailJoins).
@@ -39,15 +40,17 @@ export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKe
     }
     return holds(rules.answers, viewer, item, sharing);
   }; };
-  const queries = new CommsQueries(db, key, policy, now), inbox = new InboxQueries(db, key, questionPolicy.visibility, now, (viewer, item) => tempoCommandAllowed(db, viewer, { action: 'volume', item }), (viewer,items)=>readInboxVolume(db,viewer,items,f=>questionPolicy.sourceVisibility(viewer,f)), answers, questionAsker);
+  const queries = new CommsQueries(db, key, policy, now), inbox = new InboxQueries(db, key, questionPolicy.visibility, now, (viewer, item) => tempoCommandAllowed(db, viewer, { action: 'volume', item }), (viewer,items)=>readInboxVolume(db,viewer,items,f=>questionPolicy.sourceVisibility(viewer,f)), answers, questionAsker, proposalTitles);
+  const discussions = inboxDiscussions(service, (viewer, id) => inbox.item(viewer,id));
   const summaries = new ConversationSummaries(db, key, now);
   const scope = (row: { member?: string | null; project?: string | null; agent?: string | null }): RecordScope => ({
     type: 'conversation', member: row.member ?? undefined, project: row.project ?? undefined, agent: row.agent ?? undefined,
   });
   return {
     service, queries, inbox, summaries, authorizeQuestion:questionPolicy.ask,
-    fields: { ...commsQueryFields(queries), ...inboxQueryFields(inbox), ...conversationSummaryFields(summaries) },
+    fields: { ...commsQueryFields(queries), ...inboxQueryFields(inbox, discussions.agent), ...conversationSummaryFields(summaries) },
     install(operations: Operations) {
+      discussions.install(operations);
       registerConversationOperations(operations, service, { authorize(viewer, access) {
         if (viewer.kind !== 'member') return false;
         const sharing = sharedSharing(db);

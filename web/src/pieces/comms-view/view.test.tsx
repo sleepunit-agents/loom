@@ -392,3 +392,11 @@ it('shows archived retry state after its private reason expires', async () => {
   await draw(actions(), { ...detail, messages: [notice] });
   expect(words(classed('comms-notice')[0])).toContain('The agent started after a retry · attempt 2');
 });
+
+it('attributes the quoted FYI to the Inbox and preserves its lines', async () => {
+  const notice: CommsDetail['messages'][number] = { thread: thread.id, seq: 1, kind: 'notice', sender: 'loom',
+    at: thread.lastAt, words: 'Workshop disk is full.\nFree space fell below 2 GiB.', inboxItem: 'in-disk' };
+  await draw(actions(), { ...detail, messages: [notice] });
+  expect(words(tree.root.findByType('figcaption'))).toBe('From your Inbox');
+  expect(words(tree.root.findByType('blockquote'))).toBe(notice.words);
+});

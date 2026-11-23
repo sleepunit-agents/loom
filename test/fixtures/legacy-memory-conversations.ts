@@ -1,17 +1,8 @@
-/**
- * The conversation tables in an agent's memories.db, as they were when conversations were kept there.
- *
- * Conversations, turns and digests now live in the household database (src/core/data/schema.ts, written
- * through src/core/conversations). Nothing in the program reads or writes these four tables any more. They
- * are still created, by the `conversations` step in ./migrations.ts, so every memories.db has one shape
- * and the rows an older home holds stay where the real-data move (docs/migration-plan.md) expects them.
- * Their names repeat names in the household schema; the columns here are the old ones, not those.
- */
 import type { Database } from 'better-sqlite3';
 
 export const CONVERSATION_TABLES = ['conversations', 'conversation_turns', 'conversation_days', 'conversation_digests'] as const;
 
-/** The four tables, idempotently. Only the `conversations` migration runs it. */
+/** The historical Memory layout, for checking upgrades against real legacy columns and indexes. */
 export function createConversationTables(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS conversations (

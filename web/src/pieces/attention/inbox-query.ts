@@ -25,7 +25,7 @@ export const inboxQuery = `query Inbox($folder:String!,$search:String!,$agent:St
  inboxActionResults(limit:20){id at ok text page readAt}
 }`;
 /** The open item, alone. Opening one changes this request and nothing the list reads. */
-export const inboxItemQuery = `query InboxItem($id:String!){ inboxItem(id:$id){${fields}} }`;
+export const inboxItemQuery = `query InboxItem($id:String!){ inboxItem(id:$id){${fields} discussionAgent} }`;
 interface InboxSelection { query: string; variables: Record<string, unknown>; decode(data: Record<string, unknown>): InboxReading }
 export interface InboxReading { folders: InboxFolders; items: InboxItem[]; results: InboxActionResult[] }
 function item(value: unknown): InboxItem {

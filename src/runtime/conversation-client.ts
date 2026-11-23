@@ -21,7 +21,7 @@ const unavailable=()=>new Error('Conversation body request failed; outcome may b
 class InvalidUsageReport extends Error {}
 class OversizedMailBatch extends Error{constructor(){super('Conversation body request failed; outcome may be uncertain');}}
 const question=z.object({words:z.string(),why:z.string().nullable(),ifYes:z.string().nullable(),ifNo:z.string().nullable(),link:z.string().nullable()}).strict();
-const historyLine=z.object({sourceKey:z.string().optional(),seq:z.number().int().positive(),kind:z.enum(['message','reply']),sender:z.string().min(1),at:z.iso.datetime({offset:true}),words:z.string(),keepUntil:z.iso.datetime({offset:true}).nullable()}).strict();
+const historyLine=z.object({sourceKey:z.string().optional(),seq:z.number().int().positive(),kind:z.enum(['message','reply','notice']),sender:z.string().min(1),at:z.iso.datetime({offset:true}),words:z.string(),keepUntil:z.iso.datetime({offset:true}).nullable()}).strict();
 const item=z.object({
  history:z.array(historyLine).max(HISTORY_LINES).refine(lines=>Buffer.byteLength(JSON.stringify(lines))<=HISTORY_BYTES).optional().default([]),
  id:z.string().min(1),seq:z.number().int().positive(),source:z.enum(['thread','discord','slack','trigger','handoff','answer','task','approval','secret-request','notice']),sourceId:z.string().nullable(),

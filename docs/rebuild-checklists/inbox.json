@@ -7,7 +7,24 @@
     {
       "id": "inbox-001",
       "promise": "One inbox for everything sent to anyone, person or agent. The Inbox app is a person's side of it: the items addressed to you that are waiting.",
-      "source": "docs/how-it-works/site/inbox.html"
+      "source": "docs/how-it-works/site/inbox.html",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "inboxRecipients"
+          },
+          {
+            "kind": "action",
+            "action": "privateConversationBatch"
+          },
+          {
+            "kind": "action",
+            "action": "privateConversationQuestion"
+          }
+        ]
+      }
     },
     {
       "id": "inbox-002",
@@ -93,12 +110,20 @@
     {
       "id": "inbox-011",
       "promise": "Each incoming message becomes one item.",
-      "source": "docs/how-it-works/site/inbox.html#con-h"
+      "source": "docs/how-it-works/site/inbox.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeMail"
+      }
     },
     {
       "id": "inbox-012",
       "promise": "A pending request for a secret arrives as an item.",
-      "source": "docs/how-it-works/site/inbox.html#con-h"
+      "source": "docs/how-it-works/site/inbox.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "inboxSecretRequest"
+      }
     },
     {
       "id": "inbox-013",
@@ -112,7 +137,24 @@
     {
       "id": "inbox-014",
       "promise": "Every item has a recipient. An agent's body takes the items addressed to it, in order. A person's Inbox app is the items addressed to them that are waiting.",
-      "source": "docs/how-it-works/site/inbox.html#how-h"
+      "source": "docs/how-it-works/site/inbox.html#how-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "inboxRecipients"
+          },
+          {
+            "kind": "action",
+            "action": "privateConversationBatch"
+          },
+          {
+            "kind": "action",
+            "action": "privateConversationQuestion"
+          }
+        ]
+      }
     },
     {
       "id": "inbox-015",
@@ -162,12 +204,42 @@
     {
       "id": "inbox-020",
       "promise": "c Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
-      "source": "docs/how-it-works/site/inbox.html#see-h"
+      "source": "docs/how-it-works/site/inbox.html#see-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "inboxCallers"
+          },
+          {
+            "kind": "action",
+            "action": "inboxVisibility"
+          }
+        ]
+      }
     },
     {
       "id": "inbox-021",
       "promise": "The same inbox table is drawn from the agent's side on the Conversations page. Volume (full, dim, mute) is explained on the Tempo page.",
-      "source": "docs/how-it-works/site/inbox.html"
+      "source": "docs/how-it-works/site/inbox.html",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "inboxDocumentation"
+          },
+          {
+            "kind": "action",
+            "action": "privateConversationBatch"
+          },
+          {
+            "kind": "action",
+            "action": "inboxVolume"
+          }
+        ]
+      }
     },
     {
       "id": "inbox-022",

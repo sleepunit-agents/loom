@@ -17,17 +17,29 @@
     {
       "id": "bridges-003",
       "promise": "Decides which agent answers in a channel when nobody is addressed.",
-      "source": "docs/how-it-works/site/bridges.html"
+      "source": "docs/how-it-works/site/bridges.html",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeMail"
+      }
     },
     {
       "id": "bridges-004",
       "promise": "Links an outside user to the household member they are.",
-      "source": "docs/how-it-works/site/bridges.html"
+      "source": "docs/how-it-works/site/bridges.html",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeMail"
+      }
     },
     {
       "id": "bridges-005",
       "promise": "Records whether each reply arrived, and says so when it cannot tell.",
-      "source": "docs/how-it-works/site/bridges.html"
+      "source": "docs/how-it-works/site/bridges.html",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeReceipts"
+      }
     },
     {
       "id": "bridges-006",
@@ -37,12 +49,20 @@
     {
       "id": "bridges-007",
       "promise": "A person link says which household member an outside user is.",
-      "source": "docs/how-it-works/site/bridges.html#con-h"
+      "source": "docs/how-it-works/site/bridges.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeMail"
+      }
     },
     {
       "id": "bridges-008",
       "promise": "The message goes into one conversation: the agent in that channel.",
-      "source": "docs/how-it-works/site/bridges.html#con-h"
+      "source": "docs/how-it-works/site/bridges.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeMail"
+      }
     },
     {
       "id": "bridges-009",
@@ -61,17 +81,29 @@
     {
       "id": "bridges-011",
       "promise": "A message from outside is kept as an incoming message, matched to a person and a channel rule, and passed into the right conversation. It can be held or dropped, with a reason.",
-      "source": "docs/how-it-works/site/bridges.html#how-h"
+      "source": "docs/how-it-works/site/bridges.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeMail"
+      }
     },
     {
       "id": "bridges-012",
       "promise": "The agent's reply goes out as a send. Loom records whether it arrived. Uncertain means loom could not confirm it, and a person reviews it. A held send waits for a person to release or dismiss it.",
-      "source": "docs/how-it-works/site/bridges.html#how-h"
+      "source": "docs/how-it-works/site/bridges.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeReceipts"
+      }
     },
     {
       "id": "bridges-013",
       "promise": "A channel rule names the agent that answers in a channel. A connection can listen only to some channels, or ignore some.",
-      "source": "docs/how-it-works/site/bridges.html#how-h"
+      "source": "docs/how-it-works/site/bridges.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeMail"
+      }
     },
     {
       "id": "bridges-014",

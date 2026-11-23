@@ -1545,13 +1545,13 @@ presence implementation here. See `src/pieces/bridges/presence.ts`.
 - **What would change the answer.** Another writer of the summary columns or of the windows, or anything that needs to tell "no room"
   from "the last read failed": then the failed read gets its own column, in a schema step.
 
-### Each agent's `memories.db` still has four unused conversation tables
-- **What.** `conversations`, `conversation_turns`, `conversation_days` and `conversation_digests` are created
-  in every agent's memory file and never read or written. Conversations live in `loom.db`.
-- **Where.** `src/backends/conversations.ts`, run by the `conversations` step in `src/backends/migrations.ts`.
-- **Why accepted.** An older home's conversations are in these tables, and the move of that data reads them
-  (owner's ruling, 2026-11-16).
-- **What would change the answer.** The move being done. Then a step drops the four tables.
+### Older Memory stores keep their local conversation archives
+- **What.** Fresh stores keep conversation records in `loom.db`. Existing Memory files can still contain
+  `conversations`, `conversation_turns`, `conversation_days` and `conversation_digests`.
+- **Where.** The historical `conversations` entry in `src/backends/migrations.ts` keeps its place in the
+  memory store version count. It skips every store, including files with only part of the old layout.
+- **Why accepted.** Offline migration reads the original source tables (owner’s ruling, 2026-11-16).
+  Historical rows and indexes stay available for that move.
 
 ### Retry receipts are kept in the file whose write they protect
 - **What.** There is more than one receipt table: `operation_results` in `loom.db`, `mind_operation_receipts`

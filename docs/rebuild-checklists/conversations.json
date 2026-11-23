@@ -2,7 +2,7 @@
   "page": "conversations",
   "title": "Conversations",
   "ownerTask": "t-2237",
-  "sourceSha256": "8b648df4915735aec451fa74f3e8d20dbadf7990fef9321ed7a5d414fdf7c9f8",
+  "sourceSha256": "882d27f67c5e0f73996ed374b6e358216bdcf69dcfebea40c6886482b68efd30",
   "promises": [
     {
       "id": "conversations-001",
@@ -65,12 +65,20 @@
     {
       "id": "conversations-006",
       "promise": "A channel or a direct message. A bot signed in to the server speaks for the agent.",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "discordConversations"
+      }
     },
     {
       "id": "conversations-007",
       "promise": "The same, in a Slack workspace.",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "slackConversations"
+      }
     },
     {
       "id": "conversations-008",
@@ -93,7 +101,11 @@
     {
       "id": "conversations-010",
       "promise": "Each thing said or done is a turn: a message, a reply, an action, a wake, a note or a refusal. Loom records who it came from, when, and how it went. A turn holds no words.",
-      "source": "docs/how-it-works/site/conversations.html"
+      "source": "docs/how-it-works/site/conversations.html",
+      "probe": {
+        "kind": "action",
+        "action": "conversationTurns"
+      }
     },
     {
       "id": "conversations-011",
@@ -124,8 +136,25 @@
     },
     {
       "id": "conversations-014",
-      "promise": "Every inbox item names its conversation, and a digest points at the question it raised.inbox.conversation · digests.inbox_item",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "promise": "An inbox item links to the conversation it came from. On a standalone FYI, Discuss opens a private chat with your default agent about that notice. Open it again to continue the same chat. A digest points to the question it raised.inbox.conversation · digests.inbox_item",
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "privateConversationQuestion"
+          },
+          {
+            "kind": "action",
+            "action": "inboxDiscussion"
+          },
+          {
+            "kind": "action",
+            "action": "conversationDigest"
+          }
+        ]
+      }
     },
     {
       "id": "conversations-015",
@@ -139,7 +168,11 @@
     {
       "id": "conversations-016",
       "promise": "A trigger drops an item into the conversation's inbox, and a non-empty inbox starts the agent.inbox.source = trigger",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "scheduledWorker"
+      }
     },
     {
       "id": "conversations-017",
@@ -162,17 +195,29 @@
     {
       "id": "conversations-019",
       "promise": "Each incoming message goes into one conversation.bridge_incoming.conversation",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeMail"
+      }
     },
     {
       "id": "conversations-020",
       "promise": "A request for a secret records the conversation it was asked in.secret_requests.conversation",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "conversationSecretSource"
+      }
     },
     {
       "id": "conversations-021",
       "promise": "A session leaves a short note for the next one, and Activity builds each day from them.in the agent's own files",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "sessionEpisode"
+      }
     },
     {
       "id": "conversations-022",
@@ -213,7 +258,20 @@
     {
       "id": "conversations-026",
       "promise": "d Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
-      "source": "docs/how-it-works/site/conversations.html#see-h"
+      "source": "docs/how-it-works/site/conversations.html#see-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "conversationCallers"
+          },
+          {
+            "kind": "action",
+            "action": "conversationVisibility"
+          }
+        ]
+      }
     },
     {
       "id": "conversations-027",

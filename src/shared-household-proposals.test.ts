@@ -6,7 +6,8 @@ import { PeopleStore } from './backends/people.js';
 import type { SharedMemoryOptions } from './shared-memory.js';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import { InboxQueries } from './core/conversations/inbox-query.js';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
@@ -20,14 +21,14 @@ afterEach(async () => { for (const close of clean.splice(0).reverse()) await clo
 const credentials = { sam: 'a'.repeat(64), lee: 'b'.repeat(64), art: 'c'.repeat(64) };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const visual = { about: 'Fixture agent', markBg: '#000000', markFg: '#ffffff', faceShape: 'pebble' as const, faceEyes: 'dot' as const };
-function fixture(memory?: SharedMemoryOptions, verbose?: (statement:string)=>void) {
+function fixture(memory?: SharedMemoryOptions, verbose?: (statement:string)=>void, commsKey?:Parameters<typeof sharedRoot>[0]['commsKey']) {
   const client = new Database(':memory:',{verbose}); clean.push(() => { client.close(); });
   const clock = new FakeClock(), at = new Date(clock.now()).toISOString(), db = createDataSchema(client, () => new Date(clock.now()).toISOString());
   db.insert(members).values([{ id: 'sam', role: 'owner', joinedAt: at }, { id: 'lee', role: 'member', joinedAt: at }]).run();
   db.insert(agents).values([{ id: 'art', ...visual }, { id: 'mark', ...visual }]).run();
   for (const member of ['sam', 'lee'] as const) db.insert(tokens).values({ fingerprint: hash(credentials[member]), label: member, kind: 'owner', member, createdAt: at }).run();
   db.insert(tokens).values({ fingerprint: hash(credentials.art), label: 'Art', kind: 'agent', agent: 'art', createdAt: at }).run();
-  const root = sharedRoot({ db, clock, memory, originAllowed: () => true, reportError: () => {} }); clean.push(() => root.close());
+  const root = sharedRoot({ db, clock, memory, commsKey, originAllowed: () => true, reportError: () => {} }); clean.push(() => root.close());
   let seq = 0;
   const call = async (path: string, input: unknown, actor: keyof typeof credentials, id = 'r'+(++seq)) => {
     const response = await root.http.request('http://loom/api/'+path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer '+credentials[actor] }, body: JSON.stringify({ input, id }) });
@@ -1056,7 +1057,7 @@ const preview = async (f: Fixture, id: string) => (await f.call('household/propo
 };
 
 it('tells a household owner who a card is for, and nobody else: the names loom holds are read for the owner when the card is read', async () => {
-  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  const f = fixture(undefined,undefined,{seal:async words=>Buffer.from(words),open:async bytes=>Buffer.from(bytes).toString(),hash}), at = new Date(f.clock.now()).toISOString();
   const gage = { platform: 'slack', workspace: 'T02AYL3QM', user: 'U07V8CZUC1J' };
   await f.call('household/propose', { change: 'kit', input: { agent: 'art', kit: 'pond-et-livonia', tools: [] }, why: 'Field scope' }, 'art').then(filed => f.call('approvals/answer', { id: filed.body.value!.id, answer: 'allow' }, 'sam'));
   f.db.insert(agentPeople).values({ agent: 'art', person: JSON.stringify([gage.platform, gage.workspace, gage.user]), tier: 2 }).run();
@@ -1100,6 +1101,48 @@ it('tells a household owner who a card is for, and nobody else: the names loom h
   const colleagueTitle=(await preview(f,colleague)).card!.title;
   expect(colleagueTitle).toBe('Set gage (Slack) to tier 3 with Art');
   expect(await titles('sam',[colleague])).toEqual([{approval:colleague,title:colleagueTitle}]);
+  const searchResult=async(actor:keyof typeof credentials,offset:number)=>{
+    const response=await f.root.http.request('http://loom/graphql',{method:'POST',
+      headers:{'content-type':'application/json',authorization:'Bearer '+credentials[actor]},
+      body:JSON.stringify({query:'query($offset:Int!){inboxItems(folder:"needs",search:"GAGE (Slack)",limit:1,offset:$offset){waitsOnId}}',variables:{offset}})});
+    return response.json();
+  };
+  const search=async(actor:keyof typeof credentials,offset=0)=>{
+    const result=await searchResult(actor,offset);expect(result.errors).toBeUndefined();
+    return result.data.inboxItems.map((item:{waitsOnId:string})=>item.waitsOnId);
+  };
+  const expected=f.db.$client.prepare('SELECT waits_on_id FROM inbox WHERE [to]=? AND waits_on_id IN (?,?) ORDER BY julianday(at) DESC,id DESC').all('sam',id,colleague) as {waits_on_id:string}[];
+  expect(await search('sam')).toEqual([expected[0].waits_on_id]);
+  expect(await search('sam',1)).toEqual([expected[1].waits_on_id]);
+  f.db.update(inbox).set({source:'thread'}).where(eq(inbox.waitsOnId,id)).run();
+  expect(await search('sam')).toEqual([colleague]);
+  expect(await search('sam',1)).toEqual([]);
+  f.db.update(inbox).set({source:'approval'}).where(eq(inbox.waitsOnId,id)).run();
+  expect(await search('lee')).toEqual([]);
+  expect(await search('art')).toEqual([]);
+  f.db.update(members).set({role:'owner'}).where(eq(members.id,'lee')).run();
+  expect(await titles('lee',[colleague])).toEqual([{approval:colleague,title:colleagueTitle}]);
+  expect(await search('lee')).toEqual([]);
+  f.db.update(members).set({role:'member'}).where(eq(members.id,'lee')).run();
+  const project=InboxQueries.prototype.project;
+  const removeLinkDuringProjection=()=>vi.spyOn(InboxQueries.prototype,'project').mockImplementationOnce(async function(this:InboxQueries,...args){
+    const rows=await project.apply(this,args);
+    f.db.delete(bridgePeople).run();
+    return rows;
+  });
+  let projection=removeLinkDuringProjection();
+  try {
+    const changed=await searchResult('sam',0);
+    expect(changed.data?.inboxItems).toBeUndefined();
+    expect(changed.errors).toBeDefined();
+  }finally{projection.mockRestore();}
+  expect(await search('sam')).toEqual([]);
+  f.db.insert(bridgePeople).values({...gage,member:'gage'}).run();
+  // An independent match on the first row keeps that page valid when the second drops out.
+  f.db.update(inbox).set({why:'Gage (Slack) asked for a review.'}).where(eq(inbox.waitsOnId,expected[0].waits_on_id)).run();
+  projection=removeLinkDuringProjection();
+  try{expect(await search('sam')).toEqual([expected[0].waits_on_id]);}finally{projection.mockRestore();}
+  f.db.insert(bridgePeople).values({...gage,member:'gage'}).run();
   expect(await titles('lee',[colleague])).toEqual([]);
   expect(await titles('art',[colleague])).toEqual([]);
   await f.call('approvals/answer',{id:colleague,answer:'deny'},'sam');

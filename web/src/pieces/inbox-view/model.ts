@@ -4,6 +4,7 @@ export type InboxBody = { words: string; why?: string | null; ifYes?: string | n
 export interface InboxItem {
   canSetVolume?: boolean; quietUntil?: string | null; canAnswer?: boolean; id: string; source: string; sourceId?: string | null; fromId?: string | null;
   agent?: string | null; project?: string | null; thread?: string | null; at: string;
+  discussionAgent?: string | null;
   bodyKeepUntil?: string | null; answerKeepUntil?: string | null;
   state: 'waiting' | 'taken' | 'done' | 'answered' | 'resolved'; volume: 'full' | 'dim' | 'mute';
   answers?: 'yes-no' | 'words' | null; waitsOnKind?: string | null; waitsOnId?: string | null;

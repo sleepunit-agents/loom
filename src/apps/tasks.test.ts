@@ -301,3 +301,16 @@ it('changes a task’s project one way: an edit that names another project is th
   expect(db.select().from(inbox).where(eq(inbox.id, answered.id)).get()).toMatchObject({ project: 'pond' });
   expect(tasks.get(task.id).comments).toHaveLength(comments);
 });
+
+it('preserves the current Inbox question and claim when an old reopen is repeated', () => {
+  const task = file('Inspect the pond');
+  tasks.close(task.id, 'Inspection complete');
+  tasks.reopen(task.id);
+  tasks.ask(task.id, { to: other, ask: 'Order a filter?', ifYes: 'Order it', ifNo: 'Wait' }, actor);
+  expect(tasks.reopen(task.id)).toMatchObject({ status: 'open', ask: 'Order a filter?', assignee: other.id });
+  tasks.answer(task.id, 'yes', '', other);
+  expect(db.select().from(inbox).where(eq(inbox.source, 'task')).get()).toMatchObject({ state: 'resolved', resolution: 'yes' });
+  tasks.claim(task.id, actor);
+  expect(() => tasks.reopen(task.id)).toThrow('in progress');
+  expect(tasks.get(task.id)).toMatchObject({ status: 'in_progress', assignee: actor.id, startedAt: at });
+});

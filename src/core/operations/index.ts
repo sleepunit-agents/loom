@@ -74,7 +74,7 @@ export interface Operation<I = unknown> {
    * prepared source snapshot. Must not mutate; throw OperationError to refuse. */
   /** Re-open private source evidence before validating an existing receipt. */
   prepareReplay?(input: I): boolean;
-  validateReplay?(viewer: Viewer, input: I, prepared?: unknown): void;
+  validateReplay?(viewer: Viewer, input: I, prepared?: unknown, receipt?: Result): void;
   after?(input: I, result: Result): void;
   run(ctx: Context, input: I, prepared?: unknown): unknown;
   /** Read an already-committed external receipt by the shared viewer/id key.
@@ -308,7 +308,7 @@ export class Operations {
           if (old) {
             if (old.operation !== name || old.inputHash !== body) return failure('conflict', 'Operation id already used for different input');
             if (preflight && op.prepare && op.prepareReplay?.(parsed.data)) return new PreparationNeeded(undefined);
-            op.validateReplay?.(viewer, parsed.data, prepared);
+            op.validateReplay?.(viewer, parsed.data, prepared, old.result);
             if(!this.outsideAllowed(door,viewer,name))throw new OperationError('denied','Permission denied');
             this.completedWriteDeadlines.set(old.result,old.expires);
             return old.result;

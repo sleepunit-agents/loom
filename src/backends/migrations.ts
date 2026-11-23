@@ -11,7 +11,6 @@ import {accountPlatforms,accountColumns,accountIndex} from './people-accounts.js
  * Add new migrations at the bottom of MIGRATIONS — never reorder or remove
  * existing entries (future migrations may depend on prior state).
  */
-import { CONVERSATION_TABLES, createConversationTables } from './conversations.js';
 import type { Database } from 'better-sqlite3';
 import { rebuildUniqKeys } from './dedup.js';
 
@@ -470,14 +469,10 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   {
     id: 'conversations',
-    description:
-      'Add conversations, conversation_turns, conversation_days and conversation_digests: ' +
-      'the agent\'s conversations as core records, metadata only (docs/specs/conversations.md, t-1741). ' +
-      'Additive: dropping the four tables is the whole backout',
-    pending: (db) => CONVERSATION_TABLES.some((t) => !hasTable(db, t)),
-    run: (db) => {
-      db.transaction(() => createConversationTables(db)).immediate();
-    },
+    // Keep the original registry position: user_version counts the steps a program knows.
+    description: 'Preserve historical Memory conversation archives for offline import',
+    pending: () => false,
+    run: () => {},
   },
   {
     id: 'person_merges',
