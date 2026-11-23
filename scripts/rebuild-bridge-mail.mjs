@@ -57,10 +57,10 @@ export async function bridgeMail({app,clock}) {
    db.insert(bridgePeople).values({platform,workspace:connection.workspace,user,member}).run();
    db.insert(bridgeChannels).values({platform,workspace:connection.workspace,channel:ch,answers:agent,botsMayTalk:false}).run();
    const seconds=Math.floor(clock.now()/1000);
-   const normalize=sequence=>platform==='discord'
-    ? normalizeDiscord(connection,{op:0,t:'MESSAGE_CREATE',d:{type:0,id:'fictional-discord-message-'+sequence,channel_id:ch,
-      guild_id:connection.workspace,author:{id:user},content:words,timestamp:now(),mentions:[]}}, {id:ch,guild:connection.workspace,kind:'channel'})
-    : normalizeSlack(connection,{type:'event_callback',team_id:connection.workspace,event:{type:'message',user,channel:ch,channel_type:'channel',ts:seconds+'.00000'+sequence,thread_ts:sequence===2?seconds+'.000001':undefined,text:words}});
+   const normalize=(sequence,channel=ch)=>platform==='discord'
+    ? normalizeDiscord(connection,{op:0,t:'MESSAGE_CREATE',d:{type:0,id:'fictional-discord-message-'+sequence,channel_id:channel,
+      guild_id:connection.workspace,author:{id:user},content:words,timestamp:now(),mentions:[]}}, {id:channel,guild:connection.workspace,kind:'channel'})
+    : normalizeSlack(connection,{type:'event_callback',team_id:connection.workspace,event:{type:'message',user,channel,channel_type:'channel',ts:seconds+'.00000'+sequence,thread_ts:sequence===2?seconds+'.000001':undefined,text:words}});
    const message=normalize(1), next=normalize(2);
    assert.ok(message && next);
    assert.notEqual(message.id,next.id);
@@ -76,6 +76,22 @@ export async function bridgeMail({app,clock}) {
    assert.notEqual(second.id,delivered.id);
    assert.equal(ingress.receive(message).id,delivered.id);
    assert.equal(ingress.receive(next).id,second.id);
+   // A new Discord channel and a new Slack root in the same channel both start another conversation.
+   const channel = platform === 'discord' ? ch+'-garden' : ch;
+   if (channel !== ch) {
+    db.insert(bridgeChannels).values({platform,workspace:connection.workspace,channel,answers:agent,botsMayTalk:false}).run();
+    db.insert(bridgeChannelFilters).values({connection:connection.id,channel,rule:'only'}).run();
+   }
+   const third = normalize(3,channel);
+   const other = ingress.receive(third);
+   assert.equal(other.state,'delivered');
+   assert.ok(other.conversation);
+   assert.notEqual(other.conversation,delivered.conversation);
+   assert.equal(ingress.receive(third).id,other.id);
+   for (const receipt of [delivered,second,other]) {
+    const saved=db.select().from(bridgeIncoming).where(eq(bridgeIncoming.id,receipt.id)).get();
+    assert.equal(saved.conversation,receipt.conversation);
+   }
    db.update(bridgeConnections).set({enabled:false}).where(eq(bridgeConnections.id,connection.id)).run();
    const held=ingress.receive({...message,id:message.id+'-offline'});
    assert.equal(held.state,'held');
@@ -85,7 +101,7 @@ export async function bridgeMail({app,clock}) {
    assert.equal(room.agent,agent);
    assert.equal(room.venue,platform);
    assert.equal(db.select().from(inbox).where(eq(inbox.conversation,room.id)).all().length,2);
-   return {source:platform,member,words,conversation:delivered.conversation,receipts:[delivered.id,second.id]};
+   return {source:platform,member,words,conversation:delivered.conversation,receipts:[delivered,second,other]};
   });
  }).value;
  const credential=app.services.signin.issue({kind:'agent',agent,label:'Fictional bridge Inbox reader'});
@@ -96,12 +112,12 @@ export async function bridgeMail({app,clock}) {
   const reply=await response.json();
   assert.equal(reply.errors,undefined);
   const rows=reply.data.inboxItems;
-  assert.equal(rows.length,4);
+  assert.equal(rows.length,6);
   for(const {source,member,words,conversation,receipts} of sent) {
    assert.ok(conversation);
-   for(const receipt of receipts)assert.deepEqual(rows.find(row=>row.refs.includes(receipt)),{refs:[receipt],toKind:'agent',to:agent,source,fromKind:'person',fromId:member,conversation,body:{words}});
+   for(const receipt of receipts)assert.deepEqual(rows.find(row=>row.refs.includes(receipt.id)),{refs:[receipt.id],toKind:'agent',to:agent,source,fromKind:'person',fromId:member,conversation:receipt.conversation,body:{words}});
   }
   assert.notEqual(sent[0].conversation,sent[1].conversation);
-  return {ok:true,reason:'The receiving agent read exactly one Inbox item for each of four messages, including two with identical words per platform, after replay. The same outside ID resolved to Alex on Discord and Robin on Slack through their respective person links. Only the designated agent received the room messages. A second bot and room filters dropped other deliveries with reasons. A disabled connection held its message.'};
+  return {ok:true,reason:'The receiving agent read exactly one Inbox item for each of six messages after replay. The next Discord channel and the next Slack root each opened a distinct conversation. Every stored incoming receipt agreed with its Inbox item. The same outside ID resolved to Alex on Discord and Robin on Slack through their respective person links. Only the designated agent received the room messages. A second bot and room filters dropped other deliveries with reasons. A disabled connection held its message.'};
  } finally {app.services.signin.revoke(credential.fingerprint);}
 }
