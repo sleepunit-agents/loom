@@ -1378,6 +1378,15 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `bridge_person_sightings` (
+	`incoming` text PRIMARY KEY NOT NULL,
+	`seen_at` text NOT NULL,
+	`platform` text NOT NULL,
+	`workspace` text NOT NULL,
+	`label` text,
+	FOREIGN KEY (`incoming`) REFERENCES `bridge_incoming`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
 CREATE TABLE `agent_post_threads` (
 	`id` text PRIMARY KEY NOT NULL,
 	`source` text NOT NULL,

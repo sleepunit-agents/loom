@@ -515,6 +515,21 @@ export const MIGRATIONS: readonly Migration[] = [
       }
     },
   },
+  {
+    id: 'person_account_sightings',
+    description: 'Keep the most recent bridge sighting for each account on its existing person card',
+    pending: db => hasTable(db, 'people') && !hasTable(db, 'person_account_sightings'),
+    run: db => { db.exec(`CREATE TABLE person_account_sightings (
+      slug TEXT NOT NULL REFERENCES people(slug) ON DELETE CASCADE,
+      platform TEXT NOT NULL CHECK(platform IN ('slack','discord')),
+      workspace TEXT NOT NULL, account TEXT NOT NULL, seen_at TEXT NOT NULL, seen_order TEXT NOT NULL, label TEXT, label_order TEXT,
+      PRIMARY KEY (platform, workspace, account)
+    ) WITHOUT ROWID;
+    CREATE TABLE person_sighting_aliases (
+      workspace TEXT NOT NULL, account TEXT NOT NULL, slug TEXT NOT NULL REFERENCES people(slug) ON DELETE CASCADE,
+      PRIMARY KEY (workspace,account)
+    ) WITHOUT ROWID`); },
+  },
 ];
 
 /**

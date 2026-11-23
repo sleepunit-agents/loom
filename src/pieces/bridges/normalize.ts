@@ -8,12 +8,14 @@ import { discordBodyWords } from './discord-link.js';
 import { slackThread } from './place.js';
 
 const id = z.string().min(1).max(256);
+// Optional profile data must never reject an otherwise deliverable message.
+const displayName = z.string().trim().min(1).max(200).regex(/^[^\p{Cc}\p{Bidi_Control}]+$/u).optional().catch(undefined);
 const timestamp = z.string().regex(/^\d{1,12}\.\d{6}$/);
 const slackChannelType = z.enum(['channel', 'group', 'im', 'mpim']);
 const attachmentMetadata = z.object({ filename: z.string(), size: z.number().int().nonnegative(), content_type: z.string().nullish(), url: z.string() }).passthrough();
 const discordMessage = z.object({
   id, type: z.number().int(), channel_id: id, guild_id: id.optional(),
-  author: z.object({ id, bot: z.boolean().optional() }),
+  author: z.object({ id, bot: z.boolean().optional(), global_name: displayName, username: displayName }),
   content: z.string(), timestamp: z.iso.datetime({ offset: true }),
   mentions: z.array(z.object({ id, bot: z.boolean().optional() })), webhook_id: id.optional(),
   // The roles the message pinged, as Discord resolved them.
@@ -31,6 +33,7 @@ const slackMessage = z.object({
   ts: timestamp, thread_ts: timestamp.optional(), text: z.string(),
   // On a reply in a thread: who wrote the thread's root message.
   parent_user_id: id.optional(),
+  user_profile: z.object({ display_name: displayName, real_name: displayName }).optional().catch(undefined),
   user: id.optional(), bot_id: id.optional(), subtype: z.string().optional(),
 });
 
@@ -105,10 +108,14 @@ export function normalizeDiscord(connection: PlatformConnection & { botUser?: st
     || (channel.kind === 'thread' && !channel.parent)) throw Error('Discord message does not match connection channel');
   const { mentions, unresolvedRole } = discordSummons(message.content, message.mentions.map(mention => mention.id), message.mention_roles ?? [], botRoles);
   const knownBots = new Set([...botRoles.values(), ...message.mentions.filter(mention => mention.bot).map(mention => mention.id)]);
+  const postedAt=new Date(message.timestamp).toISOString();
+  const fraction=message.timestamp.match(/\.(\d+)/)?.[1];
+  const authorLabel = channel.kind !== 'dm' && !message.author.bot && !message.webhook_id && (message.author.global_name ?? message.author.username);
   const mentionsBot = mentions.some(id => knownBots.has(id));
   // An unresolved role may also address this bot, even when another bot is explicitly named.
   const awaitRoles = !rolesKnown && unresolvedRole && !(connection.botUser && mentions.includes(connection.botUser));
   return {
+    ...(authorLabel && { authorLabel }),
     ...(awaitRoles && { awaitRoles: true }),
     ...(mentionsBot && { mentionsBot: true }),
     ...(channel.name && { channelName: channel.name }), ...(channel.parentName && { parentName: channel.parentName }),
@@ -116,7 +123,8 @@ export function normalizeDiscord(connection: PlatformConnection & { botUser?: st
     ...(channel.kind === 'thread' ? { parent: channel.parent, thread: channel.id } : {}),
     ...(channel.kind === 'dm' && channel.group ? { groupDm: true } : {}),
     isDm: channel.kind === 'dm', user: message.author.id, text: discordWords(message.content, message.attachments ?? []),
-    postedAt: new Date(message.timestamp).toISOString(),
+    postedAt,
+    ...(fraction && fraction.length>3 && {sightedAt:postedAt.slice(0,-5)+'.'+fraction+'Z'}),
     mentions,
     // An explicit reply answers the author it points at. Any other message in a thread answers whoever
     // wrote the message the thread was started from, as a Slack thread reply answers its root.
@@ -148,8 +156,12 @@ export function normalizeSlack(connection: PlatformConnection, payload: unknown,
     throw Error('Slack message needs matching channel metadata');
   }
   if (!message.user && !message.bot_id) throw Error('Slack message has no sender');
+  const bot = !!message.bot_id || message.subtype === 'bot_message';
+  const authorLabel = slackRoom(kind) === 'room' && !bot && (message.user_profile?.display_name ?? message.user_profile?.real_name);
   const millis = Number(message.ts.split('.')[0]) * 1000 + Number(message.ts.split('.')[1].slice(0, 3));
   return {
+    ...(authorLabel && { authorLabel }),
+    sightedAt:new Date(millis).toISOString().slice(0,-1)+message.ts.slice(-3)+'Z',
     // Slack timestamps are unique per channel, not across a workspace.
     id: JSON.stringify([message.channel, message.ts]), connection: connection.id,
     channel: message.channel, thread: slackThread(kind, message.ts, message.thread_ts),
@@ -162,6 +174,6 @@ export function normalizeSlack(connection: PlatformConnection, payload: unknown,
     // Slack's only reply is a reply in a thread; it answers the thread's root.
     ...(message.thread_ts && message.thread_ts !== message.ts && message.parent_user_id ? { repliesTo: message.parent_user_id } : {}),
     mentions: [...new Set([...message.text.replace(/```[\s\S]*?(?:```|$)|`[^`\n]*(?:`|$)/g, '').matchAll(/<@([A-Za-z0-9]+)(?:\|[^>]+)?>/g)].map(match => match[1]))],
-    bot: !!message.bot_id || message.subtype === 'bot_message',
+    bot,
   };
 }

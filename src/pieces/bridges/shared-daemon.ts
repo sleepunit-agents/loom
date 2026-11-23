@@ -41,6 +41,7 @@ export interface SharedBridgeOptions {
  progressAllowed?:SendTransport['progressAllowed'];
  directAllowed?:SendTransport['directAllowed'];
  changed():void;
+ observeAccount?(platform:Connection['platform'], workspace:string, account:string, seenAt:string, label?:string):boolean;
  inboxCommitted?(ids:readonly string[]):void;
  /** The runtime's Stop, for the stop word (incoming.ts): ends the job, on that member's word, in the
   * caller's transaction. Without it the stop word is an ordinary message. */
@@ -72,6 +73,7 @@ export class SharedBridges {
  private syncing?:Promise<void>;
  private settingsKey='';
  private cancelRetry?:()=>void;
+ private cancelSightings?:()=>void;
  private readonly unobserve:()=>void;
  private closing?:Promise<void>;
  constructor(private readonly options:SharedBridgeOptions){
@@ -154,7 +156,22 @@ export class SharedBridges {
   // A body taking mail, a reply settling it and a job ending are all committed writes.
   this.track(this.presence.show());
  }
- async ready(){await this.credentials.ready();await this.reconcile();}
+ private fileSightings(){
+  const observe=this.options.observeAccount;
+  if(!observe||this.closed||this.cancelSightings)return;
+  let delay:number|undefined,changed=false;
+  try{
+   const more=this.receiver.fileSightings(s=>{
+    if(observe(s.platform,s.workspace,s.user,s.postedAt,s.authorLabel))changed=true;
+   });
+   if(more)delay=1;
+  }catch{this.report();delay=5000;}
+  if(delay!==undefined)this.cancelSightings=this.options.clock.at(this.options.clock.now()+delay,()=>{
+   this.cancelSightings=undefined;this.fileSightings();
+  });
+  if(changed)this.notify();
+ }
+ async ready(){this.fileSightings();await this.credentials.ready();await this.reconcile();}
  reconcile():Promise<void>{
   if(this.closed)return Promise.resolve();
   if(this.syncing)return this.syncing;
@@ -353,7 +370,8 @@ export class SharedBridges {
     const missing=descriptors.filter((file:{id:unknown})=>typeof file.id!=='string'||unkept.has(file.id));
     if(!missing.length)return;
     pendingFiles.set(incoming.id,missing);return false;
-   })===64;}finally{
+   },!!this.options.observeAccount)===64;}finally{
+    this.fileSightings();
     // Drain owns its per-event transactions; even a later malformed receipt may
     // follow earlier successful commits. Publish and signal only committed ids.
     // An empty drain has no new publication. Publishing after every ordinary
@@ -402,7 +420,7 @@ export class SharedBridges {
  close():Promise<void>{
   if(this.closing)return this.closing;
   let done!:()=>void;this.closing=new Promise<void>(resolve=>{done=resolve;});
-  this.closed=true;this.track(this.sends.close());this.cancelRetry?.();this.unobserve();this.credentials.close();
+  this.closed=true;this.cancelSightings?.();this.track(this.sends.close());this.cancelRetry?.();this.unobserve();this.credentials.close();
   for(const life of this.lives.values())this.retire(life);
   this.receiver.close();this.files.close();this.channels.close();
   void Promise.allSettled([...this.active]).then(done);return this.closing;
