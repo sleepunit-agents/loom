@@ -202,13 +202,11 @@ export class InboxQueries {
         const title=id?titles?.get(id):undefined;
         let until=title?.toLocaleLowerCase().includes(query)?Infinity:matches.get(item.id);
         const question=questions.get(item.id);
-        if(question&&until!==Infinity){
+        if(question&&until!==Infinity&&this.namedQuestion(viewer,item,question.body).words.toLocaleLowerCase().includes(query)){
           // Only the question's source facts can invalidate its cached wording.
           // A read mark on another item cannot change this page.
           if(latest&&questionFacts(latest,item,question.until)!==questionFacts(before,item,question.until))return;
-          if(this.namedQuestion(viewer,item,question.body).words.toLocaleLowerCase().includes(query)){
-            until=Math.max(until??-Infinity,question.until);
-          }
+          until=Math.max(until??-Infinity,question.until);
         }
         if(until===undefined)continue;
         // Earlier matches determine which row appears at the requested offset.

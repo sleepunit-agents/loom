@@ -1,3 +1,4 @@
+import {InboxQueries} from './core/conversations/inbox-query.js';
 import {bodyProgram} from './runtime/body-program.js';
 import {BridgeReceiver} from './pieces/bridges/receiver.js';
 import {reviewPlace} from './core/conversations/review-place.js';
@@ -1678,15 +1679,22 @@ it('lets a body on anybody else\'s word ask the owners a question, and says in t
  f.db.insert(bridgePeople).values({platform:'slack',workspace:'TWORK',user:'UUSER',member:'field-member'}).run();
  expect(await view(token.owner)).toMatchObject({data:{inboxItem:{body:{words:expect.stringContaining('Working for field-member.')}}}});
  expect(JSON.stringify(await view(token.body))).not.toContain('field-member');
- const matching=async()=>{
+ const searchResult=async()=>{
    const response=await f.root.http.request('http://loom/graphql',{method:'POST',
      headers:{authorization:'Bearer '+token.owner,'content-type':'application/json'},
      body:JSON.stringify({query:'{inboxItems(folder:"needs",search:"Working for field-member"){id}}'})});
-   const result=await response.json();expect(result.errors).toBeUndefined();return result.data.inboxItems;
+   return response.json();
  };
+ const matching=async()=>{const result=await searchResult();expect(result.errors).toBeUndefined();return result.data.inboxItems;};
  expect(await matching()).toEqual([{id}]);
  expect(asked()[0].words).not.toContain('field-member');
- f.db.delete(bridgePeople).run();
+ const project=InboxQueries.prototype.project;
+ const projection=vi.spyOn(InboxQueries.prototype,'project').mockImplementationOnce(async function(this:InboxQueries,...args){
+   const rows=await project.apply(this,args);f.db.delete(bridgePeople).run();return rows;
+ });
+ try{
+   const changed=await searchResult();expect(changed.errors).toBeDefined();expect(changed.data?.inboxItems).toBeUndefined();
+ }finally{projection.mockRestore();}
  expect(await view(token.owner)).toMatchObject({data:{inboxItem:{body:{words:line+'\n\nMay I post the door code here?'}}}});
  expect(await matching()).toEqual([]);
  // The owner answers yes. The answer is mail from the owner, and quotes the question with loom's line: the job that

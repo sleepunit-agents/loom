@@ -205,6 +205,13 @@ it('searches a guest question by the current name only while its private wording
   expect((await search()).map(row=>row.id)).toEqual([f.ask.inboxItem]);
   const until=Date.parse('2026-11-28T18:00:00Z');
   expect(deadlines).toContain(until);
+  f.time('2026-11-14T17:00:00.000Z');
+  const ordinary=f.comms.threads.conversations.send({toKind:'person',to:'alice',source:'notice',fromKind:'agent',member:'alice',words:'Ordinary notice'});
+  let ordinaryRecheck:(()=>boolean)|undefined;
+  expect((await service.search(alice,{search:'Ordinary notice'},undefined,check=>{ordinaryRecheck=check;})).map(row=>row.id)).toEqual([ordinary.id]);
+  f.db.update(inbox).set({volume:'dim'}).where(eq(inbox.id,f.ask.inboxItem!)).run();
+  expect(ordinaryRecheck?.()).toBe(true);
+  f.db.update(inbox).set({volume:'full'}).where(eq(inbox.id,f.ask.inboxItem!)).run();
   f.comms.threads.conversations.read(f.ask.inboxItem!,'alice');
   expect(recheck?.()).toBe(true);
   name=undefined;
