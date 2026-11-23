@@ -67,7 +67,7 @@ export default function AgentRail({ go }: { go(path: string): void }) {
       const summary=reading?.summaries.find(s=>s.agent===agent.id);
       const unread=summary?.unread??0,thread=summary?.first??summary?.last;
       const path=thread?threadPath(thread.thread):'/p/comms-preview';
-      return <WithDoing key={agent.id} agent={agent.id} onChange={jobsChanged}>{doing=>{
+      return <WithDoing key={'agent:'+agent.id} agent={agent.id} onChange={jobsChanged}>{doing=>{
         const state=shownState(status?.state,doing.items.length);
         const terminal = doing.items.find(item=>item.kind==='terminal');
         const word=agentStateLine(state,doing.items.length,needs);
@@ -96,13 +96,17 @@ export default function AgentRail({ go }: { go(path: string): void }) {
       }}</WithDoing>;
   };
   const first = companion ?? (fold ? agents.find(agent => agent.id === opened) : undefined) ?? agents[0];
-  return <div ref={box} className="desk-agent-rail" data-fold={fold||undefined}>
-    {first&&card(first)}
-    {(waiting.status!=='live'||!!waiting.total)&&<div className="desk-rail-needs">
+  // Keep every agent in one keyed list when folding promotes a different card.
+  // Moving between separate React child lists would restart its live reads.
+  const cards=agents.filter(agent=>agent.id!==first?.id).map(card);
+  if(waiting.status!=='live'||waiting.total)cards.unshift(<div key="waiting" className="desk-rail-needs">
       <span className="desk-rail-kicker">Needs you{waiting.status==='live'?` · ${waiting.total}`:''}</span>
       {waiting.status!=='live'?<span>Waiting items unavailable</span>:<WaitingRow go={go} onChange={waitingChanged}/>}
       <button type="button" className="desk-rail-kicker" onClick={()=>go(waitingPath())}>{waiting.status==='live'&&(waiting.total??0)>1?`${waiting.total!-1} more · Inbox ›`:'Inbox ›'}</button>
-    </div>}
-    {roster.status !== 'live' ? <p role="status">{roster.status==='loading'?'Opening your agents…':'Your agents are unavailable.'}</p> : !agents.length ? <p>No agents of your own.</p> : agents.filter(a=>a.id!==first?.id).map(card)}
+    </div>);
+  if(first)cards.unshift(card(first));
+  return <div ref={box} className="desk-agent-rail" data-fold={fold||undefined}>
+    {cards}
+    {roster.status!=='live'?<p role="status">{roster.status==='loading'?'Opening your agents…':'Your agents are unavailable.'}</p>:!agents.length&&<p>No agents of your own.</p>}
   </div>;
 }
