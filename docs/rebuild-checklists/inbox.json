@@ -204,7 +204,20 @@
     {
       "id": "inbox-020",
       "promise": "c Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
-      "source": "docs/how-it-works/site/inbox.html#see-h"
+      "source": "docs/how-it-works/site/inbox.html#see-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "inboxCallers"
+          },
+          {
+            "kind": "action",
+            "action": "inboxVisibility"
+          }
+        ]
+      }
     },
     {
       "id": "inbox-021",

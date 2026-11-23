@@ -229,6 +229,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('c Private.'):row['probe']={'kind':'action','action':'commsPrivacy'}
  if f.stem=='inbox':
   for row in rows:
+   if row['promise'].startswith('c Checked at the door.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':name} for name in ['inboxCallers','inboxVisibility']]}
    if row['promise'].startswith('The same inbox table is drawn'):row['probe']={'kind':'all','probes':[{'kind':'action','action':name} for name in ['inboxDocumentation','privateConversationBatch','inboxVolume']]}
    if row['promise']=='Each incoming message becomes one item.':row['probe']={'kind':'action','action':'bridgeMail'}
    if row['promise'].startswith(('One inbox for everything sent to anyone','Every item has a recipient. An agent')):row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['inboxRecipients','privateConversationBatch','privateConversationQuestion']]}
