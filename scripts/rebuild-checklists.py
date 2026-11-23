@@ -111,6 +111,16 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='conversations':
   add('Sending in Comms persists the message after reload and creates one Inbox delivery item.','',{'kind':'action','action':'commsSend'})
   add('A question answered in Inbox becomes answered inline in Comms.','',{'kind':'action','action':'commsAnswer'})
+ if f.stem=='secrets':
+  evidence={
+   "Credentials agents need, and who may use each one. A secret is a named credential, such as a GitHub token.":'secretValues',
+   "A pending request waits in a person's Inbox.":'inboxSecretRequest',
+   "A connection's bot token is one of the stored secrets.":'bridgeSettings',
+   "A secret's value never sits in loom's main database. The app can set or replace a value and cannot read one back.":'secretValues',
+   "b Values are never shown. A value is write-only. Nobody reads one back in the app.":'secretValues',
+  }
+  for row in rows:
+   if row['promise'] in evidence:row['probe']={'kind':'action','action':evidence[row['promise']]}
  if f.stem=='secrets':add('The owner can add, replace and remove a Secret value in Settings; reload preserves the result, the value is not displayed or stored in the main database, and each change is recorded.','',{'kind':'action','action':'secretValues'})
  if f.stem=='secrets':add('The owner can change the household default from Ask to Never in Settings and it persists after reload.','',{'kind':'action','action':'secretDefault'})
  if f.stem=='approvals':
