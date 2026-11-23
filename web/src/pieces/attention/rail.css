@@ -27,7 +27,10 @@
 .desk-rail-card[data-companion]{border-bottom:2px solid var(--v-blue)}
 .desk-rail-with{color:var(--v-blue);padding-bottom:8px;border-bottom:1px solid var(--v-border)}
 
-.desk-rail-location{display:block;color:var(--v-text-2);font:500 .72rem/1.4 var(--font-data,monospace)}
+.desk-rail-location .desk-doing-pill{padding:0;border:0;background:none;color:var(--v-text-2)}
+.desk-rail-location .desk-doing-phrase{font:500 .72rem/1.4 var(--font-data,monospace);text-transform:none}
+.desk-rail-location a:hover{text-decoration:underline}
+@container rail (max-width:100px){.desk-rail-location{display:none}}
 .desk-rail-card[data-state=working]{--portrait-state:var(--v-blue)}
 .desk-rail-card[data-state=waiting]{--portrait-state:var(--v-yellow)}
 .desk-rail-agent>.desk-agent-face{outline:1px solid var(--portrait-state,var(--v-border));outline-offset:2px;border-radius:20%}

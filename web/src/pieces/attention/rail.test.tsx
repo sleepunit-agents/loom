@@ -118,6 +118,7 @@ it('puts the selected owned Comms companion above Needs you and returns it to sa
 it('lists what each agent is doing in compact pills that open what they name, says Working, and drops them when disconnected',async()=>{
  f.snapshots['attention.agent']=live([{id:'s',agent:'art',state:'idle',work:'',changedAt:1}]);f.snapshots['attention.ask']=live([]);
  f.snapshots['generated.jobs']=live([
+  {id:'terminal-proof',agent:'art',kind:'terminal',machine:'atelier',title:'codex',href:'/p/comms-preview/thread/terminal-proof'},
   {id:'j:talk',agent:'art',kind:'discord',place:'#pond',title:'Discord channel #pond',href:'/p/comms-preview/conversation/cv-pond',machine:'one'},
   {id:'t-7',agent:'art',kind:'task',title:'Order hose',ref:'t-7',state:'in_progress',href:'/p/tasks-preview/task/t-7'},
   {id:'j:private',agent:'art',kind:'private'},
@@ -126,6 +127,12 @@ it('lists what each agent is doing in compact pills that open what they name, sa
  const go=vi.fn();await act(async()=>{tree=create(h(Rail,{go}));});
  const list=()=>tree.root.findByProps({'aria-label':'What Art is doing'});
  const words=(node:any):string=>typeof node==='string'?node:(node.children??[]).map(words).join('');
+ const location=tree.root.findByProps({'aria-label':'Art terminal location'});
+ const link=location.findByType('a');
+ expect(words(link)).toContain('At a terminal on atelier · codex');
+ expect(link.props.href).toBe('/p/comms-preview/thread/terminal-proof');
+ await act(async()=>link.props.onClick({button:0,preventDefault(){}}));
+ expect(go).toHaveBeenLastCalledWith(link.props.href);
  expect(list().props['data-compact']).toBe(true);
  expect(list().findAllByProps({className:'desk-doing-phrase'}).map(words)).toEqual(['Talking on Discord in #pond','Working on Order hose · t-7','In a private conversation']);
  expect(list().findAllByProps({className:'desk-doing-meta'})).toHaveLength(0);

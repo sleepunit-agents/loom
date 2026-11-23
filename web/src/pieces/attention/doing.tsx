@@ -80,8 +80,8 @@ export const claimedPath = (agent: string) => `/p/tasks-preview/?folder=progress
 
 /** The lead of an agent's card: one pill per thing it is doing, each opening what it names. Compact (the rail,
  * a folded card) leaves the quiet line to the pill's title. */
-export function Doing({ doing, name, agent, names, go, compact = false }: {
-  doing: DoingReading; name: string; /** The agent's id: with it, the tasks it has only claimed are one quiet line under the pills (never on a compact card). */ agent?: string; names?: ReadonlyMap<string, string>; go(path: string): void; compact?: boolean;
+export function Doing({ doing, name, agent, names, go, compact = false, label }: {
+  doing: DoingReading; name: string; /** The agent's id: with it, the tasks it has only claimed are one quiet line under the pills (never on a compact card). */ agent?: string; names?: ReadonlyMap<string, string>; go(path: string): void; compact?: boolean; label?: string;
 }) {
   const zone = useHouseholdZone();
   const named = (id: string) => names?.get(id) ?? fallbackName(id);
@@ -93,7 +93,7 @@ export function Doing({ doing, name, agent, names, go, compact = false }: {
   const claimed = !compact && agent && doing.claimed > 0 ? <a className="desk-doing-claimed" href={claimedPath(agent)} onClick={opens(claimedPath(agent))}>
     {doing.claimed} {doing.claimed === 1 ? 'task' : 'tasks'} in progress ›</a> : null;
   if (!doing.items.length) return <><p className="desk-doing-quiet">Nothing right now.</p>{claimed}</>;
-  return <><ul className="desk-doing" data-compact={compact || undefined} aria-label={`What ${name} is doing`}>
+  return <><ul className="desk-doing" data-compact={compact || undefined} aria-label={label ?? `What ${name} is doing`}>
     {doing.items.map(item => {
       const phrase = doingPhrase(item, named), meta = doingMeta(item, zone);
       const inside = <><span className="desk-doing-mark" aria-hidden="true">{marks[item.kind] ?? marks.job}</span>
