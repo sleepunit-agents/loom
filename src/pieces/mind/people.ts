@@ -14,7 +14,7 @@ interface Row { slug: string; card_json: string; updated: string; synthesized_at
 const has = (db: Database, table: string) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
 export interface PeopleReaderOptions {
   projectHref?(agent:string,slug:string):string|undefined;
-  directory?:string; agents:Array<{agent:string;memories:string}>; sharing():Sharing; now():number;
+  directory?:string; defaultAgent?():string|undefined; agents:Array<{agent:string;memories:string}>; sharing():Sharing; now():number;
 }
 /** Direct file projection used by GraphQL. */
 export interface PeopleReader {
@@ -33,6 +33,9 @@ export interface PeopleReader {
  list(viewer:Viewer,sharing?:Sharing):PersonRecord[];
  history(id:string,viewer:Viewer):Array<{id:number;op:string;replacedAt:string;actor:string|null;card:PersonCard}>;
  close():void;
+}
+export function mayAddPerson(viewer:Viewer,agent:string|undefined,sharing:Sharing){
+  return !!agent && mayAct(viewer,{type:'person'},sharing,'act') && mayAct(viewer,{type:'person',agent},sharing,'act');
 }
 export const mayReadPerson=(viewer:Viewer,agent:string|undefined,sharing:Sharing)=>maySee(viewer,{type:'person',...(agent?{agent}:{})},sharing);
 export function peopleReader(options:PeopleReaderOptions):PeopleReader {
@@ -215,7 +218,7 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
       const authorized=options.agents.filter(({agent})=>mayReadPerson(viewer,agent,current));
       return {id:'people',allowed:directory||authorized.length>0,directory,
         agents:authorized.map(row=>row.agent).filter(id=>!current.agents||current.agents.includes(id)),
-        canAdd:mayAct(viewer,{type:'person'},current,'act')};
+        get canAdd(){return mayAddPerson(viewer,options.defaultAgent?.(),current);}};
     },
     sightings(viewer,slug) {
       const db=sources.get('commons');

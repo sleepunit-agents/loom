@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > (2026-04-23) and this release ship together as `0.5.0`.
 
 ## [Unreleased]
+- People explains how to choose a default agent before adding a contact to a new household.
 - People checks “Last seen” accounts together when a contact opens, and reads sharing permissions once for the agent filter.
 - Fixed phone dock icons moving under a tap before the selected app opened.
 - You can ask your agent in the same private Comms thread to cancel a scheduled role or Codex handoff before Loom admits its job.

@@ -1,6 +1,6 @@
 /** File-backed Memory joins the generated schema; no copied tables or second door. */
 import type { DataDatabase } from '../core/data/database.js';
-import { householdTimezone } from '../core/data/household-settings.js';
+import { householdSettings, householdTimezone } from '../core/data/household-settings.js';
 import type { Sharing } from '../core/index.js';
 import type { MindSources } from '../pieces/mind/sources.js';
 import type { createActivityReader } from '../pieces/mind/activity.js';
@@ -25,7 +25,7 @@ export function memoryQueryFields(db: DataDatabase, options: {
     // The list of agents is read through each time: it follows the household (pieces/mind/sources.ts).
     const sources = options.sources;
     const people = peopleQueryFields({directory: sources?.commons.people, get agents() { return sources?.agents ?? []; },
-      sharing: options.sharing, now: options.now, projectHref: options.projectHref,
+      defaultAgent:()=>householdSettings(db).defaultAgent??undefined, sharing: options.sharing, now: options.now, projectHref: options.projectHref,
       conversations: hasConversations ? sharedPeopleConversations(db, options.sharing, options.conversationHref) : undefined});
     try{
       // The newest 200 digests in the window: far more than the tape's budget keeps, which drops the oldest first.

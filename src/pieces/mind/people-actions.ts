@@ -3,7 +3,8 @@ import type {Viewer} from '../../policy.js';
 import { existsSync } from 'node:fs';
 import BetterSqlite3 from 'better-sqlite3';
 import { z } from 'zod';
-import { operation, mayAct, OperationError, RecoveredWrite, type Context, type Operations, type Sharing } from '../../core/index.js';
+import { operation, OperationError, RecoveredWrite, type Context, type Operations, type Sharing } from '../../core/index.js';
+import {mayAddPerson} from './people.js';
 import { mindReceipts, mindReceiptsReady } from './receipt-schema.js';
 import { CARD_NAME_MAX, CARD_SUMMARY_MAX } from '../../backends/cards.js';
 import { MAX_STRING } from '../../backends/people.js';
@@ -46,7 +47,7 @@ export function installMindPeopleActions(operations:Operations,options:{director
   };
   operations.register(operation({name:'mind.personAdd',write:true,recover,
     input:z.object({name:z.string().trim().min(1).max(CARD_NAME_MAX),summary:z.string().trim().max(CARD_SUMMARY_MAX).default(''),channel:z.enum(['','slack','discord','email','phone','github']).default(''),handle:z.string().trim().max(MAX_STRING).default('')}).strict(),output:z.unknown(),
-    may:v=>{const agent=agentNow();return mayAct(v,{type:'person'},options.sharing(),'act') && !!agent && mayAct(v,{type:'person',agent},options.sharing(),'act');},
+    may:viewer=>mayAddPerson(viewer,agentNow(),options.sharing()),
     run(ctx,input){
       const why=options.refused?.(ctx.viewer);if(why)throw new OperationError('denied',why);
       // Read once: the agent and its file are the same for the whole of this write.

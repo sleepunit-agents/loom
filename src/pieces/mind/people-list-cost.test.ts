@@ -41,3 +41,19 @@ it('reads the sharing facts once for a whole listing, and afresh for each listin
     } finally { people.close(); }
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
+
+it('offers Add only with a current default agent and access to both halves of the card',()=>{
+  let agent:string|undefined;
+  const people=peopleReader({agents:[],defaultAgent:()=>agent,now:()=>0,sharing:()=>({
+    members:{owner:{owner:true,agents:[]},member:{owner:false,agents:['fern']}},projects:{},
+  })});
+  try{
+    const owner:Viewer={kind:'member',id:'owner'};
+    expect(people.access(owner).canAdd).toBe(false);
+    agent='fern';
+    expect(people.access(owner).canAdd).toBe(true);
+    expect(people.access({kind:'member',id:'member'}).canAdd).toBe(false);
+    agent=undefined;
+    expect(people.access(owner).canAdd).toBe(false);
+  }finally{people.close();}
+});
