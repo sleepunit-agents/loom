@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import Database from 'better-sqlite3';
 import { FakeClock } from '../dist/core/clock.js';
-import { boxes, jobs } from '../dist/core/data/schema.js';
+import { agents, boxes, jobs } from '../dist/core/data/schema.js';
 import { httpWorkerControl } from '../dist/runtime/worker-http.js';
 import { privateSecretClient } from '../dist/pieces/secrets/private-client.js';
 import { startSharedHome } from '../dist/shared-startup.js';
@@ -32,23 +32,39 @@ async function verifyGrant(app, clock, owner, name, value) {
         enrolledAt: now,
       })
       .run();
-    db.insert(jobs)
+    db.insert(agents)
       .values({
-        id: job,
-        box,
-        agent,
-        state: 'starting',
-        title: 'Garden check',
-        brief: '',
-        model: 'fixture',
-        startedByKind: 'agent',
-        startedBy: agent,
-        houseRepository: '',
-        houseFile: '',
-        houseBranch: 'next',
-        queuedAt: now,
+        id: 'fern',
+        about: 'Garden fixture',
+        markBg: '#000000',
+        markFg: '#ffffff',
+        faceShape: 'pebble',
+        faceEyes: 'dot',
       })
       .run();
+    for (const [jobId, jobAgent] of [
+      [job, agent],
+      ['watering', agent],
+      ['sowing', 'fern'],
+    ]) {
+      db.insert(jobs)
+        .values({
+          id: jobId,
+          box,
+          agent: jobAgent,
+          state: 'starting',
+          title: 'Garden check',
+          brief: '',
+          model: 'fixture',
+          startedByKind: 'agent',
+          startedBy: agent,
+          houseRepository: '',
+          houseFile: '',
+          houseBranch: 'next',
+          queuedAt: now,
+        })
+        .run();
+    }
   });
   const runner = issue({ kind: 'runner', box, label: 'Garden fixture worker' });
   const member = issue({ kind: 'owner', member: owner, label: 'Garden fixture owner' });
@@ -94,17 +110,41 @@ async function verifyGrant(app, clock, owner, name, value) {
         .prepare('SELECT secret,agent,job,at,state FROM secret_uses WHERE secret=? ORDER BY rowid')
         .all(name);
     assert.equal(uses().length, 0);
-    async function checkDelivery(requestId, count) {
+    async function expectScopedRefusal(jobId, requestId) {
+      const other = await control.enrollBody(jobId, controller.signal);
+      const client = privateSecretClient({
+        url: app.url,
+        token: other.token.toString('ascii'),
+        signal: controller.signal,
+        clock,
+      });
+      try {
+        await control.started(jobId, 'fixture');
+        await assert.rejects(client.granted(name, requestId), /Private secret input unavailable/);
+      } finally {
+        client.close();
+        other.erase();
+      }
+    }
+    await expectScopedRefusal('watering', id);
+    const expectedUses = [];
+    async function checkDelivery(requestId) {
+      clock.advance(1_000);
       const bytes = await reader.granted(name, requestId);
       try {
         assert.ok(bytes.equals(Buffer.from(value)), 'Granted bytes differed from the fictional value');
       } finally {
         bytes.fill(0);
       }
-      const expected = { secret: name, agent, job, at: now, state: 'released' };
-      assert.deepEqual(uses(), Array(count).fill(expected));
+      expectedUses.push({
+        secret: name,
+        agent,
+        job,
+        at: new Date(clock.now()).toISOString(),
+        state: 'released',
+      });
+      assert.deepEqual(uses(), expectedUses);
     }
-    await checkDelivery(id, 1);
     assert.deepEqual(
       await command('secrets/request', { ...request, id: agentRequestId, scope: 'agent' }, token),
       { id: agentRequestId, state: 'allowed' },
@@ -113,13 +153,23 @@ async function verifyGrant(app, clock, owner, name, value) {
     assert.equal(agentGrant?.grantedBy, 'rule');
     assert.equal(agentGrant.agent, agent);
     assert.equal(agentGrant.job, null);
-    await checkDelivery(agentRequestId, 2);
-    clock.advance(59_999);
+    await expectScopedRefusal('sowing', agentRequestId);
+    const unused = randomUUID();
+    assert.deepEqual(await command('secrets/request', { ...request, id: unused }, token), {
+      id: unused,
+      state: 'allowed',
+    });
+    assert.ok(requests.grantFor(name, agent, job, unused));
+    await checkDelivery(id);
+    await checkDelivery(agentRequestId);
+    clock.advance(57_999);
     assert.equal(requests.grantFor(name, agent, job, id)?.id, grant.id);
     assert.ok(requests.grantFor(name, agent, undefined, agentRequestId));
     clock.advance(1);
     assert.equal(requests.grantFor(name, agent, undefined, agentRequestId), undefined);
     assert.equal(requests.grantFor(name, agent, job, id), undefined);
+    await assert.rejects(reader.granted(name, unused), /Private secret input unavailable/);
+    assert.deepEqual(uses(), expectedUses);
   } finally {
     reader?.close();
     body?.erase();
