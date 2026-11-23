@@ -104,12 +104,13 @@ it('places current action outcomes in FYI and Errors and hides them with the mai
   expect(tree.root.findAllByType('Reader')).toHaveLength(0);
 });
 it('shows dim items as one-line entries, keeps mute hidden, and opens the complete question', async () => {
- const select=vi.fn(),dim={...item,volume:'dim' as const};
+ const select=vi.fn(),dim={...item,volume:'dim' as const,body:{...item.body!,words:item.body!.words+'\r\nBring the spare hose.'}};
  const current:InboxSnapshot={status:'live',items:[dim,{...item,id:'muted',volume:'mute'}]};
  await act(async()=>{tree=create(h(InboxView,{snapshot:current,select}));});
  const entries=tree.root.findAllByType('Row');expect(entries).toHaveLength(1);expect(entries[0].props.title).toBe(item.body!.words);expect(entries[0].props.meta).toBeUndefined();expect(entries[0].props.status).toBeUndefined();
  await act(async()=>{entries[0].props.onClick();});expect(select).toHaveBeenCalledWith(item.id);
  await act(async()=>{tree.update(h(InboxView,{snapshot:current,selected:item.id,select}));});expect(JSON.stringify(tree.toJSON())).toContain('In stock today');
+ expect(JSON.stringify(tree.toJSON())).toContain('Bring the spare hose.');
 });
 
 it('sets how loudly a managed card is shown from one quiet Notify control, without answering it, and waits for publication', async () => {
