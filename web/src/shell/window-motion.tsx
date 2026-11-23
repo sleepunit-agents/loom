@@ -60,7 +60,7 @@ export function useDeparture(ground: React.RefObject<HTMLDivElement | null>, rem
   };
 }
 
-export function useDockRestore(ground: React.RefObject<HTMLDivElement | null>, boxes: Record<string, Rect>, phone: boolean, tiles: Tile[]) {
+export function useDockRestore(ground: React.RefObject<HTMLDivElement | null>, boxes: Record<string, Rect>, tiles: Tile[]) {
   const priorTiles = useRef(tiles);
   useLayoutEffect(() => {
     const oldTiles = priorTiles.current;
@@ -68,11 +68,11 @@ export function useDockRestore(ground: React.RefObject<HTMLDivElement | null>, b
     const host = ground.current;
     if (!host?.isConnected || reducedMotion()) return;
     for (const tile of oldTiles) {
-      if (!tile.minimized || !boxes[tile.id] || phone) continue;
+      if (!tile.minimized || !boxes[tile.id]) continue;
       const window = host.querySelector<HTMLElement>(`[data-tile="${CSS.escape(tile.id)}"]`);
       const offset = window && dockOffset(host, tile.id, window);
       if (window && offset) window.animate([{ translate: offset, scale: '.08' }, { translate: '0 0', scale: '1' }],
         { duration: 620, easing: 'cubic-bezier(.18,.72,.22,1)' });
     }
-  }, [ground, boxes, phone, tiles]);
+  }, [ground, boxes, tiles]);
 }
