@@ -148,6 +148,23 @@ it('returns the existing private question envelope intact and performs no writes
 });
 
 
+it('skips the mailbox scan when the desk only selects member or agents', async () => {
+  const f = await fixture();
+  f.db.insert(memberAgents).values({ member: 'alice', agent: 'art' }).run();
+  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: commsQueryFields(f.service) }) });
+  const source = `query Home($summary: Boolean!) {
+    homeComms { member teammates: agents ...Counts }
+  } fragment Counts on HomeComms { summaries @include(if: $summary) { unread } }`;
+  for (const summary of [false, true]) {
+    f.statements.length = 0;
+    const result = await graphql({ schema, source, variableValues: { summary }, contextValue: { viewer: alice } });
+    expect(result.errors).toBeUndefined();
+    expect(result.data?.homeComms).toEqual({ member: 'alice', teammates: ['art'], ...(summary ? { summaries: [{ unread: 1 }] } : {}) });
+    const readsHistory = f.statements.some(sql => /\b(?:from|join)\s+["`]?(?:threads|messages)\b/i.test(sql));
+    expect(readsHistory).toBe(summary);
+  }
+});
+
 it('projects Home from the current member and owned agents, counting reply threads across the whole mailbox', async () => {
   const f = await fixture();
   f.db.insert(memberAgents).values({ member: 'alice', agent: 'art' }).run();

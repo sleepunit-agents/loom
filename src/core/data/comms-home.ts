@@ -11,14 +11,17 @@ import { agents, conversations, messages, threads } from './schema.js';
  * predicate. The number of statements does not grow with the rows: the household's sharing, the
  * agents, and the visible threads.
  */
-export function readCommsHome(db: DataDatabase, viewer: Viewer, allowed: SQL) {
+export function readCommsHome(db: DataDatabase, viewer: Viewer, allowed: SQL, fields?: ReadonlySet<string>) {
   if (viewer.kind !== 'member') return null;
   const sharing = sharedSharing(db);
   if ( !holds(rules.currentMember, viewer, {}, sharing)) return null;
+  const summaries = fields?.has('summaries') ?? true;
+  if (!summaries && !fields?.has('agents')) return { member: viewer.id, agents: [], summaries: [] };
   // A removed agent is nobody's to give work to: it keeps its owner link for a restore, and is left out here
   // as it is left out of the sharing facts (shared-sharing.ts).
   const owned = db.select({ id: agents.id }).from(agents).where(isNull(agents.removedAt)).orderBy(asc(agents.id)).all()
     .map(row => row.id).filter(agent => mayAct(viewer, { type: 'conversation', agent, member: viewer.id }, sharing, 'give-work'));
+  if (!summaries) return { member: viewer.id, agents: owned, summaries: [] };
   // Read the threads even for an empty list; the constant-false
   // predicate produces no rows without generating an invalid IN ().
   const rows = db.query.threads.findMany({

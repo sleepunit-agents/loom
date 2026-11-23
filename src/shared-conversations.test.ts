@@ -339,8 +339,8 @@ it('bounds SQL for the full actual Comms selection with two and ten retained mes
   }
   const large=await read();expect(large.rows).toHaveLength(10);
   // Home's part asks policy.ts who the member may give work to, which reads the household's sharing (comms-home.ts).
-  // The open thread also checks for saved questions once, regardless of message count.
-  expect(large.count).toBe(small);expect(large.count).toBe(20);
+  // This roster selection skips mailbox history. The open thread checks for saved questions once.
+  expect(large.count).toBe(small);expect(large.count).toBe(19);
   expect(large.rows.map(row=>row.words)).toEqual(Array.from({length:10},(_,n)=>'PRIVATE MESSAGE '+n));
   let changed=false;
   f.openGate(async()=>{if(!changed){changed=true;f.root.writes.run(()=>f.db.update(conversations).set({member:'bob'}).where(eq(conversations.id,thread.conversation)).run());}});
