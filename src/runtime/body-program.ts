@@ -250,7 +250,7 @@ export async function bodyProgram(input: {
         'Discover available roles, assigned peers and Codex capacity with {"operation":"conversation.handoffOptions","id":"discover-handoffs","input":{}}.',
         'Submit conversation.handoff through the same tool. Give the command a stable id. In input, include exactly one of role (a listed role), agent (a listed peer), or harness "codex", plus label, words and a clientId unique to the brief. Reuse both IDs and the same input when retrying that brief.',
         'Make words self-contained. Include the repository and commit for repository work. To schedule a role or Codex job, supply notBefore as a UTC timestamp within the private brief retention period.',
-        'Role and Codex results return to this thread. Check progress with conversation.handoffStatus, passing value.conversation from the receipt as input.conversation. For help inside this job, use native subagents when your harness provides them.',
+        'Role and Codex results return to this thread. Check progress with conversation.handoffStatus, passing value.conversation from the receipt as input.conversation. To cancel a scheduled handoff before it gets a job, call conversation.handoffCancel with the same child conversation. For help inside this job, use native subagents when your harness provides them.',
       ].join(' ');
       context.unshift(delegation);continued.unshift(delegation);
     }

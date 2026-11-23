@@ -1851,6 +1851,17 @@ The schedule survives a coordinator restart. Worker capacity and current access 
 checked when the job is placed. The original thread can read the scheduled time
 with `conversation.handoffStatus` using the returned child conversation ID.
 
+To withdraw that brief before Loom admits a job, call `loom_command` from the
+same private owner thread:
+
+```json
+{"operation":"conversation.handoffCancel","id":"withdraw-walkthrough","input":{"conversation":"<child conversation>"}}
+```
+
+The receipt and later status include `cancelled: true`. Reopening the coordinator
+or retrying the original handoff keeps the cancellation. Once a job has been
+admitted, use its normal job controls.
+
 Briefs remain encrypted in the existing Inbox words cell with an original
 household retention deadline of at most 14 days. Only the bound receiving body or a currently authorized member through the
 existing Inbox read may open them; current policy can shorten that deadline, and expiry withdraws
