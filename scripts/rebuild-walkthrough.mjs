@@ -55,6 +55,7 @@ import {installDataProbe,auditDataDoor,dataActions,sharingGrowth,homeReadGrowth}
 import {exampleHome} from '../dist/example-home.js';
 import {conversationRecords} from './rebuild-conversation-records.mjs';
 import {startSharedHome} from '../dist/shared-startup.js';
+import {deskPanelVisibility} from './rebuild-desk-visibility.mjs';
 import {deskJobs} from './rebuild-desk-jobs.mjs';
 import {deskTicker} from './rebuild-desk-ticker.mjs';
 import {deskWaiting} from './rebuild-desk-waiting.mjs';
@@ -279,6 +280,8 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'desk-jobs',actions:safeReport(report.actions)};
   report.actions.deskTicker=await deskTicker({page,app,out});
   save();yield {phase:'desk-ticker',actions:safeReport(report.actions)};
+  report.actions.deskPanelVisibility=await deskPanelVisibility({browser,out});
+  save();yield {phase:'desk-panel-visibility',actions:safeReport(report.actions)};
   phase='conversation actions';
   report.actions={...report.actions,...await conversationActions({page,app,example:report.example,out,open:openApp,actions:['inboxAnswer','commsAnswer'],previous:report.actions})};
   save();yield {phase:'actions',actions:safeReport(report.actions)};
