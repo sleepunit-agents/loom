@@ -6,7 +6,8 @@ import { PeopleStore } from './backends/people.js';
 import type { SharedMemoryOptions } from './shared-memory.js';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import { InboxQueries } from './core/conversations/inbox-query.js';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
@@ -1100,17 +1101,32 @@ it('tells a household owner who a card is for, and nobody else: the names loom h
   const colleagueTitle=(await preview(f,colleague)).card!.title;
   expect(colleagueTitle).toBe('Set gage (Slack) to tier 3 with Art');
   expect(await titles('sam',[colleague])).toEqual([{approval:colleague,title:colleagueTitle}]);
-  const search=async(actor:keyof typeof credentials,offset=0)=>{
+  const searchResult=async(actor:keyof typeof credentials,offset:number)=>{
     const response=await f.root.http.request('http://loom/graphql',{method:'POST',
       headers:{'content-type':'application/json',authorization:'Bearer '+credentials[actor]},
       body:JSON.stringify({query:'query($offset:Int!){inboxItems(folder:"needs",search:"GAGE (Slack)",limit:1,offset:$offset){waitsOnId}}',variables:{offset}})});
-    const result=await response.json();expect(result.errors).toBeUndefined();
+    return response.json();
+  };
+  const search=async(actor:keyof typeof credentials,offset=0)=>{
+    const result=await searchResult(actor,offset);expect(result.errors).toBeUndefined();
     return result.data.inboxItems.map((item:{waitsOnId:string})=>item.waitsOnId);
   };
-  expect([...(await search('sam')),...(await search('sam',1))].sort()).toEqual([id,colleague].sort());
+  const expected=f.db.$client.prepare('SELECT waits_on_id FROM inbox WHERE [to]=? AND waits_on_id IN (?,?) ORDER BY julianday(at) DESC,id DESC').all('sam',id,colleague) as {waits_on_id:string}[];
+  expect(await search('sam')).toEqual([expected[0].waits_on_id]);
+  expect(await search('sam',1)).toEqual([expected[1].waits_on_id]);
   expect(await search('lee')).toEqual([]);
   expect(await search('art')).toEqual([]);
-  f.db.delete(bridgePeople).run();
+  const project=InboxQueries.prototype.project;
+  const projection=vi.spyOn(InboxQueries.prototype,'project').mockImplementationOnce(async function(this:InboxQueries,...args){
+    const rows=await project.apply(this,args);
+    f.db.delete(bridgePeople).run();
+    return rows;
+  });
+  try {
+    const changed=await searchResult('sam',0);
+    expect(changed.data?.inboxItems).toBeUndefined();
+    expect(changed.errors).toBeDefined();
+  }finally{projection.mockRestore();}
   expect(await search('sam')).toEqual([]);
   f.db.insert(bridgePeople).values({...gage,member:'gage'}).run();
   expect(await titles('lee',[colleague])).toEqual([]);

@@ -166,7 +166,7 @@ export class InboxQueries {
 
   /** Search the recipient's whole mailbox before paging. Private text is opened
    * only through body(), and is never indexed or written back to the database. */
-  async search(viewer:Viewer,filter:InboxFilter={},retainedUntil?:(at:number)=>void):Promise<Item[]> {
+  async search(viewer:Viewer,filter:InboxFilter={},retainedUntil?:(at:number)=>void,recheckTitles?:(check:()=>boolean)=>void):Promise<Item[]> {
     if(!filter.search?.trim())return this.list(viewer,filter);
     this.list(viewer,filter);
     if(viewer.kind!=='member'&&viewer.kind!=='agent')return [];
@@ -183,19 +183,25 @@ export class InboxQueries {
     // displays its proposal title; an ordinary question can cite the same card.
     const approvalId=(item:Item)=>item.source==='approval'&&item.waitsOnKind==='approval'?item.waitsOnId:null;
     const cards=new Set(candidates.map(approvalId).filter((id): id is string=>!!id));
-    const titles=this.proposalTitles?.(viewer,[...cards]);
-    const now=Date.parse(this.now());
+    const matchingTitles=()=>{
+      const titles=this.proposalTitles?.(viewer,[...cards]);
+      return new Set(Array.from(titles??[]).filter(([,title])=>title.toLocaleLowerCase().includes(query)).map(([id])=>id));
+    };
+    const named=matchingTitles();
+    if(cards.size&&this.proposalTitles)recheckTitles?.(()=>{
+      const current=matchingTitles();
+      return current.size===named.size&&[...named].every(id=>current.has(id));
+    });
     const visible=candidates.filter(item=>{
       const id=approvalId(item);
-      if(id&&titles?.get(id)?.toLocaleLowerCase().includes(query))matches.set(item.id,Infinity);
-      return (matches.get(item.id)??-Infinity)>now;
+      if(id&&named.has(id))matches.set(item.id,Infinity);
+      return matches.has(item.id);
     });
     const offset=filter.offset??0;
     const page=visible.slice(offset,offset+(filter.limit??50));
-    for(const item of page){
-      const until=matches.get(item.id)!;
-      if(Number.isFinite(until))retainedUntil?.(until);
-    }
+    const deadlines=page.map(item=>matches.get(item.id)!).filter(Number.isFinite);
+    if(deadlines.some(until=>until<=Date.parse(this.now())))return [];
+    for(const until of deadlines)retainedUntil?.(until);
     return page;
   }
   private async searchInSet(viewer: Viewer, query:string, candidates:Item[]): Promise<Map<string,number>> {
@@ -417,6 +423,14 @@ export function inboxQueryFields(service: InboxQueries): GraphQLFieldConfigMap<u
   }, inboxItems: {
     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(item))),
     args: { folder: { type: GraphQLString }, search: { type: GraphQLString }, state: { type: GraphQLString }, source: { type: GraphQLString }, agent: { type: GraphQLString }, conversation: { type: GraphQLString }, limit: { type: GraphQLInt, defaultValue: 50 }, offset: { type: GraphQLInt, defaultValue: 0 } },
-    resolve: async(_row,args,context,info)=>service.project(context.viewer,args.search===undefined?service.list(context.viewer,args):await service.search(context.viewer,args,until=>keepReadUntil(context,until)),info,until=>keepReadUntil(context,until)),
+    resolve: async(_row,args,context,info)=>{
+      const retain=(until:number)=>keepReadUntil(context,until);
+      let titlesStillMatch:(()=>boolean)|undefined;
+      const rows=args.search===undefined?service.list(context.viewer,args):
+        await service.search(context.viewer,args,retain,check=>{titlesStillMatch=check;});
+      const result=await service.project(context.viewer,rows,info,retain);
+      if(titlesStillMatch&&!titlesStillMatch())throw Error('Inbox changed; retry the query');
+      return result;
+    },
   } };
 }
