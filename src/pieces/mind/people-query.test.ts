@@ -270,6 +270,10 @@ it('uses a registry-confirmed Slack ID in an old card only to display sightings'
  directory.write({slug:'other',where:{slack:{value:account},slack_workspace:{value:workspace}}});
  expect(directory.observeAccount('slack',workspace,account,new Date(1).toISOString(),'Second holder')).toBe(true);
  expect(reader.sightings(owner,'other')[0]?.label).toBe('Second holder');
+ directory.write({slug:'friend',where:{slack:{value:account},slack_workspace:{value:'TOTHER'}}});
+ expect(reader.sightings(owner,'other')[0]?.label).toBe('Second holder');
+ expect(directory.observeAccount('slack','TOTHER',account,new Date(2).toISOString(),'Different workspace')).toBe(true);
+ expect(reader.sightings(owner,'friend')[0]?.label).toBe('Different workspace');
 });
 
 it('reuses the deadline of each unchanged read-only file until its next boundary',()=>{

@@ -66,6 +66,7 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
     expect(await b.getByText('May discuss projects',{exact:false}).count()).toBe(1);
     for(const page of [a,b]){
       expect(await page.getByText('Workshop account',{exact:false}).count()).toBe(1);
+      await expect.poll(()=>page.getByText('Nov 13, 2026, 5:59 AM',{exact:true}).count()).toBe(1);
       expect(await page.locator('time').evaluateAll(nodes=>nodes.some(node=>Date.parse(node.getAttribute('datetime')??'')===Date.parse('2026-11-13T11:59:00Z')))).toBe(true);
     }
     const shots=resolve('artifacts/people-app');mkdirSync(shots,{recursive:true});

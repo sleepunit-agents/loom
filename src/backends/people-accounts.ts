@@ -24,14 +24,14 @@ export function accountHolders(db: Database, platform: AccountPlatform, workspac
 
 /** An older Slack card may contain the account in prose. Only the explicit registry
  * can supply its missing workspace. Multiple cards naming the same token veto a match. */
-export function legacySlackHolder(db:Database, workspace:string, user:string): string|undefined {
+export function legacySlackHolder(db:Database, workspace:string, user:string, scope:'registry-import'|'workspace'='registry-import'): string|undefined {
   if(!/^[UW][A-Z0-9]{8,}$/.test(user))return;
   const rows=db.prepare(`SELECT slug, json_extract(card_json,'$.where.slack_workspace.value') AS workspace,
     json_extract(card_json,'$.where.slack.value') AS value FROM people
     WHERE archived_at IS NULL AND json_valid(card_json) AND instr(json_extract(card_json,'$.where.slack.value'),?)>0`).all(user) as
     {slug:string;workspace:string|null;value:string}[];
   const token=new RegExp(`(?<![a-zA-Z0-9_])${user}(?![a-zA-Z0-9_])`);
-  const holders=rows.filter(row=>token.test(row.value));
+  const holders=rows.filter(row=>token.test(row.value) && (scope==='registry-import' || row.workspace===null || row.workspace===workspace));
   if(holders.length===1&&(holders[0].workspace===null||holders[0].workspace===workspace))return holders[0].slug;
 }
 
@@ -41,7 +41,7 @@ export function sightingHolder(db:Database, platform:AccountPlatform, workspace:
   if(platform==='slack'){
     const alias=db.prepare('SELECT slug FROM person_sighting_aliases WHERE workspace=? AND account=?').get(workspace,user) as {slug:string}|undefined;
     if(alias){
-      const live=legacySlackHolder(db,workspace,user);
+      const live=legacySlackHolder(db,workspace,user,'workspace');
       if(live===alias.slug && scoped.every(row=>row.slug===alias.slug))return live;
       if(scoped.length===1 && live===scoped[0].slug)return live;
       return;

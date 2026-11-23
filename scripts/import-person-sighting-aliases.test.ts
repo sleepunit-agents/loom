@@ -27,7 +27,13 @@ it('imports only exclusive registry and card matches and reconciles removed entr
     expect(run('--apply',approved)).toMatchObject({matched:1,add:1,applied:true});
     expect(run('--apply')).toMatchObject({add:0,remove:0});
     expect(db.database.prepare('SELECT account,slug FROM person_sighting_aliases').all()).toEqual([{account:one,slug:'sam'}]);
+    const fourth='U00000004';
+    db.write({slug:'sam',where:{slack:{value:[one,two,three,fourth]}}});
+    people.sam.slack[workspace].push(fourth);
+    writeFileSync(registry,JSON.stringify({people}));
+    writeFileSync(approved,JSON.stringify([[workspace,fourth,'sam']]));
+    expect(run('--apply',approved)).toMatchObject({matched:2,add:1,remove:0});
     writeFileSync(registry,JSON.stringify({people:{}}));
-    expect(run('--apply')).toMatchObject({matched:0,add:0,remove:1});
+    expect(run('--apply')).toMatchObject({matched:0,add:0,remove:2});
   }finally{db.close();rmSync(home,{recursive:true,force:true});}
 });
