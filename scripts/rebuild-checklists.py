@@ -111,7 +111,11 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith(("A pending approval is an item in a person's Inbox", 'A pending approval arrives as an item')):row['probe']={'kind':'action','action':'approvalInbox'}
  if f.stem=='bridges':
   for row in rows:
-   if row['promise'] in ('It arrives in the inbox with discord or slack as its source.', 'Links an outside user to the household member they are.', 'A person link says which household member an outside user is.'):row['probe']={'kind':'action','action':'bridgeMail'}
+   if row['promise'] in ('It arrives in the inbox with discord or slack as its source.', 'Decides which agent answers in a channel when nobody is addressed.',
+     'The message goes into one conversation: the agent in that channel.',
+     'A message from outside is kept as an incoming message, matched to a person and a channel rule, and passed into the right conversation. It can be held or dropped, with a reason.',
+     'A channel rule names the agent that answers in a channel. A connection can listen only to some channels, or ignore some.',
+     'Links an outside user to the household member they are.', 'A person link says which household member an outside user is.'):row['probe']={'kind':'action','action':'bridgeMail'}
  if f.stem=='bridges':add('The owner can save a Discord channel rule and a Slack person link in Bridges and inspect both after reload.','',{'kind':'action','action':'bridgeSettings'})
  if f.stem=='inbox':add('Answering Yes records who answered and adds exactly one item for the agent.','',{'kind':'action','action':'inboxAnswer'})
 
