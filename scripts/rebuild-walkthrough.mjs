@@ -62,6 +62,7 @@ import {deskTicker} from './rebuild-desk-ticker.mjs';
 import {deskWaiting} from './rebuild-desk-waiting.mjs';
 import {deskFaces} from './rebuild-desk-faces.mjs';
 import {deskActions} from './rebuild-desk-actions.mjs';
+import {phoneTask} from './rebuild-phone-task.mjs';
 import {memberAppearance} from './rebuild-member-appearance.mjs';
 import {appearanceActions} from './rebuild-appearance-actions.mjs';
 import {tempoWalkthrough} from './rebuild-tempo.mjs';
@@ -295,6 +296,9 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'desk-faces',actions:safeReport(report.actions)};
   report.actions.memberAppearance=await memberAppearance({page,app,browser,out});
   save();yield {phase:'member-appearance',actions:safeReport(report.actions)};
+  phase='phone task';
+  report.actions.phoneTask=await phoneTask({browser,home:join(parent,'phone-home'),out});
+  save();yield {phase:'phone-task',actions:safeReport(report.actions)};
   phase='agent memory files';
   try {
    const {agentMemoryFiles}=await import('./rebuild-agent-memory-files.mjs');
