@@ -66,7 +66,11 @@
     {
       "id": "memory-008",
       "promise": "A session leaves a short note for the next one. Activity builds each day from them.",
-      "source": "docs/how-it-works/site/memory.html#con-h"
+      "source": "docs/how-it-works/site/memory.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "sessionEpisode"
+      }
     },
     {
       "id": "memory-009",
