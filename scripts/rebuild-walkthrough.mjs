@@ -36,6 +36,7 @@ import {homeJobs} from './rebuild-home-jobs.mjs';
 import {homeActions} from './rebuild-home-actions.mjs';
 import {mkdirSync,writeFileSync,mkdtempSync,rmSync,readdirSync} from 'node:fs';
 import {approvalInbox} from './rebuild-approval-inbox.mjs';
+import {inboxDocumentation,inboxVolume} from './rebuild-inbox-volume.mjs';
 import {scheduledInbox} from './rebuild-scheduled-inbox.mjs';
 import {inboxSecretRequest} from './rebuild-inbox-secret.mjs';
 import {inboxTaskSource} from './rebuild-inbox-task-source.mjs';
@@ -366,6 +367,9 @@ export async function* walkthroughSteps(output) {
   for await(const step of conversationMailSteps({page,app,clock,example:report.example,out,open:openApp})){Object.assign(report.actions,step.actions);save();yield {phase:step.phase,actions:safeReport(report.actions)};}
   report.actions.scheduledInbox=await scheduledInbox({browser,home:join(parent,'scheduled-home'),out});
   save();yield {phase:'scheduled-inbox',actions:safeReport(report.actions)};
+  report.actions.inboxDocumentation=await inboxDocumentation(browser);
+  report.actions.inboxVolume=await inboxVolume({browser,home:join(parent,'volume-home'),out});
+  save();yield {phase:'inbox-volume',actions:safeReport(report.actions)};
   report.actions.homeJobs=await homeJobs({page,tile:await openApp('Home'),app,example:report.example,out});
   save();yield {phase:'home-jobs',actions:safeReport(report.actions)};
   phase='native worker and reply';

@@ -126,7 +126,11 @@
     {
       "id": "tempo-024",
       "promise": "Each recipient sets a volume on an inbox item. Dim returns to full when the item changes or has sat long enough. Mute ends after a week by default. A change breaks dim but not mute. Being asked by name breaks both.",
-      "source": "docs/how-it-works/site/tempo.html#how-h"
+      "source": "docs/how-it-works/site/tempo.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "inboxVolume"
+      }
     },
     {
       "id": "tempo-025",

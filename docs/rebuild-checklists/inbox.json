@@ -209,7 +209,24 @@
     {
       "id": "inbox-021",
       "promise": "The same inbox table is drawn from the agent's side on the Conversations page. Volume (full, dim, mute) is explained on the Tempo page.",
-      "source": "docs/how-it-works/site/inbox.html"
+      "source": "docs/how-it-works/site/inbox.html",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "inboxDocumentation"
+          },
+          {
+            "kind": "action",
+            "action": "privateConversationBatch"
+          },
+          {
+            "kind": "action",
+            "action": "inboxVolume"
+          }
+        ]
+      }
     },
     {
       "id": "inbox-022",
