@@ -30,6 +30,9 @@ it('explains a missing default agent and enables Add when the household chooses 
   await act(async()=>{tree=create(h(People,props));});
   const add=()=>tree!.root.findAllByType('button').find(b=>b.props.children==='Add a person')!;
   expect(add().props.disabled).toBe(true);expect(text()).toContain('set your household’s default agent');
+  f.access={records:[{...permission,agents:[]}],status:'live'};
+  await act(async()=>tree!.update(h(People,props)));
+  expect(add().props.disabled).toBe(true);expect(text()).toContain('Add a household agent');
   f.access={records:[{...permission,canAdd:true}],status:'live'};
   await act(async()=>tree!.update(h(People,props)));
   expect(add().props.disabled).toBe(false);expect(text()).not.toContain('set your household’s default agent');
