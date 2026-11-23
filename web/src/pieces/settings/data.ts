@@ -18,7 +18,8 @@ export interface SettingsData {
   secretUses: SecretsSnapshot['uses']; secretChanges: SecretsSnapshot['changes'];
 }
 export function settingsSnapshot(query: DataQuerySnapshot<SettingsData>): SecretsSnapshot {
-  const empty: SecretsSnapshot = { status: query.status === 'loading' ? 'loading' : query.status === 'offline' ? 'offline' : 'error',
+  const status = query.status === 'live' ? (query.data?.secretsReader === null ? 'denied' : 'error') : query.status;
+  const empty: SecretsSnapshot = { status,
     member: '', secrets: [], grants: [], requests: [], rules: [], ruleAgents: [], uses: [], changes: [] };
   if (query.status !== 'live' || !query.data?.secretsReader?.id) return empty;
   const data = query.data;
