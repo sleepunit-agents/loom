@@ -190,7 +190,7 @@ export async function* walkthroughSteps(output) {
     if(title==='Activity'){
      const input={page,tile,example:report.example,out};
      report.actions.activityWorkLinks=await activityWorkLinks(input);
-     report.actions.activityDays=await activityDays(input);
+     report.actions.activityDays=await activityDays({...input,now:clock.now(),householdZone});
     }
     if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out,app});report.actions={...report.actions,bridgeSettings:row.action};}
     if(['Your account','Household setup','Sharing'].includes(title))row.action=await accessAction({page,tile,title,app,out});
