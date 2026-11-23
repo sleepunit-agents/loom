@@ -1,6 +1,6 @@
 import { workForPage } from './agent-post-work.js';
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
-import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
+import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import { agentPostThreads, conversations, threads } from '../data/schema.js';
@@ -51,11 +51,11 @@ GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
       },
     },
     agentActivityHistory: { type: new GraphQLList(new GraphQLNonNull(post)),
-      args: { ...args, thread: { type: string }, after: { type: GraphQLString, defaultValue: '0' } },
-      async resolve(_row, { agent, thread, limit, after }, { viewer }) {
+      args: { ...args, thread: { type: string }, after: { type: GraphQLString, defaultValue: '0' }, newestFirst: { type: GraphQLBoolean, defaultValue: false } },
+      async resolve(_row, { agent, thread, limit, after, newestFirst }, { viewer }) {
         const cursor = Number(after);
         if (!Number.isSafeInteger(cursor) || cursor < 0 || String(cursor) !== after) throw new Error('Invalid activity cursor');
-        const rows = await agentPostHistory(db, key, source(viewer, agent), thread, cursor, size(limit));
+        const rows = await agentPostHistory(db, key, source(viewer, agent), thread, cursor, size(limit), newestFirst);
         if (!rows.length || !visibleThreads(viewer, agent, [thread]).has(thread)) return [];
         const stillReadable = visibleSources(viewer,agent,rows.map(row=>row.source));
         const visible = rows.filter(row=>stillReadable.has(row.source));
