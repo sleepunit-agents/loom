@@ -227,6 +227,8 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('c Private.'):row['probe']={'kind':'action','action':'commsPrivacy'}
  if f.stem=='inbox':
   for row in rows:
+   if row['promise']=='Each incoming message becomes one item.':row['probe']={'kind':'action','action':'bridgeMail'}
+   if row['promise'].startswith(('One inbox for everything sent to anyone','Every item has a recipient. An agent')):row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['inboxRecipients','privateConversationBatch','privateConversationQuestion']]}
    if row['promise'].startswith(('Every item has one recipient:', 'a The recipient.')):row['probe']={'kind':'action','action':'inboxRecipients'}
    if row['promise'].startswith('b Who else sees it.'):row['probe']={'kind':'action','action':'inboxVisibility'}
  # Carry source hashes so a changed approved page cannot silently reuse old results.
