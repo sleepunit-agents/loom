@@ -35,8 +35,9 @@ it('shows the page, hands the answered code to the program once, and reports wha
 it('takes the code once under one take id, and gets it through replies that never arrive', async () => {
   const r = remote([null, 'GOODCODE123'], Infinity, 0), lossy = remote(['GOODCODE123'], Infinity, 3);
   for (const each of [r, lossy]) {
-    expect(await relaySignIn(program(`fs.writeFileSync(at('link'),'https://provider.example/oauth');${waitForCode}`), request, each.value, options())).toBe(true);
+    const signedIn = await relaySignIn(program(`fs.writeFileSync(at('link'),'https://provider.example/oauth');${waitForCode}`), request, each.value, options());
     expect(each.calls.at(-1)).toEqual(['done', { id: 'signin-1', signedIn: true }]);
+    expect(signedIn).toBe(true);
     expect(each.takes.size).toBe(1);
   }
 });
