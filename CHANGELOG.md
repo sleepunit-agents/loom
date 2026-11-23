@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 - Discuss a standalone Inbox FYI with your default agent. The chat opens with the notice in context and stays linked for follow-up questions.
 - The Comms portrait signals and animates when a new reply arrives in the open thread. Reopening older replies stays quiet.
+- Activity records a wordless refusal when a body withholds a final reply containing a protected credential.
 - New workers can request admission with a matching code. An owner can admit a report-only machine or block it from the Inbox.
 - Explain unavailable kits in job briefs and give household owners one actionable notice per cause. Name outside askers in owner questions and tell guest jobs to ask only for owner decisions.
 
