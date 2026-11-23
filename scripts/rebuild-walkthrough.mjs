@@ -20,6 +20,7 @@ import {secretDefaultAction,verifySecretDefaultAfterReload} from './rebuild-secr
 import {workVisibility} from './rebuild-work-visibility.mjs';
 import {changeActions,changeInline} from './rebuild-change-actions.mjs';
 import {bridgeReceipts} from './rebuild-bridge-receipts.mjs';
+import {bridgeContactTiers} from './rebuild-bridge-contact-tiers.mjs';
 import {slackFileRetention} from './rebuild-slack-file-retention.mjs';
 import {providerConversations} from './rebuild-provider-conversations.mjs';
 import {bridgeMail} from './rebuild-bridge-mail.mjs';
@@ -423,6 +424,8 @@ export async function* walkthroughSteps(output) {
     try {report.actions[action]=await providerConversations(platform);}
     catch(error){report.actions[action]={ok:false,error:String(error)};}
   }
+  try {report.actions.bridgeContactTiers=await bridgeContactTiers({app,clock});}
+  catch(error){report.actions.bridgeContactTiers={ok:false,error:String(error)};}
   try {report.actions.slackFileRetention=await slackFileRetention();}
   catch(error){report.actions.slackFileRetention={ok:false,error:String(error)};}
   try {report.actions.bridgeMail=await bridgeMail({app,clock});}
