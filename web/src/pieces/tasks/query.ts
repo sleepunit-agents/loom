@@ -1,6 +1,11 @@
 import type { SharedTask, SharedTaskComment, SharedTaskLink, SharedTaskChange } from './shared-view';
 
-/** One live selection for the list and, when open, the selected task’s comments.
+const commentFields = `
+  id
+  taskCommentsByTask(orderBy: {seq: {direction: asc, priority: 0}}) { task seq actorKind actor at text }
+`;
+
+/** The list can include the opening task’s comments when entered by direct link.
  * Larger order priorities take precedence in the generated API.
  * Readiness is computed in SQL against all blockers, including hidden ones. So is whether a task is
  * shelved with a retired project; the app works neither out for itself. */
@@ -13,9 +18,11 @@ export const tasksQuery = `query Tasks($selected: String! = "", $withComments: B
     taskLinksByTask { task dependsOn type }
   }
   selectedTask: tasksSingle(where: {id: {eq: $selected}}) @include(if: $withComments) {
-    id
-    taskCommentsByTask(orderBy: {seq: {direction: asc, priority: 0}}) { task seq actorKind actor at text }
+    ${commentFields}
   }
+}`;
+export const taskCommentsQuery = `query TaskComments($selected: String!) {
+  selectedTask: tasksSingle(where: {id: {eq: $selected}}) { ${commentFields} }
 }`;
 export interface TaskSelection extends SharedTask {
   changeTasksByTask: { changeRow: Omit<SharedTaskChange, 'task'> | null }[];

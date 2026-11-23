@@ -3,9 +3,9 @@ import { createElement as h, type ReactNode } from '../../web/node_modules/react
 import { act, create } from '../../web/node_modules/react-test-renderer/index.js';
 import type { DataQuerySnapshot } from '../../web/src/data/graphql';
 import type { TasksSelection, TaskSelection } from '../../web/src/pieces/tasks/query';
-import { tasksQuery } from '../../web/src/pieces/tasks/query';
+import { taskCommentsQuery, tasksQuery } from '../../web/src/pieces/tasks/query';
 const f = vi.hoisted(() => ({snapshot: {status:'loading'} as DataQuerySnapshot<TasksSelection>, read: vi.fn()}));
-vi.mock('../../web/src/data/graphql', () => ({useDataQuery: (query: string, variables: unknown) => { f.read(query, variables); return f.snapshot; }}));
+vi.mock('../../web/src/data/graphql', () => ({useDataQuery: (query: string, variables: unknown, options: unknown) => { f.read(query, variables, options); return f.snapshot; }}));
 // The open form is handed to the view, which draws it in the reader.
 vi.mock('../../web/src/pieces/tasks/shared-view', () => ({SharedTasks: (props: {form?: {node: ReactNode}}) => h('Tasks',props,props.form?.node)}));
 vi.mock('../../web/src/pieces/tasks/shared-form', () => ({SharedTaskForm: (props: unknown) => h('Form',props)}));
@@ -18,7 +18,7 @@ it('mounts the generated selection, authoritative readiness, comments and shell 
   f.snapshot = {status:'live',data:{tasks:[task('a',false),task('b',true)],selectedTask:{id:'a',taskCommentsByTask:[{task:'a',seq:1,actorKind:'member',actor:'sam',at:'2026-11-14T00:00:00Z',text:'Comment'}]}}};
   const go = vi.fn();
   await act(async () => {tree = create(h(TasksApp,{path:'/p/tasks-preview/task/~a',go,questionFor:'sam'}));});
-  expect(f.read).toHaveBeenCalledWith(tasksQuery, {selected:'a', withComments:true});
+  expect(f.read).toHaveBeenCalledWith(tasksQuery, {selected:'a', withComments:true}, {keep:true});
   const props = tree.root.findByType('Tasks').props;
   expect(props.ready).toEqual(['b']); expect(props.selected).toBe('a'); expect(props.questionFor).toBe('sam');
   expect(props.comments).toHaveLength(1); expect(props.act).toBeUndefined();
@@ -41,4 +41,16 @@ it('clears all projections on lost feed and discards open forms before reconnect
   f.snapshot={status:'live',data:{tasks:[task('a',true)]}};
   await act(async () => tree.update(h(TasksApp,{submit})));
   expect(tree.root.findAllByType('Form')).toHaveLength(0);
+});
+
+it('keeps the list selection stable and reads comments only for the visible open task', async () => {
+  f.snapshot = {status:'live', data:{tasks:[task('a',true),task('b',true)]}};
+  await act(async () => { tree = create(h(TasksApp,{path:'/p/tasks-preview'})); });
+  for (const id of ['a', 'b', 'hidden', undefined]) {
+    const props = {path:id ? '/p/tasks-preview/task/~' + id : '/p/tasks-preview'};
+    f.read.mockClear();
+    await act(async () => { tree.update(h(TasksApp,props)); });
+    expect(f.read).toHaveBeenCalledWith(tasksQuery, {selected:'',withComments:false}, {keep:true});
+    expect(f.read).toHaveBeenCalledWith(taskCommentsQuery, {selected:id}, {pause:id!=='a' && id!=='b'});
+  }
 });
