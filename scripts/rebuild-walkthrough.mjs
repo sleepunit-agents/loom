@@ -45,6 +45,7 @@ import {inboxDiscussion} from './rebuild-inbox-discussion.mjs';
 import {inboxCallers} from './rebuild-inbox-callers.mjs';
 import {inboxDocumentation,inboxVolume} from './rebuild-inbox-volume.mjs';
 import {scheduledInbox} from './rebuild-scheduled-inbox.mjs';
+import {installedSecretHolder} from './rebuild-installed-secret-holder.mjs';
 import {inboxSecretRequest} from './rebuild-inbox-secret.mjs';
 import {inboxTaskSource} from './rebuild-inbox-task-source.mjs';
 
@@ -401,6 +402,8 @@ export async function* walkthroughSteps(output) {
   Object.assign(report.actions,await inboxTaskSource({page,tile:await openApp('Inbox'),app,example:report.example,out,approval:report.actions.approvalInbox,open:openApp}));
   save();yield {phase:'task-source',actions:safeReport(report.actions)};
   report.actions.inboxSecretRequest=await inboxSecretRequest({page,tile:await openApp('Inbox'),app,out,clock});
+  try{report.actions.installedSecretHolder=await installedSecretHolder();}
+  catch(error){report.actions.installedSecretHolder={ok:false,error:String(error)};}
   save();yield {phase:'secret-source',actions:safeReport(report.actions)};
   for await(const step of conversationMailSteps({page,app,clock,example:report.example,out,open:openApp})){Object.assign(report.actions,step.actions);save();yield {phase:step.phase,actions:safeReport(report.actions)};}
   report.actions.scheduledInbox=await scheduledInbox({browser,home:join(parent,'scheduled-home'),out});
