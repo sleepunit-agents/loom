@@ -200,15 +200,21 @@ it('drains initial read accounting after its consumer cancels', async () => {
 it('shares resolver wrappers only inside the same live subscription schema', async () => {
   const live = new DataLive();
   const source = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
-    label: { type: GraphQLString, resolve: (_source, _args, context) => context.label },
+    label: { type: GraphQLString, args: { suffix: { type: GraphQLString } },
+      resolve: (_source, args, context) => context.label + args.suffix },
   } }) });
   let firstActive = true;
   const build = vi.spyOn(ExecutionDrain.prototype, 'schema');
   const first = dataSubscriptions(source, live, () => true, () => firstActive);
   const second = dataSubscriptions(source, live, () => true);
-  const document = parse('subscription { observe(query:"{ label }") { patches { value } } }');
+  const document = parse(`subscription($query: String!, $name: String!, $variables: DataValue) {
+    observe(query: $query, operationName: $name, variables: $variables) { patches { value } }
+  }`);
+  const query = 'query A($s: String) { a: label(suffix:$s) } query B($s: String) { b: label(suffix:$s) }';
   const open = async (schema: GraphQLSchema, label: string) => {
-    const stream = await subscribe({ schema, document, contextValue: { label } });
+    const name = label === 'one' ? 'A' : 'B';
+    const variableValues = { query, name, variables: { s: '-' + label } };
+    const stream = await subscribe({ schema, document, variableValues, contextValue: { label } });
     if (!(Symbol.asyncIterator in stream)) throw Error('Expected a live subscription');
     return stream[Symbol.asyncIterator]();
   };
@@ -216,7 +222,7 @@ it('shares resolver wrappers only inside the same live subscription schema', asy
     const stream = await open(schema, label);
     try {
       const { value } = await stream.next();
-      expect((value as ExecutionResult).data).toEqual({ observe: { patches: [{ value: { label } }] } });
+      expect((value as ExecutionResult).data).toEqual({ observe: { patches: [{ value: { [label === 'one' ? 'a' : 'b']: label + '-' + label } }] } });
     } finally { await stream.return?.(); }
   };
   try {
