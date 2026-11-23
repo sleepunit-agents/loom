@@ -1,7 +1,7 @@
 import { TASK_ID } from '../../slug.js';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq, gt, inArray, isNull, notExists, notInArray, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, gt, lt, inArray, isNull, notExists, notInArray, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { DataDatabase } from '../data/database.js';
 import { agentPostNames, agentPosts, agentPostThreads, conversations, threads } from '../data/schema.js';
@@ -104,11 +104,12 @@ export async function agentPostPreviews(db: DataDatabase, key: WordsKey, visible
 
 /** Page forward in insertion order so a new reply never shifts a reader's place. */
 export async function agentPostHistory(db: DataDatabase, key: WordsKey, visibleSource: SQL,
-  thread: string, after: number, limit: number) {
+  thread: string, after: number, limit: number, newestFirst = false) {
+  const cursor = after === 0 ? undefined : newestFirst ? lt(agentPosts.seq, after) : gt(agentPosts.seq, after);
   const rows = db.select({ source: agentPosts.source, seq: agentPosts.seq, words: agentPosts.words, at: agentPosts.at, workRefs: agentPosts.workRefs })
     .from(agentPostThreads).innerJoin(agentPosts, eq(agentPosts.thread, agentPostThreads.id))
-    .where(and(visibleSource, eq(agentPostThreads.id, thread), gt(agentPosts.seq, after)))
-    .orderBy(agentPosts.seq).limit(limit).all();
+    .where(and(visibleSource, eq(agentPostThreads.id, thread), cursor))
+    .orderBy(newestFirst ? desc(agentPosts.seq) : agentPosts.seq).limit(limit).all();
   return Promise.all(rows.map(async row => ({ source: row.source, id: String(row.seq), at: row.at, refs: await openRefs(key,row.workRefs), words: await key.open(row.words) })));
 }
 

@@ -394,6 +394,25 @@ it('reads archived metadata without ciphertext and rechecks thread visibility af
   expect((await ask('ref body{text}')).data).toEqual({commsArchivedQuestions:[]});
 });
 
+it('opens long activity threads at the latest update and pages back without overlap', async () => {
+  const f = await fixture();
+  const { prepareAgentPost } = await import('./agent-posts.js');
+  const write = async (edit: Parameters<typeof prepareAgentPost>[3]) =>
+    (await prepareAgentPost(f.db,f.key,f.thread.id,edit))('2026-11-14T18:00:00.000Z');
+  const thread = await write({action:'open', words:'Opening'});
+  for (let i=1;i<=26;i++) await write({action:'reply',thread,words:'Update '+i});
+  const schema = new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:commsQueryFields(f.service)})});
+  const read = async (after:string) => {
+    const result=await graphql({schema,contextValue:{viewer:alice},variableValues:{thread,after},source:
+      'query($thread:String!,$after:String!){agentActivityHistory(agent:"art",thread:$thread,after:$after,limit:25,newestFirst:true){id words}}'});
+    expect(result.errors).toBeUndefined();
+    return result.data!.agentActivityHistory as {id:string;words:string}[];
+  };
+  const first=await read('0');
+  expect(first.map(row=>row.words)).toEqual(Array.from({length:25},(_,i)=>'Update '+(26-i)));
+  expect((await read(first[24].id)).map(row=>row.words)).toEqual(['Update 1','Opening']);
+});
+
 it('serves the activity card and history under the current source conversation visibility', async () => {
   const f = await fixture();
   const { prepareAgentPost } = await import('./agent-posts.js');

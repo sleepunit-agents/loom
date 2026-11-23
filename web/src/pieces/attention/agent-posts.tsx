@@ -82,15 +82,15 @@ export function AgentPostFeed({ threads, compact = false, open, go, now }: {
   </ul>;
 }
 
-export function AgentPostHistory({ title, posts, now, go, continued = false }: {
+export function AgentPostHistory({ title, posts, now, go, openerId = posts[0]?.id }: {
   title: string;
   posts: readonly AgentPost[];
-  continued?: boolean;
+  openerId?: string | null;
   go?(href: string): void;
   now: number;
 }) {
   return <ol className="desk-agent-history" aria-label={title}>
-    {posts.map((post,index) => <li key={post.id} data-reply={continued || index > 0 || undefined}>
+    {posts.map((post,index) => <li key={post.id} data-reply={post.id !== openerId || undefined}>
       <time dateTime={post.at}>{age(post.at, now)}</time>
       <p>{post.words}</p>
       <PostWork post={post} go={go}/>

@@ -8,7 +8,7 @@ export const agentFeedQuery = `query AgentActivityFeed($agent:String!,$limit:Int
   agentActivityFeed(agent:$agent,limit:$limit){thread title latest{id at words work @skip(if:$compact){id title state href}} parent{id words}}
 }`;
 export const agentHistoryQuery = `query AgentActivityHistory($agent:String!,$thread:String!,$after:String!,$limit:Int!){
-  agentActivityHistory(agent:$agent,thread:$thread,after:$after,limit:$limit){id at words source work{id title state href}}
+  agentActivityHistory(agent:$agent,thread:$thread,after:$after,limit:$limit,newestFirst:true){id at words source work{id title state href}}
 }`;
 const pageSize = 25;
 
@@ -58,8 +58,8 @@ export function LiveAgentHistory({ agent, thread, go }: {
     <Button variant="ghost" onClick={()=>go(agentPath(agent))}>Back to agent</Button>
     {query.status === 'loading' ? <Loading label="Opening activity…"/> :
       !posts?.length ? <Body quiet>Activity unavailable.</Body> :
-      <AgentPostHistory continued={after!=='0'} title="Activity posts" posts={posts.slice(0,pageSize)} now={now} go={go}/>}
-    {cursors.length>1 && <Button variant="ghost" onClick={()=>setCursors(c=>c.slice(0,-1))}>Earlier posts</Button>}
-    {posts && posts.length>pageSize && <Button variant="ghost" onClick={()=>setCursors([...cursors,posts[pageSize-1].id])}>Later posts</Button>}
+      <AgentPostHistory openerId={posts.length<=pageSize ? posts[posts.length-1].id : null} title="Activity posts" posts={posts.slice(0,pageSize)} now={now} go={go}/>}
+    {cursors.length>1 && <Button variant="ghost" onClick={()=>setCursors(c=>c.slice(0,-1))}>Newer posts</Button>}
+    {posts && posts.length>pageSize && <Button variant="ghost" onClick={()=>setCursors([...cursors,posts[pageSize-1].id])}>Earlier posts</Button>}
   </Section>;
 }
