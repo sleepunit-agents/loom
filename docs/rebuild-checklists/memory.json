@@ -103,7 +103,11 @@
     {
       "id": "memory-012",
       "promise": "A memory is a fact. A note is a document: a handoff, a review, a pile of evidence. A note is kept by path, written whole, and read by asking for it by name. It is never recalled by meaning and never fills the top of mind. A memory usually says a note exists and where. Each note has a lifespan, and a change restarts it.",
-      "source": "docs/how-it-works/site/memory.html#how-h"
+      "source": "docs/how-it-works/site/memory.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "noteLifetimes"
+      }
     },
     {
       "id": "memory-013",

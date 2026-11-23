@@ -221,7 +221,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('Recalls by meaning, and keeps what is used most'):row['probe']={'kind':'action','action':'semanticRecall'}
    if row['promise'].startswith('b Knowledge. Knowledge pages are shared by the household.'):row['probe']={'kind':'action','action':'sharedKnowledgeAudience'}
    if row['promise'].startswith('A knowledge page is a fact about the world'):row['probe']={'kind':'action','action':'knowledgeDue'}
-   if row['promise'].startswith('Keeps notes: longer working documents'):row['probe']={'kind':'action','action':'noteLifetimes'}
+   if row['promise'].startswith(('Keeps notes: longer working documents','A memory is a fact. A note is a document:')):row['probe']={'kind':'action','action':'noteLifetimes'}
  if f.stem=='data':
   for row in rows:
    if row['promise'].startswith('operation_results '):row['probe']={'kind':'action','action':'dataWriteReceipt'}
