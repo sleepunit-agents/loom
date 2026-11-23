@@ -245,6 +245,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  });
  it('applies Inbox access to the actual HTTP caller',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('inbox-callers');
+  expect(step.value.actions.conversationCallers,JSON.stringify(step.value.actions.conversationCallers)).toMatchObject({ok:true});
   expect(step.value.actions.inboxCallers,JSON.stringify(step.value.actions.inboxCallers)).toMatchObject({ok:true});
  });
  afterAll(async()=>{
