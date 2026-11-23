@@ -267,6 +267,9 @@ it('uses a registry-confirmed Slack ID in an old card only to display sightings'
  directory.write({slug:'other',where:{slack:null}});
  directory.write({slug:'friend',where:{slack:{value:'Longer token '+account+'1'}}});
  expect(reader.sightings(owner,'friend')).toEqual([]);
+ directory.write({slug:'other',where:{slack:{value:account},slack_workspace:{value:workspace}}});
+ expect(directory.observeAccount('slack',workspace,account,new Date(1).toISOString(),'Second holder')).toBe(true);
+ expect(reader.sightings(owner,'other')[0]?.label).toBe('Second holder');
 });
 
 it('reuses the deadline of each unchanged read-only file until its next boundary',()=>{

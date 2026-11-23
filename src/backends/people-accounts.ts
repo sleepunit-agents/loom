@@ -35,14 +35,16 @@ export function legacySlackHolder(db:Database, workspace:string, user:string): s
   if(holders.length===1&&(holders[0].workspace===null||holders[0].workspace===workspace))return holders[0].slug;
 }
 
-/** A registry-derived match applies only to sightings. Outgoing messages use accountHolders. */
+/** A registry-derived match applies only to sightings. An outbound address still requires a single scoped account value. */
 export function sightingHolder(db:Database, platform:AccountPlatform, workspace:string, user:string):string|undefined {
   const scoped=accountHolders(db,platform,workspace,user);
   if(platform==='slack'){
     const alias=db.prepare('SELECT slug FROM person_sighting_aliases WHERE workspace=? AND account=?').get(workspace,user) as {slug:string}|undefined;
     if(alias){
-      if(legacySlackHolder(db,workspace,user)!==alias.slug || scoped.some(row=>row.slug!==alias.slug))return;
-      return alias.slug;
+      const live=legacySlackHolder(db,workspace,user);
+      if(live===alias.slug && scoped.every(row=>row.slug===alias.slug))return live;
+      if(scoped.length===1 && live===scoped[0].slug)return live;
+      return;
     }
   }
   return scoped.length===1?scoped[0].slug:undefined;

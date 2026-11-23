@@ -1,13 +1,13 @@
 // One-time move for the older Slack registry. Run with tsx from a Loom checkout.
-// Arguments: DIRECTORY_DB REGISTRY_JSON WORKSPACE [--apply]. Prints aggregate counts only.
+// Arguments: DIRECTORY_DB REGISTRY_JSON WORKSPACE [--apply [APPROVED_ADDITIONS_JSON]]. Prints aggregate counts only.
 import Database from 'better-sqlite3';
 import {readFileSync} from 'node:fs';
 import {z} from 'zod';
 import {legacySlackHolder} from '../src/backends/people-accounts.js';
 
-const [directory,registryPath,workspace,mode,...extra]=process.argv.slice(2);
+const [directory,registryPath,workspace,mode,approvedPath,...extra]=process.argv.slice(2);
 if(!directory||!registryPath||!/^T[A-Z0-9]+$/.test(workspace??'')||(mode!==undefined&&mode!=='--apply')||extra.length){
-  throw Error('Expected DIRECTORY_DB REGISTRY_JSON WORKSPACE [--apply]');
+  throw Error('Expected DIRECTORY_DB REGISTRY_JSON WORKSPACE [--apply [APPROVED_ADDITIONS_JSON]]');
 }
 const registry=z.object({people:z.record(z.string(),z.object({slack:z.record(z.string(),z.array(z.string()))}))})
   .parse(JSON.parse(readFileSync(registryPath,'utf8')));
@@ -20,6 +20,9 @@ for(const [slug,person] of Object.entries(registry.people)){
   }
 }
 const apply=mode==='--apply';
+// Optional exact additive scope for a previously reviewed import. Each row is [workspace,account,slug].
+const approved=approvedPath?z.array(z.tuple([z.string(),z.string(),z.string()]))
+  .parse(JSON.parse(readFileSync(approvedPath,'utf8'))).filter(([space])=>space===workspace):undefined;
 const db=new Database(directory,{fileMustExist:true,readonly:!apply});
 try{
   const reconcile=db.transaction(()=>{
@@ -34,6 +37,9 @@ try{
     const changed=previous.filter(row=>matches.get(row.account)!==row.slug);
     const additions=new Map(matches);
     for(const row of previous)if(matches.get(row.account)===row.slug)additions.delete(row.account);
+    if(approved&&(changed.length||approved.length!==matches.size||
+      new Set(approved.map(([,account])=>account)).size!==matches.size||
+      approved.some(([,account,slug])=>matches.get(account)!==slug)))throw Error('The proposed matches differ from the reviewed additions');
     if(apply){
       const remove=db.prepare('DELETE FROM person_sighting_aliases WHERE workspace=? AND account=?');
       for(const row of changed)remove.run(workspace,row.account);

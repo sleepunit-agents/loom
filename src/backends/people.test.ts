@@ -62,6 +62,7 @@ describe('PeopleStore', () => {
     const instant = new Date(now+2000).toISOString().slice(0,-5);
     const earlier=instant+'.123001Z',later=instant+'.123999Z';
     expect(store.observeAccount('slack',workspace,account,earlier,'Before')).toBe(true);
+    expect(store.observeAccount('slack',workspace,account,later)).toBe(true);
     expect(store.observeAccount('slack',workspace,account,later,'After')).toBe(true);
     store.write({slug:'first',where:{slack:null}});
     store.write({slug:'next',name:'Next',where});

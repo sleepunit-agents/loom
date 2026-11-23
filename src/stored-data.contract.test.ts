@@ -165,6 +165,7 @@ it('lets no second module write a household table unless it is listed here and i
     bridge_file_messages: { owner: bridges, others: [words] },
     bridge_files: { owner: bridges, others: [words] },
     bridge_incoming: { owner: bridges, others: [words] },
+    bridge_person_sightings: { owner: bridges, others: [] },
     bridge_sends: { owner: bridges, others: [words] },
     changes: { owner: 'src/apps/changes', others: ['src/shared-work-lifetime.ts'] },
     conversations: { owner: conversations, others: [] },

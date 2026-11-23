@@ -218,6 +218,8 @@ describe('provider labels for contact sightings', () => {
     const channel = {id: 'channel', guild: 'guild', kind: 'channel'} as const;
     const author = {id: 'person', global_name: 'Robin', username: 'robin1'};
     expect(normalizeDiscord(discord, dc({author}), channel)?.authorLabel).toBe('Robin');
+    expect(normalizeDiscord(discord, dc({author:{...author,global_name:'Robin 👩‍💻'},timestamp:'2026-11-14T10:00:00.123999-06:00'}), channel))
+      .toMatchObject({authorLabel:'Robin 👩‍💻',sightedAt:'2026-11-14T16:00:00.123999Z'});
     expect(normalizeDiscord(discord, dc({author: {...author, global_name: null}}), channel)?.authorLabel).toBe('robin1');
     expect(normalizeDiscord(discord, dc({author, webhook_id: 'hook'}), channel)?.authorLabel).toBeUndefined();
     expect(normalizeDiscord(discord, dc({author: {...author, bot: true}}), channel)?.authorLabel).toBeUndefined();

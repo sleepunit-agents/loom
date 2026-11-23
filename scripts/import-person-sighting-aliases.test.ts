@@ -19,7 +19,12 @@ it('imports only exclusive registry and card matches and reconciles removed entr
       ['--import','tsx',join(import.meta.dirname,'import-person-sighting-aliases.ts'),path,registry,workspace,...flags],{encoding:'utf8'}));
     expect(run()).toEqual({matched:1,add:1,remove:0,applied:false});
     expect(db.database.prepare('SELECT account FROM person_sighting_aliases').all()).toEqual([]);
-    expect(run('--apply')).toMatchObject({matched:1,add:1,applied:true});
+    const approved=join(home,'approved.json');
+    writeFileSync(approved,JSON.stringify([[workspace,one,'alex']]));
+    expect(()=>run('--apply',approved)).toThrow();
+    expect(db.database.prepare('SELECT account FROM person_sighting_aliases').all()).toEqual([]);
+    writeFileSync(approved,JSON.stringify([[workspace,one,'sam']]));
+    expect(run('--apply',approved)).toMatchObject({matched:1,add:1,applied:true});
     expect(run('--apply')).toMatchObject({add:0,remove:0});
     expect(db.database.prepare('SELECT account,slug FROM person_sighting_aliases').all()).toEqual([{account:one,slug:'sam'}]);
     writeFileSync(registry,JSON.stringify({people:{}}));

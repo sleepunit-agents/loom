@@ -191,7 +191,7 @@ The offline Comms importer uses a temporary SQLite table named `reasons` to hold
 |---|---|
 | `memories`, `vec_memories` | `src/backends/sqlite-vec.ts` |
 | `proposals`, `memory_revisions`, `memory_supersessions`, `memory_deletions` | `src/backends/migrations.ts` |
-| `people`, `person_revisions`, `person_merges`: the agent's relationship cards | `src/backends/migrations.ts`, used by `src/backends/people.ts` |
+| `people`, `person_revisions`, `person_merges`: the agent's relationship cards. The shared migration also creates empty `person_account_sightings` and `person_sighting_aliases` here | `src/backends/migrations.ts`, used by `src/backends/people.ts` |
 | `projects`, `project_revisions`, `project_names`: the agent's project cards | `src/backends/migrations.ts`, used by `src/backends/projects.ts` |
 | `conversation_turns`, `conversation_digests`, and this file's own `conversations` and `conversation_days` | `src/backends/conversations.ts`. Left from before conversations moved to `loom.db`. Still created, never read or written. |
 | `mind_operation_receipts`, `mind_source_migrations` | `src/pieces/mind/receipt-schema.ts`: retry receipts for writes to this file |
@@ -219,7 +219,7 @@ citation store cannot be read, the sweep leaves the notes in place and tries the
 | Store | Tables | Made by |
 |---|---|---|
 | `knowledge.db` | `pages`, `citations`, `supersessions`, `page_supersessions` (attributed replacements within a page), `page_annotations` (disputes and evidence), `page_revisions`, `verifications`, `knowledge_access`, and its own `mind_operation_receipts` and `mind_source_migrations` | `src/backends/sqlite-knowledge.ts`; the receipt tables by `src/pieces/mind/receipt-schema.ts` |
-| `people.db` | `people`, `person_revisions`, `person_merges` (the directory half of each person), and its own `mind_operation_receipts` and `mind_source_migrations` | `src/backends/people.ts`, by the same steps in `src/backends/migrations.ts`; the receipt tables by `src/pieces/mind/receipt-schema.ts` |
+| `people.db` | `people`, `person_revisions`, `person_merges` (the directory half of each person), `person_account_sightings`, `person_sighting_aliases`, and its own `mind_operation_receipts` and `mind_source_migrations` | `src/backends/people.ts`, by the same steps in `src/backends/migrations.ts`; the receipt tables by `src/pieces/mind/receipt-schema.ts` |
 
 A new person is two cards, the directory's and the adding agent's, written by
 `src/pieces/mind/people-actions.ts`. A refusal or a failure on either side saves neither.
@@ -292,7 +292,7 @@ history.
 ## Elsewhere
 
 - `web`: the browser app, built by Vite into `dist/web` and served by the program.
-- `scripts`: build, CI and acceptance scripts. Those that run the program import the build (`dist`), so `npx tsc -p .` comes first. Three import `src` instead, because they are run from source by `tsx` or `vitest`: `scripts/generate-data-schema.ts` (`npm run schema:generate`, which writes `assets/data/schema.sql`), `scripts/rebuild-access-actions.test.mjs` and `scripts/rebuild-work-visibility.test.mjs`. `scripts/ci-runners.test.ts` reads three test files under `src/ui` as text.
+- `scripts`: build, CI and acceptance scripts. Those that run the program import the build (`dist`), so `npx tsc -p .` comes first. Five import `src` instead, because they are run from source by `tsx` or `vitest`: `scripts/generate-data-schema.ts` (`npm run schema:generate`, which writes `assets/data/schema.sql`), `scripts/rebuild-access-actions.test.mjs` `scripts/rebuild-work-visibility.test.mjs`, `scripts/import-person-sighting-aliases.ts` and its test. `scripts/ci-runners.test.ts` reads three test files under `src/ui` as text.
 - Test fixtures are named `*.fixture.ts` beside the tests that use them, or live in `test/fixtures`; neither is compiled into `dist`.
 - `docs/specs`: the designs each part was built from. Several describe the older program; where one disagrees with this page, the code decides.
 
