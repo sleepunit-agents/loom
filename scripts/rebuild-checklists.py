@@ -130,6 +130,8 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   }
   for row in rows:
    if row['promise'] in evidence:row['probe']={'kind':'action','action':evidence[row['promise']]}
+   if row['promise'].startswith('a Owners manage them. Household owners manage Settings,'):
+    row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['deskPanelVisibility','settingsGrant']]}
    if row['promise'].startswith('Every time a value leaves the key holder,'):
     row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['installedSecretHolder','secretValues']]}
  if f.stem=='secrets':add('The owner can add, replace and remove a Secret value in Settings; reload preserves the result, the value is not displayed or stored in the main database, and each change is recorded.','',{'kind':'action','action':'secretValues'})
