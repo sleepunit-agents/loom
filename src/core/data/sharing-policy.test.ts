@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import {afterEach,expect,it} from 'vitest';
+import {afterEach,expect,it,vi} from 'vitest';
 import {eq} from 'drizzle-orm';
 import {createDataSchema} from './database.js';
 import {members,agents,memberAgents,projects,projectMembers,projectAgents} from './schema.js';
@@ -27,4 +27,21 @@ it('reads current household policy facts in six generated batches at two and ten
  const after=sharedSharing(db);
  expect(after.members['member-2']).toBeUndefined();expect(after.projects['project-2']).toBeUndefined();expect(after.agents).not.toContain('agent-2');
  expect(canReadSharedConversation(db,viewer,'missing')).toBe(false);
+});
+
+it('prepares the six readers once on each connection and executes them for every read', () => {
+  for (const member of ['first', 'second']) {
+    const statements: string[] = [];
+    const client = new Database(':memory:', { verbose: statement => statements.push(statement) });
+    clients.push(client);
+    const db = createDataSchema(client, () => '2026-11-14T18:00:00Z');
+    db.insert(members).values({ id: member, role: 'owner', joinedAt: '2026-11-14T18:00:00Z' }).run();
+    const prepare = vi.spyOn(client, 'prepare');
+    try {
+      statements.length = 0;
+      for (let n = 0; n < 3; n++) expect(Object.keys(sharedSharing(db).members)).toEqual([member]);
+      expect(prepare).toHaveBeenCalledTimes(6);
+      expect(statements).toHaveLength(18);
+    } finally { prepare.mockRestore(); }
+  }
 });

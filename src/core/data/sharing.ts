@@ -30,14 +30,33 @@ export function readSharing(db: DataDatabase) {
   };
 }
 
-/** Current policy facts. No record bodies, credentials or stale grant cache. */
+function prepareSharingReads(db: DataDatabase) {
+  return {
+    ownership: db.query.memberAgents.findMany({columns:{member:true,agent:true}}).prepare(),
+    people: db.query.projectMembers.findMany({columns:{project:true,member:true}}).prepare(),
+    bodies: db.query.projectAgents.findMany({columns:{project:true,agent:true}}).prepare(),
+    members: db.query.members.findMany({columns:{id:true,role:true},where:(f,{isNull})=>isNull(f.removedAt)}).prepare(),
+    projects: db.query.projects.findMany({columns:{id:true},where:(f,{isNull})=>isNull(f.removedAt)}).prepare(),
+    agents: db.query.agents.findMany({columns:{id:true},where:(f,{isNull})=>isNull(f.removedAt)}).prepare(),
+  };
+}
+
+const sharingReads = new WeakMap<DataDatabase, ReturnType<typeof prepareSharingReads>>();
+
+/** Reuse statement preparation per database. Read all six sets of current
+ * facts on each call so membership changes apply inside their transaction. */
 export function readSharingPolicy(db: DataDatabase) {
-  const ownership=db.query.memberAgents.findMany({columns:{member:true,agent:true}}).sync();
-  const people=db.query.projectMembers.findMany({columns:{project:true,member:true}}).sync();
-  const bodies=db.query.projectAgents.findMany({columns:{project:true,agent:true}}).sync();
-  const members=db.query.members.findMany({columns:{id:true,role:true},where:(f,{isNull})=>isNull(f.removedAt)}).sync();
-  const projects=db.query.projects.findMany({columns:{id:true},where:(f,{isNull})=>isNull(f.removedAt)}).sync();
-  const agents=db.query.agents.findMany({columns:{id:true},where:(f,{isNull})=>isNull(f.removedAt)}).sync();
+  let reads = sharingReads.get(db);
+  if (!reads) {
+    reads = prepareSharingReads(db);
+    sharingReads.set(db, reads);
+  }
+  const ownership = reads.ownership.all();
+  const people = reads.people.all();
+  const bodies = reads.bodies.all();
+  const members = reads.members.all();
+  const projects = reads.projects.all();
+  const agents = reads.agents.all();
   const group=<T>(rows:T[],key:(row:T)=>string,value:(row:T)=>string)=>{
     const result=new Map<string,string[]>();
     for(const row of rows){const id=key(row),items=result.get(id)??[];items.push(value(row));result.set(id,items);}
