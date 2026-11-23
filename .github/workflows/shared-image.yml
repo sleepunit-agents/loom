@@ -1,0 +1,27 @@
+name: Shared image checks
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build the household image
+        run: podman build --file Containerfile --tag localhost/loom-check:"$GITHUB_SHA" .
+      - name: Save and reopen a task in Chromium
+        run: scripts/check-container-image.sh localhost/loom-check:"$GITHUB_SHA"
+      - name: Run the test shards in the same image
+        env:
+          LOOM_BROWSER_TESTS: ${{ vars.LOOM_BROWSER_TESTS }}
+        run: |
+          for shard in 1 2 3 4; do
+            podman run --rm -v "$GITHUB_WORKSPACE/.git:/opt/loom/.git:ro" \
+              -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/opt/loom \
+              -e CI=true -e LOOM_BROWSER_TESTS -e LOOM_CI_SHARD="$shard/4" \
+              localhost/loom-check:"$GITHUB_SHA" npm test -- --shard="$shard/4" --maxWorkers=1
+          done
