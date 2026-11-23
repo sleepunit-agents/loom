@@ -164,7 +164,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  });
  it('writes and reads notes and shared Knowledge through the named MCP tools',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('named-agent-tools');
-  for(const name of ['namedNotes','namedKnowledge','sharedKnowledgeAudience'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
+  for(const name of ['namedNotes','namedKnowledge','sharedKnowledgeAudience','sharedHouseholdFiles'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
  });
  it('keeps and expires notes by path and lifespan across restarts',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('note-lifetimes');

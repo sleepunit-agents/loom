@@ -219,6 +219,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith(("Keeps each agent's memories in that agent's own files.","A memory belongs to one agent.","a Memories, notes and cards.")):row['probe']={'kind':'action','action':'agentMemoryFiles'}
    if row['promise'].startswith('Each memory has a temperature.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['semanticRecall','memoryTemperature']]}
    if row['promise'].startswith('Recalls by meaning, and keeps what is used most'):row['probe']={'kind':'action','action':'semanticRecall'}
+   if row['promise']=='shared by the household Knowledge pages and the people directory.':row['probe']={'kind':'action','action':'sharedHouseholdFiles'}
    if row['promise'].startswith('b Knowledge. Knowledge pages are shared by the household.'):row['probe']={'kind':'action','action':'sharedKnowledgeAudience'}
    if row['promise'].startswith('A knowledge page is a fact about the world'):row['probe']={'kind':'action','action':'knowledgeDue'}
    if row['promise'].startswith(('Keeps notes: longer working documents','A memory is a fact. A note is a document:')):row['probe']={'kind':'action','action':'noteLifetimes'}

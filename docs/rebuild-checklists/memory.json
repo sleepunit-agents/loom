@@ -168,7 +168,11 @@
     {
       "id": "memory-021",
       "promise": "shared by the household Knowledge pages and the people directory.",
-      "source": "docs/how-it-works/site/memory.html"
+      "source": "docs/how-it-works/site/memory.html",
+      "probe": {
+        "kind": "action",
+        "action": "sharedHouseholdFiles"
+      }
     },
     {
       "id": "memory-022",
