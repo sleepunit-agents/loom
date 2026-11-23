@@ -164,23 +164,22 @@ export function dataAuthentication(db: DataDatabase, now: () => number = Date.no
     const presented = presentedCredential(request);
     if (!presented) return;
     const sessionId = presented.cookie === undefined ? undefined : credentialFingerprint(presented.cookie);
-    const tokenId = presented.bearer !== undefined ? credentialFingerprint(presented.bearer) : db.select({ token: sessions.token }).from(sessions).where(eq(sessions.id, sessionId!)).get()?.token;
-    if (!tokenId) return;
+    const bearerId = presented.bearer === undefined ? undefined : credentialFingerprint(presented.bearer);
     const current = () => {
       const time = now();
-      if (restricted(tokenId)) return;
-      if (sessionId) {
+      if (sessionId !== undefined) {
         const found = currentSession(db, sessionId, time);
-        return found && found.token.fingerprint === tokenId ? { viewer: found.viewer, job: found.job, expiresAt: found.ends } : undefined;
+        return found && { token: found.token.fingerprint, viewer: found.viewer, job: found.job, expiresAt: found.ends };
       }
-      const found = currentToken(db, tokenId, time);
-      return found && { viewer: found.viewer, job: found.job, expiresAt: found.token.expiresAt ? Date.parse(found.token.expiresAt) : undefined };
+      const found = currentToken(db, bearerId!, time);
+      return found && { token: found.token.fingerprint, viewer: found.viewer, job: found.job, expiresAt: found.token.expiresAt ? Date.parse(found.token.expiresAt) : undefined };
     };
     const admitted = current();
-    if (!admitted) return;
-    return { ...admitted, window: !!sessionId, credential: Object.freeze({ token: tokenId, session: sessionId }), valid() {
+    if (!admitted || restricted(admitted.token)) return;
+    const { token, ...identity } = admitted;
+    return { ...identity, window: !!sessionId, credential: Object.freeze({ token, session: sessionId }), valid() {
       const live = current();
-      return !!live && live.viewer.kind === admitted.viewer.kind && live.viewer.id === admitted.viewer.id && live.job === admitted.job
+      return !!live && live.token === token && !restricted(token) && live.viewer.kind === admitted.viewer.kind && live.viewer.id === admitted.viewer.id && live.job === admitted.job
         && (live.viewer.kind === 'agent' ? live.viewer.workingFor : undefined) === (admitted.viewer.kind === 'agent' ? admitted.viewer.workingFor : undefined)
         && (live.viewer.kind === 'agent' ? live.viewer.atTerminalOf : undefined) === (admitted.viewer.kind === 'agent' ? admitted.viewer.atTerminalOf : undefined);
     } };

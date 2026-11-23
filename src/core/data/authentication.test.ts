@@ -63,6 +63,24 @@ it('pins an admitted browser session to its original token even if both tokens n
   expect(authenticate(request(headers))?.credential.token).toBe(replacement);
 });
 
+it('admits a member cookie in one holder read and rechecks the member of the pinned token', () => {
+  let statements=0;
+  const {db,request}=fixture(()=>{statements++;});
+  const authenticate=dataAuthentication(db,()=>Date.parse(at),{programs:'admit'});
+  const incoming=request({cookie:'loom_ui='+cookie});
+  statements=0;
+  const admitted=authenticate(incoming)!;
+  expect(admitted.viewer.id).toBe('sam');
+  expect(statements).toBe(1);
+  statements=0;
+  expect(admitted.valid()).toBe(true);
+  expect(statements).toBe(1);
+  db.insert(members).values({id:'other',role:'member',joinedAt:at}).run();
+  db.update(tokens).set({member:'other'}).where(eq(tokens.fingerprint,hash(raw))).run();
+  expect(admitted.valid()).toBe(false);
+  expect(authenticate(incoming)?.viewer.id).toBe('other');
+});
+
 it('serves the HTTP door through actual shared credentials and rejects revoked ones', async () => {
   const { db, client } = fixture();
   const app = dataHttp(db);
