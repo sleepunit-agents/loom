@@ -132,6 +132,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise']=="The bot's token is a stored secret.":row['probe']={'kind':'action','action':'bridgeSettings'}
    if row['promise'].startswith('a Household things. Connections, channel rules and person links'):
     row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['bridgeSettings','deskPanelVisibility']]}
+   if row['promise'].startswith('d Checked at the door. Loom applies this to callers from outside:'):row['probe']={'kind':'action','action':'inboxCallers'}
    if row['promise']=='Records whether each reply arrived, and says so when it cannot tell.':row['probe']={'kind':'action','action':'bridgeReceipts'}
    if row['promise'] in ('It arrives in the inbox with discord or slack as its source.', 'Decides which agent answers in a channel when nobody is addressed.',
      'The message goes into one conversation: the agent in that channel.',
