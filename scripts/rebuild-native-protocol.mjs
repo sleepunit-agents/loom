@@ -162,3 +162,39 @@ export async function nativeProtocolAction(context){
  }catch(error){actions.conversationDigest={ok:false,error:String(error)};}
  return actions;
 }
+
+/** Follow one timed firing through admission and the ordinary worker poll. */
+export async function scheduledWorker(context) {
+ const {app,clock,page}=context;
+ const db=app.services.comms.db.$client;
+ const words='Check the fictional rain gauge after the timer fires.';
+ const response=await page.request.post(app.url+'/api/tempo/set',{
+  headers:{origin:app.url},
+  data:{id:randomUUID(),input:{ownerKind:'household',sourceKind:'time',times:new Date(clock.now()+1000).toISOString(),
+   lifespan:'once',targetKind:'inbox',toKind:'agent',to:'moss',instructions:words,note:'Walkthrough rain gauge'}},
+ });
+ assert.equal(response.status(),200);
+ const result=await response.json();
+ assert.equal(result.ok,true);
+ const trigger=result.value.id;
+ const items=()=>db.prepare("SELECT i.id,i.conversation,i.state,i.job FROM inbox i JOIN inbox_refs r ON i.id=r.item WHERE i.source='trigger' AND r.ref=? AND i.to_kind='agent' AND i.[to]='moss'").all(trigger);
+ clock.advance(999);
+ assert.deepEqual(items(),[]);
+ clock.advance(1);
+ assert.equal(items().length,1);
+ const [{id,conversation}]=items();
+ assert.ok(conversation);
+ const jobs=()=>db.prepare('SELECT id,state FROM jobs WHERE conversation=?').all(conversation);
+ assert.deepEqual(jobs(),[]);
+ clock.advance(app.services.tempo.volume.timings({kind:'agent',id:'moss'}).settleSeconds*1000);
+ const queued=jobs();
+ assert.equal(queued.length,1);
+ assert.equal(queued[0].state,'queued');
+ const job=queued[0].id;
+ const {runs}=await nativeProtocolSmoke({...context,targets:[{id:job,words}]});
+ assert.equal(runs.length,1);
+ assert.equal(runs[0].conversation,conversation);
+ assert.deepEqual(jobs(),[{id:job,state:'done'}]);
+ assert.deepEqual(items(),[{id,conversation,state:'done',job}]);
+ return {ok:true,reason:'A timed trigger delivered one Inbox item. After settling, the worker picked up its job, the running body received the scheduled instructions, and both the job and the Inbox item finished.',trigger,conversation,job};
+}

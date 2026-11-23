@@ -139,7 +139,11 @@
     {
       "id": "conversations-016",
       "promise": "A trigger drops an item into the conversation's inbox, and a non-empty inbox starts the agent.inbox.source = trigger",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "scheduledWorker"
+      }
     },
     {
       "id": "conversations-017",
