@@ -7,6 +7,7 @@ import { sql } from 'drizzle-orm';
 import { GraphQLObjectType,GraphQLSchema,graphql } from 'graphql/index.js';
 import { createDataSchema } from '../../core/data/database.js';
 import { dataQueries } from '../../core/data/queries.js';
+import {memoryQueries} from '../../../web/src/memory/queries.js';
 import { PeopleStore } from '../../backends/people.js';
 import type { Sharing,Viewer } from '../../policy.js';
 import { peopleQueryFields } from './people-query.js';
@@ -23,7 +24,7 @@ function fixture(directory:string,agents:Array<{agent:string;memories:string}>,c
  const fields=peopleQueryFields({directory,agents,sharing:()=>sharing,now:()=>now,conversations});closes.push(fields.close);
  const db=new Database(':memory:');closes.push(()=>db.close());createDataSchema(db);const generated=dataQueries(db,{tables:['tasks'],visibility:{tasks:()=>sql`true`}});
  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{...generated.getQueryType()!.toConfig().fields,...fields.fields}})});
- const query=(source:string,viewer:Viewer={kind:'member',id:'owner'})=>graphql({schema,source,contextValue:{viewer}});
+ const query=(source:string,viewer:Viewer={kind:'member',id:'owner'},variables?:Record<string,string>)=>graphql({schema,source,variableValues:variables,contextValue:{viewer}});
  return {query,sharing,generated,at:(time:number)=>{now=time;}};
 }
 it('composes generated fields and complete typed cards including value kinds, provenance and ten prior versions',async()=>{
@@ -329,4 +330,54 @@ it('reads every current tagged memory in the calling agent’s source before a c
  expect(await f.query(query,working)).toEqual({data:{memoryOwnPersonEvidence:null}});
  other.database.exec('DROP TABLE memories');
  expect((await f.query(query,{kind:'agent',id:'other'})).errors?.[0].message).toBe('People are unavailable');
+});
+
+it('bounds SQLite reads for the People tile selections as cards and linked accounts grow',async()=>{
+ const dir=home(),directory=store(join(dir,'directory.db')),agent=store(join(dir,'agent.db'));
+ const f=fixture(directory.database.name,[{agent:'fiction',memories:agent.database.name}]);
+ const owner:Viewer={kind:'member',id:'owner'},member:Viewer={kind:'member',id:'member'};
+ f.sharing.members.owner.agents=['fiction'];
+ const list=memoryQueries.people(),access=memoryQueries.peopleAccess(),detail=memoryQueries.person('commons:friend');
+ const measures:number[][]=[];
+ const proto=Object.getPrototypeOf(directory.database.prepare('SELECT 1')) as Database.Statement;
+ async function measure(query:typeof list|typeof access|typeof detail){
+  // Warm the data-version deadline calculation before comparing steady-state reads.
+  await f.query(query.query,owner,query.variables);
+  const all=vi.spyOn(proto,'all'),get=vi.spyOn(proto,'get'),iterate=vi.spyOn(proto,'iterate');
+  try{
+   const result=await f.query(query.query,owner,query.variables);
+   expect(result.errors).toBeUndefined();
+   return {rows:result.data,count:all.mock.calls.length+get.mock.calls.length+iterate.mock.calls.length};
+  }finally{all.mockRestore();get.mockRestore();iterate.mockRestore();}
+ }
+ for(const size of [2,8]){
+  const accounts=Array.from({length:size},(_,i)=>'USAMPLE00'+i);
+  directory.write({slug:'friend',name:'Directory Friend',where:{slack_workspace:{value:'TSAMPLE'},slack:{value:accounts}}});
+  for(let i=0;i<size;i++){
+   agent.write({slug:'sample-'+i,name:'Relationship '+i});
+   expect(directory.observeAccount('slack','TSAMPLE',accounts[i],new Date(i+size).toISOString(),'Account '+i)).toBe(true);
+  }
+  const accessRead=await measure(access),listRead=await measure(list),detailRead=await measure(detail);
+  expect(listRead.rows?.memoryPeople).toHaveLength(size+1);
+  expect(detailRead.rows?.memoryPerson).toMatchObject({sightings:accounts.toReversed().map((account,i)=>({account,label:'Account '+(size-1-i)}))});
+  const restricted=await f.query(detail.query,member,detail.variables);
+  expect(restricted.errors).toBeUndefined();expect(restricted.data?.memoryPerson).toBeNull();
+  const visible=await f.query(list.query,member);
+  expect(visible.errors).toBeUndefined();expect(visible.data?.memoryPeople).toHaveLength(size);
+  measures.push([accessRead.count,listRead.count,detailRead.count]);
+ }
+ expect(measures[1]).toEqual(measures[0]);
+});
+
+it('keeps mixed-platform sightings ordered and drops a newly ambiguous Discord holder',()=>{
+ const directory=store(join(home(),'directory.db'));
+ const reader=peopleReader({directory:directory.database.name,agents:[],sharing:()=>({members:{owner:{owner:true,agents:[]}},projects:{}}),now:()=>0});
+ closes.push(reader.close);
+ const owner:Viewer={kind:'member',id:'owner'};
+ directory.write({slug:'friend',name:'Friend',where:{slack_workspace:{value:'shared'},slack:{value:'outside'},discord_workspace:{value:'shared'},discord:{value:['outside','outside']}}});
+ expect(directory.observeAccount('discord','shared','outside',new Date(1).toISOString(),'Discord friend')).toBe(true);
+ expect(directory.observeAccount('slack','shared','outside',new Date(2).toISOString(),'Slack friend')).toBe(true);
+ expect(reader.sightings(owner,'friend').map(row=>row.label)).toEqual(['Slack friend','Discord friend']);
+ directory.write({slug:'other',name:'Other',where:{discord_workspace:{value:'shared'},discord:{value:'outside'}}});
+ expect(reader.sightings(owner,'friend').map(row=>row.label)).toEqual(['Slack friend']);
 });

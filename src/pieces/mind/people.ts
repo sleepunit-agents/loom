@@ -1,5 +1,5 @@
 import {evidenceExpiry,personEvidenceRows} from '../../backends/people.js';
-import {accountColumns,accountHolders,sightingHolder,type AccountPlatform} from '../../backends/people-accounts.js';
+import {accountColumns,accountHolders,listAccountSightings,type AccountPlatform} from '../../backends/people-accounts.js';
 /** Existing person cards, read in place. No schema initialization or path discovery. */
 import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
@@ -210,16 +210,17 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
     return next===Infinity?undefined:next;
   }
   return {
-    access(v){const sharing=options.sharing();return {id:'people',allowed:allowed(v)||options.agents.some(a=>allowed(v,a.agent)),directory:allowed(v),
-      agents:options.agents.filter(a=>allowed(v,a.agent)&&(sharing.agents?.includes(a.agent)??true)).map(a=>a.agent),canAdd:mayAct(v,{type:'person'},sharing,'act')};},
+    access(viewer){
+      const current=options.sharing(),directory=mayReadPerson(viewer,undefined,current);
+      const authorized=options.agents.filter(({agent})=>mayReadPerson(viewer,agent,current));
+      return {id:'people',allowed:directory||authorized.length>0,directory,
+        agents:authorized.map(row=>row.agent).filter(id=>!current.agents||current.agents.includes(id)),
+        canAdd:mayAct(viewer,{type:'person'},current,'act')};
+    },
     sightings(viewer,slug) {
       const db=sources.get('commons');
       if(!allowed(viewer)||!db||!hasTable(db,'person_account_sightings'))return [];
-      return db.transaction(()=>{
-        const rows=db.prepare(`SELECT platform,workspace,account,label,seen_at AS seenAt
-          FROM person_account_sightings WHERE slug=? ORDER BY seen_order DESC,platform,workspace,account`).all(slug) as AccountSighting[];
-        return rows.filter(row=>sightingHolder(db,row.platform,row.workspace,row.account)===slug);
-      })();
+      return db.transaction(()=>listAccountSightings(db,slug))();
     },
     outsideAccount(viewer,slug,platform){
       const [space,account]=accountColumns(platform);
