@@ -22,7 +22,11 @@
     {
       "id": "bridges-004",
       "promise": "Links an outside user to the household member they are.",
-      "source": "docs/how-it-works/site/bridges.html"
+      "source": "docs/how-it-works/site/bridges.html",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeMail"
+      }
     },
     {
       "id": "bridges-005",
@@ -37,7 +41,11 @@
     {
       "id": "bridges-007",
       "promise": "A person link says which household member an outside user is.",
-      "source": "docs/how-it-works/site/bridges.html#con-h"
+      "source": "docs/how-it-works/site/bridges.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeMail"
+      }
     },
     {
       "id": "bridges-008",

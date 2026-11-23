@@ -111,7 +111,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith(("A pending approval is an item in a person's Inbox", 'A pending approval arrives as an item')):row['probe']={'kind':'action','action':'approvalInbox'}
  if f.stem=='bridges':
   for row in rows:
-   if row['promise']=='It arrives in the inbox with discord or slack as its source.':row['probe']={'kind':'action','action':'bridgeMail'}
+   if row['promise'] in ('It arrives in the inbox with discord or slack as its source.', 'Links an outside user to the household member they are.', 'A person link says which household member an outside user is.'):row['probe']={'kind':'action','action':'bridgeMail'}
  if f.stem=='bridges':add('The owner can save a Discord channel rule and a Slack person link in Bridges and inspect both after reload.','',{'kind':'action','action':'bridgeSettings'})
  if f.stem=='inbox':add('Answering Yes records who answered and adds exactly one item for the agent.','',{'kind':'action','action':'inboxAnswer'})
 
