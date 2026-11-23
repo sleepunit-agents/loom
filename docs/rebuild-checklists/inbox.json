@@ -98,7 +98,11 @@
     {
       "id": "inbox-012",
       "promise": "A pending request for a secret arrives as an item.",
-      "source": "docs/how-it-works/site/inbox.html#con-h"
+      "source": "docs/how-it-works/site/inbox.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "inboxSecretRequest"
+      }
     },
     {
       "id": "inbox-013",

@@ -194,6 +194,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   for(const name of ['inboxTaskSettlement','inboxSourceOutcome'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
   expect(step.value.actions.inboxSourceTargets).toMatchObject(arrival.ok?{ok:true}:{inconclusive:true});
  });
+ it('follows a pending secret request from Inbox to its owner decision',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('secret-source');
+  expect(step.value.actions.inboxSecretRequest).toMatchObject({ok:true});
+ });
  it('delivers private source replies, a native handoff and a wake through the one Inbox',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('conversation-mail');
   expect(step.value.actions.conversationSingleJob).toMatchObject({ok:true,deliveries:3});
