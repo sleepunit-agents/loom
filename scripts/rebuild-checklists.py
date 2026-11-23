@@ -113,6 +113,13 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   add('A question answered in Inbox becomes answered inline in Comms.','',{'kind':'action','action':'commsAnswer'})
  if f.stem=='secrets':
   evidence={
+   'Keeps each value encrypted, in a separate file held by a separate small program.':'installedSecretHolder',
+   'Lets an agent request a secret, and a person or a rule answer.':'installedSecretHolder',
+   'Grants access for a set time, to one agent or to one job.':'installedSecretHolder',
+   'Writes down every time a value is handed out.':'installedSecretHolder',
+   'A grant goes to one agent and can be limited to one job. Each use names the job.':'installedSecretHolder',
+   'An agent requests a secret with a reason and a length of time. A person answers, or a rule answers for them. A yes creates a grant that lasts a set time.':'installedSecretHolder',
+   'c Agents. An agent is handed a value only under a grant, and each hand-off is recorded.':'installedSecretHolder',
    'A request records the conversation it was asked in.':'conversationSecretSource',
    'Work can wait on the request with a trigger that fires when it is answered.':'inboxSecretRequest',
    "Credentials agents need, and who may use each one. A secret is a named credential, such as a GitHub token.":'secretValues',
@@ -123,6 +130,8 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   }
   for row in rows:
    if row['promise'] in evidence:row['probe']={'kind':'action','action':evidence[row['promise']]}
+   if row['promise'].startswith('Every time a value leaves the key holder,'):
+    row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['installedSecretHolder','secretValues']]}
  if f.stem=='secrets':add('The owner can add, replace and remove a Secret value in Settings; reload preserves the result, the value is not displayed or stored in the main database, and each change is recorded.','',{'kind':'action','action':'secretValues'})
  if f.stem=='secrets':add('The owner can change the household default from Ask to Never in Settings and it persists after reload.','',{'kind':'action','action':'secretDefault'})
  if f.stem=='approvals':
