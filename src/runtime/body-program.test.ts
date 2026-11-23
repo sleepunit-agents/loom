@@ -160,6 +160,8 @@ it.each(['claude','codex'] as const)('gives a %s owner Comms body callable Loom 
  expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(input))})).toBe(0);
  const prompt=f.native.mock.calls[0][1];
  expect(prompt).toContain('loom_command MCP tool');
+ expect(prompt).toContain('conversation.activityPost');
+ expect(prompt).toContain('value.thread from the receipt');
  expect(prompt).toContain('{"operation":"conversation.handoffOptions","id":"discover-handoffs","input":{}}');
  expect(prompt).toContain('value.conversation from the receipt as input.conversation');
 });

@@ -5,7 +5,7 @@ import { graphql, GraphQLObjectType, GraphQLSchema } from 'graphql/index.js';
 import { withQueryFields } from '../data/query-fields.js';
 import { conversationWorkFields } from '../../shared-conversation-work.js';
 import { createDataSchema } from '../data/database.js';
-import { agents, conversations, household, memberAgents, members, messages, threads } from '../data/schema.js';
+import { agents, conversations, household, memberAgents, members, messages, projects, threads } from '../data/schema.js';
 import { CommsMessages } from './messages.js';
 import { CommsQueries, commsQueryFields } from './comms-query.js';
 const clients: Database.Database[] = [];
@@ -392,4 +392,118 @@ it('reads archived metadata without ciphertext and rechecks thread visibility af
   expect(changed.errors?.[0].message).toBe('Comms changed; retry the query');
   expect(JSON.stringify(changed)).not.toContain('Fictional archive words');
   expect((await ask('ref body{text}')).data).toEqual({commsArchivedQuestions:[]});
+});
+
+it('serves the activity card and history under the current source conversation visibility', async () => {
+  const f = await fixture();
+  const { prepareAgentPost } = await import('./agent-posts.js');
+  const at = '2026-11-14T18:00:00.000Z';
+  const other = f.comms.threads.open({ agent:'art', member:'bob', title:'Other' });
+  const write = async (source: string, edit: Parameters<typeof prepareAgentPost>[3]) =>
+    (await prepareAgentPost(f.db, f.key, source, edit))(at);
+  const thread = await write(f.thread.id,{ action:'open', words:'Boot console' });
+  await write(f.thread.id,{ action:'reply', thread, words:'It scrolls!' });
+  const otherActivity = await write(other.id,{ action:'open', words:'Other work' });
+  const schema = new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:commsQueryFields(f.service)})});
+  const read = (who: typeof alice, id: string) => graphql({schema,contextValue:{viewer:who},variableValues:{id},
+    source:`query($id:String!){
+      agentActivityFeed(agent:"art"){thread title latest{words} parent{words}}
+      agentActivityHistory(agent:"art",thread:$id){id words}
+    }`});
+  const own = await read(alice,thread);
+  expect(own.errors).toBeUndefined();
+  expect(own.data).toEqual({agentActivityFeed:[{thread,title:'Boot console',latest:{words:'It scrolls!'},parent:{words:'Boot console'}}],
+    agentActivityHistory:[{id:'1',words:'Boot console'},{id:'2',words:'It scrolls!'}]});
+  expect((await read(alice,otherActivity)).data?.agentActivityHistory).toEqual([]);
+  expect((await read(owner,otherActivity)).data?.agentActivityHistory).toEqual([{id:'3',words:'Other work'}]);
+  f.onOpen(f.revoke);
+  expect((await read(alice,thread)).data).toEqual({agentActivityFeed:[],agentActivityHistory:[]});
+});
+
+it('attaches current work states to a post without requiring the IDs in its words', async () => {
+  const f = await fixture();
+  const { changes, tasks } = await import('../data/schema.js');
+  const { prepareAgentPost } = await import('./agent-posts.js');
+  const at = '2026-11-14T18:00:00Z', id = 'github:house/loom#7';
+  f.db.insert(memberAgents).values({member:'alice',agent:'art'}).run();
+  f.db.insert(tasks).values({id:'t-17',title:'Fix disk cleanup',ownerKind:'member',owner:'alice',
+    createdByKind:'member',createdBy:'alice',createdAt:at,changedAt:at}).run();
+  f.db.insert(changes).values({id,repository:'house/loom',number:7,title:'Remove test homes',body:'',url:'https://github.com/house/loom/pull/7',
+    state:'open',draft:false,authorLogin:'art',agent:'art',branch:'fix',headCommit:'a'.repeat(40),baseBranch:'next',
+    checks:'passing',review:'approved',mergeable:'yes',waitingOn:'author',openedAt:at,updatedAt:at}).run();
+  const thread=(await prepareAgentPost(f.db,f.key,f.thread.id,{action:'open',words:'Oh right, it was me. Fixed.',refs:['t-17',id]}))(at);
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:commsQueryFields(f.service)})});
+  const read=async()=> {
+    const result=await graphql({schema,source:'{agentActivityFeed(agent:"art"){latest{words work{id title state href}}}}',contextValue:{viewer:alice}});
+    expect(result.errors).toBeUndefined();
+    return (result.data!.agentActivityFeed as {latest:{work:unknown[];words:string}}[])[0].latest;
+  };
+  const task={id:'t-17',title:'Fix disk cleanup',state:'open',href:'/p/tasks-preview/task/t-17'};
+  const change={id,title:'Remove test homes',state:'open',href:'/p/changes-preview/change/github%3Ahouse%2Floom%237'};
+  expect(await read()).toEqual({words:'Oh right, it was me. Fixed.',work:[task,change]});
+  f.db.update(changes).set({state:'merged'}).where(eq(changes.id,id)).run();
+  expect((await read()).work).toEqual([task,{...change,state:'merged'}]);
+  (await prepareAgentPost(f.db,f.key,f.thread.id,{action:'reply',thread,words:'See t-17 and https://github.com/house/loom/pull/7.'}))(at);
+  expect((await read()).work).toEqual([task,{...change,state:'merged'}]);
+  f.db.delete(memberAgents).run();
+  expect((await read()).work).toEqual([task]);
+});
+
+it('resumes across matching sessions, keeps each source link and restores the opener after the second source is deleted', async () => {
+  const f=await fixture(), {prepareAgentPost}=await import('./agent-posts.js');
+  const at='2026-11-14T18:00:00Z';
+  const second=f.comms.threads.open({agent:'art',member:'alice',venue:'terminal',title:'Next terminal'});
+  const other=f.comms.threads.open({agent:'art',member:'bob',title:'Other reader'});
+  const write=async (source:string,edit:Parameters<typeof prepareAgentPost>[3])=>(await prepareAgentPost(f.db,f.key,source,edit))(at);
+  const id=await write(f.thread.id,{action:'open',words:'Boot console'});
+  await write(second.id,{action:'reply',thread:id,words:'It scrolls!'});
+  await write(second.id,{action:'rename',thread:id,title:'The scrolling console'});
+  await expect(write(other.id,{action:'reply',thread:id,words:'Different audience'})).rejects.toThrow('unavailable');
+  f.db.insert(projects).values({id:'loom',name:'Loom'}).run();
+  for (const scope of [{agent:'mark',member:'alice'},{agent:'art',member:'alice',project:'loom'}]) {
+    const different=f.comms.threads.open({...scope,title:'Separate activity'});
+    await expect(write(different.id,{action:'reply',thread:id,words:'Different scope'})).rejects.toThrow('unavailable');
+  }
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:commsQueryFields(f.service)})});
+  const read=async()=>{
+    const result=await graphql({schema,contextValue:{viewer:alice},variableValues:{id},source:`query($id:String!){
+      agentActivityFeed(agent:"art"){thread title latest{words source} parent{words}}
+      agentActivityHistory(agent:"art",thread:$id){words source}
+    }`});
+    expect(result.errors).toBeUndefined();
+    return result.data;
+  };
+  expect(await read()).toEqual({
+    agentActivityFeed:[{thread:id,title:'The scrolling console',latest:{words:'It scrolls!',source:second.id},parent:{words:'Boot console'}}],
+    agentActivityHistory:[{words:'Boot console',source:f.thread.id},{words:'It scrolls!',source:second.id}],
+  });
+  f.db.update(conversations).set({member:'bob'}).where(eq(conversations.id,second.conversation)).run();
+  expect(await read()).toEqual({agentActivityFeed:[],agentActivityHistory:[]});
+  await expect(write(f.thread.id,{action:'reply',thread:id,words:'Late reply'})).rejects.toThrow('unavailable');
+  await expect(write(f.thread.id,{action:'rename',thread:id,title:'Late rename'})).rejects.toThrow('unavailable');
+  f.db.delete(threads).where(eq(threads.id,second.id)).run();
+  expect(await read()).toEqual({
+    agentActivityFeed:[{thread:id,title:'Boot console',latest:{words:'Boot console',source:f.thread.id},parent:null}],
+    agentActivityHistory:[{words:'Boot console',source:f.thread.id}],
+  });
+});
+
+it.each(['feed','history'] as const)('withholds removed source words during an independent %s read', async surface => {
+  const f=await fixture(), {prepareAgentPost}=await import('./agent-posts.js');
+  const at='2026-11-14T18:00:00Z';
+  const second=f.comms.threads.open({agent:'art',member:'alice',venue:'terminal',title:'Later session'});
+  const write=async (source:string,edit:Parameters<typeof prepareAgentPost>[3])=>(await prepareAgentPost(f.db,f.key,source,edit))(at);
+  const id=await write(f.thread.id,{action:'open',words:'Boot console'});
+  await write(second.id,{action:'reply',thread:id,words:'Later reply'});
+  await write(second.id,{action:'rename',thread:id,title:'Later title'});
+  f.onOpen(()=>{
+    f.onOpen(()=>{});
+    f.db.delete(threads).where(eq(threads.id,second.id)).run();
+  });
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:commsQueryFields(f.service)})});
+  const query=surface==='feed' ? '{agentActivityFeed(agent:"art"){title latest{words}}}'
+    : 'query($id:String!){agentActivityHistory(agent:"art",thread:$id){words}}';
+  const result=await graphql({schema,source:query,variableValues:{id},contextValue:{viewer:alice}});
+  expect(result.errors).toBeUndefined();
+  expect(result.data).toEqual(surface==='feed' ? {agentActivityFeed:[]} : {agentActivityHistory:[{words:'Boot console'}]});
 });

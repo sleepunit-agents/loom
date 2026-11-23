@@ -36,6 +36,35 @@ The tools are:
   admitted. Calling an otherwise granted operation does not require catalogue
   access.
 
+An observed terminal can post to its agent card through `loom_command` using the
+same harness and native session ID its terminal hook registered. At session start,
+call `terminal.activityContext` with those two fields and keep `value.binding`
+for this terminal instance. A post carries that binding on its first call and on
+retry. For example:
+
+```json
+{
+  "operation": "terminal.activityPost",
+  "id": "boot-first-post",
+  "input": {
+    "harness": "codex",
+    "sessionId": "<current native session ID>",
+    "binding": "<binding from this instance>",
+    "post": {"action": "open", "words": "Giving boot a scrolling console.", "title": "Desktop boot console"}
+  }
+}
+```
+
+Summarize the opener in a short `title`. If omitted, the first 60 characters of the post supply an initial title. Keep `value.thread` from the receipt. For a reply, send a new command ID and
+`post: {"action":"reply","thread":"<activity ID>","words":"It scrolls!"}`. A
+rename takes `action: "rename"`, the same thread ID, and a `title`.
+An opener or reply can also carry `refs`, for example `["t-17","github:house/loom#7"]`.
+These appear beside the post with the current task or PR state for viewers who
+can open the work. A later terminal or Comms session can continue the activity
+using its thread ID when the member, agent and project match. Each group of posts
+links to the conversation that supplied it. Removing a later source removes its
+posts and any current title it supplied. Removing the opening source removes the activity.
+
 A terminal session also gets the names it already calls. Each is a thin mapping
 onto one registered command or one query on this same door, so a named tool
 that works proves its data layer works:
