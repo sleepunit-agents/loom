@@ -104,6 +104,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   add(text,'',probe)
  if f.stem=='tempo':
   for row in rows:
+   if row['promise']=='Shows a day as a calendar, with each trigger at the time it fires.':row['probe']={'kind':'action','action':'tempoCalendar'}
    if row['promise']=="Holds an agent's triggers while the agent is paused.":row['probe']={'kind':'action','action':'pausedWake'}
    if row['promise'].startswith('Each recipient sets a volume on an inbox item.'):row['probe']={'kind':'action','action':'inboxVolume'}
    if row['promise'].startswith('Waiting on an approval is a once-only trigger on that answer.'):row['probe']={'kind':'action','action':'tempoResumed'}
