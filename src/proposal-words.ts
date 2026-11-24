@@ -68,12 +68,19 @@ export function outsideCardName(change:string, who:Outside, names?:CardNames):He
   const recipient = names?.slackRecipient?.(who.workspace, who.user);
   return recipient ? { name: recipient, source: 'People directory match used for Last seen' } : null;
 }
-function outsideShort(who:Outside,held:HeldName|null,names?:CardNames){
+export function outsideShort(who:Outside,held:HeldName|null,names?:CardNames){
   const platform=platformWord(who.platform);
   return held ? held.name + ' (' + platform + ')'
       : names && who.platform === 'slack' ? 'an unnamed Slack account'
       : names ? 'a ' + platform + ' account loom has no name for (' + who.user + ' in workspace ' + who.workspace + ')'
       : 'the ' + platform + ' account ' + who.user + ' (workspace ' + who.workspace + ')';
+}
+export function colleagueTitle(whom:string,tier:string,agent:string,project?:string,on?:boolean){
+  const rosterAction=on===undefined?' and include them on ':on?' and keep them on ':' and add them to ';
+  return 'Set '+whom+' to tier '+tier+' with '+agent+(project?rosterAction+'the '+project+' kit roster':'');
+}
+export function outsideProjectTitle(whom:string,project:string,on:boolean){
+  return on?'Add '+whom+' to the project '+project:'Remove '+whom+' from the project '+project;
 }
 function kitGrantTitle(grant:boolean,whom:string,whose:string){
   return grant ? 'Let ' + whom + ' use ' + whose : 'Stop letting ' + whom + ' use ' + whose;
@@ -289,9 +296,8 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
         if(earlier.length)facts.push({label:'Existing kit grants that become available',value:list(earlier)});
       }
       const roster=project?'the '+project+' kit roster':'';
-      const rosterTitle=was?(was.on?' and keep them on ':' and add them to '):' and include them on ';
       const rosterEffect=was?(was.on?' The account remains on ':' The account joins '):' The account will be on ';
-      return {title:'Set '+who.short+' to tier '+tier+' with '+agent+(roster?rosterTitle+roster:''),
+      return {title:colleagueTitle(who.short,tier,agent,project,was?!!was.on:undefined),
         facts:[...facts,who.id],nothing:!!was && was.tier===input.tier && (!project || was.on===true),
         ifYes:'This Slack account can interact with '+agent+' at tier '+tier+'.'+(roster?rosterEffect+roster+'.':''),ifNo:'Keep the current access.'};
     }
@@ -305,7 +311,7 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
         facts.push({ label: same ? 'What changes' : 'Now', value: same ? NOTHING : was.on ? 'They are on the project.' : 'They are not on the project.' });
       }
       facts.push(who.id);
-      return { title: on ? 'Add ' + who.short + ' to the project ' + project : 'Remove ' + who.short + ' from the project ' + project, facts, nothing: same,
+      return { title: outsideProjectTitle(who.short,project,on), facts, nothing: same,
         ifYes: on ? 'Their account is added to the project roster used for kit access.' : 'Their account is removed from this project’s kit grants. Other grants still apply.', ifNo: 'Who is on the project stays as it is.' };
     }
     case 'project': {

@@ -1569,3 +1569,38 @@ it('reads Slack grant titles with one bridge lookup per page and no per-card kit
 
  }
 });
+
+it('names contact and roster cards together while preserving the project and workspace of each request',async()=>{
+ const statements:string[]=[];
+ const f=fixture(undefined,statement=>statements.push(statement));
+ const project='orchard',user='UFRIEND';
+ f.db.insert(projects).values({id:project,name:'Orchard keepers'}).run();
+ const east={platform:'slack',workspace:'TEAST',user},west={...east,workspace:'TWEST'};
+ f.db.insert(projectOutsidePeople).values({project,...east}).run();
+ f.db.insert(bridgePeople).values({...east,member:'lee'}).run();
+ const file=async(change:string,input:Record<string,unknown>)=>{
+  const result=await f.call('household/propose',{change,input,why:'Fixture orchard access'},'art');
+  expect(result.body.ok).toBe(true);
+  return result.body.value!.id;
+ };
+ const archived=await file('colleague',{...east,project,agent:'art',tier:1});
+ expect((await f.call('approvals/answer',{id:archived,answer:'deny'},'sam')).body.ok).toBe(true);
+ const eastId=await file('colleague',{...east,project,agent:'art',tier:2});
+ const westId=await file('colleague',{...west,project,agent:'art',tier:2});
+ const remove=await file('projectOutsidePerson',{...east,project,on:false});
+ const ids=[eastId,westId,archived,remove];
+ statements.length=0;
+ const response=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+credentials.sam},
+  body:JSON.stringify({query:'query($ids:[String!]!){inboxProposalTitles(ids:$ids){approval title}}',variables:{ids}})});
+ const packet=await response.json();
+ expect(packet.errors).toBeUndefined();
+ expect(Object.fromEntries(packet.data.inboxProposalTitles.map((r:{approval:string;title:string})=>[r.approval,r.title]))).toEqual({
+  [eastId]:'Set lee (Slack) to tier 2 with Art and keep them on the Orchard keepers kit roster',
+  [westId]:'Set an unnamed Slack account to tier 2 with Art and add them to the Orchard keepers kit roster',
+  [archived]:'Set lee (Slack) to tier 1 with Art and include them on the Orchard keepers kit roster',
+  [remove]:'Remove lee (Slack) from the project Orchard keepers',
+ });
+ const queried=statements.map(s=>s.match(/\bfrom\s+"?(\w+)/i)?.[1]);
+ expect(queried.filter(table=>table==='project_outside_people')).toHaveLength(1);
+ expect(queried.filter(table=>table==='bridge_people')).toHaveLength(1);
+});
