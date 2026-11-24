@@ -4,15 +4,15 @@ import { createElement as h, useMemo } from 'react';
 // @ts-expect-error Existing renderer has no declarations.
 import { act, create } from 'react-test-renderer';
 import type { Snapshot } from '../../data';
-const f=vi.hoisted(()=>({work:{status:"live",data:{agentsAtWork:[] as string[]}},snapshots:{} as Record<string,Snapshot<any>>, tasks:{status:'live',data:{inProgress:[],readyTasks:[]}} as any, changes:{status:'live',data:{changes:[]}} as any, bridges:{status:'live',data:{bridgeConnections:[]}} as any, boxes:{status:'live',data:{boxes:[]}} as any, tempo:{status:'live',data:{triggers:[],triggerLog:[],agentPauses:[]}} as any}));
-vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:Record<string,unknown>)=>useMemo(()=>document.includes('DeskBarWork')?f.work:document.includes('DeskTime')?{status:f.snapshots['household.time'].status,data:{deskTime:f.snapshots['household.time'].records[0]??null}}:document.includes('DeskWaiting')||document.includes('DeskAgentWaiting')?deskWaitingFixture(document,variables,f.snapshots['attention.ask'],'owner'):document.includes('DeskAgentDirectory')?{status:f.snapshots.person.status,data:{memoryPeopleAccess:{directory:true},memoryPeople:f.snapshots.person.records.map((p:any)=>({...p,agent:p.agent??null}))}}:document.includes('DeskAgentStatus')?{status:f.snapshots['attention.agent'].status,data:{agentStatus:f.snapshots['attention.agent'].records.map((r:any)=>({agent:r.agent,state:r.state,work:r.work,changedAt:new Date(r.changedAt).toISOString()}))}}:document.includes('DeskTasks')?f.tasks:document.includes('DeskChanges')?f.changes:document.includes('DeskBridges')?f.bridges:document.includes('DeskBoxes')?f.boxes:document.includes('DeskTempo')?f.tempo:({status:f.snapshots['attention.ownedAgent'].status,data:{homeComms:{member:'owner',agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>a.id)},agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.work,f.snapshots['household.time'],f.snapshots['attention.ask'],f.snapshots.person,f.snapshots['attention.agent'],f.snapshots['attention.ownedAgent'],f.tempo,f.boxes,f.bridges,f.changes,f.tasks])}));
+const f=vi.hoisted(()=>({levels:{status:'live',data:{modelAccounts:[]}} as {status:string;data:{modelAccounts:{label:string;level:string}[]}},work:{status:"live",data:{agentsAtWork:[] as string[]}},snapshots:{} as Record<string,Snapshot<any>>, tasks:{status:'live',data:{inProgress:[],readyTasks:[]}} as any, changes:{status:'live',data:{changes:[]}} as any, bridges:{status:'live',data:{bridgeConnections:[]}} as any, boxes:{status:'live',data:{boxes:[]}} as any, tempo:{status:'live',data:{triggers:[],triggerLog:[],agentPauses:[]}} as any}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:Record<string,unknown>)=>useMemo(()=>document.includes('DeskSubscriptionLevels')?f.levels:document.includes('DeskBarWork')?f.work:document.includes('DeskTime')?{status:f.snapshots['household.time'].status,data:{deskTime:f.snapshots['household.time'].records[0]??null}}:document.includes('DeskWaiting')||document.includes('DeskAgentWaiting')?deskWaitingFixture(document,variables,f.snapshots['attention.ask'],'owner'):document.includes('DeskAgentDirectory')?{status:f.snapshots.person.status,data:{memoryPeopleAccess:{directory:true},memoryPeople:f.snapshots.person.records.map((p:any)=>({...p,agent:p.agent??null}))}}:document.includes('DeskAgentStatus')?{status:f.snapshots['attention.agent'].status,data:{agentStatus:f.snapshots['attention.agent'].records.map((r:any)=>({agent:r.agent,state:r.state,work:r.work,changedAt:new Date(r.changedAt).toISOString()}))}}:document.includes('DeskTasks')?f.tasks:document.includes('DeskChanges')?f.changes:document.includes('DeskBridges')?f.bridges:document.includes('DeskBoxes')?f.boxes:document.includes('DeskTempo')?f.tempo:({status:f.snapshots['attention.ownedAgent'].status,data:{homeComms:{member:'owner',agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>a.id)},agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.levels,f.work,f.snapshots['household.time'],f.snapshots['attention.ask'],f.snapshots.person,f.snapshots['attention.agent'],f.snapshots['attention.ownedAgent'],f.tempo,f.boxes,f.bridges,f.changes,f.tasks])}));
 vi.mock('../../data',()=>({useRecords:(type:string)=>{expect(['household.time','attention.ask','person','runtime.box','bridges.venue','change','task','attention.agent','attention.ownedAgent']).not.toContain(type);return f.snapshots[type];}}));
 vi.mock('../../ticker',()=>({Ticker:(props:unknown)=>h('ticker-test',props as object)}));
 import Bar from './bar';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;
 const live=(records:object[])=>({records,status:'live' as const});
-beforeEach(()=>{f.work={status:'live',data:{agentsAtWork:[]}};f.tasks={status:'live',data:{inProgress:[{id:'t-1'}],readyTasks:[{id:'t-2'}]}};f.changes={status:'live',data:{changes:[{id:'pr',checks:'failing'}]}};f.bridges={status:'live',data:{bridgeConnections:[{id:'v',enabled:true},{id:'off',enabled:false}]}};f.boxes={status:'live',data:{boxes:[{id:'local',revokedAt:null},{id:'gone',revokedAt:'2026-11-14T00:00:00Z'}]}};f.tempo={status:'live',data:{triggers:[{id:'standing',enabled:true,state:'standing'},{id:'done',enabled:true,state:'fired'},{id:'off',enabled:false,state:'due'}],triggerLog:[{seq:2,event:'fired'}],agentPauses:[{agent:'art'}]}};f.snapshots={
+beforeEach(()=>{f.levels={status:'live',data:{modelAccounts:[]}};f.work={status:'live',data:{agentsAtWork:[]}};f.tasks={status:'live',data:{inProgress:[{id:'t-1'}],readyTasks:[{id:'t-2'}]}};f.changes={status:'live',data:{changes:[{id:'pr',checks:'failing'}]}};f.bridges={status:'live',data:{bridgeConnections:[{id:'v',enabled:true},{id:'off',enabled:false}]}};f.boxes={status:'live',data:{boxes:[{id:'local',revokedAt:null},{id:'gone',revokedAt:'2026-11-14T00:00:00Z'}]}};f.tempo={status:'live',data:{triggers:[{id:'standing',enabled:true,state:'standing'},{id:'done',enabled:true,state:'fired'},{id:'off',enabled:false,state:'due'}],triggerLog:[{seq:2,event:'fired'}],agentPauses:[{agent:'art'}]}};f.snapshots={
  wake:live([{id:'w-1',state:'parked'},{id:'w-2',state:'fired'}]),
  'household.time':live([{id:'owner',at:Date.parse('2026-11-13T18:41:00Z'),timezone:'America/Chicago'}]),
  'attention.ownedAgent':live([{id:'art',name:'Art'}]),
@@ -202,4 +202,20 @@ it('counts an agent whose current work supersedes an idle report and drops unava
  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
  expect(tree.root.findByProps({'aria-label':'Agent status unavailable'})).toBeTruthy();
  expect(word()).toBe('Art E Fish · Status unavailable');
+});
+
+it('shows each filling subscription and drops its warning when the reading is unavailable',async()=>{
+ const data={modelAccounts:[{label:'Studio',level:'almost full'},{label:'House',level:'getting full'},{label:'Spare',level:'plenty'}]};
+ f.levels={status:'live',data};
+ await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn()}));});
+ const levels=()=>tree.root.findByType('ticker-test').props.parts.filter((part:{capacity?:string})=>part.capacity);
+ expect(levels()).toEqual([
+  {text:'Studio · almost full',href:'/p/subscriptions',capacity:'almost full',tone:'bad'},
+  {text:'House · getting full',href:'/p/subscriptions',capacity:'getting full',tone:'warn'},
+ ]);
+ for(const status of ['loading','offline','denied']){
+  f.levels={status,data};
+  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
+  expect(levels()).toEqual([]);
+ }
 });
