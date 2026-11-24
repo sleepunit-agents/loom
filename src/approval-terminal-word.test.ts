@@ -178,3 +178,24 @@ it('lets the agent at a household owner’s own terminal answer for them, only o
   expect((await answer(fourth.id,quote)).status).toBe(403);
   expect(state(fourth.id)).toBeUndefined();
 });
+
+it('delivers a signed-in owner’s denial reason to the requester once across a retry', async () => {
+  const f = await bodyFixture(cleanup);
+  f.db.update(members).set({role:'owner'}).where(eq(members.id,'alice')).run();
+  const card = f.root.writes.run(() => f.root.services.approvals.request({
+    kind:'command', target:'pump', agent:'art', what:'Run', why:'Fixture',
+    askedFrom:'terminal', actingFor:'alice', ask:'Run it?', ifYes:'Run it', ifNo:'Wait',
+  })).value;
+  const reason = 'Fix the pump first.';
+  const answer = (decision: 'allow' | 'deny') => f.root.http.request('/api/approvals/answer', {
+    method:'POST', headers:{'content-type':'application/json',cookie:'loom_ui='+bodyCredentials.memberCookie},
+    body:JSON.stringify({id:'decision-'+decision,input:{id:card.id,answer:decision,reason}}),
+  });
+  expect((await answer('allow')).ok).toBe(false);
+  expect(f.root.services.approvals.get(card.id).state).toBe('pending');
+  expect((await answer('deny')).status).toBe(200);
+  expect((await answer('deny')).status).toBe(200);
+  const replies = f.db.select().from(inbox).all().filter(row => row.words?.includes(reason));
+  expect(replies).toHaveLength(1);
+  expect(replies[0]).toMatchObject({toKind:'agent',to:'art',fromId:'alice',words:'Deny\nRun it?\nWait\n'+reason});
+});

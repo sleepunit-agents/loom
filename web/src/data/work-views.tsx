@@ -28,7 +28,7 @@ function useWorkAccess() {
     members:snapshot.status === 'live' && snapshot.data?.workAnswerOwner === true ? snapshot.data?.members ?? [] : []};
 }
 function ownerApprovalActions(owner: boolean, standing?:WorkAlwaysInput): ApprovalActions | undefined {
-  return owner ? {...(standing?{always:{approval:standing.approval,label:alwaysLabel(standing),run:async(id:string)=>{if(id!==standing.approval)throw Error('Approval changed');await sendWorkAlways(standing);}}}:{}),allow:(id,confirm,review)=>sendWorkAnswer({piece:'approvals',id,answer:'allow',...(review?{review}:{}),...(confirm?{confirm:true as const}:{})}),deny:id=>sendWorkAnswer({piece:'approvals',id,answer:'deny'})} : undefined;
+  return owner ? {...(standing?{always:{approval:standing.approval,label:alwaysLabel(standing),run:async(id:string)=>{if(id!==standing.approval)throw Error('Approval changed');await sendWorkAlways(standing);}}}:{}),allow:(id,confirm,review)=>sendWorkAnswer({piece:'approvals',id,answer:'allow',...(review?{review}:{}),...(confirm?{confirm:true as const}:{})}),deny:(id,reason)=>sendWorkAnswer({piece:'approvals',id,answer:'deny',reason})} : undefined;
 }
 
 /** Read the owner preview for the open card and discard results when it closes or changes. */

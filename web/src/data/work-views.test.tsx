@@ -310,11 +310,12 @@ it.each(tempoAnswerCases)('awaits the actual $surface Tempo answer (allow=$allow
   await draw(surface==='app'?h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id}):h(LiveApprovalCard,{id:card.id}));expect(words()).toContain('Tempo settings change');
   await act(async()=>tree.update(surface==='app'?h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+selected.id}):h(LiveApprovalCard,{id:selected.id})));
   expect(words()).toContain('Second timing change?');
+  await act(async()=>tree.root.findByType('Textarea').props.onChange({target:{value:'  Please wait for the pump.  '}}));
   const button=tree.root.findAllByType('Button').find((node:{props:{children:unknown}})=>node.props.children===(allow?'Allow':'Deny'))!;
   await act(async()=>button.props.onClick());expect(words()).toContain('Saving answer…');
   expect(tree.root.findAllByType('Button').every((node:{props:{disabled:boolean}})=>node.props.disabled)).toBe(true);expect(card.state).toBe('pending');expect(selected.state).toBe('pending');
   expect(request).toHaveBeenCalledWith('/api/approvals/answer',expect.objectContaining({method:'POST',credentials:'same-origin'}));
-  expect(JSON.parse(String(request.mock.calls[0][1].body))).toMatchObject({input:{id:selected.id,answer:allow?'allow':'deny'}});
+  expect(JSON.parse(String(request.mock.calls[0][1].body)).input).toEqual({id:selected.id,answer:allow?'allow':'deny',...(allow?{}:{reason:'Please wait for the pump.'})});
   await act(async()=>{if(success)accept();else refuse();});
   expect(words()).not.toContain('Saving answer…');expect(card.state).toBe('pending');expect(selected.state).toBe('pending');
   if(success)expect(words()).not.toContain('Could not save your answer');else expect(words()).toContain('Could not save your answer');

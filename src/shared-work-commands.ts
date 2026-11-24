@@ -32,18 +32,18 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
   const currentHead = (input: { id: string; head: string }) => {
     if (change(input.id)?.headCommit !== input.head) throw new OperationError('conflict', 'The change head moved. Open it again.');
   };
-  const answerMerge = (ctx: Context, member: string, input: { id: string; head: string; approval: string; allow: boolean; basis?: string }) => {
+  const answerMerge = (ctx: Context, member: string, input: { id: string; head: string; approval: string; allow: boolean; basis?: string; reason?: string }) => {
     // A no is always possible. When the pull request has moved on, closed or gone,
     // there is nothing left to compare the card with: deny the card itself.
     const row = change(input.id);
     if (!input.allow && (!row || row.state !== 'open' || row.headCommit !== input.head)) {
-      try { service.deny(input.approval, member, input.basis); }
+      try { service.deny(input.approval, member, input.basis, input.reason); }
       catch (error) { if (error instanceof Error && ['Approval is already answered', 'Approval cannot be denied now'].includes(error.message)) throw new OperationError('conflict', 'This approval cannot be answered now. Open it again.'); throw error; }
       ctx.changed('approvals', input.approval); if (row) ctx.changed('changes', input.id);
       return;
     }
     currentHead(input);
-    try { answers.answer({ change: input.id, head: input.head, approval: input.approval, member, allow: input.allow, basis: input.basis }); }
+    try { answers.answer({ change: input.id, head: input.head, approval: input.approval, member, allow: input.allow, basis: input.basis, reason: input.reason }); }
     catch (error) {
       if (error instanceof Error && ['Change is no longer open', 'Change head has changed', 'Approval does not match this change', 'Approval is already answered', 'Approval cannot be denied now'].includes(error.message))
         throw new OperationError('conflict', 'The merge request changed. Open it again.');
@@ -82,10 +82,16 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
   const decisionBasis = (answer: 'allow' | 'deny', basis: string | undefined) =>
     basis && (answer === 'allow' ? 'Allowed by ' : 'Denied by ') + basis;
   operations.register({ name: 'approvals.answer', write: true, recheckPolicy: true,
-    input: z.object({ id, answer: z.enum(['allow', 'deny']), confirm: z.literal(true).optional(), review: z.string().regex(SHA256_HEX).optional(), onWord: ownerWord.optional() }).strict(), output: z.object({ id }).strict(),
+    input: z.object({ id, answer: z.enum(['allow', 'deny']), reason: z.string().trim().min(1).max(2000).optional(), confirm: z.literal(true).optional(), review: z.string().regex(SHA256_HEX).optional(), onWord: ownerWord.optional() }).strict(), output: z.object({ id }).strict(),
     may(viewer, input) {
       const row = approval(input.id);
       if (!workAnswersAllowed(db, viewer) && !sources.bodyJob(viewer) && !(viewer.kind === 'agent' && viewer.atTerminalOf !== undefined && sources.terminal?.(viewer))) return false;
+      if (input.reason) {
+        if (input.answer !== 'deny') return false;
+        if (input.onWord) {
+          if (viewer.kind !== 'agent' || !('venue' in input.onWord) || input.onWord.quote !== input.reason) return false;
+        } else if (viewer.kind !== 'member' || sources.isProgram(viewer)) return false;
+      }
       evidenceCandidates(db, sources, viewer, input.onWord);
       if (!row) return false;
       if (input.review && (viewer.kind !== 'member' || sources.isProgram(viewer) || input.onWord || input.answer !== 'allow' || row.operation !== 'household.change' || !workAnswersAllowed(db, viewer))) return false;
@@ -129,9 +135,9 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
       if (row.kind === 'dangerous' && input.answer === 'allow' && input.confirm !== true && !basis)
         throw new OperationError('invalid', 'This cannot be undone. To allow it, answer again with confirm set to true.');
       const merge = mergeTarget(row);
-      if (merge) answerMerge(ctx, proof.member, { basis, ...merge, approval: row.id, allow: input.answer === 'allow' });
+      if (merge) answerMerge(ctx, proof.member, { basis, reason: input.reason, ...merge, approval: row.id, allow: input.answer === 'allow' });
       else {
-        try { input.answer === 'allow' ? service.allow(input.id, proof.member, basis, input.review) : service.deny(input.id, proof.member, basis); }
+        try { input.answer === 'allow' ? service.allow(input.id, proof.member, basis, input.review) : service.deny(input.id, proof.member, basis, input.reason); }
         catch (error) {
           if (error instanceof Error && ['Approval is already answered', 'Approval cannot be denied now'].includes(error.message))
             throw new OperationError('conflict', 'This approval cannot be answered now. Open it again.');
