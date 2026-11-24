@@ -164,6 +164,7 @@ export function SharedTasks(props: SharedTasksProps) {
       </Facts>
       {selected.sourceKind === 'conversation' && selected.sourceId && (props.conversation
         ? <LinkButton onClick={() => props.conversation!(selected.sourceId!)}>From a conversation</LinkButton> : <Body quiet>From a conversation</Body>)}
+      {selected.sourceKind === 'old-conversation' && selected.sourceId && <Body quiet>From an archived conversation</Body>}
       {selected.description && <Section label="Description"><Body>{selected.description}</Body></Section>}
       {selected.ask && <Section label="Question"><Body>{selected.ask}</Body>
         {(selected.ifYes || selected.ifNo) && <Facts><Fact label="If yes">{selected.ifYes}</Fact><Fact label="If no">{selected.ifNo}</Fact></Facts>}</Section>}
