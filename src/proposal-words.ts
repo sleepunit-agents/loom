@@ -18,6 +18,8 @@ export interface HeldName { name: string; source: string }
 export interface CardNames {
   /** The name held for an outside account, or null when loom holds none. */
   person(platform: string, workspace: string, user: string): HeldName | null;
+  /** Display-only fallback for the recipient of an owner-visible Slack access request. */
+  slackRecipient?(workspace: string, user: string): string | undefined;
   channel(platform: string, workspace: string, channel: string): HeldName | null;
   workspace(platform: string, workspace: string): HeldName | null;
 }
@@ -130,7 +132,12 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
 
   /** An outside account: the name loom holds, or, for an owner, that it holds none; otherwise just the id. */
   const outside = (who: Outside) => {
-    const platform = platformWord(who.platform), held = names?.person(who.platform, who.workspace, who.user) ?? null;
+    const platform = platformWord(who.platform);
+    let held = names?.person(who.platform, who.workspace, who.user) ?? null;
+    if (!held && who.platform === 'slack' && ['kitGrant', 'colleague', 'projectOutsidePerson'].includes(change)) {
+      const recipient = names?.slackRecipient?.(who.workspace, who.user);
+      if (recipient) held = { name: recipient, source: 'People directory match used for Last seen' };
+    }
     const short = held ? held.name + ' (' + platform + ')'
       : names && who.platform === 'slack' ? 'an unnamed Slack account'
       : names ? 'a ' + platform + ' account loom has no name for (' + who.user + ' in workspace ' + who.workspace + ')'

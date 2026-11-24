@@ -525,6 +525,12 @@ export const MIGRATIONS: readonly Migration[] = [
       PRIMARY KEY (workspace,account)
     ) WITHOUT ROWID`); },
   },
+  {
+    id: 'slack_recipient_display',
+    description: 'Bind optional owner-facing recipient display to the specifically approved person',
+    pending: db => hasTable(db, 'person_sighting_aliases') && !hasColumn(db, 'person_sighting_aliases', 'recipient_display_slug'),
+    run: db => { db.exec('ALTER TABLE person_sighting_aliases ADD COLUMN recipient_display_slug TEXT'); },
+  },
 ];
 
 /**
