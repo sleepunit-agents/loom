@@ -24,6 +24,8 @@ function TriggerActions({ trigger, pauses, actions }: { trigger: Trigger; pauses
   const busy = useRef(false);
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState('');
+  const standing = trigger.lifespan === 'until-stopped';
+  const start = actions.start;
   const agent = triggerAgent(trigger);
   const paused = !!agent && pauses.some(item => item.agent === agent);
   async function run(action: () => Promise<void>) {
@@ -39,8 +41,10 @@ function TriggerActions({ trigger, pauses, actions }: { trigger: Trigger; pauses
     <div className="flex flex-wrap gap-2">
       {!terminal(trigger) && <>
         <Button disabled={pending || !trigger.enabled || paused || trigger.state === 'held' || trigger.state === 'firing'} onClick={() => void run(() => actions.runNow(trigger.id))}>Run now</Button>
-        <Button disabled={pending} onClick={() => void run(() => actions.stop(trigger.id))}>Cancel</Button>
+        <Button disabled={pending} onClick={() => void run(() => actions.stop(trigger.id))}>{standing ? 'Stop' : 'Cancel'}</Button>
       </>}
+      {start && standing && !trigger.enabled && trigger.state === 'stopped' && !trigger.scheduleRemovedAt &&
+        <Button disabled={pending} onClick={()=>void run(()=>start(trigger.id))}>Start</Button>}
       {agent && <Button disabled={pending} onClick={() => void run(() => paused ? actions.resume(agent) : actions.pause(agent))}>{paused ? 'Resume agent' : 'Pause agent'}</Button>}
     </div>
     {pending && <p role="status">Waiting for Tempo…</p>}

@@ -22,6 +22,6 @@ export function tempoActions(request: typeof fetch = fetch): TempoActions {
       || (action === 'set' ? !('id' in result.value) || typeof result.value.id !== 'string' || !result.value.id : !('saved' in result.value) || result.value.saved !== true)) throw new Error('Tempo could not confirm the change.');
     if (pending.get(action) === attempt) pending.delete(action);
   }
-  return { create: input => call('set', input), runNow: id => call('runNow', { id }), stop: id => call('stop', { id }),
+  return { create: input => call('set', input), runNow: id => call('runNow', { id }), stop: id => call('stop', { id }), start: id => call('start', { id }),
     pause: agent => call('pause', { agent }), resume: agent => call('resume', { agent }) };
 }

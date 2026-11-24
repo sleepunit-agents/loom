@@ -200,3 +200,16 @@ it('links a measured run to its conversation, preserves zero usage and clears it
   await act(async()=>tree.update(h(TempoCard,{snapshot,triggerId:'tr-1',go})));
   expect(tree.root.findAllByType('a')).toHaveLength(0);
 });
+
+it('starts only an available stopped standing trigger from the live card',async()=>{
+  const callbacks={...actions(),start:vi.fn(async (_id:string)=>{})};
+  const stopped={...snapshot.triggers[0],state:'stopped' as const,enabled:false,lifespan:'until-stopped' as const};
+  const card=(trigger:typeof snapshot.triggers[number])=>h(TempoCard,{snapshot:{...snapshot,triggers:[trigger]},triggerId:stopped.id,actions:callbacks});
+  await act(async()=>{tree=create(card(stopped));});
+  await act(async()=>button('Start').props.onClick());
+  expect(callbacks.start).toHaveBeenCalledExactlyOnceWith(stopped.id);
+  for(const trigger of [{...stopped,scheduleRemovedAt:stopped.changedAt},{...stopped,lifespan:'once' as const},{...stopped,state:'fired' as const}]){
+    await act(async()=>tree.update(card(trigger)));
+    expect(button('Start')).toBeUndefined();
+  }
+});
