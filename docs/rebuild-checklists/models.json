@@ -12,7 +12,11 @@
     {
       "id": "models-002",
       "promise": "Lists every subscription to a model service, grouped by service, with how full it is.",
-      "source": "docs/how-it-works/site/models.html"
+      "source": "docs/how-it-works/site/models.html",
+      "probe": {
+        "kind": "action",
+        "action": "subscriptionGroups"
+      }
     },
     {
       "id": "models-003",
