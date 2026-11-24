@@ -79,9 +79,9 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       const row = tempo.triggers.set(as.trigger, as.member, as.asked,
         reuseFileSchedule ? (agent, file, due) => coveringFileSchedule(db, ctx.viewer, agent, file, due) : undefined,
         reusePendingRun ? (id, agent) => {
-          const existing = pendingNamedRun(db, ctx.viewer, id, agent);
-          joined = !!existing.existing;
-          return existing;
+          const run = pendingNamedRun(db, ctx.viewer, id, agent);
+          joined = !!run.existing;
+          return run;
         } : undefined);
       if (joined) return { id: row.id, joined: true as const };
       if (reuseFileSchedule && as.trigger.lifespan === 'once' && row.lifespan === 'until-stopped')

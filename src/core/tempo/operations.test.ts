@@ -236,3 +236,17 @@ it('checks holds, scheduling authority and owner proposals before returning a pe
   decision='ask'; expect(f.call('tempo.set',input,'ask')).toMatchObject({ok:true,value:{id:'proposed',waits:'owner'}});
   expect(f.db.select().from(triggers).all()).toHaveLength(1);
 });
+
+it('retains trigger visibility even when the command authorizer permits setting a wake for another agent', () => {
+  const f = fixture();
+  f.db.insert(agents).values({id:'fern',about:'',markBg:'#fff',markFg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
+  const input = {...f.trigger, id:'run-alert-garden-20261124t010203-aaaa', owner:'fern', to:'fern',
+    times:new Date(f.clock.now()+60000).toISOString()};
+  expect(f.call('tempo.set',input,'private').ok).toBe(true);
+  const result=f.call('tempo.set',{...input,reusePendingRun:true},'guarded');
+  expect(result).toMatchObject({ok:true,value:{id:expect.not.stringMatching(input.id)}});
+  if (!result.ok) throw Error('Expected a new wake');
+  expect(result.value).not.toHaveProperty('joined');
+  expect(f.db.select().from(triggers).all()).toHaveLength(2);
+  expect(f.tempo.triggers.get(input.id)).toMatchObject({owner:'fern',to:'fern',enabled:true,state:'standing'});
+});
