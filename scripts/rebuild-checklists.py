@@ -261,6 +261,8 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith(('Retries a job that fails to start','A job that fails to start is tried again')):row['probe']={'kind':'action','action':'workerRetries'}
  if f.stem=='tools':
   for row in rows:
+   if row['promise'].startswith('Save a memory, find memories by meaning,'):row['probe']={'kind':'action','action':'namedMemoryChanges'}
+   if row['promise'].startswith('Draft a memory and ratify it.'):row['probe']={'kind':'action','action':'namedMemoryLifecycle'}
    if row['promise']=='Write a note, read one by path, list notes under a prefix.':row['probe']={'kind':'action','action':'namedNotes'}
    if row['promise']=='Change a knowledge page, mark it still true or due a check, and restore an earlier version of it.':row['probe']={'kind':'action','action':'namedKnowledgeHistory'}
    if row['promise']=='Search knowledge pages, read one, and add one.':row['probe']={'kind':'action','action':'namedKnowledge'}

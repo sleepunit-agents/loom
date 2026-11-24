@@ -330,8 +330,9 @@ export async function* walkthroughSteps(output) {
    // Run the real embedding model and advance its wall clock in a separate process.
    const script=fileURLToPath(new URL('./rebuild-semantic-recall.mjs',import.meta.url));
    const {stdout}=await promisify(execFile)(process.execPath,[script],{timeout:110_000});
-   report.actions.semanticRecall=JSON.parse(stdout);
-  } catch(error) { report.actions.semanticRecall={ok:false,error:String(error)}; }
+   const {namedMemoryChanges,...semanticRecall}=JSON.parse(stdout);
+   Object.assign(report.actions,{semanticRecall,namedMemoryChanges});
+  } catch(error) { report.actions.namedMemoryChanges=report.actions.semanticRecall={ok:false,error:String(error)}; }
   save();yield {phase:'semantic-recall',actions:safeReport(report.actions)};
   phase='memory temperature';
   try {
@@ -377,7 +378,7 @@ export async function* walkthroughSteps(output) {
    const {agentToolsEvidence}=await import('./rebuild-agent-tools.mjs');
    Object.assign(report.actions,await agentToolsEvidence());
   } catch(error) {
-   for(const name of ['namedNotes','namedKnowledge','namedKnowledgeHistory','sharedKnowledgeAudience'])report.actions[name]={ok:false,error:String(error)};
+   for(const name of ['namedMemoryLifecycle','namedNotes','namedKnowledge','namedKnowledgeHistory','sharedKnowledgeAudience'])report.actions[name]={ok:false,error:String(error)};
   }
   try {
    const {sharedHouseholdFiles}=await import('./rebuild-shared-household-files.mjs');
