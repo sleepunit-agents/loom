@@ -13,17 +13,21 @@ import TasksApp from '../../web/src/pieces/tasks';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
 afterEach(async () => { await act(async () => tree?.unmount()); f.read.mockClear(); });
-const task = (id: string, isReady: boolean): TaskSelection => ({id,title:id,type:'task',status:'open',priority:2,position:1,ownerKind:'member',owner:'sam',project:'pond',assigneeKind:null,assignee:null,goal:'Goal',why:'Why',doneWhen:'',description:'',ask:null,ifYes:null,ifNo:null,closeReason:null,sourceKind:null,sourceId:null,commentCount:1,isReady,changeTasksByTask:[],taskLinksByTask:[]});
+const task = (id: string, isReady: boolean): TaskSelection => ({id,title:id,type:'task',status:'open',priority:2,position:1,ownerKind:'member',owner:'sam',project:'pond',assigneeKind:null,assignee:null,goal:'Goal',why:'Why',doneWhen:'',description:'',ask:null,ifYes:null,ifNo:null,closeReason:null,sourceKind:null,sourceId:null,commentCount:1,isReady,taskLinksByTask:[]});
 it('mounts the generated selection, authoritative readiness, comments and shell navigation without a record feed', async () => {
-  f.snapshot = {status:'live',data:{tasks:[task('a',false),task('b',true)],selectedTask:{id:'a',taskCommentsByTask:[{task:'a',seq:1,actorKind:'member',actor:'sam',at:'2026-11-14T00:00:00Z',text:'Comment'}]}}};
+  f.snapshot = {status:'live',data:{tasks:[task('a',false),task('b',true)],selectedTask:{id:'a',changeTasksByTask:[{changeRow:null},{changeRow:{id:'pr',repository:'garden',number:3,title:'Repair',state:'open',draft:false,checks:'passing',review:'approved',waitingOn:'done'}}],taskCommentsByTask:[{task:'a',seq:1,actorKind:'member',actor:'sam',at:'2026-11-14T00:00:00Z',text:'Comment'}]}}};
   const go = vi.fn();
   await act(async () => {tree = create(h(TasksApp,{path:'/p/tasks-preview/task/~a',go,questionFor:'sam'}));});
   expect(f.read).toHaveBeenCalledWith(tasksQuery, {selected:'a', withComments:true}, {keep:true});
   const props = tree.root.findByType('Tasks').props;
   expect(props.ready).toEqual(['b']); expect(props.selected).toBe('a'); expect(props.questionFor).toBe('sam');
-  expect(props.comments).toHaveLength(1); expect(props.act).toBeUndefined();
+  expect(props.changes).toMatchObject([{id:'pr',task:'a'}]); expect(props.comments).toHaveLength(1); expect(props.act).toBeUndefined();
   await act(async () => props.select('b'));
   expect(go).toHaveBeenCalledWith('/p/tasks-preview/task/~b');
+  // The detail feed can retain the previous task until its replacement arrives.
+  await act(async () => tree.update(h(TasksApp,{path:'/p/tasks-preview/task/~b',go})));
+  const switched = tree.root.findByType('Tasks').props;
+  expect(switched.changes ?? []).toEqual([]); expect(switched.comments).toEqual([]);
 });
 it('clears all projections on lost feed and discards open forms before reconnect', async () => {
   f.snapshot = {status:'live',data:{tasks:[task('a',true)]}};

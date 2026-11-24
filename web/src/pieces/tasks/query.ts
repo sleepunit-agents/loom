@@ -1,7 +1,8 @@
 import type { SharedTask, SharedTaskComment, SharedTaskLink, SharedTaskChange } from './shared-view';
 
-const commentFields = `
+const detailFields = `
   id
+  changeTasksByTask { changeRow { id repository number title state draft checks review waitingOn } }
   taskCommentsByTask(orderBy: {seq: {direction: asc, priority: 0}}) { task seq actorKind actor at text }
 `;
 
@@ -14,18 +15,16 @@ export const tasksQuery = `query Tasks($selected: String! = "", $withComments: B
     id title type status priority position ownerKind owner project assigneeKind assignee
     goal why doneWhen description ask ifYes ifNo closeReason sourceKind sourceId
     commentCount isReady isShelved
-    changeTasksByTask { changeRow { id repository number title state draft checks review waitingOn } }
     taskLinksByTask { task dependsOn type }
   }
   selectedTask: tasksSingle(where: {id: {eq: $selected}}) @include(if: $withComments) {
-    ${commentFields}
+    ${detailFields}
   }
 }`;
 export const taskCommentsQuery = `query TaskComments($selected: String!) {
-  selectedTask: tasksSingle(where: {id: {eq: $selected}}) { ${commentFields} }
+  selectedTask: tasksSingle(where: {id: {eq: $selected}}) { ${detailFields} }
 }`;
 export interface TaskSelection extends SharedTask {
-  changeTasksByTask: { changeRow: Omit<SharedTaskChange, 'task'> | null }[];
   commentCount: number;
   isReady: boolean;
   isShelved: boolean;
@@ -33,7 +32,11 @@ export interface TaskSelection extends SharedTask {
 }
 export interface TasksSelection {
   tasks: TaskSelection[];
-  selectedTask?: { id: string; taskCommentsByTask: SharedTaskComment[] } | null;
+  selectedTask?: {
+    id: string;
+    taskCommentsByTask: SharedTaskComment[];
+    changeTasksByTask: { changeRow: Omit<SharedTaskChange, 'task'> | null }[];
+  } | null;
 }
 
 /** Choices inherit each generated table's current outside-door visibility. */
