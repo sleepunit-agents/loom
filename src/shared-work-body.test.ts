@@ -257,7 +257,7 @@ it.each(['unlocated message', 'different words', 'different card conversation', 
   f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();
   const id=await f.ask();
   const reason='Hold off until the pump test passes.';
-  const words=scenario==='another named card'?'Deny '+await f.ask()+'. '+reason:reason;
+  const words=scenario==='another named card'?'Deny _'+await f.ask()+'_. '+reason:reason;
   expect((await f.send(words,'owner-answer')).status).toBe(200);
   const take=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{
    authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({input:{}})});
@@ -287,6 +287,7 @@ it('accepts a casual yes for the card named in Comms while another card is pendi
  const take=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{
   authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({input:{}})});
  const item=(await take.json()).value.items.find((row:{words:string})=>row.words===words);
+ expect((await f.call('answer',{id:other,answer:'allow',onWord:{item:item.id,quote:'Sure'}})).status).toBe(403);
  expect((await f.call('answer',{id,answer:'allow',onWord:{item:item.id,quote:words}})).status).toBe(200);
  expect(f.root.services.approvals.get(id).state).toBe('allowed');
  expect(f.root.services.approvals.get(other).state).toBe('pending');
