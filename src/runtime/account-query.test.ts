@@ -383,3 +383,19 @@ it('rechecks a retry on another account when it supplied the trigger for a buffe
   expect(response.status).toBe(401);
   expect(await response.text()).not.toContain('Private association');
 });
+
+it('shows only the assigned subscription summary for a visible job', async () => {
+  const f = fixture();
+  const job = {id:'private-run',title:'Inspect the example shed',agent:'agent',member:'alice',model:'example',
+    account:'private-b',state:'done' as const,startedByKind:'agent' as const,startedBy:'agent',brief:'',
+    houseRepository:'repo',houseBranch:'main',houseFile:'Housefile',queuedAt:f.now()};
+  f.db.insert(jobs).values(job).run();
+  const read = async (who: keyof typeof keys, agent='agent') => (await (await f.post(who,
+    'query($agent:String!){jobSubscription(agent:$agent,job:"private-run"){label level}}',{agent})).json()).data;
+  expect(await read('alice')).toEqual({jobSubscription:{label:'Other subscription',level:'getting full'}});
+  expect(await read('house')).toEqual({jobSubscription:null});
+  expect(await read('bob')).toEqual({jobSubscription:null});
+  expect(await read('alice','another-agent')).toEqual({jobSubscription:null});
+  f.db.update(jobs).set({account:null}).where(eq(jobs.id,job.id)).run();
+  expect(await read('alice')).toEqual({jobSubscription:null});
+});

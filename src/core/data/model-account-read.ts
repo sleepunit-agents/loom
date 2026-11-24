@@ -1,6 +1,6 @@
 /** Model-account page projection. Public coarse capacity and private detail
  * are separate generated batches; location joins never run once per account. */
-import { and, asc, inArray, sql, type AnyColumn } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql, type AnyColumn } from 'drizzle-orm';
 import { rules, type Viewer } from '../../policy.js';
 import { sqlHolds, sqlRule } from '../../policy-sql.js';
 import type { DataDatabase } from './database.js';
@@ -11,11 +11,17 @@ function privateAccount(viewer: Viewer, fields: Record<string, AnyColumn>) {
   const allowed = sqlRule(rules.ownedByMember('owner'), viewer, fields);
   return sql`${{ getSQL: () => allowed }}`;
 }
-export function readModelAccounts(db: DataDatabase, viewer: Viewer) {
-  // Two rules, both policy.ts's: the summary (name and coarse level) and the private detail.
-  const rows = !sqlHolds(db, rules.accountSummary, viewer) ? [] : db.query.modelAccounts.findMany({ columns: { id: true, label: true, hasRoom: true }, orderBy: f => asc(f.label),
+/** Only names and coarse capacity cross the public summary door. */
+export function readAccountCapacityRows(db: DataDatabase, viewer: Viewer, account?: string) {
+  if (!sqlHolds(db, rules.accountSummary, viewer)) return [];
+  return db.query.modelAccounts.findMany({
+    where: account === undefined ? undefined : f => eq(f.id, account),
+    columns: { id: true, label: true, hasRoom: true }, orderBy: f => asc(f.label),
     with: { modelAccountWindowsByAccount: { columns: { window: true, usage: true, usageReadAt: true, resetsAt: true, durationMs: true, reserve: true } } },
   }).sync();
+}
+export function readModelAccounts(db: DataDatabase, viewer: Viewer) {
+  const rows = readAccountCapacityRows(db, viewer);
   const privateRows = db.query.modelAccounts.findMany({ where: f => privateAccount(viewer, f),
     columns: { id: true, owner: true, provider: true, usage: true, usageReadAt: true, resetsAt: true },
     with: { modelAccountBoxesByAccount: { columns: {}, with: { boxRow: { columns: { id: true, name: true } } } },
