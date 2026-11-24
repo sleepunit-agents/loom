@@ -13,9 +13,10 @@ import TasksApp from '../../web/src/pieces/tasks';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
 afterEach(async () => { await act(async () => tree?.unmount()); f.read.mockClear(); });
-const task = (id: string, isReady: boolean): TaskSelection => ({id,title:id,type:'task',status:'open',priority:2,position:1,ownerKind:'member',owner:'sam',project:'pond',assigneeKind:null,assignee:null,goal:'Goal',why:'Why',doneWhen:'',description:'',ask:null,ifYes:null,ifNo:null,closeReason:null,sourceKind:null,sourceId:null,isReady,taskLinksByTask:[]});
+const task = (id: string, isReady: boolean): TaskSelection => ({id,title:id,type:'task',status:'open',priority:2,position:1,ownerKind:'member',owner:'sam',project:'pond',assigneeKind:null,assignee:null,goal:'Goal',why:'Why',description:'',ask:null,closeReason:null,isShelved:false,isReady,taskLinksByTask:[]});
+const detail = (id:string) => ({id,doneWhen:'The pump works',ifYes:null,ifNo:null,sourceKind:null,sourceId:null,changeTasksByTask:[],taskCommentsByTask:[]});
 it('mounts the generated selection, authoritative readiness, comments and shell navigation without a record feed', async () => {
-  f.snapshot = {status:'live',data:{tasks:[task('a',false),task('b',true)],selectedTask:{id:'a',changeTasksByTask:[{changeRow:null},{changeRow:{id:'pr',repository:'garden',number:3,title:'Repair',state:'open',draft:false,checks:'passing',review:'approved',waitingOn:'done'}}],taskCommentsByTask:[{task:'a',seq:1,actorKind:'member',actor:'sam',at:'2026-11-14T00:00:00Z',text:'Comment'}]}}};
+  f.snapshot = {status:'live',data:{tasks:[task('a',false),task('b',true)],selectedTask:{...detail('a'),changeTasksByTask:[{changeRow:null},{changeRow:{id:'pr',repository:'garden',number:3,title:'Repair',state:'open',draft:false,checks:'passing',review:'approved',waitingOn:'done'}}],taskCommentsByTask:[{task:'a',seq:1,actorKind:'member',actor:'sam',at:'2026-11-14T00:00:00Z',text:'Comment'}]}}};
   const go = vi.fn();
   await act(async () => {tree = create(h(TasksApp,{path:'/p/tasks-preview/task/~a',go,questionFor:'sam'}));});
   expect(f.read).toHaveBeenCalledWith(tasksQuery, {selected:'a', withComments:true}, {keep:true});
@@ -27,23 +28,24 @@ it('mounts the generated selection, authoritative readiness, comments and shell 
   // The detail feed can retain the previous task until its replacement arrives.
   await act(async () => tree.update(h(TasksApp,{path:'/p/tasks-preview/task/~b',go})));
   const switched = tree.root.findByType('Tasks').props;
+  expect(switched.reader).toBeUndefined();
   expect(switched.changes ?? []).toEqual([]); expect(switched.comments).toEqual([]);
 });
 it('clears all projections on lost feed and discards open forms before reconnect', async () => {
-  f.snapshot = {status:'live',data:{tasks:[task('a',true)]}};
+  f.snapshot = {status:'live',data:{tasks:[task('a',true)],selectedTask:detail('a')}};
   const submit=vi.fn();
-  await act(async () => {tree=create(h(TasksApp,{submit}));});
+  await act(async () => {tree=create(h(TasksApp,{submit,path:'/p/tasks-preview/task/~a'}));});
   await act(async () => tree.root.findByType('Tasks').props.act('comment',f.snapshot.data!.tasks[0]));
   expect(tree.root.findByType('Form').props.submit).toBe(submit);
   for (const status of ['offline','loading','denied'] as const) {
-    f.snapshot={status,data:{tasks:[task('a',true)]}};
-    await act(async () => tree.update(h(TasksApp,{submit})));
+    f.snapshot={status,data:{tasks:[task('a',true)],selectedTask:detail('a')}};
+    await act(async () => tree.update(h(TasksApp,{submit,path:'/p/tasks-preview/task/~a'})));
     const props=tree.root.findByType('Tasks').props;
     expect(props.tasks).toEqual([]);expect(props.comments).toEqual([]);expect(props.links).toEqual([]);expect(props.ready).toEqual([]);
     expect(tree.root.findAllByType('Form')).toHaveLength(0);
   }
-  f.snapshot={status:'live',data:{tasks:[task('a',true)]}};
-  await act(async () => tree.update(h(TasksApp,{submit})));
+  f.snapshot={status:'live',data:{tasks:[task('a',true)],selectedTask:detail('a')}};
+  await act(async () => tree.update(h(TasksApp,{submit,path:'/p/tasks-preview/task/~a'})));
   expect(tree.root.findAllByType('Form')).toHaveLength(0);
 });
 
@@ -60,8 +62,8 @@ it('keeps the list selection stable and reads comments only for the visible open
 });
 
 it('offers a route only for the selected task’s visible source', async () => {
-  const row = {...task('a',true), sourceKind:'conversation', sourceId:'cv-a'};
-  f.snapshot = {status:'live',data:{tasks:[row]}};
+  const row = task('a',true), selectedTask={...detail('a'), sourceKind:'conversation', sourceId:'cv-a'};
+  f.snapshot = {status:'live',data:{tasks:[row],selectedTask}};
   const go = vi.fn(), props = {path:'/p/tasks-preview/task/~a',go};
   const render = async () => act(async () => { tree.update(h(TasksApp,props)); });
   const open = () => tree.root.findByType('Tasks').props.conversation;
@@ -78,7 +80,7 @@ it('offers a route only for the selected task’s visible source', async () => {
   f.source = {status:'denied',data:f.source.data};await render();expect(open()).toBeUndefined();
   f.source = {status:'live',data:{source:{id:'different',venue:'loom',place:'th:other'}}};
   await render();expect(open()).toBeUndefined();
-  f.snapshot = {status:'live',data:{tasks:[{...row,sourceKind:'old-conversation'}]}};
+  f.snapshot = {status:'live',data:{tasks:[row],selectedTask:{...selectedTask,sourceKind:'old-conversation'}}};
   await render();expect(f.read).toHaveBeenCalledWith(taskSourceQuery,{id:null},{pause:true});
   expect(open()).toBeUndefined();
 });

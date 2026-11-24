@@ -17,7 +17,7 @@ vi.mock('../../kit', () => ({
 let tree: ReturnType<typeof create>;
 afterEach(async () => { await act(async () => tree?.unmount()); });
 const task = (id: string, patch: Partial<SharedTask> = {}): SharedTask => ({id,title:id,type:'task',status:'open',priority:2,position:1,ownerKind:'agent',owner:'art',project:null,assigneeKind:null,assignee:null,goal:'Goal',why:'Reason',doneWhen:'',description:'',ask:null,ifYes:null,ifNo:null,closeReason:null,sourceKind:null,sourceId:null,...patch});
-const props = (patch: Partial<SharedTasksProps> = {}): SharedTasksProps => ({status:'live',tasks:[],links:[],comments:[],ready:[],questionFor:'jonathan',select:vi.fn(),act:vi.fn(),...patch});
+const props = (patch: Partial<Omit<SharedTasksProps, 'tasks'>> & {tasks?: SharedTask[]} = {}): SharedTasksProps => ({status:'live',tasks:[],links:[],comments:[],ready:[],questionFor:'jonathan',select:vi.fn(),act:vi.fn(),reader:patch.tasks?.find(task=>task.id===patch.selected),...patch});
 const draw = async (p:SharedTasksProps) => {await act(async () => {tree=create(h(SharedTasks,p));});};
 const rows = () => tree.root.findAllByType('Row');
 const visibleText = (node: {children?: unknown[]} | unknown[] | string | null): string => typeof node === 'string' ? node : Array.isArray(node) ? node.map(n => visibleText(n as Parameters<typeof visibleText>[0])).join(' ') : node ? visibleText(node.children ?? []) : '';

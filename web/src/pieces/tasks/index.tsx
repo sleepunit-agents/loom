@@ -41,13 +41,18 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
   const status = snapshot.status === 'offline' ? 'unavailable' : snapshot.status;
   const tasks = status === 'live' ? snapshot.data?.tasks ?? [] : [];
   const selectedTask = tasks.find(task => task.id === selected);
-  const sourceId = selectedTask?.sourceKind === 'conversation' ? selectedTask.sourceId : null;
+  const readDetail = !combined && !!selectedTask;
+  const detailFeed = useDataQuery<Pick<TasksSelection, 'selectedTask'>>(taskCommentsQuery, { selected }, { pause: !readDetail });
+  const readerFeed = combined ? snapshot : detailFeed;
+  const detail = status === 'live' && readerFeed.status === 'live' && !readerFeed.settling
+    ? readerFeed.data?.selectedTask : undefined;
+  const visibleDetail = selectedTask && detail?.id === selectedTask.id ? detail : undefined;
+  const reader = selectedTask && visibleDetail ? { ...selectedTask, ...visibleDetail } : undefined;
+  const sourceId = reader?.sourceKind === 'conversation' ? reader.sourceId : null;
   const sourceFeed = useDataQuery<{source: Parameters<typeof talkPath>[0] | null}>(
     taskSourceQuery, {id:sourceId}, {pause:!sourceId || !go || !!openConversation});
   const source = sourceFeed.status === 'live' ? sourceFeed.data?.source : null;
   const openSource = openConversation ?? (go && source && source.id === sourceId ? () => go(talkPath(source)) : undefined);
-  const readComments = !combined && selected !== undefined && tasks.some(task => task.id === selected);
-  const comments = useDataQuery<Pick<TasksSelection, 'selectedTask'>>(taskCommentsQuery, { selected }, { pause: !readComments });
   // Claim, Unclaim and Reopen are sent at once: one at a time, and what the program says if it refuses is shown.
   const [sending, setSending] = useState(false), [problem, setProblem] = useState('');
   const lock = useRef(false), alive = useRef(true);
@@ -64,9 +69,10 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
     window.addEventListener('popstate', pop);
     return () => window.removeEventListener('popstate', pop);
   }, [go]);
-  const target = tasks.find(task => task.id === action?.id);
+  const target = reader?.id === action?.id ? reader : undefined;
+  const hasTarget = !!target;
   // A removed row also revokes its draft while the rest of the query stays live.
-  useEffect(() => { if (status !== 'live' || (action?.id && !target)) setAction(undefined); }, [status, action?.id, target]);
+  useEffect(() => { if (status !== 'live' || (action?.id !== undefined && !hasTarget)) setAction(undefined); }, [status, action?.id, hasTarget]);
   const act = submit ? (next: TaskAction, task?: SharedTask) => {
     if (next === 'claim' || next === 'unclaim' || next === 'reopen') {
       if (!task || lock.current) return;
@@ -81,16 +87,12 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
     setAction({ action: next, id: task?.id });
   } : undefined;
   const open = !!submit && !!action && status === 'live' && (action.action === 'create' || !!target);
-  const commentFeed = combined ? snapshot : comments;
-  const detail = status === 'live' && commentFeed.status === 'live' && !commentFeed.settling
-    ? commentFeed.data?.selectedTask : undefined;
-  const visibleDetail = selectedTask && detail?.id === selectedTask.id ? detail : undefined;
   const links = tasks.flatMap(task => task.taskLinksByTask);
-  return <SharedTasks status={status} tasks={tasks} selected={selected} select={navigate} questionFor={questionFor} startFolder={startFolder} startAssignee={startAssignee} liveAgentIds={liveAgentIds}
+  return <SharedTasks status={status} tasks={tasks} selected={selected} reader={reader} select={navigate} questionFor={questionFor} startFolder={startFolder} startAssignee={startAssignee} liveAgentIds={liveAgentIds}
     changes={visibleDetail?.changeTasksByTask.flatMap(link => link.changeRow ? [{ ...link.changeRow, task: visibleDetail.id }] : [])}
     links={links} comments={visibleDetail?.taskCommentsByTask ?? []}
-    loadingComments={(combined || readComments) && (commentFeed.status === 'loading' || commentFeed.settling)}
-    commentsUnavailable={readComments && (comments.status === 'offline' || comments.status === 'denied')}
+    loadingReader={(combined || readDetail) && (readerFeed.status === 'loading' || readerFeed.settling)}
+    readerUnavailable={readDetail && (detailFeed.status === 'offline' || detailFeed.status === 'denied')}
     ready={tasks.filter(task => task.isReady).map(task => task.id)} conversation={openSource}
     openChange={go ? id => go(`/p/changes-preview/change/${encodeURIComponent(id)}`) : undefined}
     names={names} zone={zone} busy={sending} problem={problem || undefined} act={act}

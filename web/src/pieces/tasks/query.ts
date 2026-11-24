@@ -1,19 +1,19 @@
-import type { SharedTask, SharedTaskComment, SharedTaskLink, SharedTaskChange } from './shared-view';
+import type { TaskListRow, TaskReaderFields, SharedTaskComment, SharedTaskLink, SharedTaskChange } from './shared-view';
 
 const detailFields = `
-  id
+  id doneWhen ifYes ifNo sourceKind sourceId
   changeTasksByTask { changeRow { id repository number title state draft checks review waitingOn } }
   taskCommentsByTask(orderBy: {seq: {direction: asc, priority: 0}}) { task seq actorKind actor at text }
 `;
 
-/** The list can include the opening task’s comments when entered by direct link.
+/** The list can include the opening task’s details when entered by direct link.
  * Larger order priorities take precedence in the generated API.
  * Readiness is computed in SQL against all blockers, including hidden ones. So is whether a task is
  * shelved with a retired project; the app works neither out for itself. */
 export const tasksQuery = `query Tasks($selected: String! = "", $withComments: Boolean! = false) {
   tasks(orderBy: {priority: {direction: asc, priority: 2}, position: {direction: asc, priority: 1}, id: {direction: asc, priority: 0}}) {
     id title type status priority position ownerKind owner project assigneeKind assignee
-    goal why doneWhen description ask ifYes ifNo closeReason sourceKind sourceId
+    goal why description ask closeReason
     isReady isShelved
     taskLinksByTask { task dependsOn type }
   }
@@ -24,14 +24,14 @@ export const tasksQuery = `query Tasks($selected: String! = "", $withComments: B
 export const taskCommentsQuery = `query TaskComments($selected: String!) {
   selectedTask: tasksSingle(where: {id: {eq: $selected}}) { ${detailFields} }
 }`;
-export interface TaskSelection extends SharedTask {
+export interface TaskSelection extends TaskListRow {
   isReady: boolean;
   isShelved: boolean;
   taskLinksByTask: SharedTaskLink[];
 }
 export interface TasksSelection {
   tasks: TaskSelection[];
-  selectedTask?: {
+  selectedTask?: TaskReaderFields & {
     id: string;
     taskCommentsByTask: SharedTaskComment[];
     changeTasksByTask: { changeRow: Omit<SharedTaskChange, 'task'> | null }[];

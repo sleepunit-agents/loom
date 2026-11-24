@@ -21,17 +21,20 @@ export interface SharedTask {
 export interface SharedTaskLink { task: string; dependsOn: string; type: 'blocks' | 'parent-child' }
 export interface SharedTaskComment { task: string; seq: number; actorKind: 'member' | 'agent'; actor: string; at: string; text: string }
 export type SharedTaskChange = Pick<typeof changes.$inferSelect, 'id' | 'repository' | 'number' | 'title' | 'state' | 'draft' | 'checks' | 'review' | 'waitingOn'> & { task: string };
+export type TaskReaderFields = Pick<SharedTask, 'doneWhen' | 'ifYes' | 'ifNo' | 'sourceKind' | 'sourceId'>;
+export type TaskListRow = Omit<SharedTask, keyof TaskReaderFields>;
 type Task = SharedTask;
 type Link = SharedTaskLink;
 type Comment = SharedTaskComment;
 export type TaskAction = 'create' | 'claim' | 'unclaim' | 'close' | 'reopen' | 'comment' | 'edit' | 'priority' | 'project' | 'parent' | 'link' | 'ask';
 export interface SharedTasksProps {
   status: 'loading' | 'live' | 'unavailable' | 'denied';
-  tasks: readonly Task[];
+  tasks: readonly TaskListRow[];
+  reader?: SharedTask;
   links: readonly Link[];
   comments: readonly Comment[];
-  loadingComments?: boolean;
-  commentsUnavailable?: boolean;
+  loadingReader?: boolean;
+  readerUnavailable?: boolean;
   changes?: readonly SharedTaskChange[];
   /** IDs returned by the authorized ready query, never inferred from partial visible links. */
   ready: readonly string[];
@@ -61,7 +64,7 @@ function actions(task: Task): TaskAction[] {
   return [ ...(task.status === 'closed' ? ['reopen' as const] : [ ...(!task.ask && !(task.isShelved && task.status === 'open') ? [task.status === 'open' ? 'claim' as const : 'unclaim' as const] : []), 'close' as const, 'ask' as const]), 'comment','edit','priority','project','parent','link'];
 }
 /** A task's stored state in plain words ("in_progress" is "in progress"). */
-const stateWord = (task: Task) => task.closeReason === 'cancelled' && task.status === 'closed' ? 'cancelled' : task.status.replace('_',' ');
+const stateWord = (task: TaskListRow) => task.closeReason === 'cancelled' && task.status === 'closed' ? 'cancelled' : task.status.replace('_',' ');
 /** Shared-schema presentation only. Root owns reads, authorization, routing and writes. */
 export function SharedTasks(props: SharedTasksProps) {
   const [folder,setFolder] = useState(props.startFolder ?? 'ready'), [query,setQuery] = useState('');
@@ -77,7 +80,7 @@ export function SharedTasks(props: SharedTasksProps) {
   const live = props.status === 'live';
   const tasks = live ? props.tasks : [];
   const links = live ? props.links : [];
-  const selected = tasks.find(t => t.id === props.selected);
+  const selected = live ? props.reader : undefined;
   const name = (id: string | null) => displayName(id, props.names);
   const readyIds = new Set(live ? props.ready : []);
   const openTaskIds = new Set<string>();
@@ -100,7 +103,7 @@ export function SharedTasks(props: SharedTasksProps) {
     }
     children.add(child);
   }
-  const inFolder = (task: Task, id: string) => {
+  const inFolder = (task: TaskListRow, id: string) => {
     if (id === 'closed') return task.status === 'closed';
     if (task.status === 'closed') return false;
     // Shelved with its retired project: under Shelved, its project and its epic, and in no list of open work.
@@ -152,7 +155,7 @@ export function SharedTasks(props: SharedTasksProps) {
     listTitle={current?.label ?? 'Tasks'} listCount={live ? shown.length : undefined} listKey={JSON.stringify([folder,query,assignee])}
     listAction={<Button disabled={!live || !props.act} onClick={() => act('create')}>Create task</Button>}
     listTop={live && assignee && <Body quiet>Only {name(assignee)}’s tasks · <LinkButton onClick={() => setAssignee(undefined)}>show everyone’s</LinkButton></Body>}
-    list={props.status === 'loading' ? <Loading label="Opening tasks…"/> : !live ? <Error text={props.status === 'denied' ? 'Sign in to see tasks.' : 'Waiting for connection.'}/> : shown.length ? <List label="Task list">{shown.map(t => <Row key={t.id} title={t.title} meta={t.goal} status={`${t.id} · P${t.priority} · ${t.isShelved ? `shelved · was ${stateWord(t)}` : stateWord(t)}`} selected={t.id === selected?.id} onClick={() => props.select(t.id)}/>)}</List> : <Empty title="No tasks here" text="Choose another folder or change your search."/>}
+    list={props.status === 'loading' ? <Loading label="Opening tasks…"/> : !live ? <Error text={props.status === 'denied' ? 'Sign in to see tasks.' : 'Waiting for connection.'}/> : shown.length ? <List label="Task list">{shown.map(t => <Row key={t.id} title={t.title} meta={t.goal} status={`${t.id} · P${t.priority} · ${t.isShelved ? `shelved · was ${stateWord(t)}` : stateWord(t)}`} selected={t.id === props.selected} onClick={() => props.select(t.id)}/>)}</List> : <Empty title="No tasks here" text="Choose another folder or change your search."/>}
     open={!!props.selected || creating} onBack={() => props.select()} backLabel="Back to Tasks" blank={<Empty title="Open a task" text="Choose work from the list."/>}
     reader={creating ? <Reader aria-label="Create task"><Title>Create task</Title>{props.form!.node}</Reader>
     : selected ? <Reader aria-label="Task">
@@ -189,10 +192,10 @@ export function SharedTasks(props: SharedTasksProps) {
         const href = repository && Number.isInteger(change.number) && change.number > 0 ? `https://github.com/${repository}/pull/${change.number}` : undefined;
         return <RefCard key={change.id} label={`Pull request ${label}`}><ChangeCard id={change.id} snapshot={{status:'live',changes:[change]}} open={props.openChange} link={{label,href}} name={name}/></RefCard>;
       })}</Section>}
-      {props.commentsUnavailable && <Error text="Could not load comments."/>}
-      {props.loadingComments && <Loading label="Loading comments…"/>}
       {comments.length > 0 && <Section label="Comments"><ol className="grid gap-2.5">{comments.map(c => <li key={c.seq} className="grid gap-0.5">
         <Body><strong>{name(c.actor)}</strong> <time className="loom-reader__meta" dateTime={c.at} title={fullTime(c.at,props.zone)}>{briefTime(c.at,props.zone)}</time></Body>
         <Body>{c.text}</Body></li>)}</ol></Section>}
-    </Reader> : live && props.selected ? <Empty title="This task is no longer in view" text="Choose another task."/> : null}/>;
+    </Reader> : live && props.selected && props.loadingReader ? <Loading label="Opening task…"/>
+    : live && props.selected && props.readerUnavailable ? <Error text="Could not load this task."/>
+    : live && props.selected ? <Empty title="This task is no longer in view" text="Choose another task."/> : null}/>;
 }

@@ -20,6 +20,7 @@ it('runs the mounted Tasks selection in one SQL statement and respects hidden bl
       ('b','Ready','task','member','sam','pond','member','sam','2026-11-14T00:00:00Z','2026-11-14T00:00:00Z'),
       ('epic','Epic','epic','member','sam','pond','member','sam','2026-11-14T00:00:00Z','2026-11-14T00:00:00Z'),
       ('secret','Secret blocker','task','member','sam','hidden','member','sam','2026-11-14T00:00:00Z','2026-11-14T00:00:00Z');
+      UPDATE tasks SET done_when='Valve closed',if_yes='Start pump',if_no='Wait',source_kind='old-conversation',source_id='pump' WHERE id='a';
       INSERT INTO task_links (task,depends_on,type) VALUES ('a','secret','blocks'),('b','epic','parent-child');
       INSERT INTO task_comments (task,seq,actor_kind,actor,at,text) VALUES ('a',1,'member','sam','2026-11-14T00:00:00Z','Visible comment'),('b',1,'member','sam','2026-11-14T00:00:00Z','Other thread'),('secret',1,'member','sam','2026-11-14T00:00:00Z','Secret comment');`);
     db.exec(`INSERT INTO changes(id,repository,number,title,body,url,state,draft,author_login,project,branch,head_commit,base_branch,checks,review,mergeable,waiting_on,opened_at,updated_at)
@@ -37,13 +38,13 @@ it('runs the mounted Tasks selection in one SQL statement and respects hidden bl
       {id:'epic',isReady:false},
     ]);
     expect(JSON.stringify(result.data)).not.toContain('Visible comment');
-    expect(statements[0]).not.toMatch(/change_tasks|task_comments/i);
+    expect(statements[0]).not.toMatch(/change_tasks|task_comments|done_when|if_yes|if_no|source_kind|source_id/i);
     const detail = (selected:string) => graphql({schema,source:tasksQuery,variableValues:{selected,withComments:true}});
     statements.length = 0;
     const opened = await detail('a');
     expect(opened.errors).toBeUndefined();
     expect(statements).toHaveLength(2);
-    expect(opened.data?.selectedTask).toMatchObject({id:'a',taskCommentsByTask:[{text:'Visible comment'}]});
+    expect(opened.data?.selectedTask).toMatchObject({id:'a',doneWhen:'Valve closed',ifYes:'Start pump',ifNo:'Wait',sourceKind:'old-conversation',sourceId:'pump',taskCommentsByTask:[{text:'Visible comment'}]});
     expect(JSON.stringify(opened.data)).not.toContain('Other thread');
     expect((await detail('secret')).data?.selectedTask).toBeNull();
     expect(JSON.stringify(result.data)).not.toContain('Secret');
