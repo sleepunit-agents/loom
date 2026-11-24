@@ -34,12 +34,29 @@ export async function machineSignInWarnings({browser,home}){
   const {box,account,job,publicJob}=example.runtime;
   const machine=page.getByRole('heading').filter({has:page.getByRole('button',{name:'Example workshop',exact:true})});
   await machine.waitFor();
-  const warning=machine.getByRole('img',{name:'A sign-in needs attention'});
+  const machineLabel='A sign-in needs attention';
+  const jobLabel='A machine needed sign-in on the last placement check';
+  const warning=machine.getByRole('img',{name:machineLabel});
+  const create=async(name,input)=>{
+   const response=await page.request.post(app.url+'/api/runtime/'+name,{headers:{origin:app.url},data:{id:crypto.randomUUID(),input}});
+   const result=await response.json();
+   assert.equal(result.ok,true,name);
+   return result.value;
+  };
+  const secondName='Example healthy worker';
+  const second=(await create('boxCreate',{name:secondName,sameMachineAsLoom:false})).id;
+  await create('accountSignedIn',{account,box:second});
+  const healthy=page.getByRole('heading').filter({has:page.getByRole('button',{name:secondName,exact:true})});
+  await healthy.waitFor();
   const worker={url:app.url,token:app.writes.run(()=>app.services.signin.issue({kind:'runner',box,label:'Example workshop'})).value.token,facts:['cpu:example'],signal:AbortSignal.timeout(60000)};
   const login={account,harness:'claude',place:'containers',state:'signed-in'};
+  const secondWorker={...worker,token:app.writes.run(()=>app.services.signin.issue({kind:'runner',box:second,label:secondName})).value.token};
+  await reportWorkerHealth(secondWorker);
+  await reportWorkerAccountLogins(secondWorker,[login]);
   await reportWorkerHealth(worker);
   await reportWorkerAccountLogins(worker,[{...login,state:'signed-out'}]);
   await warning.waitFor();
+  assert.equal(await healthy.getByRole('img',{name:machineLabel}).count(),0);
   await reportWorkerAccountLogins(worker,[{...login,expiresAt:new Date(clock.now()+3*86400000+1000).toISOString()}]);
   await warning.waitFor({state:'hidden'});
   clock.advance(1000);
@@ -65,7 +82,7 @@ export async function machineSignInWarnings({browser,home}){
   await page.getByLabel('Jobs for').selectOption('moss');
   const jobRow=page.getByRole('button').filter({has:page.getByText(job.title,{exact:true})});
   await jobRow.waitFor();
-  const jobWarning=jobRow.getByRole('img',{name:'A machine needed sign-in on the last placement check'});
+  const jobWarning=jobRow.getByRole('img',{name:jobLabel});
   assert.equal(await jobWarning.count(),0);
   // Only the fixture's age is seeded. The coordinator's normal sweep decides the end and the reason.
   app.writes.run(()=>app.services.comms.db.$client.prepare('UPDATE jobs SET queued_at=? WHERE id=? AND state=\'queued\'')
@@ -76,7 +93,7 @@ export async function machineSignInWarnings({browser,home}){
   const unrelated=page.getByRole('button').filter({has:page.getByText(publicJob.title,{exact:true})});
   await unrelated.waitFor();
   assert.match(await unrelated.innerText(),/Failed/);
-  assert.equal(await unrelated.getByRole('img',{name:'A machine needed sign-in on the last placement check'}).count(),0);
+  assert.equal(await unrelated.getByRole('img',{name:jobLabel}).count(),0);
   assert.deepEqual(await readDiagnosis(),[{signInBlocked:true}]);
   await reportWorkerAccountLogins(worker,[login]);
   await warning.waitFor({state:'hidden'});
@@ -89,7 +106,7 @@ export async function machineSignInWarnings({browser,home}){
   await reportWorkerHealth(worker);
   await reportWorkerAccountLogins(worker,[{...login,state:'signed-out'}]);
   const other=page.getByRole('region',{name:'Other visible machines'}).getByRole('heading',{name:/Example workshop/});
-  await other.getByRole('img',{name:'A sign-in needs attention'}).waitFor();
+  await other.getByRole('img',{name:machineLabel}).waitFor();
   memberContext=await browser.newContext({reducedMotion:'reduce',serviceWorkers:'block'});
   await memberContext.route('**/*',route=>new URL(route.request().url()).origin===app.url?route.continue():route.abort());
   await memberContext.routeWebSocket(url=>url.origin!==app.url.replace(/^http/,'ws'),socket=>socket.close());
@@ -100,7 +117,7 @@ export async function machineSignInWarnings({browser,home}){
   await member.locator('.next-shell').waitFor();
   await member.goto(app.url+'/p/machines');
   await member.getByRole('button',{name:'Example workshop',exact:true}).waitFor();
-  assert.equal(await member.getByRole('img',{name:'A sign-in needs attention'}).count(),0);
+  assert.equal(await member.getByRole('img',{name:machineLabel}).count(),0);
   return {ok:true,reason:'The machine warning appeared at the three-day boundary, cleared during worker silence, and returned after the browser reconnected to a signed-out worker. Only the member with account detail saw it on a shared machine. The job warning appeared after the missed deadline and survived renewal and reload.'};
  }finally{try{await memberContext?.close();await context?.close();}finally{await app.close();}}
 }
