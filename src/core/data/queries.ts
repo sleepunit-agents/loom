@@ -6,7 +6,8 @@ import { and, createTableRelationsHelpers, getOperators, getTableColumns, getTab
 import { type AnySQLiteTable } from 'drizzle-orm/sqlite-core';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { buildSchema } from 'drizzle-graphql';
-import { GraphQLError, GraphQLSchema, GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLString, GraphQLNonNull, GraphQLSkipDirective, GraphQLIncludeDirective, getDirectiveValues, getNamedType, isObjectType, isInputObjectType, Kind, type GraphQLResolveInfo, type SelectionSetNode } from 'graphql/index.js';
+import { GraphQLError, GraphQLSchema, GraphQLObjectType, GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLString, GraphQLNonNull, GraphQLSkipDirective, GraphQLIncludeDirective, getDirectiveValues, getNamedType, isObjectType, isInputObjectType, Kind, type GraphQLFieldConfigMap, type GraphQLResolveInfo, type SelectionSetNode } from 'graphql/index.js';
+import type { Viewer } from '../../policy.js';
 import { dataValue } from './subscriptions.js';
 import { schema, tables, taskComments } from './schema.js';
 
@@ -41,6 +42,7 @@ export function dataQueries(client: Database.Database, options: {
   tables: readonly TableName[];
   visibility: QueryVisibility;
   relationsDepthLimit?: number;
+  fields?: GraphQLFieldConfigMap<unknown, {viewer:Viewer}>;
 }) {
   if (!options.tables.length) throw new Error('Select at least one query table');
   const depth = options.relationsDepthLimit ?? 2;
@@ -203,8 +205,16 @@ export function dataQueries(client: Database.Database, options: {
       return querySelection.run(info, () => resolve(source, args, context, info));
     };
   }
-  // Register the JSON scalar introduced on the generated reading types.
-  return selected.has('boxReadings') ? new GraphQLSchema(generated.toConfig()) : generated;
+  // The generated schema belongs to this caller and has not escaped. Attach custom
+  // resolvers after wrapping the generated table reads, then register their types
+  // together with the JSON scalar in one traversal of the finished schema.
+  const fields = options.fields ?? {};
+  const extended = Object.keys(fields).length > 0;
+  if (extended) {
+    const extension = new GraphQLObjectType({name:'QueryExtensions',fields});
+    Object.assign(rootFields,extension.getFields());
+  }
+  return extended || selected.has('boxReadings') ? new GraphQLSchema(generated.toConfig()) : generated;
 }
 
 /** Merge field selections by schema field name: scalar aliases, directives
