@@ -12,7 +12,11 @@
     {
       "id": "tempo-002",
       "promise": "Shows a day as a calendar, with each trigger at the time it fires.",
-      "source": "docs/how-it-works/site/tempo.html"
+      "source": "docs/how-it-works/site/tempo.html",
+      "probe": {
+        "kind": "action",
+        "action": "tempoCalendar"
+      }
     },
     {
       "id": "tempo-003",
