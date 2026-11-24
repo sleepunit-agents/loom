@@ -185,7 +185,7 @@ export class TriggerEngine {
     const park = parkedSource(v);
     if (v.parked && (!park || v.sourceKind !== 'answer' || v.lifespan !== 'once' || v.targetKind !== 'inbox' || v.toKind !== 'agent'
       || v.times || v.days || v.program)) throw Error('A parked wait resumes an agent once on an answer');
-    const due = park ? new Date(this.clock.now() + DAY_MS).toISOString() : this.due(v.sourceKind, v.times, v.days, v.lifespan);
+    const due = park ? new Date(this.clock.now() + DAY_MS).toISOString() : this.due(v.sourceKind, v.times, v.days, v.lifespan, !!pendingRun);
     if (coveringSchedule && due && v.file && v.sourceKind === 'time' && v.lifespan === 'once' &&
         v.targetKind === 'inbox' && v.toKind === 'agent' && v.to && v.ownerKind === 'agent' && v.owner === v.to &&
         !member && !v.conversation && !v.project && !v.program && !v.needs && !v.prefers && !v.id) {
@@ -196,9 +196,10 @@ export class TriggerEngine {
     if (pendingRun) {
       if (member || asked || v.ownerKind !== 'agent' || !v.owner || v.to !== v.owner || v.toKind !== 'agent' ||
           v.targetKind !== 'inbox' || v.sourceKind !== 'time' || v.lifespan !== 'once' || v.project || v.conversation ||
-          v.program || park || !due) throw Error('Joining a pending run requires a one-off wake for the same agent');
+          v.program || park) throw Error('Joining a pending run requires a one-off wake for the same agent');
       const waiting = pendingRun(v.id, v.owner);
       if (waiting.existing) return waiting.existing;
+      if (!due) throw Error('Time is in the past');
       id = waiting.id;
     }
     this.db.transaction(() => {
@@ -296,11 +297,14 @@ export class TriggerEngine {
     });
     this.tick();
   }
-  private due(sourceKind: Trigger['sourceKind'], times: string | null | undefined, days: string | null | undefined, lifespan: Trigger['lifespan']): string | null {
+  private due(sourceKind: Trigger['sourceKind'], times: string | null | undefined, days: string | null | undefined, lifespan: Trigger['lifespan'], allowPast = false): string | null {
     if (sourceKind !== 'time') return null;
     if (!times) throw new Error('Time trigger needs a time');
     const at = nextTime(times, days ?? null, this.clock.now() - 1, this.zone());
-    if (!Number.isFinite(at)) throw new Error('Time is in the past');
+    if (!Number.isFinite(at)) {
+      if (allowPast) return null;
+      throw new Error('Time is in the past');
+    }
     if (lifespan === 'today' && localDate(at, this.zone()) !== localDate(this.clock.now(), this.zone())) throw new Error('No time left today');
     return new Date(at).toISOString();
   }

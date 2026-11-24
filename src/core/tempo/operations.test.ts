@@ -200,10 +200,13 @@ it('joins an older unguarded wake even while held, preserving exact name and rec
   const joined = {ok:true,value:{id:first,joined:true}};
   expect(f.call('tempo.set', next, 'join')).toMatchObject(joined);
   f.tempo.triggers.pause('art');
-  expect(f.call('tempo.set', next, 'held')).toMatchObject(joined);
+  const late = {...next,times:new Date(f.clock.now()-1000).toISOString()};
+  expect(f.call('tempo.set', late, 'held')).toMatchObject(joined);
+  expect(f.call('tempo.set', {...late,times:'invalid'}, 'invalid').ok).toBe(false);
   f.tempo.triggers.resume('art');
   f.clock.advance(60000);
   expect(f.tempo.triggers.get(first).state).toBe('fired');
+  expect(f.call('tempo.set', late, 'missed').ok).toBe(false);
   expect(f.call('tempo.set', next, 'join')).toMatchObject(joined);
   expect(f.call('tempo.set', {...next, id:first}, 'fresh')).toMatchObject({ok:true,value:{id:expect.not.stringMatching(first)}});
   expect(f.db.select().from(triggers).all()).toHaveLength(3);
