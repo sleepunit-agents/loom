@@ -75,7 +75,7 @@ import {agentBodyPolicyInput,readAgentBodyPolicy,saveAgentBodyPolicy} from './sh
 import {placeScheduleAsk,placeScheduleCard,placeScheduleRefusal,placeScheduleWords,type PlaceScheduleAsk} from './shared-place-triggers.js';
 import {triggers as triggerRows} from './core/data/schema.js';
 import {applyKitChange,kitBefore,kitCardName,kitReview,kitQuestion,kitRefusal,kitChange,kitChanges,projectKitDefinitions,type KitRefusal} from './shared-kit-cards.js';
-import {outsideShort,colleagueTitle,outsideProjectTitle,outsideKitGrantTitle,type InboxCardNames,outsideCardName,proposalCard,factLines,storedProposal,clipProposalText,clipWithCount,type CardContext,type CardNames} from './proposal-words.js';
+import {outsideShort,bridgePersonTitle,colleagueTitle,outsideProjectTitle,outsideKitGrantTitle,type InboxCardNames,outsideCardName,proposalCard,factLines,storedProposal,clipProposalText,clipWithCount,type CardContext,type CardNames} from './proposal-words.js';
 import {validateBoxSettings,validateMachineReader} from './shared-box-settings.js';
 import {validateAgentRunSettings} from './shared-agent-run-settings.js';
 import {validateAgentAccounts} from './shared-household-access.js';
@@ -529,6 +529,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
     const titles=new Map<string,string>();
     const grants=[];
     const contacts=[];
+    const bridgePeopleCards=[];
     const projectsNeeded=new Set<string>();
     const rosterRequests=[];
     for(const card of cards){
@@ -536,6 +537,8 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
       try{value=read(card).value;}catch{continue;}
       if(value.change==='kitGrant' && 'platform' in value.input.to && value.input.to.platform==='slack'){
         grants.push({card,input:value.input,to:value.input.to});
+      }else if(value.change==='bridge'&&(value.input.action==='person'||value.input.action==='removePerson')&&value.input.platform==='slack'){
+        bridgePeopleCards.push({card,input:value.input});
       }else if((value.change==='colleague'||value.change==='projectOutsidePerson')&&value.input.platform==='slack'){
         contacts.push({card,value});
         if(value.input.project)projectsNeeded.add(value.input.project);
@@ -547,14 +550,23 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
         if(title)titles.set(card.id,title);
       }
     }
-    if(!grants.length&&!contacts.length)return titles;
+    if(!grants.length&&!contacts.length&&!bridgePeopleCards.length)return titles;
     let held:ReturnType<InboxCardNames['slackGrantNames']>;
-    try{held=names.slackGrantNames([...grants.map(grant=>grant.to),...contacts.map(({value})=>({workspace:value.input.workspace,user:value.input.user}))]);}
+    try{held=names.slackGrantNames([...grants.map(grant=>grant.to),...bridgePeopleCards.map(({input})=>({workspace:input.workspace,user:input.user})),...contacts.map(({value})=>({workspace:value.input.workspace,user:value.input.user}))]);}
     catch{ return titles; } // Full previews also omit cards whose bridge lookup is unavailable.
     for(const {card,input,to} of grants){
       const recipient=held.get(JSON.stringify([to.workspace,to.user]))??null;
       const agent=card.state==='pending'?input.agent.charAt(0).toUpperCase()+input.agent.slice(1):input.agent;
       titles.set(card.id,outsideKitGrantTitle(input.grant,agent,input.kit,to,recipient,names));
+    }
+    for(const {card,input} of bridgePeopleCards){
+      const match=held.get(JSON.stringify([input.workspace,input.user]));
+      // A Last seen alias can label an access grant, but cannot identify a bridge account link.
+      const whom=outsideShort(input,match && match.via!=='alias'?match:null,names);
+      const pending=card.state==='pending';
+      const member=input.action==='person'?input.member:pending && match?.via==='link'?match.name:undefined;
+      const display=member && pending ? member.charAt(0).toUpperCase()+member.slice(1) : member;
+      titles.set(card.id,clipProposalText(bridgePersonTitle(whom,input.action==='removePerson',display),240));
     }
     const projectNames=new Map(projectsNeeded.size?db.select({id:projectRows.id,name:projectRows.name}).from(projectRows)
       .where(inArray(projectRows.id,[...projectsNeeded])).all().map(row=>[row.id,row.name]):[]);
