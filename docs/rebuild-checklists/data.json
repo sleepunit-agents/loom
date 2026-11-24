@@ -165,7 +165,20 @@
     {
       "id": "data-024",
       "promise": "bridge_file_messages Which messages carried each kept Slack or Discord attachment. A file shared in two messages is listed under both and kept once.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "slackFileRetention"
+          },
+          {
+            "kind": "action",
+            "action": "discordFileRetention"
+          }
+        ]
+      }
     },
     {
       "id": "data-025",
