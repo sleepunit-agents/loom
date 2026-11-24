@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import {afterEach,expect,it} from 'vitest';
+import {afterEach,expect,it,vi} from 'vitest';
 import {eq} from 'drizzle-orm';
 import {createDataSchema} from './database.js';
 import {members,agents,memberAgents,projects,projectMembers,projectAgents} from './schema.js';
@@ -27,4 +27,33 @@ it('reads current household policy facts in six generated batches at two and ten
  const after=sharedSharing(db);
  expect(after.members['member-2']).toBeUndefined();expect(after.projects['project-2']).toBeUndefined();expect(after.agents).not.toContain('agent-2');
  expect(canReadSharedConversation(db,viewer,'missing')).toBe(false);
+});
+
+it('prepares the six readers once on each connection and executes them for every read', () => {
+  const fixtures = ['first', 'second'].map(member => {
+    const statements: string[] = [];
+    const client = new Database(':memory:', { verbose: statement => statements.push(statement) });
+    clients.push(client);
+    const db = createDataSchema(client, () => '2026-11-14T18:00:00Z');
+    db.insert(members).values({ id: member, role: 'owner', joinedAt: '2026-11-14T18:00:00Z' }).run();
+    statements.length = 0;
+    return { member, db, statements, prepare: vi.spyOn(client, 'prepare') };
+  });
+  try {
+    for (let n = 0; n < 3; n++) {
+      for (const { member, db } of fixtures) expect(Object.keys(sharedSharing(db).members)).toEqual([member]);
+    }
+    for (const { statements, prepare } of fixtures) {
+      expect(prepare).toHaveBeenCalledTimes(6);
+      expect(statements).toHaveLength(18);
+    }
+    const { member, db } = fixtures[0];
+    const rollback = new Error('Roll back the fixture change');
+    expect(() => db.transaction(() => {
+      db.update(members).set({ role: 'member' }).where(eq(members.id, member)).run();
+      expect(sharedSharing(db).members[member].owner).toBe(false);
+      throw rollback;
+    })).toThrow(rollback);
+    expect(sharedSharing(db).members[member].owner).toBe(true);
+  } finally { for (const { prepare } of fixtures) prepare.mockRestore(); }
 });

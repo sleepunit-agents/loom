@@ -1,7 +1,7 @@
 /** Current credential claims at the outside door. Never derive authority from a
  * caller's Viewer label, job argument, or an installed-module name. */
 import {isReservedProgramOperation,programSnapshot,sameProgramGrants,type ProgramGrantReader,type ProgramGrants} from './shared-program-access.js';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, placeholder } from 'drizzle-orm';
 import type { Viewer } from './policy.js';
 import type { Clock } from './core/clock.js';
 import type { DataDatabase } from './core/data/database.js';
@@ -13,6 +13,7 @@ import type { Authentication } from './core/live/index.js';
 export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () => boolean, write: (action: () => boolean) => void, programs: ProgramGrantReader = () => undefined) {
   const resolve = dataAuthentication(db, () => clock.now(), { programs: 'admit' });
   const identity = { fingerprint: tokens.fingerprint, kind: tokens.kind, member: tokens.member, agent: tokens.agent, job: tokens.job, box: tokens.box };
+  const readIdentity = db.select(identity).from(tokens).where(eq(tokens.fingerprint, placeholder('tokenId'))).prepare();
   type Token = Pick<typeof tokens.$inferSelect, keyof typeof identity>;
   type Proof = { token: Token; session?: string; bearer: boolean; grants?:Readonly<ProgramGrants>; valid(): boolean; box?: string };
   const proofs = new WeakMap<Viewer, Proof>();
@@ -46,7 +47,7 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
       // Which token and session this is comes from the same resolution that named the viewer, so the
       // proof kept here can never be about a different credential than the one that was admitted.
       const { token: tokenId, session } = auth.credential, bearer = session === undefined;
-      const token = db.select(identity).from(tokens).where(eq(tokens.fingerprint, tokenId)).get();
+      const token = readIdentity.get({tokenId});
       if (!token) return;
       const grants=programSnapshot(programs,tokenId);
       // Program tokens stay outside callers; they cannot mint browser/body authority.
@@ -57,7 +58,7 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
         // Stop before any SQL when the root has closed admission.
         if (!admitted() || !auth.valid() || !admitted()) return false;
         if(!sameProgramGrants(grants,programSnapshot(programs,tokenId)))return false;
-        const current = db.select(identity).from(tokens).where(eq(tokens.fingerprint, tokenId)).get();
+        const current = readIdentity.get({tokenId});
         if (!current || ['kind', 'member', 'agent', 'job', 'box'].some(key => current[key as keyof Token] !== token[key as keyof Token])) return false;
         if (token.job && !bodyJob(token, bound)) return false;
         return true;

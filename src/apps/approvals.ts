@@ -1,3 +1,5 @@
+import {shellCommandRecord} from './shell-command-record.js';
+import {sameCommandForm,shellRequestRecord} from './approval-answer.js';
 import { parseMergeTarget } from './merge-target.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, sql } from 'drizzle-orm';
@@ -32,14 +34,14 @@ export type ApprovedOperations = ReadonlyMap<string, (approval: Approval, review
  */
 export function approvalService(db: DataDatabase, operations: ApprovedOperations = new Map(), now: () => string = () => new Date().toISOString()) {
   const mail = new Conversations(db, now, lateMailWaits);
-  const answer = (row: Approval, member: string, allowed: boolean) => {
+  const answer = (row: Approval, member: string, allowed: boolean, reason?: string) => {
     const scope=mail.answerScope(row.conversation,row.agent,{project:row.project,member:row.member})??{project:row.project,member:row.member};
     const questions = mail.resolve('approval', row.id, allowed ? 'Allowed' : 'Denied');
     // One answer returns to the asking agent, even if several owners saw it.
     // A later denial of an allowance is a new event, not a replay of its answer.
     mail.send({ toKind: 'agent', to: row.agent, conversation: row.conversation,
       source: questions.length ? 'answer' : 'approval', sourceId: questions[0]?.id ?? `${row.id}:denied`,
-      fromKind: 'person', fromId: member, words: [allowed ? 'Allow' : 'Deny', row.ask, allowed ? row.ifYes : row.ifNo].join('\n'),
+      fromKind: 'person', fromId: member, words: [allowed ? 'Allow' : 'Deny', row.ask, allowed ? row.ifYes : row.ifNo, ...(reason ? [reason] : [])].join('\n'),
       ...scope, agent: row.agent, refs: [row.id, ...questions.map(q => q.id)] });
   };
   const get = (id: string) => {
@@ -51,6 +53,7 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
     const seq = db.select({ n: sql<number>`coalesce(max(${approvalRecord.seq}), 0) + 1` }).from(approvalRecord).get()!.n;
     db.insert(approvalRecord).values({ seq, at: now(), event, approval: row.id, agent: row.agent, note }).run();
   };
+  const isShell = (row: Approval) => row.kind === 'command' && !!shellRequestRecord(db,row.id).get();
   const expire = (row: Approval) => {
     if (row.state === 'allowed' && row.expiresAt && Date.parse(row.expiresAt) <= Date.parse(now())) {
       db.update(approvals).set({ state: 'expired' }).where(eq(approvals.id, row.id)).run();
@@ -59,7 +62,7 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
     return row;
   };
   return {
-    request(input: ApprovalRequest, machineOwner?: string) {
+    request(input: ApprovalRequest, machineOwner?: string, literalShell = false) {
       const value = request.parse(input);
       if (value.kind === 'merge' && !parseMergeTarget(value.target)) throw new Error('A merge approval must name one exact commit');
       if ((value.kind === 'setting' || value.kind === 'dangerous') && (!value.operation || !value.changeSummary)) throw new Error('A proposed change needs an operation and before/after summary');
@@ -72,7 +75,7 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
           fromKind: 'agent', fromId: row.agent, conversation: row.conversation, project: row.project, agent: row.agent, member: row.member,
           words: row.ask, why: row.why, answers: 'yes-no', ifYes: row.ifYes, ifNo: row.ifNo,
           waitsOnKind: 'approval', waitsOnId: row.id, refs: [row.id] });
-        record(row, 'request'); return row;
+        record(row, 'request', literalShell ? shellCommandRecord : ''); return row;
       });
     },
     get(id: string) { return db.transaction(() => expire(get(id))); },
@@ -97,18 +100,18 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
         return get(id);
       });
     },
-    deny(id: string, member: string, basis?: string) {
+    deny(id: string, member: string, basis?: string, reason?: string) {
       return db.transaction(() => {
         const row = expire(get(id));
         if (row.state !== 'pending' && row.state !== 'allowed') throw new Error('Approval cannot be denied now');
         db.update(approvals).set({ state: 'denied', decidedBy: member, decidedAt: now(), expiresAt: null }).where(eq(approvals.id, id)).run();
         record(row, 'deny', basis ?? member);
-        const older = db.select().from(approvals).where(and(eq(approvals.agent, row.agent), eq(approvals.kind, row.kind), eq(approvals.target, row.target), eq(approvals.state, 'allowed'))).all();
+        const older = db.select().from(approvals).where(and(eq(approvals.agent, row.agent), eq(approvals.kind, row.kind), eq(approvals.target, row.target), row.kind === 'command' ? sameCommandForm(db,isShell(row)) : undefined, eq(approvals.state, 'allowed'))).all();
         for (const previous of older) {
           db.update(approvals).set({ state: 'denied', overriddenBy: id, expiresAt: null }).where(eq(approvals.id, previous.id)).run();
           record(previous, 'deny', `Overridden by ${id}`);
         }
-        answer(row, member, false);
+        answer(row, member, false, reason);
         return get(id);
       });
     },
@@ -132,10 +135,10 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
       });
     },
     /** A refused spend is a result rather than an exception so its audit commits. */
-    use(id: string, agent: string, kind: Approval['kind'], target: string): { ok: boolean; approval: Approval } {
+    use(id: string, agent: string, kind: Approval['kind'], target: string, literalShell = false): { ok: boolean; approval: Approval } {
       return db.transaction(() => {
         const row = expire(get(id));
-        if (row.agent !== agent || row.kind !== kind || row.target !== target || row.state !== 'allowed' || row.operation) {
+        if (row.agent !== agent || row.kind !== kind || row.target !== target || literalShell !== isShell(row) || row.state !== 'allowed' || row.operation) {
           record(row, 'refused-use', 'Agent, kind, target or allowance does not match');
           return { ok: false, approval: row };
         }

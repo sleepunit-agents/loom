@@ -61,8 +61,8 @@ export class CommsQueries {
   }
   /** Home is the signed-in member's own mailbox, including only agents they
    * can give work to. Reply metadata suffices; no private words are loaded. */
-  home(viewer: Viewer) {
-    return readCommsHome(this.db, viewer, this.allowed(viewer));
+  home(viewer: Viewer, fields?: ReadonlySet<string>) {
+    return readCommsHome(this.db, viewer, this.allowed(viewer), fields);
   }
 
   thread(viewer: Viewer, id: string) {
@@ -178,7 +178,7 @@ export function commsQueryFields(service: CommsQueries): GraphQLFieldConfigMap<u
   return {
     ...service.activityFields(),
     commsArchivedQuestions: service.archivedHistory(),
-    homeComms: { type: home, resolve: (_row, _args, context) => service.home(context.viewer) },
+    homeComms: { type: home, resolve: (_row, _args, context, info) => service.home(context.viewer, selectedQueryFields(info)) },
     commsFolders: { type: new GraphQLNonNull(folders), resolve: (_row, _args, context) => service.folders(context.viewer) },
     commsThreads: { type: many(thread), args: { search: { type: GraphQLString }, member: { type: GraphQLString }, agent: { type: GraphQLString }, archived: { type: GraphQLBoolean }, limit: { type: GraphQLInt }, offset: { type: GraphQLInt } }, resolve: (_row, args, context) => service.list(context.viewer, args) },
     commsThread: { type: thread, args: { id }, resolve: (_row, args, context) => service.thread(context.viewer, args.id) },

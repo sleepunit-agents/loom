@@ -10,7 +10,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { workAnswersAllowed } from './shared-work-access.js';
 import type { DataDatabase } from './core/data/database.js';
-import { approvals, changes } from './core/data/schema.js';
+import { approvals, changes, conversations } from './core/data/schema.js';
 import { type Operations, type Context, OperationError } from './core/operations/index.js';
 import type { approvalService, Approval } from './apps/approvals.js';
 import { changeAnswers } from './apps/changes-answers.js';
@@ -32,18 +32,18 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
   const currentHead = (input: { id: string; head: string }) => {
     if (change(input.id)?.headCommit !== input.head) throw new OperationError('conflict', 'The change head moved. Open it again.');
   };
-  const answerMerge = (ctx: Context, member: string, input: { id: string; head: string; approval: string; allow: boolean; basis?: string }) => {
+  const answerMerge = (ctx: Context, member: string, input: { id: string; head: string; approval: string; allow: boolean; basis?: string; reason?: string }) => {
     // A no is always possible. When the pull request has moved on, closed or gone,
     // there is nothing left to compare the card with: deny the card itself.
     const row = change(input.id);
     if (!input.allow && (!row || row.state !== 'open' || row.headCommit !== input.head)) {
-      try { service.deny(input.approval, member, input.basis); }
+      try { service.deny(input.approval, member, input.basis, input.reason); }
       catch (error) { if (error instanceof Error && ['Approval is already answered', 'Approval cannot be denied now'].includes(error.message)) throw new OperationError('conflict', 'This approval cannot be answered now. Open it again.'); throw error; }
       ctx.changed('approvals', input.approval); if (row) ctx.changed('changes', input.id);
       return;
     }
     currentHead(input);
-    try { answers.answer({ change: input.id, head: input.head, approval: input.approval, member, allow: input.allow, basis: input.basis }); }
+    try { answers.answer({ change: input.id, head: input.head, approval: input.approval, member, allow: input.allow, basis: input.basis, reason: input.reason }); }
     catch (error) {
       if (error instanceof Error && ['Change is no longer open', 'Change head has changed', 'Approval does not match this change', 'Approval is already answered', 'Approval cannot be denied now'].includes(error.message))
         throw new OperationError('conflict', 'The merge request changed. Open it again.');
@@ -82,12 +82,32 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
   const decisionBasis = (answer: 'allow' | 'deny', basis: string | undefined) =>
     basis && (answer === 'allow' ? 'Allowed by ' : 'Denied by ') + basis;
   operations.register({ name: 'approvals.answer', write: true, recheckPolicy: true,
-    input: z.object({ id, answer: z.enum(['allow', 'deny']), confirm: z.literal(true).optional(), review: z.string().regex(SHA256_HEX).optional(), onWord: ownerWord.optional() }).strict(), output: z.object({ id }).strict(),
+    input: z.object({ id, answer: z.enum(['allow', 'deny']), reason: z.string().refine(value => value.trim().length > 0 && value.trim().length <= 2000).optional(), confirm: z.literal(true).optional(), review: z.string().regex(SHA256_HEX).optional(), onWord: ownerWord.optional() }).strict()
+      .transform(input => input.reason && !(input.onWord && 'item' in input.onWord)
+        ? { ...input, reason: input.reason.trim() } : input), output: z.object({ id }).strict(),
     may(viewer, input) {
       const row = approval(input.id);
       if (!workAnswersAllowed(db, viewer) && !sources.bodyJob(viewer) && !(viewer.kind === 'agent' && viewer.atTerminalOf !== undefined && sources.terminal?.(viewer))) return false;
-      evidenceCandidates(db, sources, viewer, input.onWord);
+      const proofs = evidenceCandidates(db, sources, viewer, input.onWord);
       if (!row) return false;
+      if (input.reason) {
+        if (input.answer !== 'deny') return false;
+        const word = input.onWord;
+        if (!word) {
+          if (viewer.kind !== 'member' || sources.isProgram(viewer)) return false;
+        } else {
+          if ('venue' in word) {
+            if (viewer.kind !== 'agent' || word.quote !== input.reason) return false;
+          } else {
+            // Only return the owner's quoted reason to the private Comms thread that supplied it.
+            const job = sources.bodyJob(viewer)?.job, proof = proofs[0];
+            if (word.quote !== input.reason || !word.item || !proof?.sealed || !job?.conversation || row.conversation !== job.conversation ||
+                row.agent !== job.agent || row.member !== proof.member) return false;
+            const cv = db.select().from(conversations).where(eq(conversations.id, job.conversation)).get();
+            if (cv?.venue !== 'loom' || cv.place !== proof.thread || cv.agent !== job.agent || cv.member !== proof.member) return false;
+          }
+        }
+      }
       if (input.review && (viewer.kind !== 'member' || sources.isProgram(viewer) || input.onWord || input.answer !== 'allow' || row.operation !== 'household.change' || !workAnswersAllowed(db, viewer))) return false;
       const merge = mergeTarget(row);
       // A yes to a merge needs its change to still be here; a no is always possible.
@@ -101,7 +121,15 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
         const read = sources.words?.(proof.thread, proof.seq);
         const words = await (terminal ? read?.catch(() => null) : read);
         if (words == null && !terminal) throw new OperationError('denied','Those words do not appear in that message.');
-        opened.set(proof.item, { sealed: proof.sealed, thread: proof.thread, seq: proof.seq, matches: words == null ? null : !!input.onWord && words.includes(input.onWord.quote) });
+        const matches = words == null ? null : !!input.onWord && words.includes(input.onWord.quote);
+        if (!terminal && matches && words) {
+          // Check the whole message: the quoted reason may omit the card ID the owner named.
+          const namedCards = words.match(/(?<![a-z0-9])a-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?![a-z0-9])/gi) ?? [];
+          if (namedCards.length && (!namedCards.some(card => card.toLowerCase() === input.id) ||
+              (input.reason && namedCards.some(card => card.toLowerCase() !== input.id))))
+            throw new OperationError('denied', 'That message names a different approval card.');
+        }
+        opened.set(proof.item, { sealed: proof.sealed, thread: proof.thread, seq: proof.seq, matches });
       }
       return opened;
     },
@@ -129,9 +157,9 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
       if (row.kind === 'dangerous' && input.answer === 'allow' && input.confirm !== true && !basis)
         throw new OperationError('invalid', 'This cannot be undone. To allow it, answer again with confirm set to true.');
       const merge = mergeTarget(row);
-      if (merge) answerMerge(ctx, proof.member, { basis, ...merge, approval: row.id, allow: input.answer === 'allow' });
+      if (merge) answerMerge(ctx, proof.member, { basis, reason: input.reason, ...merge, approval: row.id, allow: input.answer === 'allow' });
       else {
-        try { input.answer === 'allow' ? service.allow(input.id, proof.member, basis, input.review) : service.deny(input.id, proof.member, basis); }
+        try { input.answer === 'allow' ? service.allow(input.id, proof.member, basis, input.review) : service.deny(input.id, proof.member, basis, input.reason); }
         catch (error) {
           if (error instanceof Error && ['Approval is already answered', 'Approval cannot be denied now'].includes(error.message))
             throw new OperationError('conflict', 'This approval cannot be answered now. Open it again.');

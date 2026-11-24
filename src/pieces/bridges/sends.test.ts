@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { asc, eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { agents, members, secrets, bridgeConnections, bridgeIncoming, bridgeSendFiles, bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
-import { BridgeSends, STOPPED_LINE, reviewReply } from './sends.js';
+import { BridgeSends, STOPPED_LINE, dropSettledFiles, reviewReply } from './sends.js';
 import { SEND_FILES, SEND_FILES_BYTES } from './send-file-limit.js';
 import { BridgeReplyNotSent } from './outbound.js';
 
@@ -263,6 +263,19 @@ it('queues a post to a message that was not delivered only as loom\'s own line a
 describe('a post\'s files', () => {
   const png = () => ({ name: '../out/plot one.png', contents: Buffer.from('PNG') });
   const kept = (f: ReturnType<typeof fixture>) => f.db.select().from(bridgeSendFiles).all().map(row => [row.send, row.position, row.name, row.contents.toString()]);
+  it.each([undefined, 'reply'])('cleans up without scanning the send history (send %s)', send => {
+    const statements: string[] = [];
+    const client = new Database(':memory:', { verbose: sql => statements.push(String(sql)) });
+    opened.push(client);
+    const db = createDataSchema(client);
+    statements.length = 0;
+    dropSettledFiles(db, send);
+    const cleanup = statements.find(sql => /^delete from "bridge_send_files"/i.test(sql));
+    expect(cleanup).toBeDefined();
+    const plan = client.prepare('EXPLAIN QUERY PLAN ' + cleanup).all() as { detail: string }[];
+    expect(plan.some(row => /SCAN bridge_sends\b/i.test(row.detail))).toBe(false);
+    if (send !== undefined) expect(plan.some(row => /SCAN bridge_send_files\b/i.test(row.detail))).toBe(false);
+  });
   it('are kept with the post, go out with its last part, and are gone once it is sent', async () => {
     const f = fixture();
     const long = 'a'.repeat(1500) + '\n' + 'b'.repeat(1500);

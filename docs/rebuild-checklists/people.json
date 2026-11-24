@@ -17,7 +17,11 @@
     {
       "id": "people-003",
       "promise": "Lists the agents, and who owns each.",
-      "source": "docs/how-it-works/site/people.html"
+      "source": "docs/how-it-works/site/people.html",
+      "probe": {
+        "kind": "action",
+        "action": "householdAgentOwners"
+      }
     },
     {
       "id": "people-004",

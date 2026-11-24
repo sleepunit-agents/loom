@@ -40,7 +40,10 @@ export function sharedPasskeys(db:DataDatabase,clock:Clock,rp:{origin:string;rpI
     loginOptions(){return {challenge:challenge(),rpId:rp.rpId,timeout:CHALLENGE_MS,userVerification:'required'};},
     registrationOptions(cookie:string){
       const {session,token}=fresh(cookie);
-      return {challenge:challenge({session:session.id,token:token.fingerprint}),rp:{id:rp.rpId,name:'Loom'},user:{id:Buffer.from(token.member!).toString('base64url'),name:token.member!,displayName:token.member!},pubKeyCredParams:ALGS.map(alg=>({type:'public-key',alg})),timeout:CHALLENGE_MS,authenticatorSelection:{residentKey:'required',userVerification:'required'},attestation:'none',excludeCredentials:db.select().from(passkeys).all().filter(k=>{const t=db.select().from(tokens).where(eq(tokens.fingerprint,k.token)).get();return t?.member===token.member;}).map(k=>({type:'public-key',id:k.id}))};
+      const enrolled=db.select({id:passkeys.id}).from(passkeys)
+        .innerJoin(tokens,eq(tokens.fingerprint,passkeys.token))
+        .where(eq(tokens.member,token.member!)).all();
+      return {challenge:challenge({session:session.id,token:token.fingerprint}),rp:{id:rp.rpId,name:'Loom'},user:{id:Buffer.from(token.member!).toString('base64url'),name:token.member!,displayName:token.member!},pubKeyCredParams:ALGS.map(alg=>({type:'public-key',alg})),timeout:CHALLENGE_MS,authenticatorSelection:{residentKey:'required',userVerification:'required'},attestation:'none',excludeCredentials:enrolled.map(k=>({type:'public-key',id:k.id}))};
     },
     register(cookie:string,body:Record<string,unknown>){
       const {session,token}=fresh(cookie), verified=verifyRegistration(body,rp), issued=spend(verified.challenge);

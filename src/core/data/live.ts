@@ -51,6 +51,16 @@ export class DataLive {
   }
   currentRead(version: number | undefined): boolean { return !this.stopped && version !== undefined && version === this.version; }
   private executions = new ExecutionDrain();
+  private transportSchemas = new WeakMap<() => boolean, WeakMap<GraphQLSchema, GraphQLSchema>>();
+
+  /** Only these receiver-independent transport guards can share wrappers.
+   * A standalone watch may use its options object as its active() receiver. */
+  transportGuard(active: () => boolean) {
+    const guard = () => active();
+    this.transportSchemas.set(guard, new WeakMap());
+    return guard;
+  }
+
   changed() { this.version++; for (const listener of [...this.listeners]) listener(); }
   /** Wake readers without making an otherwise current read invalidate its own
    * publication. Only for times loom stamps as it is used (a credential's last
@@ -88,7 +98,14 @@ export class DataLive {
     const errors = validate(options.schema, document);
     if (errors.length) throw errors[0];
     if (getOperationAST(document, options.operationName)?.operation !== 'query') throw new Error('A live selection must be a query');
-    const schema = this.executions.schema(options.schema, () => !this.stopped && (options.active?.() ?? true));
+    const guard = options.active;
+    const cache = guard && this.transportSchemas.get(guard);
+    let schema = cache?.get(options.schema);
+    if (!schema) {
+      const active = cache ? guard : () => options.active?.() ?? true;
+      schema = this.executions.schema(options.schema, () => !this.stopped && active());
+      cache?.set(options.schema, schema);
+    }
     let initial = true;
     let ended = false, dirty = true, previous: unknown, revision = 0, reading = false;
     let wake: (() => void) | undefined;

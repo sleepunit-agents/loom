@@ -7,12 +7,38 @@
     {
       "id": "bridges-001",
       "promise": "How agents talk to people in other apps. A connection is one bot signed in to one Discord server or Slack workspace, speaking for one agent.",
-      "source": "docs/how-it-works/site/bridges.html"
+      "source": "docs/how-it-works/site/bridges.html",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "discordConversations"
+          },
+          {
+            "kind": "action",
+            "action": "slackConversations"
+          }
+        ]
+      }
     },
     {
       "id": "bridges-002",
       "promise": "Connects a bot to a server or workspace for one agent.",
-      "source": "docs/how-it-works/site/bridges.html"
+      "source": "docs/how-it-works/site/bridges.html",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "discordConversations"
+          },
+          {
+            "kind": "action",
+            "action": "slackConversations"
+          }
+        ]
+      }
     },
     {
       "id": "bridges-003",
@@ -44,7 +70,11 @@
     {
       "id": "bridges-006",
       "promise": "The bot's token is a stored secret.",
-      "source": "docs/how-it-works/site/bridges.html#con-h"
+      "source": "docs/how-it-works/site/bridges.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeSettings"
+      }
     },
     {
       "id": "bridges-007",
@@ -76,7 +106,11 @@
     {
       "id": "bridges-010",
       "promise": "An agent's run settings give each outside person a tier.",
-      "source": "docs/how-it-works/site/bridges.html#con-h"
+      "source": "docs/how-it-works/site/bridges.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeContactTiers"
+      }
     },
     {
       "id": "bridges-011",
@@ -108,17 +142,51 @@
     {
       "id": "bridges-014",
       "promise": "A connection is one bot signed in to one Discord server or Slack workspace, speaking for one agent. Attachments fetched from Slack are kept for 14 days.",
-      "source": "docs/how-it-works/site/bridges.html#how-h"
+      "source": "docs/how-it-works/site/bridges.html#how-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "discordConversations"
+          },
+          {
+            "kind": "action",
+            "action": "slackConversations"
+          },
+          {
+            "kind": "action",
+            "action": "slackFileRetention"
+          }
+        ]
+      }
     },
     {
       "id": "bridges-015",
       "promise": "a Household things. Connections, channel rules and person links belong to the household. Household owners manage them and see them all.",
-      "source": "docs/how-it-works/site/bridges.html#see-h"
+      "source": "docs/how-it-works/site/bridges.html#see-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "bridgeSettings"
+          },
+          {
+            "kind": "action",
+            "action": "deskPanelVisibility"
+          }
+        ]
+      }
     },
     {
       "id": "bridges-016",
       "promise": "b An agent's owners. An agent's owners see their agent's connections.",
-      "source": "docs/how-it-works/site/bridges.html#see-h"
+      "source": "docs/how-it-works/site/bridges.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "deskPanelVisibility"
+      }
     },
     {
       "id": "bridges-017",
@@ -128,7 +196,11 @@
     {
       "id": "bridges-018",
       "promise": "d Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
-      "source": "docs/how-it-works/site/bridges.html#see-h"
+      "source": "docs/how-it-works/site/bridges.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "inboxCallers"
+      }
     },
     {
       "id": "bridges-019",

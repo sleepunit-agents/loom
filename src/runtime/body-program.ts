@@ -11,6 +11,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { workerAssignment } from './worker-http.js';
 import { bodyInput, eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { bodyConversationClient,bodyMailContext } from './conversation-client.js';
+import { omittedWakeTools, type OmittedWakeTools } from './wake-tool-profiles.js';
 import { bodyHarness, harnessCannotRun, harnesses } from './body-harnesses.js';
 import { BODY_OWN_HARNESS, BODY_SCRATCH, HarnessResumeUnavailable, type HarnessRun } from './body-harness.js';
 import {kitReasons,kitUnavailableList,type KitUnavailable} from './kit-availability.js';
@@ -153,10 +154,12 @@ export async function bodyProgram(input: {
     const continued:string[]=[];let oldestErased:string|undefined, earliestExpiry:string|undefined;
     // loom read who is in the room when it claimed the job. The body takes everything waiting, so mail from
     // outside the household may have arrived since; nobody looked that sender up, so they count as a guest.
+    let deliveredItems = 0;
     const journalDeliveries: string[] = [];
     const claimed=job.run?.policy?.mail;let lateStranger=false,placed=false;
     const batch = await client.takeAndAccept(async (item, sinkSignal) => {
       if (sinkSignal.aborted || signal.aborted) throw new Error();
+      deliveredItems++;
       // This is the receiving body's context, never a parent's pipe queue.
       // Mail in a bridge conversation that is no message from the bridge: a trigger's firing there, or a note
       // from another body of this agent. Its answer is a post in the conversation, answering no message.
@@ -221,6 +224,11 @@ export async function bodyProgram(input: {
     const policy=lateStranger&&job.run?.policy?withUnknownSender(job.run.policy):job.run?.policy;
     // What this body may use, decided once here for everything below: loom's tools only on anybody else's word.
     const guest=hasGuest(policy),reach=bodyReach(plan.reach,policy);
+    let omitClaudeTools: OmittedWakeTools = [];
+    if (reach === 'all' && job.harness === 'claude' && journalDeliveries.length && journalDeliveries.length === deliveredItems) {
+      const profile = await memoryClient.command('tempo.wakeToolProfile', {items: journalDeliveries}, randomUUID());
+      if (profile.ok) omitClaudeTools = omittedWakeTools.safeParse(profile.value).data ?? [];
+    }
     // The word turned after the startup secrets were fetched: they leave the environment before any harness starts.
     if(guest)secrets.close();
     // And the session it was handed before the word turned is not continued, and none is left: its files go
@@ -260,7 +268,7 @@ export async function bodyProgram(input: {
         'Discover available roles, assigned peers and Codex capacity with {"operation":"conversation.handoffOptions","id":"discover-handoffs","input":{}}.',
         'Submit conversation.handoff through the same tool. Give the command a stable id. In input, include exactly one of role (a listed role), agent (a listed peer), or harness "codex", plus label, words and a clientId unique to the brief. Reuse both IDs and the same input when retrying that brief.',
         'Make words self-contained. Include the repository and commit for repository work. To schedule a role or Codex job, supply notBefore as a UTC timestamp within the private brief retention period.',
-        'Role and Codex results return to this thread. Check progress with conversation.handoffStatus, passing value.conversation from the receipt as input.conversation. For help inside this job, use native subagents when your harness provides them.',
+        'Role and Codex results return to this thread. Check progress with conversation.handoffStatus, passing value.conversation from the receipt as input.conversation. To cancel a scheduled handoff before it gets a job, call conversation.handoffCancel with the same child conversation. For help inside this job, use native subagents when your harness provides them.',
       ].join(' ');
       context.unshift(delegation);continued.unshift(delegation);
     }
@@ -327,7 +335,7 @@ export async function bodyProgram(input: {
     if(tools?.houseSend)shellEnv.LOOM_BODY_HOUSE_SEND=tools.houseSend;
     delete shellEnv.LOOM_BODY_HOUSE_NOTE;
     if(tools?.houseNote)shellEnv.LOOM_BODY_HOUSE_NOTE=tools.houseNote;
-    const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, reach, env: shellEnv, failedUsage:usage=>{failureReport=usage;}, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
+    const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, reach, omitClaudeTools, env: shellEnv, failedUsage:usage=>{failureReport=usage;}, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
     // A second one for the case the session cannot be continued: each takes its own copy of the tools file.
     const native = harness(), afresh = resume ? harness() : undefined;
     tools?.config.fill(0);

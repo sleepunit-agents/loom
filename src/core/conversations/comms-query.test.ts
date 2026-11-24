@@ -148,6 +148,23 @@ it('returns the existing private question envelope intact and performs no writes
 });
 
 
+it('skips the mailbox scan when the desk only selects member or agents', async () => {
+  const f = await fixture();
+  f.db.insert(memberAgents).values({ member: 'alice', agent: 'art' }).run();
+  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: commsQueryFields(f.service) }) });
+  const source = `query Home($summary: Boolean!) {
+    homeComms { member teammates: agents ...Counts }
+  } fragment Counts on HomeComms { summaries @include(if: $summary) { unread } }`;
+  for (const summary of [false, true]) {
+    f.statements.length = 0;
+    const result = await graphql({ schema, source, variableValues: { summary }, contextValue: { viewer: alice } });
+    expect(result.errors).toBeUndefined();
+    expect(result.data?.homeComms).toEqual({ member: 'alice', teammates: ['art'], ...(summary ? { summaries: [{ unread: 1 }] } : {}) });
+    const readsHistory = f.statements.some(sql => /\b(?:from|join)\s+["`]?(?:threads|messages)\b/i.test(sql));
+    expect(readsHistory).toBe(summary);
+  }
+});
+
 it('projects Home from the current member and owned agents, counting reply threads across the whole mailbox', async () => {
   const f = await fixture();
   f.db.insert(memberAgents).values({ member: 'alice', agent: 'art' }).run();
@@ -394,6 +411,46 @@ it('reads archived metadata without ciphertext and rechecks thread visibility af
   expect((await ask('ref body{text}')).data).toEqual({commsArchivedQuestions:[]});
 });
 
+it('opens long activity threads at the latest update and pages back without overlap', async () => {
+  const f = await fixture();
+  const { prepareAgentPost } = await import('./agent-posts.js');
+  const write = async (edit: Parameters<typeof prepareAgentPost>[3]) =>
+    (await prepareAgentPost(f.db,f.key,f.thread.id,edit))('2026-11-14T18:00:00.000Z');
+  const thread = await write({action:'open', words:'Opening'});
+  for (let i=1;i<=26;i++) await write({action:'reply',thread,words:'Update '+i});
+  const schema = new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:commsQueryFields(f.service)})});
+  const read = async (after:string) => {
+    const result=await graphql({schema,contextValue:{viewer:alice},variableValues:{thread,after},source:
+      'query($thread:String!,$after:String!){agentActivityHistory(agent:"art",thread:$thread,after:$after,limit:25,newestFirst:true){id words}}'});
+    expect(result.errors).toBeUndefined();
+    return result.data!.agentActivityHistory as {id:string;words:string}[];
+  };
+  const first=await read('0');
+  expect(first.map(row=>row.words)).toEqual(Array.from({length:25},(_,i)=>'Update '+(26-i)));
+  expect((await read(first[24].id)).map(row=>row.words)).toEqual(['Update 1','Opening']);
+});
+
+it('pages visible activities by their newest reply across equal timestamps', async () => {
+  const f=await fixture(), at='2026-11-14T18:00:00.000Z';
+  const {prepareAgentPost}=await import('./agent-posts.js');
+  const other=f.comms.threads.open({agent:'art',member:'bob',title:'Other'});
+  const write=async(source:string,edit:Parameters<typeof prepareAgentPost>[3])=>
+    (await prepareAgentPost(f.db,f.key,source,edit))(at);
+  const oldest=await write(f.thread.id,{action:'open',words:'Oldest'});
+  await write(other.id,{action:'open',words:'Private'});
+  await write(f.thread.id,{action:'open',words:'Middle'});
+  await write(f.thread.id,{action:'open',words:'Newest'});
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:commsQueryFields(f.service)})});
+  const read=(before:string)=>graphql({schema,contextValue:{viewer:alice},variableValues:{before},
+    source:'query($before:String!){agentActivityFeed(agent:"art",limit:2,before:$before){title latest{id}}}'});
+  expect((await read('0')).data?.agentActivityFeed).toEqual([{title:'Newest',latest:{id:'4'}},{title:'Middle',latest:{id:'3'}}]);
+  expect((await read('3')).data?.agentActivityFeed).toEqual([{title:'Oldest',latest:{id:'1'}}]);
+  await write(f.thread.id,{action:'reply',thread:oldest,words:'Back on it'});
+  expect((await read('3')).data?.agentActivityFeed).toEqual([]);
+  expect((await read('0')).data?.agentActivityFeed).toEqual([{title:'Oldest',latest:{id:'5'}},{title:'Newest',latest:{id:'4'}}]);
+  expect((await read('-1')).errors).toBeDefined();
+});
+
 it('serves the activity card and history under the current source conversation visibility', async () => {
   const f = await fixture();
   const { prepareAgentPost } = await import('./agent-posts.js');
@@ -408,16 +465,19 @@ it('serves the activity card and history under the current source conversation v
   const read = (who: typeof alice, id: string) => graphql({schema,contextValue:{viewer:who},variableValues:{id},
     source:`query($id:String!){
       agentActivityFeed(agent:"art"){thread title latest{words} parent{words}}
+      selected:agentActivityFeed(agent:"art",thread:$id,limit:1){title}
       agentActivityHistory(agent:"art",thread:$id){id words}
     }`});
   const own = await read(alice,thread);
   expect(own.errors).toBeUndefined();
-  expect(own.data).toEqual({agentActivityFeed:[{thread,title:'Boot console',latest:{words:'It scrolls!'},parent:{words:'Boot console'}}],
+  expect(own.data).toEqual({selected:[{title:'Boot console'}],agentActivityFeed:[{thread,title:'Boot console',latest:{words:'It scrolls!'},parent:{words:'Boot console'}}],
     agentActivityHistory:[{id:'1',words:'Boot console'},{id:'2',words:'It scrolls!'}]});
   expect((await read(alice,otherActivity)).data?.agentActivityHistory).toEqual([]);
   expect((await read(owner,otherActivity)).data?.agentActivityHistory).toEqual([{id:'3',words:'Other work'}]);
+  expect((await read(alice,otherActivity)).data?.selected).toEqual([]);
+  expect((await read(owner,thread)).data?.selected).toEqual([{title:'Boot console'}]);
   f.onOpen(f.revoke);
-  expect((await read(alice,thread)).data).toEqual({agentActivityFeed:[],agentActivityHistory:[]});
+  expect((await read(alice,thread)).data).toEqual({selected:[],agentActivityFeed:[],agentActivityHistory:[]});
 });
 
 it('attaches current work states to a post without requiring the IDs in its words', async () => {

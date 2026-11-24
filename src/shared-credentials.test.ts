@@ -173,6 +173,20 @@ it.each(['queued','unassigned','wrong-agent'] as const)('refuses initial body au
   expect(f.client.prepare('SELECT * FROM operation_results').all()).toEqual([]);
 });
 
+it('prepares one identity lookup for repeated checks of different tokens', () => {
+  const f = fixture();
+  const prepare = vi.spyOn(f.client, 'prepare');
+  const door = sharedCredentials(f.db, f.clock, () => true, action => { action(); });
+  for (const token of [raw.member, raw.agent, raw.member]) {
+    const auth = door.authenticate(request({ authorization: 'Bearer '+token }), { recordUse: false });
+    expect(auth?.valid()).toBe(true);
+    expect(auth?.valid()).toBe(true);
+  }
+  const identityReads = prepare.mock.calls.map(([statement]) => String(statement)).filter(statement =>
+    /select "fingerprint", "kind", "member", "agent", "job", "box" from "tokens"/i.test(statement));
+  expect(identityReads).toHaveLength(1);
+});
+
 it('reads binding metadata without selecting or retaining job payload columns', () => {
   const f = fixture();
   f.db.update(jobs).set({ brief: 'Private fixture words', logTail: 'Private fixture transcript' }).where(eq(jobs.id, 'job-1')).run();

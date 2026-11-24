@@ -15,6 +15,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {saveBodyAttachments} from './runtime/body-attachments.js';
 import {wordsKey} from './pieces/comms/crypto.js';
+import {readBridgeAttachments} from './core/data/bridge-attachment-read.js';
 import {BridgeFiles} from './pieces/bridges/files.js';
 import {expirePrivateBridgeWords} from './core/conversations/private-bridge-words.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];
@@ -142,6 +143,20 @@ it('denies cached bytes and preparation to a body acting on a guest’s word',as
  const body=f.body(room.conversation!);f.root.writes.run(()=>f.root.services.conversations.take(room.conversation!,body.job));
  expect((await f.call('file',{incoming:room.id},body.token)).status).toBe(403);
  expect((await f.call('prepareFile',{incoming:room.id,index:0,maxBytes:12},body.token)).status).toBe(403);
+});
+it('keeps bytes in SQLite for listings and over-limit files, and reads the exact download limit',()=>{
+ const f=fixture(),incoming=f.receive(false).id;
+ const store=new BridgeFiles(f.db,f.clock);
+ try {
+  for(const [file,contents] of [['empty',''],['exact','abc'],['large','abcd']]){
+   store.store({connection:'slack',incoming,file,name:file+'.txt',contents:Buffer.from(contents)});
+  }
+  const read=(file?:string)=>readBridgeAttachments(f.db,{incoming,file},3).map(row=>[row.file,row.bytes,row.contents]);
+  expect(read()).toEqual([['empty',0,null],['exact',3,null],['large',4,null]]);
+  expect(read('empty')).toEqual([['empty',0,Buffer.alloc(0)]]);
+  expect(read('exact')).toEqual([['exact',3,Buffer.from('abc')]]);
+  expect(read('large')).toEqual([['large',4,null]]);
+ } finally {store.close();}
 });
 it('reads attachments under the rule of the message they hang off',async()=>{
  const f=fixture(),dm=f.receive(true),room=f.receive(false);

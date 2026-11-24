@@ -68,15 +68,17 @@ function ChatQuestion({ item, actions, sourceCard, openInbox, zone }: { item: In
 function QuestionReader({ item, actions, sourceCard, zone, words, whole }: { item: InboxItem; actions?: InboxActions; sourceCard?: ReactNode; zone?: string; words?: string; whole?: boolean }) {
   const { busy, error, answer, volume } = useItemActions(item, actions);
   const waiting = item.state === 'waiting', link = safeLink(item.body?.link);
+  const linkedApproval = actions?.openSource && approvalRequestId(item);
+  const refs = item.refs.filter(ref => ref !== linkedApproval);
   return <Reader aria-label="Inbox item">
     <Meta>{`${from(item)} · ${stateWord(item)}`}</Meta>
     <Title>{words ?? item.body?.words ?? 'Message words are unavailable'}</Title>
     <Meta><time dateTime={item.at}>{when(item.at, zone)}</time>{item.project && ` · ${item.project}`}</Meta>
-    {(item.body?.why || item.body?.ifYes || item.body?.ifNo || item.refs.length > 0) && <Facts>
+    {((!whole && (item.body?.why || item.body?.ifYes || item.body?.ifNo)) || refs.length > 0) && <Facts>
       {!whole && <><Fact label="Why">{item.body?.why}</Fact>
       <Fact label="If yes">{item.body?.ifYes}</Fact>
       <Fact label="If no">{item.body?.ifNo}</Fact></>}
-      {item.refs.length > 0 && <Fact label="About"><Chips label="About">{item.refs.map(ref => <Chip key={ref} onClick={actions?.openRef?.(ref)} label={`Open ${ref}`}>{ref}</Chip>)}</Chips></Fact>}
+      {refs.length > 0 && <Fact label="About"><Chips label="About">{refs.map(ref => <Chip key={ref} onClick={actions?.openRef?.(ref)} label={`Open ${ref}`}>{ref}</Chip>)}</Chips></Fact>}
     </Facts>}
     {link && <a className="loom-kit-link" href={link} target="_blank" rel="noreferrer">Open linked page</a>}
     {managed(item) && actions?.openSource && <LinkButton onClick={() => actions.openSource!(item)}>{sourceLabel(item)}</LinkButton>}

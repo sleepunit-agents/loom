@@ -30,3 +30,16 @@ it('draws the reader as the site does: one filled button, quiet ones in rows, fa
   expect(html).toContain('placeholder="Or answer in your own words"');
   expect(html).toContain('aria-label="Notify"'); expect(html).not.toContain('Volume'); expect(html).not.toContain('America/Chicago');
 });
+
+it('uses the named approval link for its own reference and keeps other references', () => {
+  const id = 'a-fictional';
+  const approval = { ...item, source: 'approval', waitsOnKind: 'approval', waitsOnId: id, refs: [id, 't-2190'] };
+  const render = (openSource?: () => void) => renderToStaticMarkup(h(InboxQuestionCard, {
+    id: approval.id, snapshot: { ...snapshot, items: [approval] }, actions: { openSource },
+  }));
+  const linked = render(vi.fn());
+  expect(linked).toContain('Open in Approvals');
+  expect(linked).not.toContain(id);
+  expect(linked).toContain('t-2190');
+  expect(render()).toContain(id);
+});

@@ -158,7 +158,8 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
  const conversationHref=(id:string)=>'/p/comms-preview/conversation/'+encodeURIComponent(id);
  const projectHref=(agent:string,slug:string)=>'/p/projects-preview/project/'+encodeURIComponent(agent+':'+slug);
  try{
-  const people=peopleReader({directory:sources?.commons.people,get agents(){return listed.agents;},sharing,now:()=>clock.now(),projectHref});closers.push(people.close);
+  const defaultAgent=()=>householdSettings(db).defaultAgent??undefined;
+  const people=peopleReader({defaultAgent,directory:sources?.commons.people,get agents(){return listed.agents;},sharing,now:()=>clock.now(),projectHref});closers.push(people.close);
   const projects=createProjectsReader(clock,{get agents(){return listed.agents;},sharing,people,...sharedProjectSections(db),...options?.sections});closers.push(projects.close);
   const activity=createActivityReader(clock,{get agents(){return listed.agents;},sharing,timezone,github:()=>householdSettings(db).githubOwner,conversations:sharedActivityConversations(db,{conversationHref})});closers.push(activity.close);
   const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),projects,activity,conversationHref,projectHref});closers.push(queries.close);
@@ -176,8 +177,7 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
    register(operations:Operations,commands?:Pick<Parameters<typeof registerSemanticMemory>[1],'body'|'hash'|'committed'>&{mayReadFile(viewer:Viewer):boolean;mayAttachFile(viewer:Viewer):boolean},held?:{knowledge(viewer:Viewer):string|undefined;memory:NonNullable<Parameters<typeof registerSemanticMemory>[1]['addsOnly']>;note(viewer:Viewer):Readonly<{overwrite:string;by:string}>|undefined}){
     const knowledge=installMindKnowledgeActions(operations,{path:sources?.commons.knowledge,sharing,verify:verifyKnowledgePages,refused:held?.knowledge});closers.push(knowledge.close);
     // The household's default agent, asked each time: it can be changed in Setup while the program runs.
-    const agent=()=>householdSettings(db).defaultAgent??undefined;
-    const actions=installMindPeopleActions(operations,{directory:sources?.commons.people,relationship:()=>{const id=agent();return id===undefined?undefined:listed.agents.find(a=>a.agent===id)?.memories;},agent,sharing,create:createPersonHalf,refused:held?.knowledge});closers.push(actions.close);
+    const actions=installMindPeopleActions(operations,{directory:sources?.commons.people,relationship:()=>{const id=defaultAgent();return id===undefined?undefined:listed.agents.find(a=>a.agent===id)?.memories;},agent:defaultAgent,sharing,create:createPersonHalf,refused:held?.knowledge});closers.push(actions.close);
     if(commands)notes.register(operations,{...commands,addsOnly:held?.note});
     if(commands)closers.push(registerSemanticMemory(operations,{sources,now:()=>clock.now(),embedding,...commands,addsOnly:held?.memory}).close);
    },

@@ -16,6 +16,7 @@ import type {CommsMessages} from './messages.js';
 import {handoffDeadline,sealHandoff} from './handoff-words.js';
 import {threadTitle} from './title.js';
 import { commsKeepDays } from '../data/comms-days.js';
+const cancelledSchedule='The originating conversation cancelled the scheduled handoff.';
 /** Where a note to the agent's own body goes: a conversation it has, or a channel (and thread) it has a rule for. */
 const toSelf=z.union([z.object({conversation:z.string().min(1).max(200)}).strict(),
  channelTarget]);
@@ -80,20 +81,53 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    return {agents,...(roles.length?{roles}:{}),codexAvailable:codex?.available===true,...(codex?.reason?{codexUnavailableReason:codex.reason}:{})};
   },
  }));
+ const reviewInThread=(work:Work,id:string)=>{
+  if(!ownerThread(work))return;
+  const child=db.select().from(conversations).where(eq(conversations.id,id)).get();
+  if(!child)return;
+  const origin=reviewThread(db,child);
+  if(origin?.conversation===work.cv.id)return {child,origin};
+ };
+ const briefFor=(child:typeof conversations.$inferSelect)=>{
+  const request=reviewRequest(child)!;
+  return db.select({id:inbox.id,state:inbox.state,resolution:inbox.resolution,job:inbox.job}).from(inbox)
+   .where(and(eq(inbox.conversation,child.id),eq(inbox.toKind,'agent'),eq(inbox.to,child.agent),eq(inbox.source,'handoff'),
+    eq(inbox.sourceId,JSON.stringify([request.parent,request.clientId])))).get();
+ };
  operations.register(operation({name:'conversation.handoffStatus',write:false,doors:['http'],
   input:z.object({conversation:z.string().min(1).max(200)}).strict().describe('Check a work role or Codex handoff using the child conversation returned by the original handoff.'),
-  output:z.object({jobState:z.enum(jobs.state.enumValues).nullable(),resultDelivered:z.boolean(),notBefore:z.string().optional()}).strict(),
+  output:z.object({jobState:z.enum(jobs.state.enumValues).nullable(),resultDelivered:z.boolean(),notBefore:z.string().optional(),cancelled:z.literal(true).optional()}).strict(),
   may(viewer){const work=current(viewer);return !!work && ownerThread(work);},
   run(ctx,input){
    const work=requireCurrent(ctx.viewer);
-   const child=db.select().from(conversations).where(eq(conversations.id,input.conversation)).get();
-   const origin=child && reviewThread(db,child);
-   if(!ownerThread(work) || !origin || origin.conversation!==work.cv.id)throw new OperationError('denied','Handoff outside this conversation');
+   const target=reviewInThread(work,input.conversation);
+   if(!target)throw new OperationError('denied','Handoff outside this conversation');
+   const {child,origin}=target;
    const latest=db.select({state:jobs.state}).from(jobs).where(eq(jobs.conversation,input.conversation))
     .orderBy(desc(jobs.queuedAt),desc(sql`jobs.rowid`)).limit(1).get();
    const delivery=db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.conversation,work.cv.id),eq(inbox.thread,origin.id),
     eq(inbox.source,'handoff'),eq(inbox.sourceId,'review:'+input.conversation),eq(inbox.toKind,'agent'),eq(inbox.to,work.cv.agent))).limit(1).get();
-   return {jobState:latest?.state??null,resultDelivered:!!delivery,...(child?.handoffNotBefore?{notBefore:child.handoffNotBefore}:{})};
+   const brief=child.handoffNotBefore && !latest ? briefFor(child) : undefined;
+   return {jobState:latest?.state??null,resultDelivered:!!delivery,...(child.handoffNotBefore?{notBefore:child.handoffNotBefore}:{}),
+    ...(brief?.state==='resolved' && brief.resolution===cancelledSchedule?{cancelled:true as const}:{})};
+  },
+ }));
+ operations.register(operation({...common,name:'conversation.handoffCancel',
+  input:z.object({conversation:z.string().min(1).max(200)}).strict().describe('Withdraw a scheduled role or Codex brief before a job is admitted.'),
+  output:z.object({cancelled:z.literal(true)}).strict(),
+  may(viewer,input){const work=current(viewer);return !!work && !!reviewInThread(work,input.conversation);},
+  run(ctx,input){
+   const target=reviewInThread(requireCurrent(ctx.viewer),input.conversation);
+   if(!target)throw new OperationError('denied','Handoff outside this conversation');
+   if(!target.child.handoffNotBefore)throw new OperationError('conflict','This handoff was not scheduled.');
+   const brief=briefFor(target.child);
+   if(brief?.state==='resolved' && brief.resolution===cancelledSchedule)return {cancelled:true};
+   // A failed job can release its waiting mail. The job row still proves it was admitted.
+   const admitted=db.select({id:jobs.id}).from(jobs).where(eq(jobs.conversation,input.conversation)).limit(1).get();
+   if(admitted || !brief || brief.job!==null || !cvs.resolveItem(brief.id,cancelledSchedule))
+    throw new OperationError('conflict','This brief is no longer waiting for a job.');
+   ctx.changed('inbox',brief.id);
+   return {cancelled:true};
   },
  }));
  operations.register(operation({...common,name:'conversation.handoff',

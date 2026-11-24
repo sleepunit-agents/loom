@@ -1,9 +1,10 @@
+import { talkPath } from '../comms/shared-query';
 import { useEffect, useRef, useState } from 'react';
 import { useDataQuery } from '../../data/graphql';
 import { SharedTasks, type SharedTask, type TaskAction } from './shared-view';
 import { SharedTaskForm, type TaskFormProps } from './shared-form';
 import { taskId, taskSegment } from '../../../../src/task-route';
-import { tasksQuery, type TasksSelection } from './query';
+import { taskCommentsQuery, taskSourceQuery, tasksQuery, type TasksSelection } from './query';
 
 export interface TasksAppProps {
   path?: string;
@@ -30,9 +31,23 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
   const base = path.split('/task/')[0].replace(/\/$/, '');
   const selected = taskId(path);
   const [action, setAction] = useState<{ action: TaskAction; id?: string }>();
-  const snapshot = useDataQuery<TasksSelection>(tasksQuery);
+  // A direct link opens list and detail in one request. On first departure
+  // release that combined subscription. Subsequent selections reuse the list.
+  const [entryTask, setEntryTask] = useState(selected);
+  if (entryTask !== undefined && entryTask !== selected) setEntryTask(undefined);
+  const combined = entryTask !== undefined && entryTask === selected;
+  const listVariables = { selected: combined ? entryTask : '', withComments: combined };
+  const snapshot = useDataQuery<TasksSelection>(tasksQuery, listVariables, { keep: true });
   const status = snapshot.status === 'offline' ? 'unavailable' : snapshot.status;
   const tasks = status === 'live' ? snapshot.data?.tasks ?? [] : [];
+  const selectedTask = tasks.find(task => task.id === selected);
+  const sourceId = selectedTask?.sourceKind === 'conversation' ? selectedTask.sourceId : null;
+  const sourceFeed = useDataQuery<{source: Parameters<typeof talkPath>[0] | null}>(
+    taskSourceQuery, {id:sourceId}, {pause:!sourceId || !go || !!openConversation});
+  const source = sourceFeed.status === 'live' ? sourceFeed.data?.source : null;
+  const openSource = openConversation ?? (go && source && source.id === sourceId ? () => go(talkPath(source)) : undefined);
+  const readComments = !combined && selected !== undefined && tasks.some(task => task.id === selected);
+  const comments = useDataQuery<Pick<TasksSelection, 'selectedTask'>>(taskCommentsQuery, { selected }, { pause: !readComments });
   // Claim, Unclaim and Reopen are sent at once: one at a time, and what the program says if it refuses is shown.
   const [sending, setSending] = useState(false), [problem, setProblem] = useState('');
   const lock = useRef(false), alive = useRef(true);
@@ -66,11 +81,16 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
     setAction({ action: next, id: task?.id });
   } : undefined;
   const open = !!submit && !!action && status === 'live' && (action.action === 'create' || !!target);
+  const commentFeed = combined ? snapshot : comments;
+  const detail = status === 'live' && commentFeed.status === 'live' && !commentFeed.settling
+    ? commentFeed.data?.selectedTask : undefined;
   const links = tasks.flatMap(task => task.taskLinksByTask);
   return <SharedTasks status={status} tasks={tasks} selected={selected} select={navigate} questionFor={questionFor} startFolder={startFolder} startAssignee={startAssignee} liveAgentIds={liveAgentIds}
     changes={tasks.flatMap(task => task.changeTasksByTask.flatMap(link => link.changeRow ? [{ ...link.changeRow, task: task.id }] : []))}
-    links={links} comments={tasks.flatMap(task => task.taskCommentsByTask)}
-    ready={tasks.filter(task => task.isReady).map(task => task.id)} conversation={openConversation}
+    links={links} comments={detail && detail.id === selected ? detail.taskCommentsByTask : []}
+    loadingComments={(combined || readComments) && (commentFeed.status === 'loading' || commentFeed.settling)}
+    commentsUnavailable={readComments && (comments.status === 'offline' || comments.status === 'denied')}
+    ready={tasks.filter(task => task.isReady).map(task => task.id)} conversation={openSource}
     openChange={go ? id => go(`/p/changes-preview/change/${encodeURIComponent(id)}`) : undefined}
     names={names} zone={zone} busy={sending} problem={problem || undefined} act={act}
     form={open ? { action: action.action, node: <SharedTaskForm status={status} action={action.action} task={target} tasks={tasks} links={links}

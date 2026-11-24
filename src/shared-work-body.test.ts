@@ -229,3 +229,67 @@ it('applies a kit card on the authenticated household owner’s quoted message',
  expect(f.db.select().from(s.agentKits).all()).toEqual([{agent:'art',kit:'field',tools:[]}]);
  expect(f.root.services.approvals.get(id).decidedBy).toBe('alice');
 });
+
+it('carries a quoted Comms denial back to the card in that conversation once', async () => {
+ const f=await fixture();
+ f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();
+ const id=await f.ask(), other=await f.ask();
+ const reason='Hold off until the pump test passes.\n';
+ expect((await f.send('No. '+reason+'I will check tomorrow.','owner-denial')).status).toBe(200);
+ const take=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{
+   authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({input:{}})});
+ const item=(await take.json()).value.items.find((row:{words:string})=>row.words==='No. '+reason+'I will check tomorrow.');
+ expect(item).toBeDefined();
+ const input={id,answer:'deny',reason,onWord:{item:item.id,quote:reason}};
+ expect((await f.call('answer',input,'comms-reason')).status).toBe(200);
+ expect((await f.call('answer',input,'comms-reason')).status).toBe(200);
+ const replies=f.db.select().from(s.inbox).all().filter(row=>row.source==='answer' && row.toKind==='agent');
+ expect(replies).toHaveLength(1);
+ const card=f.root.services.approvals.get(id);
+ expect(replies[0].words).toBe(['Deny',card.ask,card.ifNo,reason].join('\n'));
+ expect(replies[0]).toMatchObject({to:'art',fromId:'alice',member:'alice',conversation:f.thread.conversation});
+ expect(f.root.services.approvals.get(other).state).toBe('pending');
+});
+
+it.each(['unlocated message', 'different words', 'different card conversation', 'card for another member', 'shared conversation', 'other agent', 'expired message', 'absent quote', 'another named card'] as const)(
+ 'keeps the denial reason private for a %s', async scenario => {
+  const f=await fixture();
+  f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();
+  const id=await f.ask();
+  const reason='Hold off until the pump test passes.';
+  const words=scenario==='another named card'?'Deny _'+await f.ask()+'_. '+reason:reason;
+  expect((await f.send(words,'owner-answer')).status).toBe(200);
+  const take=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{
+   authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({input:{}})});
+  const item=(await take.json()).value.items.find((row:{words:string})=>row.words===words);
+  const word=scenario==='unlocated message'?{quote:reason}:{item:item.id,quote:reason};
+  if(scenario==='different card conversation'){
+   const other=f.root.services.comms!.threads.open({member:'alice',agent:'art',title:'Another question'});
+   f.db.update(s.approvals).set({conversation:other.conversation}).where(eq(s.approvals.id,id)).run();
+  }
+  if(scenario==='card for another member') f.db.update(s.approvals).set({member:'pat'}).where(eq(s.approvals.id,id)).run();
+  if(scenario==='shared conversation') f.db.update(s.conversations).set({member:null}).where(eq(s.conversations.id,f.thread.conversation)).run();
+  if(scenario==='other agent') f.db.update(s.approvals).set({agent:'mark'}).where(eq(s.approvals.id,id)).run();
+  if(scenario==='expired message') f.db.update(s.messages).set({at:'2000-01-01T00:00:00Z'}).where(eq(s.messages.inboxItem,item.id)).run();
+  if(scenario==='absent quote') word.quote='I need a different pump.';
+  const response=await f.call('answer',{id,answer:'deny',reason:scenario==='different words'?'Another explanation':word.quote,onWord:word});
+  expect(response.status).toBe(403);
+  expect(f.root.services.approvals.get(id).state).toBe('pending');
+  expect(f.db.select().from(s.inbox).all().filter(row=>row.source==='answer')).toHaveLength(0);
+ });
+
+it('accepts a casual yes for the card named in Comms while another card is pending', async () => {
+ const f=await fixture();
+ f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();
+ const id=await f.ask(), other=await f.ask();
+ const words='Sure, go ahead with '+id+'.';
+ expect((await f.send(words,'casual-yes')).status).toBe(200);
+ const take=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{
+  authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({input:{}})});
+ const item=(await take.json()).value.items.find((row:{words:string})=>row.words===words);
+ expect((await f.call('answer',{id:other,answer:'allow',onWord:{item:item.id,quote:'Sure'}})).status).toBe(403);
+ expect((await f.call('answer',{id:other,answer:'allow',onWord:{quote:'Sure'}})).status).toBe(403);
+ expect((await f.call('answer',{id,answer:'allow',onWord:{item:item.id,quote:words}})).status).toBe(200);
+ expect(f.root.services.approvals.get(id).state).toBe('allowed');
+ expect(f.root.services.approvals.get(other).state).toBe('pending');
+});

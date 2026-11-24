@@ -118,7 +118,11 @@
     {
       "id": "data-017",
       "promise": "machine_reads Diagnostic request metadata for the machine owner’s history. The answer text is never stored here.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "action",
+        "action": "machineHistory"
+      }
     },
     {
       "id": "data-018",
@@ -146,27 +150,65 @@
     {
       "id": "data-021",
       "promise": "bridge_raw_events Events exactly as Discord and Slack sent them, kept until they are turned into incoming messages: up to a day for one that cannot be read yet, and an hour from arrival once it has been. The one place loom stores something it does not look inside.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeRetention"
+      }
     },
     {
       "id": "data-022",
       "promise": "bridge_resume Where each Discord connection left off, so it can pick up after a restart, and the credential it was made under.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "action",
+        "action": "discordResume"
+      }
     },
     {
       "id": "data-023",
       "promise": "bridge_send_parts The id the app gave each posted part of a reply, in order. A long reply goes out in parts; these say how far it got and which outside messages are the bot's own.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "slackSendParts"
+          },
+          {
+            "kind": "action",
+            "action": "discordSendParts"
+          }
+        ]
+      }
     },
     {
       "id": "data-024",
       "promise": "bridge_file_messages Which messages carried each kept Slack or Discord attachment. A file shared in two messages is listed under both and kept once.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "slackFileRetention"
+          },
+          {
+            "kind": "action",
+            "action": "discordFileRetention"
+          }
+        ]
+      }
     },
     {
       "id": "data-025",
       "promise": "bridge_send_files The files a post carries, kept only until the post is sent, dismissed or left in doubt.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "action",
+        "action": "outgoingFileRetention"
+      }
     },
     {
       "id": "data-026",

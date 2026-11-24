@@ -1,11 +1,17 @@
 import { workForPage } from './agent-post-work.js';
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
-import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
+import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import { agentPostThreads, conversations, threads } from '../data/schema.js';
 import { activitySources, allActivitySourcesMatch, agentPostHistory, agentPostPreviews } from './agent-posts.js';
 import type { WordsKey } from './words.js';
+
+function activityCursor(value: string) {
+  const cursor = Number(value);
+  if (!Number.isSafeInteger(cursor) || cursor < 0 || String(cursor) !== value) throw new Error('Invalid activity cursor');
+  return cursor;
+}
 
 export function agentPostFields(db: DataDatabase, key: WordsKey, allowed: (viewer: Viewer) => SQL):
 GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
@@ -39,9 +45,12 @@ GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
   };
   const args = { agent: { type: string }, limit: { type: GraphQLInt, defaultValue: 20 } };
   return {
-    agentActivityFeed: { type: new GraphQLList(new GraphQLNonNull(preview)), args,
-      async resolve(_row, { agent, limit }, { viewer }) {
-        const rows = await agentPostPreviews(db, key, source(viewer, agent), size(limit));
+    agentActivityFeed: { type: new GraphQLList(new GraphQLNonNull(preview)), args: { ...args, thread: { type: GraphQLString }, before: {type: GraphQLString, defaultValue: '0'} },
+      async resolve(_row, { agent, limit, thread, before }, { viewer }) {
+        const visibleSource = source(viewer, agent);
+        const selection = thread == null ? visibleSource : and(visibleSource, eq(agentPostThreads.id, thread))!;
+        const cursor = activityCursor(before);
+        const rows = await agentPostPreviews(db, key, selection, size(limit), cursor);
         if (!rows.length) return [];
         const current = visibleThreads(viewer, agent, rows.map(row => row.thread));
         const stillReadable = visibleSources(viewer,agent,rows.flatMap(row=>row.sources));
@@ -51,11 +60,10 @@ GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
       },
     },
     agentActivityHistory: { type: new GraphQLList(new GraphQLNonNull(post)),
-      args: { ...args, thread: { type: string }, after: { type: GraphQLString, defaultValue: '0' } },
-      async resolve(_row, { agent, thread, limit, after }, { viewer }) {
-        const cursor = Number(after);
-        if (!Number.isSafeInteger(cursor) || cursor < 0 || String(cursor) !== after) throw new Error('Invalid activity cursor');
-        const rows = await agentPostHistory(db, key, source(viewer, agent), thread, cursor, size(limit));
+      args: { ...args, thread: { type: string }, after: { type: GraphQLString, defaultValue: '0' }, newestFirst: { type: GraphQLBoolean, defaultValue: false } },
+      async resolve(_row, { agent, thread, limit, after, newestFirst }, { viewer }) {
+        const cursor = activityCursor(after);
+        const rows = await agentPostHistory(db, key, source(viewer, agent), thread, cursor, size(limit), newestFirst);
         if (!rows.length || !visibleThreads(viewer, agent, [thread]).has(thread)) return [];
         const stillReadable = visibleSources(viewer,agent,rows.map(row=>row.source));
         const visible = rows.filter(row=>stillReadable.has(row.source));

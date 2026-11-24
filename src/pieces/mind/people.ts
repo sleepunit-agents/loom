@@ -1,9 +1,10 @@
 import {evidenceExpiry,personEvidenceRows} from '../../backends/people.js';
-import {accountColumns,accountHolders,sightingHolder,type AccountPlatform} from '../../backends/people-accounts.js';
+import {accountColumns,accountHolders,listAccountSightings,sightingHolder,type AccountPlatform} from '../../backends/people-accounts.js';
 /** Existing person cards, read in place. No schema initialization or path discovery. */
 import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
 import { AgentFiles } from './sources.js';
+import { isHouseholdOwner } from '../../policy.js';
 import { maySee, mayAct, type Sharing, type Viewer } from '../../core/index.js';
 import {batchPersonEvidence,batchPersonMerges,batchPersonReferences,followPersonMerge} from './people-list-rows.js';
 import {resolveCardReference} from './card-references.js';
@@ -14,13 +15,14 @@ interface Row { slug: string; card_json: string; updated: string; synthesized_at
 const has = (db: Database, table: string) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
 export interface PeopleReaderOptions {
   projectHref?(agent:string,slug:string):string|undefined;
-  directory?:string; agents:Array<{agent:string;memories:string}>; sharing():Sharing; now():number;
+  directory?:string; defaultAgent?():string|undefined; agents:Array<{agent:string;memories:string}>; sharing():Sharing; now():number;
 }
 /** Direct file projection used by GraphQL. */
 export interface PeopleReader {
  access(viewer:Viewer):{id:string;allowed:boolean;directory:boolean;agents:string[];canAdd:boolean};
  outsideAccount(viewer:Viewer,slug:string,platform:AccountPlatform):{workspace:string;user:string}|undefined;
  outsideName(viewer:Viewer, platform:AccountPlatform, workspace:string, user:string):string|undefined;
+ slackRecipient(viewer:Viewer,workspace:string,user:string):string|undefined;
  sightings(viewer:Viewer,slug:string):AccountSighting[];
  ownEvidence(viewer:Viewer,slug:string,since:string|null):PersonEvidence[]|null;
  nextDeadline():number|undefined;
@@ -33,6 +35,9 @@ export interface PeopleReader {
  list(viewer:Viewer,sharing?:Sharing):PersonRecord[];
  history(id:string,viewer:Viewer):Array<{id:number;op:string;replacedAt:string;actor:string|null;card:PersonCard}>;
  close():void;
+}
+export function mayAddPerson(viewer:Viewer,agent:string|undefined,sharing:Sharing){
+  return !!agent && mayAct(viewer,{type:'person'},sharing,'act') && mayAct(viewer,{type:'person',agent},sharing,'act');
 }
 export const mayReadPerson=(viewer:Viewer,agent:string|undefined,sharing:Sharing)=>maySee(viewer,{type:'person',...(agent?{agent}:{})},sharing);
 export function peopleReader(options:PeopleReaderOptions):PeopleReader {
@@ -210,16 +215,17 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
     return next===Infinity?undefined:next;
   }
   return {
-    access(v){const sharing=options.sharing();return {id:'people',allowed:allowed(v)||options.agents.some(a=>allowed(v,a.agent)),directory:allowed(v),
-      agents:options.agents.filter(a=>allowed(v,a.agent)&&(sharing.agents?.includes(a.agent)??true)).map(a=>a.agent),canAdd:mayAct(v,{type:'person'},sharing,'act')};},
+    access(viewer){
+      const current=options.sharing(),directory=mayReadPerson(viewer,undefined,current);
+      const authorized=options.agents.filter(({agent})=>mayReadPerson(viewer,agent,current));
+      return {id:'people',allowed:directory||authorized.length>0,directory,
+        agents:authorized.map(row=>row.agent).filter(id=>!current.agents||current.agents.includes(id)),
+        get canAdd(){return mayAddPerson(viewer,options.defaultAgent?.(),current);}};
+    },
     sightings(viewer,slug) {
       const db=sources.get('commons');
       if(!allowed(viewer)||!db||!hasTable(db,'person_account_sightings'))return [];
-      return db.transaction(()=>{
-        const rows=db.prepare(`SELECT platform,workspace,account,label,seen_at AS seenAt
-          FROM person_account_sightings WHERE slug=? ORDER BY seen_order DESC,platform,workspace,account`).all(slug) as AccountSighting[];
-        return rows.filter(row=>sightingHolder(db,row.platform,row.workspace,row.account)===slug);
-      })();
+      return db.transaction(()=>listAccountSightings(db,slug))();
     },
     outsideAccount(viewer,slug,platform){
       const [space,account]=accountColumns(platform);
@@ -247,6 +253,18 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
         const matches=accountHolders(db,platform,workspace,user);
         return matches.length===1 ? matches[0]?.name : undefined;
       } catch { return undefined; } // An unavailable directory cannot supply a held name.
+    },
+    slackRecipient(viewer,workspace,user) {
+      const db=sources.get('commons');
+      if (!db || !isHouseholdOwner(viewer, sharing())) return;
+      try {
+        return db.transaction(() => {
+          const alias=db.prepare(`SELECT a.slug,json_extract(p.card_json,'$.name') AS name
+            FROM person_sighting_aliases a JOIN people p ON p.slug=a.slug
+            WHERE a.workspace=? AND a.account=? AND a.recipient_display_slug=a.slug AND p.archived_at IS NULL`).get(workspace,user) as {slug:string;name:string}|undefined;
+          if (alias && sightingHolder(db,'slack',workspace,user)===alias.slug) return alias.name;
+        })();
+      } catch { return undefined; }
     },
     ownEvidence(viewer,slug,since) {
       if (viewer.kind !== 'agent' || viewer.id === 'commons' || !maySee(viewer,{type:'memory',agent:viewer.id},sharing())) return null;

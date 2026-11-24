@@ -75,3 +75,20 @@ it('offers only live agents in the Activity filter',async()=>{
  f.sharing({members:{owner:{owner:true,agents:['fiction']}},projects:{},agents:[]});
  expect((await f.query(query)).data).toEqual({memoryActivityAccess:{allowed:true,agents:[]}});
 });
+
+it('returns session evidence from the authenticated agent’s visible episodes including those recorded when a long-running session started',async()=>{
+ const s=episodes(),f=fixture(s.path);
+ const insert=s.db.prepare("INSERT INTO memories VALUES(?,?,?, ?,NULL,?,?, 'episode',?)");
+ const at='2026-11-14T17:00:00Z',id='abcdef01-0000-0000-0000-000000000001';
+ insert.run('meta','Private title','older form: session abcdef01',at,JSON.stringify({session_id:id,transcript_path:'/fixture/12345678-0000-0000-0000-000000000000.jsonl'}),null,0);
+ insert.run('text','session aaaaaaaa','transcript /tmp/bbbbbbbb-0000-0000-0000-000000000000.jsonl',at,'{}',null,0);
+ for(const [ref,created,meta,expires,archived] of [
+  ['future','2026-11-15T00:00:00Z','{}',null,0],
+  ['archived',at,'{}',null,1],['expired',at,'{}',at,0],['hidden',at,'{"conversation":"cv-222222222222"}',null,0],
+ ] as const)insert.run(ref,'session deadbeef','private',created,meta,expires,archived);
+ insert.run('older','session 10101010','','2026-01-01T00:00:00Z','{}',null,0);
+ const query='{memoryOwnEpisodeSessions}';
+ expect(await f.query(query,{kind:'agent',id:'fiction'})).toEqual({data:{memoryOwnEpisodeSessions:['10101010','12345678-0000-0000-0000-000000000000','aaaaaaaa',id,'bbbbbbbb-0000-0000-0000-000000000000']}});
+ expect(await f.query(query,owner)).toEqual({data:{memoryOwnEpisodeSessions:null}});
+ expect((await f.query(query,{kind:'agent',id:'other'})).data?.memoryOwnEpisodeSessions).toBeNull();
+});

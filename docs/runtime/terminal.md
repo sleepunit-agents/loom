@@ -100,6 +100,10 @@ Household owners and agents can use `loom_query` with
 Pass the last slug as `after` to continue. Review each candidate for its
 shared audience before deciding whether to revise it.
 
+For a citation audit, select `{memoryKnowledge { citationCounts { slug sourcing total conversations } }}`.
+This returns one row per active page, including pages with zero citations. An older store
+without the citations table returns `null`. The sourcing field is the stored classification.
+
 Through the generic tools: for private Memory, use `memory.remember` and `memory.recall`; their opaque IDs
 can be read with `memoryProjectMemory(id:){title content}`. For Notes, use
 `memory.noteWrite` with `{path,body,lifespan}` and read
@@ -125,6 +129,11 @@ notices, through `loom_command` or the command door (`POST /api/<piece>/<operati
   `approvals.report {id, what}` answers `{id, reported: true}` for a card a tell rule allowed;
   `approvals.withdraw {id}` answers `{id, state: "withdrawn"}`. A card's state is read with the `approvals`
   tool or query.
+- For shell text, file `approvals.request {kind: "command", commandText, why, minutes?}`. Loom builds the
+  question from the complete text and keeps it under **Full command** in the card. Shortened previews are
+  labelled. The full view uses JSON string quoting to make line breaks and invisible characters visible.
+  Spend it with `approvals.use {id, kind: "command", commandText}`. Supply exactly the same text, including
+  trailing newlines. Each literal request takes its own owner decision. An allowance records one use. The caller handles execution.
 - `notices.raise {key, title, detail?, quiet?}` answers `{item, raised, pushed}`: the key, whether the
   notice was news to the people who have the agent, and whether any push was queued. Nothing is pushed for
   `quiet`, for a key settled within the last ten minutes, or to a person who already has the notice
@@ -189,7 +198,7 @@ prepared at creation.
 
 ### Answering an approval on the owner's word
 
-An owner can call `approvals.answer` with the card ID, an `answer` of `allow` or `deny`, and optional `onWord: {venue: "terminal", through: "art", quote: "..."}`. A unique retained human turn in an open terminal session for the signing owner and named agent supplies the conversation, turn and machine. Missing, unreadable or ambiguous words leave an unverified attribution. Omitting it gives the ordinary owner answer.
+An owner can call `approvals.answer` with the card ID, an `answer` of `allow` or `deny`, and optional `onWord: {venue: "terminal", through: "art", quote: "..."}`. A unique retained human turn in an open terminal session for the signing owner and named agent supplies the conversation, turn and machine. Missing, unreadable or ambiguous words leave an unverified attribution. Omitting it gives the ordinary owner answer. A signed-in owner can include a reason of up to 2,000 characters with a direct denial. Loom sends it in the reply to the requesting agent. An agent denying from the owner’s enrolled terminal can send the exact verified quote as the reason.
 
 A body working on its owners' word can answer with `onWord: {quote}` when exactly one eligible message in its credential's job contains the quote. If several match, quote a longer passage. A body that knows the inbox item can still use `onWord: {item, quote}` to name it directly. Loom checks a human bridge message against the venue link or reads the signed-in member's Comms message. The writer must still be a household owner and able to answer the card. The quote is 1–500 characters, copied exactly. One message can support multiple cards, including cards filed by the same agent. Card-specific checks, such as a merge head still matching, apply.
 

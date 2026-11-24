@@ -4,12 +4,21 @@ import type { ChangeSnapshot } from '../pieces/change-view/model';
 
 /** Selections from the generated shared schema, filtered by the outside door's
  * SQL policies. A connected task is selected through the visible link only. */
+const approvalFields = `id kind target actingFor operation what why agent project member conversation state
+    ask ifYes ifNo details changeSummary askedAt decidedBy expiresAt`;
+const recordFields = 'seq at event approval agent note';
 export const approvalsQuery = `query ApprovalsView {
-  approvals { id kind target actingFor operation what why agent project member conversation state
-    ask ifYes ifNo details changeSummary askedAt decidedBy expiresAt }
+  approvals { ${approvalFields} }
   approvalRules { kind scope person tier setBy setAt }
   approvalNotices { id agent kind target what at }
-  approvalRecord { seq at event approval agent note }
+  approvalRecord { ${recordFields} }
+}`;
+export const inboxApprovalsQuery = `query InboxApprovals($ids:[String!]!) {
+  approvals(where:{id:{inArray:$ids}}) { id operation what details }
+}`;
+export const inlineApprovalQuery = `query InlineApproval($id:String!) {
+  approvals(where:{id:{eq:$id}},limit:1) { ${approvalFields} }
+  approvalRecord(where:{approval:{eq:$id}}) { ${recordFields} }
 }`;
 export const changesQuery = `query ChangesView {
   changes { id repository number title body url state draft authorLogin project

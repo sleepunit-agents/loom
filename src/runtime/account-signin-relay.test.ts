@@ -1,4 +1,6 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { RELAY_MS, SIGNIN_MS } from './account-signin-time.js';
 import { expect, it } from 'vitest';
 import {relaySignIn, type SignInRemote } from './account-signin-relay.js';
@@ -35,17 +37,51 @@ it('shows the page, hands the answered code to the program once, and reports wha
 it('takes the code once under one take id, and gets it through replies that never arrive', async () => {
   const r = remote([null, 'GOODCODE123'], Infinity, 0), lossy = remote(['GOODCODE123'], Infinity, 3);
   for (const each of [r, lossy]) {
-    expect(await relaySignIn(program(`fs.writeFileSync(at('link'),'https://provider.example/oauth');${waitForCode}`), request, each.value, options())).toBe(true);
+    const signedIn = await relaySignIn(program(`fs.writeFileSync(at('link'),'https://provider.example/oauth');${waitForCode}`), request, each.value, options());
     expect(each.calls.at(-1)).toEqual(['done', { id: 'signin-1', signedIn: true }]);
+    expect(signedIn).toBe(true);
     expect(each.takes.size).toBe(1);
   }
 });
-it('shows a device flow\'s code and waits for the program to finish by itself, never typing anything', async () => {
-  const r = remote(['SHOULD-NOT-BE-USED']);
-  const device = `fs.writeFileSync(at('user-code'),'ABCD-12345\\n');fs.writeFileSync(at('link'),'https://auth.example/device\\n');setTimeout(()=>process.exit(fs.existsSync(at('code'))?3:0),300);`;
-  expect(await relaySignIn(program(device), request, r.value, options())).toBe(true);
-  expect(r.calls).toEqual([['page', { id: 'signin-1', link: 'https://auth.example/device', userCode: 'ABCD-12345' }], ['done', { id: 'signin-1', signedIn: true }]]);
+it.each(['paste','device'])('finishes the %s flow with a private, single-use answer directory', async flow => {
+  const fixture = mkdtempSync(join(tmpdir(),'provider-observer-'));
+  // Only the fake provider and fake remote see these markers. The real relay uses its usual directory.
+  const device = flow === 'device';
+  const provider = program(`
+    fs.writeFileSync('directory',dir);
+    if (${device}) fs.writeFileSync(at('user-code'),'ABCD-12345');
+    fs.writeFileSync(at('link'),'https://provider.example/device');
+    let received = false;
+    setInterval(() => {
+      if (fs.existsSync(at('code'))) {
+        if (${device} || received || (fs.statSync(at('code')).mode & 0o777) !== 0o600) process.exit(2);
+        if (fs.readFileSync(at('code'),'utf8') !== 'GOODCODE123') process.exit(3);
+        fs.unlinkSync(at('code')); received = true;
+        setTimeout(() => process.exit(fs.existsSync(at('code')) ? 4 : 0), 200);
+      }
+      if (${device} && fs.existsSync('device-finished')) process.exit(0);
+    }, 5);
+  `);
+  const r = remote(['GOODCODE123']);
+  let answeredReads = 0;
+  const code = r.value.code;
+  r.value.code = async (...args) => {
+    const answer = await code(...args);
+    if (answer.code && ++answeredReads === 2 && device) writeFileSync(join(fixture,'device-finished'),'');
+    return answer;
+  };
+  try {
+    const signedIn = await relaySignIn({...provider,cwd:fixture},request,r.value,options());
+    expect(r.calls.at(-1)).toEqual(['done',{id:request.id,signedIn:true}]);
+    expect(signedIn).toBe(true);
+    if (device) expect(answeredReads).toBeGreaterThanOrEqual(2);
+    else expect(answeredReads).toBe(1);
+    expect(r.calls[0]).toEqual(['page',{id:request.id,link:'https://provider.example/device',...(device?{userCode:'ABCD-12345'}:{})}]);
+    const directory = readFileSync(join(fixture,'directory'),'utf8');
+    expect(existsSync(directory)).toBe(false);
+  } finally { rmSync(fixture,{recursive:true,force:true}); }
 });
+
 it('ends the program and says why when loom ends the request, nobody answers in time, the page is unusable, or the worker stops', async () => {
   const hang = `fs.writeFileSync(at('link'),'https://provider.example/oauth');setInterval(()=>{},1000);`;
   const ended = remote([], 1); expect(await relaySignIn(program(hang), request, ended.value, options())).toBe(false);
@@ -59,7 +95,6 @@ it('ends the program and says why when loom ends the request, nobody answers in 
   expect(stopped.calls.at(-1)).toEqual(['done', { id: 'signin-1', signedIn: false, why: 'stopped' }]);
   const missing = remote(); expect(await relaySignIn({ command: '/nonexistent/program', args: [], cwd: process.cwd(), env: {} }, request, missing.value, options())).toBe(false);
   expect((missing.calls.at(-1) as [string, { signedIn: boolean }])[1].signedIn).toBe(false);
-  expect(existsSync('/tmp')).toBe(true);
 });
 it('carries none of the program\'s own words: a reason outside the list is the plain word', async () => {
   const leak = `fs.writeFileSync(at('link'),'https://provider.example/oauth');setTimeout(()=>{fs.writeFileSync(at('why'),'token sk-PRIVATE-0123456789 was rejected');process.exit(1);},50);`;

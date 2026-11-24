@@ -47,7 +47,7 @@ async function memoryHttpFixture(cleanup: Array<() => unknown>) {
     return id === 'owner' || id === 'peer' ? {viewer:{kind:'member',id},valid:()=>valid} : undefined;
   }, undefined, queries.fields, {}, undefined, () => clock.now());
   const read = (query:string, token='owner', extra={}) => http.request('http://loom/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:token},body:JSON.stringify({query,...extra})});
-  return {http,read,sharing,thread,knowledge,people,projects,clock,home,client,admitted:()=>admitted,end:()=>{valid=false;}};
+  return {http,read,sharing,thread,knowledge,people,projects,clock,home,client,db,admitted:()=>admitted,end:()=>{valid=false;}};
 }
 
 const cleanup: Array<() => unknown> = [];
@@ -69,6 +69,8 @@ async function fixture() {
 it('executes every browser selection against the real generated HTTP schema and existing file readers', async () => {
   const f = await fixture(), c = f.client;
   expect(await c.read(memoryQueries.knowledgeAccess())).toEqual({allowed:true,canAdd:true,canVerify:true,canRecheck:true});
+  expect(await c.read(memoryQueries.peopleAccess())).toEqual({allowed:true,directory:true,canAdd:false,agents:['fiction']});
+  f.db.update(household).set({defaultAgent:'fiction'}).run();
   expect(await c.read(memoryQueries.peopleAccess())).toEqual({allowed:true,directory:true,canAdd:true,agents:['fiction']});
   expect(await c.read(memoryQueries.projectsAccess())).toEqual({allowed:true,agents:['fiction']});
   expect(await c.read(memoryQueries.activityAccess())).toMatchObject({allowed:true,agents:['fiction'],today:'2026-11-14',windows:expect.any(Array),expires:expect.any(Number)});

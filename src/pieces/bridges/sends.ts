@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, max } from 'drizzle-orm';
+import { and, asc, eq, exists, inArray, isNull, max } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeIncoming, bridgeSendFiles, bridgeSendJobs, bridgeSendParts, bridgeSends, type DirectSendTarget } from '../../core/data/schema.js';
 import { BridgeReplyNotSent, postReply, replyParts, type ReplyAttempt } from './outbound.js';
@@ -37,7 +37,7 @@ export function reviewReply(db: DataDatabase, id: string, decision: 'release' | 
   const changed = db.update(bridgeSends).set({ state: decision === 'release' ? 'pending' : 'dismissed' })
     .where(and(eq(bridgeSends.id, id), eq(bridgeSends.state, send.state))).run();
   if (!changed.changes) throw new Error('Reply state changed');
-  dropSettledFiles(db);
+  dropSettledFiles(db, id);
 }
 
 /** The one rule for how long a post's files are kept: while the post may still be sent. A post that is
@@ -46,8 +46,11 @@ export function reviewReply(db: DataDatabase, id: string, decision: 'release' | 
  * they go in the write that puts it there, whichever path that was: the attempt itself, a person's
  * dismissal, or the start-up that finds a post a crash left mid-send. Called in the same transaction as
  * every such change, so no file outlives its post's last chance. */
-export function dropSettledFiles(db: Pick<DataDatabase, 'delete' | 'select'>): void {
-  db.delete(bridgeSendFiles).where(inArray(bridgeSendFiles.send, db.select({ id: bridgeSends.id }).from(bridgeSends).where(inArray(bridgeSends.state, ['sent', 'uncertain', 'dismissed'])))).run();
+export function dropSettledFiles(db: Pick<DataDatabase, 'delete' | 'select'>, send?: string): void {
+  // Start with files still in the queue. Completed send history can keep growing after the last file goes.
+  const settled = exists(db.select({ id: bridgeSends.id }).from(bridgeSends)
+    .where(and(eq(bridgeSends.id, bridgeSendFiles.send), inArray(bridgeSends.state, ['sent', 'uncertain', 'dismissed']))));
+  db.delete(bridgeSendFiles).where(and(send === undefined ? undefined : eq(bridgeSendFiles.send, send), settled)).run();
 }
 
 /** Trusted in-process send queue on the approved shared schema. External callers
@@ -211,7 +214,7 @@ export class BridgeSends {
       if (state === 'pending') this.notBefore.set(send.id, Date.parse(this.now()) + RETRY_UNSENT);
       this.commit(() => {
         this.db.update(bridgeSends).set({ state }).where(and(eq(bridgeSends.id, send.id), eq(bridgeSends.state, 'sending'))).run();
-        dropSettledFiles(this.db);
+        dropSettledFiles(this.db, send.id);
       });
       this.changed();
     }

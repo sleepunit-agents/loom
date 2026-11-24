@@ -6,8 +6,8 @@ import { agents, members, memberAgents, boxes, boxAgents, boxFacts, agentBoxes, 
 import { decidePlacement, QUOTA_WAIT_REASON, selectPlacement } from './placement.js';
 const opened: Database.Database[] = [];
 afterEach(() => opened.splice(0).forEach(client => client.close()));
-function fixture() {
-  const client = new Database(':memory:'); opened.push(client);
+function fixture(verbose?: (sql: string) => void) {
+  const client = new Database(':memory:', { verbose }); opened.push(client);
   const db = createDataSchema(client);
   const now = '2026-11-14T20:00:00.000Z';
   db.insert(members).values({ id: 'owner', role: 'owner', joinedAt: now }).run();
@@ -240,4 +240,46 @@ it('explains quota only for an eligible container sign-in and a usable window re
   db.update(modelAccountLogins).set({expiresAt:null}).run();
   db.update(modelAccountWindows).set({resetsAt:input.now,usageReadAt:'2026-11-14T19:00:00.000Z'}).run();
   expect(quotaLimited()).toBe(false);
+});
+
+it('reads a fixed number of statements as eligible workers and occupied-slot checks grow', () => {
+  let selects = 0;
+  const { db, input } = fixture(sql => { if (/^select /i.test(sql)) selects++; });
+  db.update(boxes).set({ slots: 1 }).run();
+  const measure = (size: number) => {
+    selects = 0;
+    const result = decidePlacement(db, { ...input, prefers: ['gpu'] });
+    expect(result.decision).toHaveLength(size);
+    expect(result.placement?.box).toBe('local');
+    return selects;
+  };
+  const baseline = measure(2);
+  expect(baseline).toBeGreaterThan(0);
+  for (let i = 2; i < 32; i++) {
+    const id = 'worker-' + i;
+    db.insert(boxes).values({ id, name: id, owner: 'owner', sameMachineAsLoom: false,
+      hostsAny: true, reportOnly: false, alwaysOn: true, slots: 1, enrolledAt: input.now, lastSeenAt: input.now }).run();
+    db.insert(agentBoxes).values({ agent: 'art', box: id, position: i }).run();
+  }
+  expect(measure(32)).toBe(baseline);
+});
+
+it('reads account windows in one batch and selects the first account with room', () => {
+  let selects = 0;
+  const { db, input } = fixture(sql => { if (/^select /i.test(sql)) selects++; });
+  const measure = () => {
+    selects = 0;
+    expect(selectPlacement(db, input)?.account).toBe('shared');
+    return selects;
+  };
+  const before = measure();
+  expect(before).toBeGreaterThan(0);
+  for (let i = 0; i < 31; i++) {
+    const id = 'busy-' + i;
+    db.insert(modelAccounts).values({ id, owner: 'owner', provider: 'provider', label: id, hasRoom: true }).run();
+    db.insert(modelAccountBoxes).values({ account: id, box: 'local' }).run();
+    db.insert(modelAccountWindows).values({ account: id, window: 'hour', usage: 1, usageReadAt: input.now,
+      resetsAt: '2026-11-14T21:00:00.000Z', durationMs: 3600000 }).run();
+  }
+  expect(measure()).toBe(before);
 });

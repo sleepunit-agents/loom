@@ -21,7 +21,11 @@
     {
       "id": "machines-003",
       "promise": "Starts a job when an agent's inbox has something waiting.",
-      "source": "docs/how-it-works/site/machines.html"
+      "source": "docs/how-it-works/site/machines.html",
+      "probe": {
+        "kind": "action",
+        "action": "scheduledWorker"
+      }
     },
     {
       "id": "machines-004",
@@ -44,32 +48,56 @@
     {
       "id": "machines-006",
       "promise": "The agent it runs, the project it is for, and a member when the work is private.",
-      "source": "docs/how-it-works/site/machines.html#con-h"
+      "source": "docs/how-it-works/site/machines.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "jobLabels"
+      }
     },
     {
       "id": "machines-007",
       "promise": "A job works in one conversation and takes that agent's inbox items there.",
-      "source": "docs/how-it-works/site/machines.html#con-h"
+      "source": "docs/how-it-works/site/machines.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "scheduledWorker"
+      }
     },
     {
       "id": "machines-008",
       "promise": "A non-empty inbox starts a job. Triggers are one of the things that fill it.",
-      "source": "docs/how-it-works/site/machines.html#con-h"
+      "source": "docs/how-it-works/site/machines.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "scheduledWorker"
+      }
     },
     {
       "id": "machines-009",
       "promise": "An agent's body carries a token, and one can belong to a single job.",
-      "source": "docs/how-it-works/site/machines.html#con-h"
+      "source": "docs/how-it-works/site/machines.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "installedSecretHolder"
+      }
     },
     {
       "id": "machines-010",
       "promise": "A grant can be for one job only, and each use names the job.",
-      "source": "docs/how-it-works/site/machines.html#con-h"
+      "source": "docs/how-it-works/site/machines.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "installedSecretHolder"
+      }
     },
     {
       "id": "machines-011",
       "promise": "A job is one run of an agent's body on a box. It is queued, picked up by a worker, runs, and ends done or failed. It can also be stopped or lost.",
-      "source": "docs/how-it-works/site/machines.html#how-h"
+      "source": "docs/how-it-works/site/machines.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "jobOutcomes"
+      }
     },
     {
       "id": "machines-012",
@@ -93,7 +121,11 @@
     {
       "id": "machines-015",
       "promise": "a Jobs. A job carries its agent, the project it is for, and a member when the work is private.",
-      "source": "docs/how-it-works/site/machines.html#see-h"
+      "source": "docs/how-it-works/site/machines.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "jobLabels"
+      }
     },
     {
       "id": "machines-016",

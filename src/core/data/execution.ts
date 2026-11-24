@@ -25,8 +25,7 @@ export class ExecutionDrain {
   async drain() { while (this.active) await new Promise<void>(resolve => this.waiters.add(resolve)); }
 
   schema(source: GraphQLSchema, admitted: () => boolean) {
-    // Each transport selection owns its resolver closures, reused for live
-    // reruns. No ambient scopes or mutation of a retained schema.
+    // The transport owns these resolver closures and their admission check. No ambient scopes or mutation of a retained schema.
     const track = (resolve: GraphQLFieldResolver<unknown, { viewer: Viewer }>): typeof resolve =>
       (...values) => {
         if (!admitted()) throw new Error('Data access ended');

@@ -25,15 +25,15 @@ it('shares the window connection with another app and clears both readers on acc
     expect(sinks.size).toBe(3);
     const push = (query: string, value: unknown) => sinks.get(query)!.next({data: {observe: {revision: 1, patches: [{path: [], removed: false, value}]}}});
     await act(async () => {
-      push(tempoQuery, {__typename: 'Query', tempoTimezone: 'UTC', triggers: [], triggerLog: [{__typename: 'TriggerLogSelectItem', seq: 1, trigger: 't', event: 'set', at: '2026-11-14T00:00:00Z', note: 'Private'}], agentPauses: []});
+      push(tempoQuery, {__typename: 'Query', tempoTimezone: 'UTC', triggers: [], agentPauses: []});
       push(liveAgentsQuery, {__typename: 'Query', agents: [{__typename: 'AgentsSelectItem', id: 'art', removedAt: null}, {__typename: 'AgentsSelectItem', id: 'mark', removedAt: '2026-11-14'}]});
       push('other', {__typename: 'Query', agents: [{__typename: 'AgentsSelectItem', id: 'art'}]});
     });
     expect([...tree!.root.findByType('tempo').props.inUse]).toEqual(['art']);
-    expect(tree!.root.findByType('tempo').props.snapshot.events).toHaveLength(1);
+    expect(tree!.root.findByType('tempo').props.snapshot.timezone).toBe('UTC');
     expect(tree!.root.findByType('other-app').props.data).toEqual({agents: [{id: 'art'}]});
     await act(async () => wire.close!({code: 4403}));
-    expect(tree!.root.findByType('tempo').props.snapshot).toMatchObject({status: 'offline', triggers: [], events: [], pauses: []});
+    expect(tree!.root.findByType('tempo').props.snapshot).toMatchObject({status: 'offline', triggers: [], pauses: []});
     expect(tree!.root.findByType('other-app').props).toMatchObject({status: 'offline', data: undefined});
   } finally {
     if (tree) await act(async () => tree!.unmount());

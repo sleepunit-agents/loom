@@ -64,3 +64,51 @@ it('expires notes at the household hour and retains live task, knowledge and mem
     expect(notes.read('pump')).not.toBeNull();
   } finally { stop?.(); notes.close(); memories.close(); knowledge.close(); client.close(); rmSync(directory,{recursive:true,force:true}); }
 });
+
+it('sweeps a prepared notes-only store, preserving citations and stopping on an unrecognized source', async () => {
+  const {prepareAgentMemory} = await import('./shared-memory.js');
+  const directory = mkdtempSync(join(tmpdir(), 'loom-notes-only-'));
+  const agent = {agent:'fern', directory, memories:join(directory,'memories.db')};
+  const knowledgeFile = join(directory,'knowledge.db');
+  const client = new Database(':memory:'), db = createDataSchema(client);
+  const knowledge = new Database(knowledgeFile);
+  const start = Date.UTC(2026,0,1), due = start+15*86400000;
+  let notes: Notes | undefined;
+  let memory: Database.Database | undefined;
+  try {
+    upgradeKnowledgeStore(knowledge);
+    prepareAgentMemory(agent);
+    notes = new Notes(directory,()=>start);
+    for (const path of ['scratch','garden']) notes.write(path,'words',{lifespan:'short',by:'fern'});
+    db.insert(agents).values({id:'fern',about:'',markBg:'#fff',markFg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
+    db.insert(tasks).values({id:'garden-task',title:'Water note:garden',status:'open',
+      createdByKind:'agent',createdBy:'fern',ownerKind:'household',createdAt:new Date(start).toISOString(),
+      changedAt:new Date(start).toISOString()}).run();
+    const sweep = (dryRun=false) => sweepAgentNotes(db,agent,knowledgeFile,()=>due,dryRun);
+    expect(sweep(true)).toEqual({gone:['scratch'],keptCited:['garden']});
+    memory = new Database(agent.memories);
+    // A version number alone cannot establish the schema. Both known layouts are safe only at their own version.
+    memory.pragma('user_version=28');
+    expect(()=>sweep(true)).toThrow();
+    memory.exec('ALTER TABLE person_sighting_aliases DROP COLUMN recipient_display_slug');
+    expect(sweep(true)).toEqual({gone:['scratch'],keptCited:['garden']});
+    memory.pragma('user_version=29');
+    expect(()=>sweep(true)).toThrow();
+    memory.exec('ALTER TABLE person_sighting_aliases ADD COLUMN recipient_display_slug TEXT');
+    memory.exec('ANALYZE');
+    expect(sweep(true)).toEqual({gone:['scratch'],keptCited:['garden']});
+    memory.exec('CREATE TABLE unavailable(title, content, metadata, provenance, archived)');
+    expect(()=>sweep()).toThrow();
+    expect(notes.read('scratch')).not.toBeNull();
+    memory.exec('DROP TABLE unavailable');
+    memory.prepare('INSERT INTO memory_card_references VALUES(?,?,?)').run('receipt','person','fern');
+    expect(()=>sweep()).toThrow();
+    expect(notes.read('scratch')).not.toBeNull();
+    memory.exec('DELETE FROM memory_card_references');
+    expect(sweep()).toEqual({gone:['scratch'],keptCited:['garden']});
+    expect(notes.read('scratch')).toBeNull();
+    expect(notes.read('garden')).not.toBeNull();
+  } finally {
+    memory?.close(); notes?.close(); knowledge.close(); client.close(); rmSync(directory,{recursive:true,force:true});
+  }
+});

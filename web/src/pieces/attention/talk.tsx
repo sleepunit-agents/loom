@@ -1,3 +1,4 @@
+import { talkPath } from '../comms/shared-query';
 import { briefTime, fullTime } from '../../kit/time';
 import { useHouseholdZone } from '../../data/zone';
 import {conversationTitle} from '../../data/conversation-title';
@@ -16,9 +17,6 @@ interface Wire { id: string; agent: string; label?: string; venue: string; place
 type Data = { recent: Wire[]; answered: Wire[] };
 export interface Talk { id: string; title: string; at: string; path: string }
 export interface CardTalk { status: DataQuerySnapshot<unknown>['status']; recent: Talk[]; answer?: { at: string; words: string; path: string } }
-/** Where a conversation opens: a Comms thread for the app's own and a terminal's, its history for any other. */
-export const talkPath = (row: { id: string; venue: string; place: string }) =>
-  row.venue === 'loom' || row.venue === 'terminal' ? threadPath(row.place) : `/p/comms-preview/conversation/${encodeURIComponent(row.id)}`;
 export function cardTalk(query: DataQuerySnapshot<Data>, agent: string, limit: number): CardTalk {
   if (query.status !== 'live') return { status: query.status, recent: [] };
   if (!query.data) return { status: 'loading', recent: [] };

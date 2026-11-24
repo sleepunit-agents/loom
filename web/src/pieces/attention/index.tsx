@@ -1,7 +1,7 @@
 import { InboxDiscussion } from './inbox-discussion';
 import {WorkerJoinCard} from './worker-join';
 import { TaskQuestionAnswer } from '../tasks/question-answer';
-import { LiveApprovalCard, useApprovalList } from '../../data/work-views';
+import { CurrentApprovalCard, useInboxApprovalLabels, useInboxApproval } from '../../data/work-views';
 import { approvalTitle } from '../approval-view/model';
 import { useReadingVisible } from '../../data/visibility';
 import { memberOperation } from '../../data/operation';
@@ -58,11 +58,15 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
   const mutate = memberOperation;
   // An approval's item is said as its card says it: the same plain sentence, made when it is read, and the same
   // card with its Allow and Deny in the reader. The words stored with the item stay where the card is not readable.
-  const cards = useApprovalList();
-  const cardOf = (row: { waitsOnKind?: string | null; waitsOnId?: string | null }) => row.waitsOnKind === 'approval' && cards.status === 'live' ? cards.approvals.find(card => card.id === row.waitsOnId) : undefined;
-
-  const ids = [...new Set([...(data?.items.slice(0,inboxPageSize).filter(approvalRequestId) ?? []), ...(current ? [current] : [])]
-    .map(cardOf).filter(card => card?.operation === 'household.change').map(card => card!.id))];
+  const visibleIds=[...new Set(data?.items.slice(0,inboxPageSize).flatMap(row=>approvalRequestId(row) ?? []) ?? [])].sort();
+  const labels=useInboxApprovalLabels(visibleIds);
+  const selectedId=current?.waitsOnKind==='approval' ? current.waitsOnId ?? undefined : undefined;
+  const selectedApproval=useInboxApproval(selectedId,zone);
+  const selectedCard=selectedApproval.approvals.find(card=>card.id===selectedId);
+  const cardOf = (row: {waitsOnKind?:string|null; waitsOnId?:string|null}) =>
+    row.waitsOnKind==='approval' ? labels.find(card=>card.id===row.waitsOnId) : undefined;
+  const ids=[...new Set([...labels,...(selectedCard ? [selectedCard] : [])]
+    .filter(card=>card.operation==='household.change').map(card=>card.id))].sort();
   const {named} = useInboxProposalTitles(ids);
 
   const actions: InboxActions | undefined = live ? {
@@ -74,11 +78,11 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
   } : undefined;
   return <InboxView zone={zone} snapshot={{ status, settling: reading.settling, folder: drawnFolder, folders: data?.folders, items: data?.items.slice(0, inboxPageSize).map(row => retainedInboxItem(row, Math.max(now, Date.now()))) ?? [] }}
     selected={selected} select={select} detail={{ status: detailStatus, item: current }} actions={actions}
-    words={row => { const approval = approvalRequestId(row) ? cardOf(row) : undefined; return approval?.operation === 'household.change' ? named.get(approval.id) ?? approvalTitle(approval) : undefined; }}
+    words={row => { const approval = approvalRequestId(row) ? (row.id===current?.id && selectedApproval.status!=='loading' ? selectedCard : cardOf(row)) : undefined; return approval?.operation === 'household.change' ? named.get(approval.id) ?? approvalTitle(approval) : undefined; }}
     sourceCard={item => {
       const card = item.source === 'notice' && item.sourceId?.startsWith('worker-join:') ? <WorkerJoinCard key={item.id} item={item}/>
       : item.source === 'task' && item.waitsOnKind === 'task' ? <TaskQuestionAnswer key={item.id} item={item}/>
-      : cardOf(item) ? <LiveApprovalCard showBlocker key={item.id} id={item.waitsOnId!} displayTitle={named.get(item.waitsOnId!)} /> : undefined;
+      : selectedCard && selectedCard.id===item.waitsOnId ? <CurrentApprovalCard base={selectedApproval} showBlocker key={item.id} id={item.waitsOnId!} displayTitle={named.get(item.waitsOnId!)} /> : undefined;
       return item.discussionAgent ? <>{card}<InboxDiscussion key={JSON.stringify([item.id, item.discussionAgent])} item={item.id} agent={item.discussionAgent} go={go} /></> : card;
     }}
     results={{ status, results: data?.results ?? [] }} dismissResult={live ? id => mutate('inbox.dismissResult', { id }) : undefined}

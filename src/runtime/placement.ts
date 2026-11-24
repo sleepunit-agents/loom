@@ -1,8 +1,9 @@
-import { currentAccountCapacity } from './account-windows.js';
+import { readPlacementAccounts } from '../core/data/model-account-read.js';
+import { reportedAccountCapacity } from './account-windows.js';
 import { SILENCE_MS } from './silence.js';
 import { and, asc, count, eq, inArray, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentBoxes, agentModels, boxes, boxAgents, boxFacts, jobs, modelAccounts, modelAccountBoxes, modelAccountLogins } from '../core/data/schema.js';
+import { agentBoxes, agentModels, boxes, boxAgents, boxFacts, jobs, modelAccountBoxes, modelAccountLogins } from '../core/data/schema.js';
 import { claimedJobStates } from '../core/data/job-states.js';
 import { machineMayHost, namesCurrent } from '../policy.js';
 import { sharedSharing } from '../shared-sharing.js';
@@ -50,13 +51,32 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
   // Whether a machine may be handed this agent's work is policy.ts's (machineMayHost), on the household as it is now.
   const sharing = sharedSharing(db);
   const listed = new Map(db.select().from(boxAgents).where(eq(boxAgents.agent, input.agent)).all().map(row => [row.box, row]));
-  const preferences = db.select().from(agentBoxes).where(eq(agentBoxes.agent, input.agent)).orderBy(asc(agentBoxes.position), asc(agentBoxes.box)).all();
+  const preferences = db.select({ id: agentBoxes.box, box: boxes }).from(agentBoxes)
+    .leftJoin(boxes, eq(boxes.id, agentBoxes.box)).where(eq(agentBoxes.agent, input.agent))
+    .orderBy(asc(agentBoxes.position), asc(agentBoxes.box)).all();
+  const factsByBox = new Map<string, string[]>();
+  if (input.needs?.length || input.prefers?.length) {
+    const facts = db.select({ box: boxFacts.box, fact: boxFacts.fact }).from(agentBoxes)
+      .innerJoin(boxFacts, eq(boxFacts.box, agentBoxes.box)).where(eq(agentBoxes.agent, input.agent)).all();
+    for (const { box, fact } of facts) {
+      const existing = factsByBox.get(box);
+      if (existing) existing.push(fact);
+      else factsByBox.set(box, [fact]);
+    }
+  }
+  const occupiedByBox = new Map<string, number>();
+  if (preferences.some(({ box }) => box?.slots != null)) {
+    const counts = db.select({ box: agentBoxes.box, occupied: count() }).from(agentBoxes)
+      .innerJoin(jobs, eq(jobs.box, agentBoxes.box)).where(and(eq(agentBoxes.agent, input.agent),
+        ne(jobs.startedByKind, 'terminal'), inArray(jobs.state, claimedJobStates))).groupBy(agentBoxes.box).all();
+    for (const row of counts) occupiedByBox.set(row.box, row.occupied);
+  }
   const models = input.programBoxes ? [] : db.select().from(agentModels).where(eq(agentModels.agent, input.agent)).orderBy(asc(agentModels.position), asc(agentModels.model)).all()
     .filter(row => !input.wants || row.model === input.wants || input.roles.some(role => role.model === row.model && role.tag === input.wants));
   // A removed member's account pays for nothing, like their machine runs nothing.
-  const accounts = input.programBoxes ? [] : db.select().from(modelAccounts).orderBy(asc(modelAccounts.id)).all()
+  const accounts = input.programBoxes ? [] : readPlacementAccounts(db)
     .filter(account => namesCurrent('member', account.owner, sharing))
-    .map(account => ({ ...account, capacity:currentAccountCapacity(db, account.id, input.now) }));
+    .map(account => ({ ...account, capacity: reportedAccountCapacity(account.hasRoom, account.modelAccountWindowsByAccount, input.now) }));
   const bindings = input.programBoxes ? [] : db.select().from(modelAccountBoxes).all();
   // Host and container logins can differ. Placement uses only reports from the houses.
   const logins = input.programBoxes ? [] : db.select().from(modelAccountLogins).where(eq(modelAccountLogins.place, 'containers')).all();
@@ -64,20 +84,18 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
     const role = input.roles.find(role => role.model === model.model);
     return role && !input.cannotRun?.(role.harness) ? [role] : [];
   });
-  const candidates = preferences.map(({ box: id }): Candidate => {
-    const box = db.select().from(boxes).where(eq(boxes.id, id)).get();
+  const candidates = preferences.map(({ id, box }): Candidate => {
     const silence = box?.lastSeenAt ? now - Date.parse(box.lastSeenAt) : NaN;
     if (!box || box.revokedAt || !Number.isFinite(silence) || silence < 0 || silence > SILENCE_MS)
       return { box: id, reason: 'Machine is not live.' };
     if (input.eligibleBoxes && !input.eligibleBoxes.has(id)) return {box:id,reason:'Worker has not advertised delegated result delivery.'};
     if (box.reportOnly || !machineMayHost(box, listed.get(id), input.agent, sharing))
       return { box: id, reason: `Machine does not host ${input.agent}.` };
-    const facts = db.select().from(boxFacts).where(eq(boxFacts.box, id)).all().map(row => row.fact);
+    const facts = factsByBox.get(id) ?? [];
     const missing = (input.needs ?? []).filter(need => !meetsNeed(facts, need));
     if (missing.length) return { box: id, reason: `Missing required facts: ${describeFacts(missing)}.` };
     if (box.slots != null) {
-      const occupied = db.select({ n: count() }).from(jobs).where(and(eq(jobs.box, id),
-        ne(jobs.startedByKind, 'terminal'), inArray(jobs.state, claimedJobStates))).get()!.n;
+      const occupied = occupiedByBox.get(id) ?? 0;
       if (occupied >= box.slots) return { box: id, reason: `No free worker slot (${occupied}/${box.slots} in use).` };
     }
     if (input.programBoxes && !input.programBoxes.has(id)) return { box: id, reason: 'Worker has not advertised house programs.' };

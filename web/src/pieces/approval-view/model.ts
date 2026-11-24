@@ -20,7 +20,7 @@ export interface Approval {
   /** For the same owner: the plain line saying this cannot be allowed and what would fix it. The answer operation still decides. */
   blocked?: string | null;
 }
-export const approvalTitle = (approval: Approval) => approval.operation === 'household.change' ? publicProposalTitle(approval) : approval.what;
+export const approvalTitle = (approval: Pick<Approval,'operation'|'what'|'details'>) => approval.operation === 'household.change' ? publicProposalTitle(approval) : approval.what;
 export interface Rule {
   kind: Approval['kind']; scope: string; person: string; tier: 'do' | 'tell' | 'ask'; setBy: string; setAt: string;
 }

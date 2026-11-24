@@ -24,6 +24,19 @@ it('separates loading, denial, offline and empty states without writes',async()=
   f.access={records:[{id:'people',allowed:false}],status:'live'};await act(async()=>tree!.update(h(People,props)));expect(text()).toContain('don’t have access');expect(text()).not.toContain('No people yet');
   f.access={records:[],status:'offline'};await act(async()=>tree!.update(h(People,props)));expect(text()).toContain('Connection lost');expect(f.call).not.toHaveBeenCalled();
 });
+it('explains a missing default agent and enables Add when the household chooses one',async()=>{
+  const permission={id:'people',allowed:true,directory:true,canAdd:false,agents:['art']};
+  f.access={records:[permission],status:'live'};
+  await act(async()=>{tree=create(h(People,props));});
+  const add=()=>tree!.root.findAllByType('button').find(b=>b.props.children==='Add a person')!;
+  expect(add().props.disabled).toBe(true);expect(text()).toContain('set your household’s default agent');
+  f.access={records:[{...permission,agents:[]}],status:'live'};
+  await act(async()=>tree!.update(h(People,props)));
+  expect(add().props.disabled).toBe(true);expect(text()).toContain('Add a household agent');
+  f.access={records:[{...permission,canAdd:true}],status:'live'};
+  await act(async()=>tree!.update(h(People,props)));
+  expect(add().props.disabled).toBe(false);expect(text()).not.toContain('set your household’s default agent');
+});
 it('retains a draft and request across disconnect and freezes unavailable saves for same-id retry',async()=>{
   let state:CallState={pending:true,status:'pending'},listener=()=>{};const retry=vi.fn();
   f.call.mockReturnValue({id:'retained',getSnapshot:()=>state,subscribe:(fn:()=>void)=>{listener=fn;return()=>{};},result:new Promise(()=>{}),retry});

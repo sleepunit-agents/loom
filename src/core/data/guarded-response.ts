@@ -1,6 +1,6 @@
 /** Responses carrying private command data keep their authorization until the bytes are consumed. */
 export function isGuardedCommandRead(name:string):boolean {
-  return name==='conversation.session'||name==='tempo.readJournal'||name==='tempo.wakeLessons'||name==='memory.noteFile';
+  return name==='conversation.session'||name==='tempo.readJournal'||name==='tempo.wakeLessons'||name==='tempo.wakeToolProfile'||name==='memory.noteFile';
 }
 
 const availability = new WeakMap<ReadableStream<Uint8Array>, () => boolean>();

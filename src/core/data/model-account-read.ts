@@ -1,6 +1,6 @@
 /** Model-account page projection. Public coarse capacity and private detail
  * are separate generated batches; location joins never run once per account. */
-import { and, asc, inArray, sql, type AnyColumn } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql, type AnyColumn } from 'drizzle-orm';
 import { rules, type Viewer } from '../../policy.js';
 import { sqlHolds, sqlRule } from '../../policy-sql.js';
 import type { DataDatabase } from './database.js';
@@ -11,11 +11,17 @@ function privateAccount(viewer: Viewer, fields: Record<string, AnyColumn>) {
   const allowed = sqlRule(rules.ownedByMember('owner'), viewer, fields);
   return sql`${{ getSQL: () => allowed }}`;
 }
-export function readModelAccounts(db: DataDatabase, viewer: Viewer) {
-  // Two rules, both policy.ts's: the summary (name and coarse level) and the private detail.
-  const rows = !sqlHolds(db, rules.accountSummary, viewer) ? [] : db.query.modelAccounts.findMany({ columns: { id: true, label: true, hasRoom: true }, orderBy: f => asc(f.label),
+/** Only names and coarse capacity cross the public summary door. */
+export function readAccountCapacityRows(db: DataDatabase, viewer: Viewer, account?: string) {
+  if (!sqlHolds(db, rules.accountSummary, viewer)) return [];
+  return db.query.modelAccounts.findMany({
+    where: account === undefined ? undefined : f => eq(f.id, account),
+    columns: { id: true, label: true, hasRoom: true }, orderBy: f => asc(f.label),
     with: { modelAccountWindowsByAccount: { columns: { window: true, usage: true, usageReadAt: true, resetsAt: true, durationMs: true, reserve: true } } },
   }).sync();
+}
+export function readModelAccounts(db: DataDatabase, viewer: Viewer) {
+  const rows = readAccountCapacityRows(db, viewer);
   const privateRows = db.query.modelAccounts.findMany({ where: f => privateAccount(viewer, f),
     columns: { id: true, owner: true, provider: true, usage: true, usageReadAt: true, resetsAt: true },
     with: { modelAccountBoxesByAccount: { columns: {}, with: { boxRow: { columns: { id: true, name: true } } } },
@@ -30,6 +36,14 @@ export function readModelAccounts(db: DataDatabase, viewer: Viewer) {
         .sort((a, b) => text(a.box.name, b.box.name) || text(a.box.id, b.box.id) || text(a.harness, b.harness) || text(a.place, b.place)),
       signedInOn: modelAccountBoxesByAccount.map(link => link.boxRow!).filter(Boolean).sort((a,b) => Buffer.compare(Buffer.from(a.name), Buffer.from(b.name)) || Buffer.compare(Buffer.from(a.id), Buffer.from(b.id))) }])) };
 }
+/** Internal scheduler projection, ordered for deterministic account selection. */
+export function readPlacementAccounts(db: DataDatabase) {
+  return db.query.modelAccounts.findMany({
+    columns: { id: true, owner: true, provider: true, usageReadSucceeded: true, hasRoom: true },
+    orderBy: f => asc(f.id), with: { modelAccountWindowsByAccount: true },
+  }).sync();
+}
+
 /** One current-authority statement for every private account witnessed by a read. */
 export function allowedModelAccounts(db: DataDatabase, viewer: Viewer, ids: readonly string[]) {
   if (!ids.length) return new Set<string>();

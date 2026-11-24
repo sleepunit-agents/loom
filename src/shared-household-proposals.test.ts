@@ -1174,6 +1174,8 @@ it('names an outside account from its exact directory record only for the owner'
     store.write({ slug: 'field-contact', name: 'Casey Field', where: {
       slack: { value: ['UCASEY', 'UCASEYTWO'] }, slack_workspace: { value: 'TFIELD' },
     } });
+    store.write({slug:'legacy-field',name:'Test Contact',where:{slack:{value:'Contact UEXAMPLE01'}}});
+    store.database.prepare('INSERT INTO person_sighting_aliases (workspace,account,slug,recipient_display_slug) VALUES (?,?,?,?)').run('TFIELD','UEXAMPLE01','legacy-field','legacy-field');
     store.write({ slug: 'bare-handle', name: 'Unscoped Name', where: { slack: { value: 'UCASEY' } } });
   } finally { store.close(); }
   const f = fixture({ checkingAgent: 'art', sources: { commons: { directory, people, knowledge }, agents: [] } });
@@ -1182,6 +1184,11 @@ it('names an outside account from its exact directory record only for the owner'
     return (await f.call('household/propose', { change: 'kitGrant', input, why: 'Set field access' }, 'art')).body.value!.id;
   };
   const id = await file('slack', 'TFIELD', 'UCASEY');
+  const legacy = await file('slack','TFIELD','UEXAMPLE01');
+  const recipient = await preview(f,legacy);
+  expect(recipient.card!.title).toContain('Test Contact (Slack)');
+  expect(recipient.blocked).toContain('does not know Test Contact as an outside contact');
+  expect((await f.call('approvals/answer',{id:legacy,answer:'allow',confirm:true},'sam')).body.ok).toBe(false);
   const named = await preview(f, id);
   expect((await preview(f, await file('slack','TFIELD','UCASEYTWO'))).card!.title).toContain('Casey Field (Slack)');
   expect(named.card!.title).toContain('Casey Field (Slack)');
