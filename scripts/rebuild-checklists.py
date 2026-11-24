@@ -262,6 +262,8 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('A change saves the earlier version first.'):row['probe']={'kind':'action','action':'memoryRevisions'}
    if row['promise']=='Shows what happened each day in Activity.':row['probe']={'kind':'action','action':'activityDays'}
    if row['promise']=='Activity lists the tasks and pull requests each conversation touched.':row['probe']={'kind':'action','action':'activityWorkLinks'}
+   if row['promise']=="Memories, notes, people cards, project cards and identity live in each agent's own folder. Knowledge pages and the people directory are shared by the household. Identity also holds a page for each harness, model, role and project the agent works in, loaded when asked for, and a summary of what its other bodies did in the last 24 hours.":
+    row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['agentFolderContents','sharedHouseholdFiles','identityPages','sessionEpisode']]}
    if row['promise']=="each agent's folder Its memories and their history, drafts awaiting ratification, its notes and their earlier versions, people cards, project cards, and its identity files.":
     row['probe']={'kind':'action','action':'agentFolderContents'}
    if row['promise'].startswith(("Keeps each agent's memories in that agent's own files.","A memory belongs to one agent.","a Memories, notes and cards.")):row['probe']={'kind':'action','action':'agentMemoryFiles'}

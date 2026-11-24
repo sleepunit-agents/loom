@@ -310,6 +310,10 @@ export async function* walkthroughSteps(output) {
    report.actions.agentMemoryFiles=await agentMemoryFiles();
   } catch(error) { report.actions.agentMemoryFiles={ok:false,error:String(error)}; }
   report.actions.agentFolderContents=report.actions.agentMemoryFiles;
+  try {
+   const {identityPages}=await import('./rebuild-identity-pages.mjs');
+   report.actions.identityPages=await identityPages();
+  } catch(error) { report.actions.identityPages={ok:false,error:String(error)}; }
   save();yield {phase:'agent-memory-files',actions:safeReport(report.actions)};
   phase='semantic recall';
   try {
