@@ -44,7 +44,7 @@ function AgentReader({ agent, selectedThread, before, names, go }: { agent: Agen
       <div className="desk-agent-feed-column">
         {selectedThread
           ? <LiveAgentHistory key={selectedThread} agent={agent.id} thread={selectedThread} before={before} go={go}/>
-          : <LiveAgentFeed agent={agent.id} go={go} showEmpty before={before ?? '0'}/>}
+          : <LiveAgentFeed agent={agent.id} go={go} showEmpty before={before}/>}
       </div>
       <div className="desk-agent-context">
         <Section label="Doing now"><Doing doing={doing} name={agent.name} agent={agent.id} names={names} go={go}/></Section>

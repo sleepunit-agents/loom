@@ -28,8 +28,7 @@ function usePostClock(active: boolean) {
 export function LiveAgentFeed({ agent, compact = false, go, onChange, showEmpty = false, before }: {
   agent: string; compact?: boolean; go(path: string): void; onChange?(): void; showEmpty?: boolean; before?: string;
 }) {
-  const paged = before !== undefined;
-  const limit = compact ? 1 : previewCount + Number(paged);
+  const limit = compact ? 1 : previewCount + 1;
   const query = useDataQuery<{agentActivityFeed: AgentPostPreview[]}>(agentFeedQuery, {agent,limit,compact,before:before ?? '0'});
   const threads = query.status === 'live' ? query.data?.agentActivityFeed : undefined;
   const latest = threads?.[0];
@@ -47,11 +46,11 @@ export function LiveAgentFeed({ agent, compact = false, go, onChange, showEmpty 
     if (query.status === 'loading') return <Loading label="Opening activity…"/>;
     return <><Body quiet>{threads ? page ? 'No earlier activities.' : 'No updates yet.' : 'Activity unavailable.'}</Body>{firstPage}</>;
   }
-  const visible = paged ? threads.slice(0,previewCount) : threads;
+  const visible = threads.slice(0,previewCount);
   return <><AgentPostFeed threads={visible} now={now} compact={compact} go={go}
     open={id=>go(base+page+(page?'&':'?')+'activity='+encodeURIComponent(id))}/>
     {firstPage}
-    {paged && threads.length>previewCount && <Button variant="ghost" onClick={()=>go(base+'?before='+encodeURIComponent(visible[visible.length-1].latest.id))}>Earlier activities</Button>}
+    {!compact && threads.length>previewCount && <Button variant="ghost" onClick={()=>go(base+'?before='+encodeURIComponent(visible[visible.length-1].latest.id))}>Earlier activities</Button>}
   </>;
 }
 
