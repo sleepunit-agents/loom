@@ -357,6 +357,10 @@ export async function* walkthroughSteps(output) {
    const {jobLabelsEvidence}=await import('./rebuild-job-labels.mjs');
    report.actions.jobLabels=await jobLabelsEvidence();
   } catch(error) { report.actions.jobLabels={ok:false,error:String(error)}; }
+  try {
+   const {machinePlacementEvidence}=await import('./rebuild-machine-placement.mjs');
+   report.actions.machinePlacement=await machinePlacementEvidence();
+  } catch(error) { report.actions.machinePlacement={ok:false,error:String(error)}; }
   save();yield {phase:'job-labels',actions:safeReport(report.actions)};
   phase='worker start retries';
   try {

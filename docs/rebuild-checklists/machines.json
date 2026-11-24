@@ -111,7 +111,11 @@
     {
       "id": "machines-013",
       "promise": "A box is a machine with a worker on it. A member owns it. A worker can share a machine with loom or sit on another one. Facts such as gpu:5090 match work to a machine.",
-      "source": "docs/how-it-works/site/machines.html#how-h"
+      "source": "docs/how-it-works/site/machines.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "machinePlacement"
+      }
     },
     {
       "id": "machines-014",
