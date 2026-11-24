@@ -136,6 +136,8 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'] in evidence:row['probe']={'kind':'action','action':evidence[row['promise']]}
    if row['promise'].startswith('a Owners manage them. Household owners manage Settings,'):
     row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['deskPanelVisibility','settingsGrant']]}
+   if row['promise']=="d Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.":
+    row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['secretCallers','installedSecretHolder','settingsGrant','secretValues']]}
    if row['promise'].startswith('Every time a value leaves the key holder,'):
     row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['installedSecretHolder','secretValues']]}
  if f.stem=='secrets':add('The owner can add, replace and remove a Secret value in Settings; reload preserves the result, the value is not displayed or stored in the main database, and each change is recorded.','',{'kind':'action','action':'secretValues'})

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { secretCallers } from './rebuild-secret-callers.mjs';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { channel } from 'node:diagnostics_channel';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
@@ -193,6 +194,12 @@ async function verifyGrant(app, clock, owner, name, value) {
       state: 'allowed',
     });
     assert.ok(requests.grantFor(name, agent, job, unused));
+    let callers;
+    try {
+      callers = await secretCallers({ app, clock, owner, name, agentToken: token, machineToken: runner.token, ownerToken: member.token });
+    } catch (error) {
+      callers = { ok: false, error: String(error) };
+    }
     clock.advance(57_999);
     assert.equal(requests.grantFor(name, agent, job, id)?.id, grant.id);
     assert.ok(requests.grantFor(name, agent, undefined, agentRequestId));
@@ -202,6 +209,7 @@ async function verifyGrant(app, clock, owner, name, value) {
     clock.advance(2_000);
     await assert.rejects(reader.granted(name, unused), /Private secret input unavailable/);
     assert.deepEqual(uses(), expectedUses);
+    return callers;
   } finally {
     reader?.close();
     body?.erase();
@@ -297,7 +305,7 @@ export async function installedSecretHolder() {
     const second = await start();
     assert.notEqual(second, first);
     assert.ok(ciphertext().equals(before), 'Encrypted record changed when the home reopened');
-    await verifyGrant(app, clock, owner, name, value);
+    const callers = await verifyGrant(app, clock, owner, name, value);
     await app.services.secrets.values.remove({ member: owner, id: randomUUID(), name });
     const holderDb = new Database(join(directory, 'holder.db'), { readonly: true, fileMustExist: true });
     try {
@@ -307,6 +315,7 @@ export async function installedSecretHolder() {
     }
     return {
       ok: true,
+      callers,
       standingAnswer: {
         ok: true,
         reason: 'After Always, the listed agent was allowed, the other agent waited, and the Never default denied both agents on a second secret with no rule.',
