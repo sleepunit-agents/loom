@@ -60,3 +60,21 @@ it('plays a newly retained reply, skips history and drops the animation when the
   expect(inline()['data-face']).toBe('idle');
  } finally {await act(async()=>tree?.unmount());vi.useRealTimers();}
 });
+
+it('starts fresh reply tracking when the same agent opens another conversation',async()=>{
+ const row=(thread:string,seq:number):CommsMessage=>({thread,seq,words:'Reply',kind:'reply',sender:'art',at:'2026-11-21T00:00:00Z'});
+ const view=(threadId:string|undefined,messages:CommsMessage[])=>h(Companion,{agent:'art',threadId,visible:true,working:false,needs:false,messages,go:vi.fn()});
+ let tree!:ReturnType<typeof create>;
+ try {
+  await act(async()=>{tree=create(view('th:a',[row('th:a',4)]));});
+  const signal=()=>tree.root.findByProps({'data-location':'inline'}).props['data-signal'];
+  await act(async()=>tree.update(view('th:a',[row('th:a',5)])));
+  expect(signal()).toBe('on');
+  await act(async()=>tree.update(view(undefined,[])));
+  expect(signal()).toBeUndefined();
+  await act(async()=>tree.update(view('th:b',[row('th:b',15)])));
+  expect(signal()).toBeUndefined();
+  await act(async()=>tree.update(view('th:b',[row('th:b',16)])));
+  expect(signal()).toBe('on');
+ } finally {await act(async()=>tree?.unmount());}
+});

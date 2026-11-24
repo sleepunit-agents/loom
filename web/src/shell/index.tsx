@@ -1,4 +1,4 @@
-import { Component, Suspense, useEffect, useRef, useState, useSyncExternalStore, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react';
+import { Component, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react';
 import { DeskRouter, currentPath, presentedTiles, type AppRegistration, type Tile } from './router';
 import { ContextMenu, type MenuAt } from '../tiling/menu';
 import { layout, railWidth, type Rect } from '../tiling/layout';
@@ -63,7 +63,8 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   // Until Home's piece registers a rail there is no invented agent data or empty reserved column.
   const { Home, Rail, Bar, Signals, Notice } = surfaces;
   const companion = useCompanion(!phone&&!!Rail&&visible.length>0&&railWidth(width)>100&&(railAs==='always'||hiding.peek.rail));
-  const workArea = { ...area,w:Math.max(1,area.w - (Rail && visible.length ? (railAs==='always'?railWidth(width)+10:railAs==='strip'?24:0) : 0)) };
+  const railSpace = Rail && visible.length ? (railAs==='always'?railWidth(width)+10:railAs==='strip'?24:0) : 0;
+  const workArea = useMemo(()=>({...area,w:Math.max(1,area.w-railSpace)}),[area,railSpace]);
   useEffect(() => { if(!phone) {const notices=router.fit(workArea,width,oneWindow);if(notices.length)setNotice(notices.join(' '));} },[workArea.w,workArea.h,width,phone,oneWindow,route.maximized,router]);
   const focused = visible.find(t => t.id === route.focused) ?? visible[0];
   // Open apps are the route's tiles, shown or minimized: what the dock marks as open. Most recently in front first;
@@ -77,12 +78,12 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   const presented = presentedTiles(route,phone||oneWindow);
   const boxes = layout(router.asTiles(presented),workArea,width).apps;
   useDockRestore(ground, boxes, route.tiles);
-  const open = (id: string, tap = false) => {
+  const open = useCallback((id: string, tap = false) => {
     buzz(haptics,tap);
     const gone = router.open(id,phone ? undefined : workArea,phone ? 1920 : width,undefined,oneWindow);
     setNotice(gone?.map(t => t.why).join('. ') ?? ''); setLauncher(false);
     if (document.documentElement.dataset.sound === 'on') void import('../sound').then(s => s.chime('done'));
-  };
+  },[haptics,router,phone,workArea,width,oneWindow]);
   const keys = useShortcuts({
     toggleLauncher: () => setLauncher(v => !v),
     apps: () => ({ order: recentNow, focused: focused?.id }),
@@ -120,11 +121,12 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
     };
     window.addEventListener('keydown',key); return () => window.removeEventListener('keydown',key);
   },[visible,route.focused,router,boxes,phone]);
-  const go = (path:string) => {
+  const go = useCallback((path:string) => {
     if(path === '/') {router.home();return;}
     const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));
     if(app){open(app.id);router.go(app.id,path);}
-  };
+  },[apps,open,router]);
+  const railSurface = useMemo(()=>Rail ? <Rail go={go}/> : null,[Rail,go]);
   return <RailContext.Provider value={phone?null:companion}><div className="next-shell" data-shell={phone ? 'phone' : 'desk'} data-dock-mode={phone?'always':hiding.modes.dock}>
     {Bar ? <Bar title={apps.find(a => a.id === focused?.id)?.title ?? 'Home'} go={go} /> : <header className="next-bar"><strong>LOOM<span aria-hidden="true">//</span>OS</strong><span>{apps.find(a => a.id === focused?.id)?.title ?? 'Home'}</span><Button variant="ghost" size="sm" onClick={() => setLauncher(!launcher)}>All apps</Button></header>}
     <div ref={ground} className="next-ground">
@@ -135,7 +137,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
           onClick={()=>hiding.show('rail',true)} onPointerEnter={()=>{if(railAs==='auto')hiding.show('rail',true);}} onPointerDown={e=>{if(e.pointerType==='touch')hiding.show('rail',true);}} onContextMenu={e=>setMenu(hiding.menu('rail',e))}><span aria-hidden="true">‹</span></button>}
         <aside aria-label="Your agents" tabIndex={-1} data-hide-part="rail" className="next-rail" data-mode={railAs} data-peek={hiding.peek.rail||undefined} inert={railAs!=='always'&&!hiding.peek.rail} style={{width:railWidth(width)||296}}
           onPointerEnter={()=>{if(railAs==='auto')hiding.show('rail',true);}} onPointerLeave={e=>{if(railAs==='auto'&&e.pointerType==='mouse'&&!menu)hiding.show('rail',false);}} onContextMenu={e=>setMenu(hiding.menu('rail',e))}>
-          <Rail go={path => {const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}} />
+          {railSurface}
         </aside>
       </>}
       </AgentCardMotion>

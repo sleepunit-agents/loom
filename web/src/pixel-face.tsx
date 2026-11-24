@@ -259,7 +259,7 @@ export default function PixelFace({ sprite, state = 'idle', size, label, fallbac
   scale?: number;
   /** The state it shows, as it changes, and the manifest state each frame is drawn from (the comm screen's data-face, data-anim). */
   onShown?: (st: FaceState) => void; onFrom?: (from: string) => void;
-  /** Whether a sheet-backed player is available (otherwise the drawn fallback supplies the run). */
+  /** Whether a sheet-backed player is available (otherwise the comm screen times its own state changes). */
   onReady?: (ready: boolean) => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const { sheet, failed } = useSheet(sprite);
@@ -310,7 +310,7 @@ export default function PixelFace({ sprite, state = 'idle', size, label, fallbac
     else player.current?.want(want.current);
   }, [talk?.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // A sheet that can't be had (gone, refused): the agent's drawn face, not an empty square.
+  // Reserve the slot while this exact sheet is loading or unavailable.
   if (failed || !sheet) return <>{fallback}</>;
   const [w, h] = PIXEL.box;
   // The agent's own scale and offset (its manifest, t-1849), on top of the whole-pixel 1x or 2x. None, and it's drawn as ever.
@@ -389,8 +389,7 @@ export function avatarHalf(src: Uint8ClampedArray, w: number, h: number): { data
  * An agent's small pixel avatar (under 36 px, where a whole 48-pixel sprite would swamp the words beside it; Jonathan,
  * 2026-11-05: "anywhere we currently have the 0000h face should be the pixel art guy now"): its head, from its rest
  * frame (avatarCrop), drawn at a whole-pixel scale (avatarFit: the head itself from 32 px, at half resolution below),
- * never smoothed, centred in its box. It's drawn once and doesn't move: quieter in a list, and cheaper. A sheet that
- * can't be had: its drawn face.
+ * never smoothed, centred in its box. It's drawn once and doesn't move: quieter in a list, and cheaper. An unavailable sheet uses the caller's reserved slot.
  */
 export function PixelAvatar({ sprite, size, label, fallback }: { sprite: Sprite; size: number; label?: string; fallback: React.ReactNode }) {
   const canvas = useRef<HTMLCanvasElement>(null);

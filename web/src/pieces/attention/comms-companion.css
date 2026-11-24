@@ -8,5 +8,4 @@
 button.desk-comms-mini__face{cursor:pointer}
 button.desk-comms-mini__face:hover{border-color:var(--v-edge)}
 button.desk-comms-mini__face:focus-visible{outline:2px solid var(--t,var(--v-pink));outline-offset:2px}
-.desk-comms-mini .desk-agent-initial{font-size:15px}
 .desk-comms-screen[data-signal="on"] .desk-comms-glass,.desk-comms-mini[data-signal="on"] .desk-comms-mini__face{background-image:repeating-linear-gradient(to bottom,transparent 0 2px,color-mix(in srgb,var(--v-blue) 27%,transparent) 2px 3px)}

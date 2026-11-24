@@ -205,12 +205,13 @@ export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style,
       <AvatarFallback>{a.label[0]}</AvatarFallback>
     </Avatar>
   );
+  const space = <span role="img" aria-label={a.label} className={className} style={{ display: 'inline-block', width: size, height: size, ...style }} />;
   return (
-    <Suspense fallback={initial}>
+    <Suspense fallback={sprite ? space : initial}>
       <span className={`inline-grid shrink-0 place-items-center ${className ?? ''}`} style={{ width: size, height: size }}>
         {(() => {
           const drawn = <Face bg={a.bg} fg={a.fg} shape={a.face?.shape as never} eyes={a.face?.eyes as never} state={state} size={size} label={a.label} dark={isDark()} />;
-          return !sprite ? drawn : size >= 36 ? <PixelFace sprite={sprite} state={state} size={size} label={a.label} fallback={drawn} /> : <PixelAvatar sprite={sprite} size={size} label={a.label} fallback={drawn} />;
+          return !sprite ? drawn : size >= 36 ? <PixelFace sprite={sprite} state={state} size={size} label={a.label} fallback={space} /> : <PixelAvatar sprite={sprite} size={size} label={a.label} fallback={space} />;
         })()}
       </span>
     </Suspense>
