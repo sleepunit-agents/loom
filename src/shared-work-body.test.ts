@@ -288,6 +288,7 @@ it('accepts a casual yes for the card named in Comms while another card is pendi
   authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({input:{}})});
  const item=(await take.json()).value.items.find((row:{words:string})=>row.words===words);
  expect((await f.call('answer',{id:other,answer:'allow',onWord:{item:item.id,quote:'Sure'}})).status).toBe(403);
+ expect((await f.call('answer',{id:other,answer:'allow',onWord:{quote:'Sure'}})).status).toBe(403);
  expect((await f.call('answer',{id,answer:'allow',onWord:{item:item.id,quote:words}})).status).toBe(200);
  expect(f.root.services.approvals.get(id).state).toBe('allowed');
  expect(f.root.services.approvals.get(other).state).toBe('pending');
