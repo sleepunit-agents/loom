@@ -56,7 +56,7 @@ function DayHours({date, zone, now, triggers, pauses, open, log}: ScheduleProps 
   }
   if (today && !marked) add(now,'now');
   return <section aria-label="Day schedule" className="grid gap-1">
-    {[...hours].map(([hour,items])=><div key={hour} className="grid grid-cols-[5em_minmax(0,1fr)] gap-2 border-t py-2">
+    {[...hours].map(([hour,items])=><div key={hour} className="tempo-hour grid grid-cols-[5em_minmax(0,1fr)] gap-2 border-t py-2">
       <h3 className="pt-1 text-sm">{hour}</h3>
       <div className="grid gap-1 border-l pl-2">{items.map(entry=>entry === 'now'
         ? <div key="now" className="border-b text-sm" role="separator" aria-label="Now">Now · {format.format(now)}</div>
@@ -80,7 +80,7 @@ function CalendarHours({start,week,selectDay,...schedule}: ScheduleProps & {star
     }
     return days;
   },[log,schedule.zone]);
-  return <div aria-label={week ? 'Week schedule' : undefined} role={week ? 'region' : undefined} className="grid gap-3">
+  return <div aria-label={week ? 'Week schedule' : undefined} role={week ? 'region' : undefined} className={week ? 'tempo-week-days' : 'grid gap-3'}>
     {!log && <p>{feed.status === 'loading' ? 'Loading firing history…' : 'Firing history unavailable.'}</p>}
     {Array.from({length},(_,offset)=>{
       const date = shift(start,offset);

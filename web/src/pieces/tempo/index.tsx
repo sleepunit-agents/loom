@@ -1,3 +1,4 @@
+import './calendar.css';
 import { TempoCalendar } from './day';
 import { triggerHistoryQuery } from './query';
 import { tempoFailureMessage } from './actions';
@@ -125,7 +126,7 @@ export default function Tempo({ snapshot, actions, inUse }: { snapshot: TempoSna
   const agents = [...new Set(triggers.map(triggerAgent).filter((agent): agent is string => !!agent && (!inUse || inUse.has(agent))))].sort();
   const reader = live && creating && actions?.create ? <CreateTrigger timezone={snapshot.timezone} submit={actions.create} done={() => setCreating(false)} /> : trigger ? <TriggerDetails key={trigger.id} snapshot={snapshot} trigger={trigger} actions={actions} /> : null;
   const time = (at: string) => new Intl.DateTimeFormat(undefined, { timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(at));
-  return <Split label="Tempo" className="h-full" folders={[{id:'day',label:'Day'}, {id:'week',label:'Week'}, ...folders.map(item => ({ ...item, count: live ? rows(triggers, item.id, '', selectedAgent).length : undefined }))]}
+  return <Split label="Tempo" className={folder === 'week' ? 'h-full tempo-week' : 'h-full'} folders={[{id:'day',label:'Day'}, {id:'week',label:'Week'}, ...folders.map(item => ({ ...item, count: live ? rows(triggers, item.id, '', selectedAgent).length : undefined }))]}
     folder={folder} onFolder={id => { setFolder(id as Folder | 'day' | 'week'); setCreating(false); setSelected(undefined); }}
     search={<div className="grid gap-2"><label>Search tempo<Input type="search" value={query} onChange={event => setQuery(event.target.value)} /></label>
       <label>Agent<NativeSelect value={selectedAgent} onChange={event => { setAgent(event.target.value); setSelected(undefined); }}><option value="">All agents</option>{agents.map(id => <option key={id}>{id}</option>)}</NativeSelect></label></div>}
