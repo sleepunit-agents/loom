@@ -108,6 +108,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
     row['probe']={'kind':'action','action':'measuringDestinations'}
  if f.stem=='tempo':
   for row in rows:
+   if row['promise'].startswith(('a What it carries. A trigger names who set it','b Who sees it. Household owners can read these records.')):row['probe']={'kind':'action','action':'triggerAudience'}
    if row['promise']=='Shows a day as a calendar, with each trigger at the time it fires.':row['probe']={'kind':'action','action':'tempoCalendar'}
    if row['promise']=='Who set it: the household, an agent or a person.':row['probe']={'kind':'action','action':'tempoCalendar'}
    if row['promise'].startswith('Each block is one of four kinds,'):row['probe']={'kind':'action','action':'tempoCalendar'}

@@ -198,12 +198,20 @@
     {
       "id": "tempo-026",
       "promise": "a What it carries. A trigger names who set it, the agent or person it is for, and its project.",
-      "source": "docs/how-it-works/site/tempo.html#see-h"
+      "source": "docs/how-it-works/site/tempo.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "triggerAudience"
+      }
     },
     {
       "id": "tempo-027",
       "promise": "b Who sees it. Household owners can read these records. Anyone else sees triggers in their projects and triggers for agents they own, and a person also sees a trigger they set for themselves or one that is for them.",
-      "source": "docs/how-it-works/site/tempo.html#see-h"
+      "source": "docs/how-it-works/site/tempo.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "triggerAudience"
+      }
     },
     {
       "id": "tempo-028",
