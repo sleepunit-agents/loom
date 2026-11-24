@@ -120,7 +120,11 @@
     {
       "id": "machines-014",
       "promise": "Each agent has run settings. The first preferred machine that is up is used. Settings also say how the agent treats each outside person and which tools its body is not given. How a house is defined and built is on the Houses page.",
-      "source": "docs/how-it-works/site/machines.html#how-h"
+      "source": "docs/how-it-works/site/machines.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "machinePlacement"
+      }
     },
     {
       "id": "machines-015",
