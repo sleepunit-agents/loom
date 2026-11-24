@@ -68,6 +68,9 @@ it('shows each provider window and sign-in only while detail remains visible',as
  f.snapshot={status:'live',data:{modelAccounts:[{...detail,windows,logins}]}};
  await act(async()=>{tree=create(h(RuntimeAccounts));});
  expect(tree.root.findByType('meter').props.value).toBe(.41);
+ const settings=tree.root.findByProps({'aria-label':'Settings'});
+ expect(settings.findAllByType('dt').map(node=>node.children.join(''))).toEqual(['Label','Owner','Service','Configured machines','Week reserve']);
+ expect(settings.findAllByType('dd').map(node=>node.children.join(''))).toEqual(['Main subscription','alice','private-provider','Workshop','5%']);
  expect(JSON.stringify(tree.toJSON())).toContain('Signed out');
  expect(JSON.stringify(tree.toJSON())).toContain('In houses');
  f.snapshot={status:'live',data:{modelAccounts:[{__typename:'RuntimeAccountSummary',label:'Main subscription',level:'plenty'}]}};
