@@ -1,3 +1,4 @@
+import { triggerHistoryQuery } from './query';
 import { tempoFailureMessage } from './actions';
 import { NativeSelect } from '../../kit/native-select';
 import { useDataQuery } from '../../data/graphql';
@@ -10,7 +11,6 @@ import { folders, rows, title, source, target, history, status, terminal, trigge
 export interface TempoSnapshot {
   status: 'loading' | 'live' | 'offline' | 'denied';
   triggers: readonly Trigger[];
-  events: readonly TriggerEvent[];
   pauses: readonly AgentPause[];
   timezone: string;
 }
@@ -64,7 +64,9 @@ function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapsho
   }>('query JournalDetails($id:String!){tempoJournal(id:$id)}', {id: trigger.id});
   const program = detail.status === 'live' ? detail.data?.tempoProgram : null;
   const journal = journalDetail.status === 'live' ? journalDetail.data?.tempoJournal : null;
-  const lastDecision = program?.lastResult ?? history(snapshot.events, trigger.id).find(event => event.event === 'program')?.note;
+  const log = useDataQuery<{ triggerLog: TriggerEvent[] }>(triggerHistoryQuery, {id: trigger.id});
+  const entries = log.status === 'live' && log.data?.triggerLog ? history(log.data.triggerLog, trigger.id) : undefined;
+  const lastDecision = program?.lastResult ?? entries?.find(event => event.event === 'program')?.note;
   const time = (at: string) => new Intl.DateTimeFormat(undefined, {
     timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short',
   }).format(new Date(at));
@@ -95,9 +97,10 @@ function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapsho
     {trigger.instructions && <section><h2>Words</h2><p className="whitespace-pre-wrap break-words">{trigger.instructions}</p></section>}
     {trigger.file && <section><h2>Repository file</h2><p>{trigger.file}</p></section>}
     {actions && <TriggerActions trigger={trigger} pauses={snapshot.pauses} actions={actions} />}
-    <section><h2>Recent history</h2>{history(snapshot.events, trigger.id).length ? <ol>
-      {history(snapshot.events, trigger.id).map(event => <li key={event.seq}>{time(event.at)} · {event.event}{event.note && ` · ${event.note}`}</li>)}
-    </ol> : <p>No events yet.</p>}</section>
+    <section><h2>Recent history</h2>{entries?.length ? <ol>
+      {entries.map(event => <li key={event.seq}>{time(event.at)} · {event.event}{event.note && ` · ${event.note}`}</li>)}
+    </ol> : entries ? <p>No events yet.</p> : log.status === 'loading' || log.status === 'live'
+      ? <Loading label="Reading trigger history…" /> : <p>Trigger history unavailable.</p>}</section>
   </article> : null;
 }
 
