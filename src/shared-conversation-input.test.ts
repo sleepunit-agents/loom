@@ -48,6 +48,46 @@ it('guards deferred wrapped-clone input at its deadline without running an expir
  const response=await take(f);expect(response.status).toBe(200);const wrapped=new Response(response.body,response),copy=wrapped.clone();await Promise.resolve();time+=1000;await expect(copy.text()).rejects.toThrow('Data access ended');await expect(wrapped.text()).rejects.toThrow('Data access ended');
  expect(f.db.select().from(s.messages).get()?.words).not.toBeNull();const retry=await(await take(f)).json() as Batch;expect(retry.value.items[0].words).toBeNull();
 });
+it.each(['expiry','worker loss','thread deletion'])('withholds unread checkpoint bytes after %s', async change=>{
+ const f=await fixture(), start=f.clock.now(), deadline=new Date(start+1000).toISOString();
+ let time=start;
+ vi.spyOn(f.clock,'now').mockImplementation(()=>time);
+ f.db.update(s.jobs).set({harness:'claude'}).where(eq(s.jobs.id,'job')).run();
+ await f.send('Fictional retained message','checkpoint');
+ f.root.writes.run(()=>f.db.update(s.messages).set({keepUntil:deadline}).where(eq(s.messages.thread,f.thread.id)).run());
+ await (await take(f)).json();
+ const files=Buffer.from('Fictional private transcript').toString('base64');
+ const save=await f.call('sessionSave',{session:'fictional-checkpoint',files},'save-session');
+ expect(await save.json()).toMatchObject({ok:true,value:{saved:true}});
+ const read=()=>f.call('session',{retention:true},'read-session');
+ expect(await (await read()).json()).toMatchObject({ok:true,value:{session:{files,keepUntil:deadline}}});
+ const response=await read(),wrapped=new Response(response.body,response),copy=wrapped.clone();
+ expect(response.status).toBe(200);
+ if(change==='expiry')time=start+1000; // No sweep or database revision.
+ else if(change==='worker loss')f.root.writes.run(()=>f.db.update(s.jobs).set({state:'lost'}).where(eq(s.jobs.id,'job')).run());
+ else f.root.writes.run(()=>f.root.services.comms!.delete(f.thread.id));
+ await expect(copy.text()).rejects.toThrow('Data access ended');
+ await expect(wrapped.text()).rejects.toThrow('Data access ended');
+});
+it('applies the stored deadline to a bridge worker that requests the original session format',async()=>{
+ const f=await fixture(),start=f.clock.now();
+ let time=start;
+ vi.spyOn(f.clock,'now').mockImplementation(()=>time);
+ const cv=f.root.services.conversations.open({agent:'art',project:'pond',venue:'slack',place:'fixture-channel',label:'Fictional channel'});
+ const bridgeJob='bridge-job',token='body_'+'e'.repeat(64);
+ const job=f.db.select().from(s.jobs).where(eq(s.jobs.id,'job')).get()!;
+ f.root.writes.run(()=>{
+  f.db.insert(s.jobs).values({...job,id:bridgeJob,member:null,conversation:cv.id,harness:'claude'}).run();
+  f.db.insert(s.tokens).values({fingerprint:hash(token),label:'Bridge worker',kind:'agent',agent:'art',job:bridgeJob,createdAt:new Date(start).toISOString()}).run();
+ });
+ const session='fictional-checkpoint', files=Buffer.from('Legacy bridge checkpoint').toString('base64');
+ expect(await (await f.call('sessionSave',{session,files,keepUntil:new Date(start+1000).toISOString()},'save-session',token)).json()).toMatchObject({ok:true,value:{saved:true}});
+ const read=()=>f.call('session',{},'read-session',token);
+ expect(await (await read()).json()).toEqual({ok:true,value:{session:{session,files}}});
+ const response=await read();
+ time=start+1000;
+ await expect(response.text()).rejects.toThrow('Data access ended');
+});
 it('drains a held input callback at shutdown and releases no late words or claim',async()=>{
  const f=await fixture();await f.send('PRIVATE SHUTDOWN','one');let entered!:()=>void,release!:()=>void;const started=new Promise<void>(r=>{entered=r;});f.openGate(()=>{entered();return new Promise<void>(r=>{release=r;});});
  const pending=take(f);await started;let closed=false;const closing=f.root.close().then(()=>{closed=true;});await Promise.resolve();expect(closed).toBe(false);release();const response=await pending;expect([403,503]).toContain(response.status);expect(await response.text()).not.toContain('PRIVATE SHUTDOWN');await closing;expect(f.db.select().from(s.inbox).get()?.state).toBe('waiting');

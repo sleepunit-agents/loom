@@ -39,7 +39,7 @@ import { recordActionResult } from './shared-action-results.js';
 import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 import { settledNotices } from './core/tempo/notices.js';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { boxes, jobs as jobRows, secretChanges } from './core/data/schema.js';
+import { boxes, conversationSessions, jobs as jobRows, secretChanges } from './core/data/schema.js';
 import { setHouseSecrets } from './shared-secret-commands.js';
 import { SharedBridges, type SharedBridgeOptions } from './pieces/bridges/shared-daemon.js';
 import {directTargets} from './shared-direct-target.js';
@@ -74,6 +74,8 @@ import { sharedHouseholdProposals } from './shared-household-proposals.js';
 import { outsideNames } from './shared-outside-names.js';
 import { registerSharedJobControl } from './shared-job-control.js';
 import { Jobs } from './runtime/jobs.js';
+import { wordsDeadline } from './core/conversations/retention.js';
+import { commsKeepDays } from './core/data/comms-days.js';
 import { ConversationSessions } from './core/conversations/sessions.js';
 import { expireTerminalSessions } from './core/conversations/terminal-sessions.js';
 import { registerTerminalSession } from './shared-terminal-session.js';
@@ -589,8 +591,19 @@ export function sharedRoot(options: {
     const epoch = isGuardedCommandRead(name) ? data.readVersion() : undefined;
     const answer=await executeCommand(auth,name,parsed.data.input,parsed.data.id,signal);
     if (epoch !== undefined && answer.ok) {
+      const emptySession = name === 'conversation.session' && (answer.value as { session: unknown }).session === null;
+      const releaseEpoch = emptySession ? data.readVersion() : epoch;
+      let until = Infinity;
+      if (name === 'conversation.session' && !emptySession) {
+        // Older bridge workers omit retention metadata from their response. The byte
+        // release still expires at the coordinator's deadline for the opened row.
+        const work = bodyScope(auth.viewer);
+        const row = work?.job.harness && db.select({at:conversationSessions.startedAt,keepUntil:conversationSessions.keepUntil})
+          .from(conversationSessions).where(and(eq(conversationSessions.conversation, work.cv.id), eq(conversationSessions.harness, work.job.harness))).get();
+        until = row ? wordsDeadline(row, commsKeepDays(db)) : NaN;
+      }
       return guardedResponse(JSON.stringify(answer), {status:200, headers:{'content-type':'application/json', 'cache-control':'no-store'}},
-        () => !closing && auth.valid() && data.readVersion() === epoch);
+        () => !closing && auth.valid() && data.readVersion() === releaseEpoch && clock.now() < until);
     }
 
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);

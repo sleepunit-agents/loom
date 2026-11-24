@@ -178,6 +178,49 @@ it.each(['fresh','continued'])('tells a %s Discord body where this conversation 
  }})).toBe(0);
  expect(f.native.mock.calls[0][1]).toContain('Current conversation: Discord direct message with Jonathan. This is your location for this turn');
 });
+it('saves bridge history with its receipt deadline when the provider posted it long before delivery',async()=>{
+ const f=fixture(), value=JSON.parse(f.input.toString()), clock=new FakeClock();
+ Object.assign(value.job,{venue:'slack',thread:null});
+ const deadline=new Date(clock.now()+86400000).toISOString();
+ const since=new Date(clock.now()).toISOString(), save=vi.fn(async()=>{});
+ const sessions={take:async()=>undefined,save,discard:()=>{}};
+ f.native.mockResolvedValue({text:'Answer',model:'observed',actions:[],session:'abcd-1234'});
+ expect(await bodyProgram({...f.options,clock,sessions,stdin:async()=>Buffer.from(JSON.stringify(value)),fetch:async(url,init)=>{
+  const response=await f.options.fetch(url,init);if(!String(url).endsWith('/take'))return response;
+  const batch=await response.json();
+  Object.assign(batch.value.items[0],{source:'slack',refs:['bi:first'],at:since,keepUntil:deadline,
+   history:[{seq:1,kind:'message',sender:'sender',at:'2020-01-01T00:00:00.000Z',words:'Earlier post',keepUntil:deadline}]});
+  return Response.json(batch);
+ }})).toBe(0);
+ expect(save).toHaveBeenCalledWith('abcd-1234',since,expect.any(Array),deadline);
+});
+it.each(['checkpoint','mail'])('rechecks the %s deadline after startup and before launching the harness', async expiring => {
+  const f=fixture(), value=JSON.parse(f.input.toString()), clock=new FakeClock();
+  value.job.venue='loom';
+  const deadline=new Date(clock.now()+83000+1000).toISOString();
+  const discard=vi.fn();
+  const sessions={take:async()=>'session-1',keepUntil:deadline,coordinatorNow:()=>clock.now()+83000,save:async()=>{},discard};
+  const native=vi.fn(async()=>{
+    expect(discard).toHaveBeenCalledOnce();
+    return {text:'Fresh answer',model:'observed',actions:[]};
+  });
+  const exit=await bodyProgram({...f.options,clock,native,sessions,stdin:async()=>Buffer.from(JSON.stringify(value)),
+    loadMemory:async()=>{clock.advance(1000);return 'Fresh identity';},
+    fetch:async(url,init)=>{
+      const response=await f.options.fetch(url,init);
+      if(expiring!=='mail' || !String(url).endsWith('/take'))return response;
+      const batch=await response.json();batch.value.items[0].keepUntil=deadline;return Response.json(batch);
+    }});
+  if(expiring==='mail'){
+    expect(exit).toBe(BODY_EXIT.mail);
+    expect(native).not.toHaveBeenCalled();
+    expect(f.calls.some(call=>call.path==='confirm')).toBe(false);
+    expect(discard).toHaveBeenCalledOnce();
+  }else{
+    expect(exit).toBe(0);
+    expect(native).toHaveBeenCalledWith(expect.anything(),expect.stringMatching(/Fresh identity[\s\S]*PRIVATE MAIL/),expect.any(AbortSignal),{});
+  }
+});
 it('passes retained question context with a short answer to native execution',async()=>{
  const f=fixture(),fetcher=f.options.fetch,question={words:'PRIVATE QUESTION',why:'PRIVATE WHY',ifYes:'PRIVATE YES',ifNo:'PRIVATE NO',link:null};
  const fetchWithContext=async(url:Parameters<typeof fetcher>[0],init?:Parameters<typeof fetcher>[1])=>{

@@ -1453,6 +1453,17 @@ CREATE TABLE `worker_join_requests` (
 CREATE UNIQUE INDEX `worker_join_requests_fingerprint_unique` ON `worker_join_requests` (`fingerprint`);
 CREATE UNIQUE INDEX `worker_join_requests_code_unique` ON `worker_join_requests` (`code`);
 CREATE INDEX `worker_join_recent` ON `worker_join_requests` (`requested_at`);
+CREATE TABLE `job_session_limits` (
+	`job` text PRIMARY KEY NOT NULL,
+	`since` text NOT NULL,
+	`keep_until` text NOT NULL,
+	`invalidated` integer DEFAULT false NOT NULL,
+	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "job_session_limits_valid_flag" CHECK("job_session_limits"."invalidated" in (0, 1)),
+	CONSTRAINT "job_session_limits_since_utc" CHECK("job_session_limits"."since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "job_session_limits"."since") = "job_session_limits"."since" or strftime('%Y-%m-%dT%H:%M:%fZ', "job_session_limits"."since") = "job_session_limits"."since", 0)),
+	CONSTRAINT "job_session_limits_until_utc" CHECK("job_session_limits"."keep_until" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "job_session_limits"."keep_until") = "job_session_limits"."keep_until" or strftime('%Y-%m-%dT%H:%M:%fZ', "job_session_limits"."keep_until") = "job_session_limits"."keep_until", 0))
+);
+
 CREATE TABLE `archived_questions` (
 	`thread` text NOT NULL,
 	`source_member` text NOT NULL,
@@ -1829,6 +1840,7 @@ CREATE TABLE `conversation_sessions` (
 	`files` blob NOT NULL,
 	`bytes` integer NOT NULL,
 	`started_at` text NOT NULL,
+	`keep_until` text,
 	PRIMARY KEY(`conversation`, `harness`),
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "conversation_sessions_started_at_utc" CHECK("conversation_sessions"."started_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "conversation_sessions"."started_at") = "conversation_sessions"."started_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "conversation_sessions"."started_at") = "conversation_sessions"."started_at", 0))

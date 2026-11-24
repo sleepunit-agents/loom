@@ -1,4 +1,5 @@
 /** Trusted household membership and agent appearance over the shared schema. */
+import { tightenSessionDeadlines } from '../core/conversations/sessions.js';
 import { deskSpriteVersion } from '../desk-sprites.js';
 import { HH_MM } from '../core/tempo/calendar.js';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
@@ -133,6 +134,7 @@ export function householdService(db: DataDatabase, now: () => string) {
       return db.transaction(() => {
         validateSettings(row);
         if (Object.keys(row).length) { seed(); db.update(household).set(row).run(); }
+        if (row.commsDays !== undefined) tightenSessionDeadlines(db, row.commsDays);
         if (recipients) {
           db.delete(backupRecipients).run();
           if (recipients.length) db.insert(backupRecipients).values(recipients.map(recipient => ({ recipient }))).run();

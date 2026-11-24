@@ -5,6 +5,7 @@
  * only after the answer is recorded. A body that dies before answering therefore leaves the mail with its job,
  * and loom tries the work again on the bounded retry chain (Jobs.retry). A body that dies after answering
  * cannot cause a second answer: loom settles the mail in the same write as a thread reply or a bridge reply. */
+import {threadInputKey, threadReplyKey} from '../core/conversations/history-limit.js';
 import { z } from 'zod';
 import { createHash, randomUUID } from 'node:crypto';
 import { workerAssignment } from './worker-http.js';
@@ -139,16 +140,18 @@ export async function bodyProgram(input: {
     // Not on anybody else's word: a kept session is the record of what an owners' body read and used. Such a
     // body asks for none and leaves none, and starts fresh with the kept history. loom's doors refuse it both
     // on loom's own reading of the word (shared-conversation-sessions.ts), so one that asked would get nothing.
-    if(bridge&&!hasGuest(job.run?.policy)){
+    if((bridge || (job.venue==='loom' && job.thread && !job.review))&&!hasGuest(job.run?.policy)){
       sessionClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal:jobSignal,onJobEnded,fetch:input.fetch,clock:input.clock});
       keeper=input.sessions??(input.native?undefined:bodySessions(sessionClient,job.harness,input.env));
     }
-    let resume=await keeper?.take();
+    const localNow=()=>input.clock?.now() ?? Date.now();
+    let resume=await keeper?.take(localNow);
+    const now=()=>Math.max(localNow(), keeper?.coordinatorNow?.() ?? -Infinity);
     if(signal.aborted)throw new Error();
     // Keys identify individual posts even when two replies have identical text and timestamps.
     const keyOf=(id:string)=>createHash('sha256').update(id).digest('hex');
     const covered=new Set(keeper?.covered), seen=new Set<string>();
-    const continued:string[]=[];let oldestErased:string|undefined;
+    const continued:string[]=[];let oldestErased:string|undefined, earliestExpiry:string|undefined;
     // loom read who is in the room when it claimed the job. The body takes everything waiting, so mail from
     // outside the household may have arrived since; nobody looked that sender up, so they count as a guest.
     let deliveredItems = 0;
@@ -175,7 +178,14 @@ export async function bodyProgram(input: {
       }
       if(claimed&&item.fromKind==='unknown'&&!claimed.includes(item.id))lateStranger=true;
       // The oldest word handed in that will be erased: a session started from them is counted from then.
-      for(const line of item.history)if(line.keepUntil!==null&&(oldestErased===undefined||Date.parse(line.at)<Date.parse(oldestErased)))oldestErased=line.at;
+      for(const deadline of [item.words!==null?item.keepUntil:null,item.questionKeepUntil,...item.history.map(line=>line.keepUntil)]) {
+        if(deadline && (!earliestExpiry || Date.parse(deadline)<Date.parse(earliestExpiry))) earliestExpiry=deadline;
+      }
+      if(item.words!==null && item.keepUntil && (!oldestErased || Date.parse(item.at)<Date.parse(oldestErased))) oldestErased=item.at;
+      // A bridge history timestamp is the provider's display time. Loom recorded
+      // the local receipt time during take and supplied its absolute deadline.
+      if(!bridge)for(const line of item.history)if(line.keepUntil!==null&&(oldestErased===undefined||Date.parse(line.at)<Date.parse(oldestErased)))oldestErased=line.at;
+      if(job.venue==='loom' && item.source==='thread' && item.words!==null)seen.add(keyOf(threadInputKey(item.id)));
       if(job.venue==='loom' && item.source==='handoff' && item.words!==null){
         context.push('Your delegated worker returned the following result. Continue the originating request using the findings.');
       }
@@ -334,11 +344,24 @@ export async function bodyProgram(input: {
     const room=policy&&job.run&&policy!==job.run.policy?{...job,run:{...job.run,policy}}:job;
     const harnessStarted=performance.now();
     try {
+      // Setup may cross a deadline after the coordinator delivered these words. The retry
+      // takes its mail again from the coordinator, which can omit the expired inputs.
+      const checkMail = () => {
+        if (earliestExpiry && now() >= Date.parse(earliestExpiry)) { exit=BODY_EXIT.mail; throw new Error('Accepted mail expired'); }
+      };
+      checkMail();
+      if (resume && keeper?.keepUntil && now() >= Date.parse(keeper.keepUntil)) {
+        keeper.discard();
+        resume=undefined;
+        covered.clear();
+      }
       if(!keeper)answer = await native(room, context.join('\n\n'), signal);
       else try { answer = await native(room, (resume?continued:context).join('\n\n'), signal, resume?{resume}:{}); }
       catch (error) {
         // The harness could not continue the session and did nothing: the same work, afresh, with the history.
-        if(!(error instanceof HarnessResumeUnavailable)||!afresh||signal.aborted)throw error;
+        if(!(error instanceof HarnessResumeUnavailable)||!resume||!afresh||signal.aborted)throw error;
+        if (keeper.keepUntil && now() >= Date.parse(keeper.keepUntil)) keeper.discard();
+        checkMail();
         answer = await afresh(room, context.join('\n\n'), signal, {});covered.clear();
       }
       // No secret this body was handed is said in its answer: one it used, or one it was started with.
@@ -374,7 +397,10 @@ export async function bodyProgram(input: {
     else if(background){
       await client.turn({kind:'reply',model:answer.model,outcome:'progressed'});
     }
-    else await client.reply({ clientId: repeated??randomUUID(), ...(repeated?{progressId:repeated}:{}), words: answer.text, model: answer.model, outcome: 'progressed' });
+    else {
+      const receipt=await client.reply({ clientId:replyId, ...(repeated?{progressId:repeated}:{}), words:answer.text, model:answer.model, outcome:'progressed' });
+      seen.add(keyOf(threadReplyKey(receipt.seq)));
+    }
     // The answer is recorded; only now is the mail done. loom has already settled what a thread or bridge reply
     // answers, so this covers the rest: background work, and earlier bridge messages the one reply also answers.
     await client.settle();
@@ -385,7 +411,7 @@ export async function bodyProgram(input: {
       if(keeper){
         const current=new Set([...seen,keyOf(replyId)]);
         const previous=[...covered].filter(key=>!current.has(key));
-        await keeper.save(answer.session,oldestErased,[...previous,...current].slice(-SESSION_HISTORY_KEYS));
+        await keeper.save(answer.session,oldestErased,[...previous,...current].slice(-SESSION_HISTORY_KEYS),earliestExpiry);
       }
       saved=true;
     }catch{/* loom sees the kept session is behind the answer */}

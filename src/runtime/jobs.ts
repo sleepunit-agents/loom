@@ -1,3 +1,4 @@
+import {inheritJobSessionLimit, invalidateRefiledJobSessions, releaseJobSessionLimit} from '../core/conversations/sessions.js';
 import { closePendingReview, hasChangeReview } from '../apps/change-reviews.js';
 import {keepJobText} from './job-text.js';
 /** Trusted job lifecycle. The worker executes; this service only changes records.
@@ -304,6 +305,7 @@ export class Jobs {
       const job = this.assigned(id, box, claimedJobStates);
       if (job.state !== 'starting') return job;
       const at = this.now();
+      if (job.conversation && job.harness) inheritJobSessionLimit(this.db,job.id,job.conversation,job.harness,at);
       if (job.startedByKind === 'program' && job.conversation) this.mail.turn({
         conversation: job.conversation, kind: 'action', fromKind: 'schedule', fromId: job.startedBy, run: job.id, model: 'program',
       }, at);
@@ -503,6 +505,7 @@ export class Jobs {
     const firing = program && this.db.select().from(programFirings).where(eq(programFirings.job, job.id)).get();
     const line = firing && (state === 'done' ? firing.line : 'Program did not complete.');
     const ended = this.db.update(jobs).set({ ...values, ...(line && {endedNote: line}), state }).where(eq(jobs.id, job.id)).returning().get()!;
+    releaseJobSessionLimit(this.db, job.id);
     closePendingReview(this.db, job.id, ended.endedAt ?? this.now());
     const started = program && this.db.select({ at: turns.at }).from(turns).where(and(eq(turns.run, job.id), eq(turns.kind, 'action'))).get();
     const began = program ? started && started.at : job.claimedAt;
@@ -577,5 +580,6 @@ export function agentMailAdmission(jobs: Jobs, changed: () => void): AdmitInbox 
 /** Every job filed under one project is filed under another: for a merge of the two (shared-projects.ts).
  * A job keeps the labels of its conversation, which is refiled in the same write. */
 export function refileJobs(db: DataDatabase, from: string, into: string): void {
+  invalidateRefiledJobSessions(db, from);
   db.update(jobs).set({ project: into }).where(eq(jobs.project, from)).run();
 }
