@@ -9,8 +9,6 @@ const display = (text: string) => JSON.stringify(text).replace(/[^\x20-\x7e]/g,
 
 const shellTargetPrefix = 'shell:sha256:';
 const targetOf = (text: string) => shellTargetPrefix + createHash('sha256').update(text).digest('hex');
-export const namedTarget = (input: {kind: string; target: string}) =>
-  input.kind !== 'command' || !input.target.startsWith(shellTargetPrefix);
 const shellInput = z.object({
   kind: z.literal('command'),
   commandText: z.string().max(MESSAGE_WORDS_MAX).refine(text =>
@@ -18,7 +16,7 @@ const shellInput = z.object({
     'Supply the complete UTF-8 shell command within the card detail limit.'),
 });
 export const shellCommandSpend = shellInput.extend({id: z.string().min(1)}).strict().transform(
-  ({kind, id, commandText}) => ({kind, id, target: targetOf(commandText)}));
+  ({kind, id, commandText}) => ({kind, id, target: targetOf(commandText), literalShell: true as const}));
 export const shellCommandRequest = shellInput.extend({
   why: z.string().trim().min(1).max(2000),
   minutes: z.number().int().min(1).max(1440).optional(),
@@ -27,7 +25,7 @@ export const shellCommandRequest = shellInput.extend({
   const preview = details.length <= 180 ? details : details.slice(0, 180) + '… (shortened, open Full command)';
   const separators = /[;&|\n]/.test(commandText.replace(/[\r\n]+$/, ''));
   return {
-    ...request, details, target: targetOf(commandText),
+    ...request, literalShell: true as const, details, target: targetOf(commandText),
     what: 'Run shell command ' + preview,
     ask: 'Allow this shell command? ' + preview + (separators ? ' Contains separators or line breaks. Review the whole command.' : ''),
     ifYes: 'Allow one use of this exact command.', ifNo: 'Decline this command.',

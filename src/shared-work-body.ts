@@ -1,4 +1,4 @@
-import {shellCommandRequest, shellCommandSpend, namedTarget} from './apps/shell-command-approval.js';
+import {shellCommandRequest, shellCommandSpend} from './apps/shell-command-approval.js';
 import {parseMergeTarget} from './apps/merge-target.js';
 import {requestApprovalWithRules} from './apps/approval-request.js';
 /** Work commands for an agent's own credential (a current body, or its terminal), never input-selected actors.
@@ -36,9 +36,8 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
    kind: z.enum(['merge','command']), what: boundedText, why: boundedText, ask: boundedText,
    ifYes: boundedText, ifNo: boundedText, minutes: z.number().int().min(1).max(1440).optional(),
    details: z.string().max(MESSAGE_WORDS_MAX).optional(),
- }).strict().refine(namedTarget, 'Supply commandText for a literal shell command.');
- const namedSpend = target.extend({id:z.string().min(1)}).strict()
-   .refine(namedTarget, 'Supply commandText to spend a shell command allowance.');
+ }).strict();
+ const namedSpend = target.extend({id:z.string().min(1)}).strict();
  type Source={own:boolean;agent:string;conversation:string|null;askedFrom:string;actingFor:string;project:string|null;member:string|null};
  const source=(viewer:Viewer):Source=>{
   const bound=current(viewer);
@@ -78,7 +77,7 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
   run(ctx,input){
    refuseHeld(ctx.viewer);
    const context=source(ctx.viewer),binding=merge(context,input.kind,input.target,true);
-   const row=requestApprovalWithRules(db,service,rules,{...input,agent:context.agent,conversation:context.conversation,askedFrom:context.askedFrom,actingFor:context.actingFor,member:context.member,project:binding.project});
+   const row=requestApprovalWithRules(db,service,rules,{...input,agent:context.agent,conversation:context.conversation,askedFrom:context.askedFrom,actingFor:context.actingFor,member:context.member,project:binding.project}, 'literalShell' in input);
    if(binding.change&&row.state==='allowed')ctx.changed('changes',binding.change.id);
    ctx.changed('approvals',row.id);return {id:row.id,state:service.get(row.id).state};
   },
@@ -108,6 +107,6 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
   may:(viewer,input)=>belongs(viewer,input.id,true),
   // A body that is refused this door for its job's word writes nothing on the card, an audit line included.
   rejected(viewer,input,failure){if(held(viewer))return;if(failure.code==='denied'&&belongs(viewer,input.id)&&!belongs(viewer,input.id,true)){const row=card(viewer,input.id);service.refuseUse(row.id,row.agent,'Cached merge target no longer matches');}},
-  run(ctx,input){refuseHeld(ctx.viewer);const row=card(ctx.viewer,input.id),result=service.use(row.id,row.agent,input.kind,input.target);ctx.changed('approvals',row.id);return {id:row.id,used:result.ok};},
+  run(ctx,input){refuseHeld(ctx.viewer);const row=card(ctx.viewer,input.id),result=service.use(row.id,row.agent,input.kind,input.target,'literalShell' in input);ctx.changed('approvals',row.id);return {id:row.id,used:result.ok};},
  }));
 }

@@ -226,7 +226,7 @@ it('makes the card and its Inbox question from the full literal command and spen
  const script = '# ' + 'garden '.repeat(32) + '\r\nprintf one && printf two\r\n';
  const target = 'shell:sha256:' + hash(script);
  const input = {kind:'command',commandText:script,why:'Check the example pump'};
- for (const bad of [{...input,what:'Just look'}, {...input,target}, {kind:'command',target,...words},
+ for (const bad of [{...input,what:'Just look'}, {...input,target},
    {...input,commandText:'\n'.repeat(60_000)+'x'}])
    expect((await f.call('request',bad)).status).toBe(400);
  const result = await f.call('request',input);
@@ -241,7 +241,17 @@ it('makes the card and its Inbox question from the full literal command and spen
  expect(questions.length).toBeGreaterThan(0);
  expect(questions.every(row=>row.words===card.ask)).toBe(true);
  f.root.writes.run(()=>f.root.services.approvals.allow(id,'pat'));
- expect((await f.call('use',{id,kind:'command',target})).status).toBe(400);
+ const asNamed = (cardId: string) => f.call('use',{id:cardId,kind:'command',target});
+ expect((await asNamed(id)).body.value?.used).toBe(false);
+ // A named request issued under the same spelling remains a distinct allowance.
+ const named = await f.call('request',{kind:'command',target,...words});
+ const namedId = named.body.value!.id as string;
+ f.root.writes.run(()=>f.root.services.approvals.allow(namedId,'pat'));
+ expect((await f.call('use',{id:namedId,kind:'command',commandText:script})).body.value?.used).toBe(false);
+ expect((await asNamed(namedId)).body.value?.used).toBe(true);
+ const denied = await f.call('request',{kind:'command',target,...words});
+ f.root.writes.run(()=>f.root.services.approvals.deny(denied.body.value!.id as string,'pat'));
+ expect(f.root.services.approvals.get(id).state).toBe('allowed');
  const use = (commandText:string)=>f.call('use',{id,kind:'command',commandText});
  expect((await use(script.trimEnd())).body.value?.used).toBe(false);
  expect((await use(script)).body.value?.used).toBe(true);

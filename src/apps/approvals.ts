@@ -1,3 +1,5 @@
+import {shellCommandRecord} from './shell-command-record.js';
+import {sameCommandForm} from './approval-answer.js';
 import { parseMergeTarget } from './merge-target.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, sql } from 'drizzle-orm';
@@ -51,6 +53,8 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
     const seq = db.select({ n: sql<number>`coalesce(max(${approvalRecord.seq}), 0) + 1` }).from(approvalRecord).get()!.n;
     db.insert(approvalRecord).values({ seq, at: now(), event, approval: row.id, agent: row.agent, note }).run();
   };
+  const isShell = (row: Approval) => row.kind === 'command' && !!db.select({ seq: approvalRecord.seq })
+    .from(approvalRecord).where(and(eq(approvalRecord.approval,row.id),eq(approvalRecord.event,'request'),eq(approvalRecord.note,shellCommandRecord))).get();
   const expire = (row: Approval) => {
     if (row.state === 'allowed' && row.expiresAt && Date.parse(row.expiresAt) <= Date.parse(now())) {
       db.update(approvals).set({ state: 'expired' }).where(eq(approvals.id, row.id)).run();
@@ -59,7 +63,7 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
     return row;
   };
   return {
-    request(input: ApprovalRequest, machineOwner?: string) {
+    request(input: ApprovalRequest, machineOwner?: string, literalShell = false) {
       const value = request.parse(input);
       if (value.kind === 'merge' && !parseMergeTarget(value.target)) throw new Error('A merge approval must name one exact commit');
       if ((value.kind === 'setting' || value.kind === 'dangerous') && (!value.operation || !value.changeSummary)) throw new Error('A proposed change needs an operation and before/after summary');
@@ -72,7 +76,7 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
           fromKind: 'agent', fromId: row.agent, conversation: row.conversation, project: row.project, agent: row.agent, member: row.member,
           words: row.ask, why: row.why, answers: 'yes-no', ifYes: row.ifYes, ifNo: row.ifNo,
           waitsOnKind: 'approval', waitsOnId: row.id, refs: [row.id] });
-        record(row, 'request'); return row;
+        record(row, 'request', literalShell ? shellCommandRecord : ''); return row;
       });
     },
     get(id: string) { return db.transaction(() => expire(get(id))); },
@@ -103,7 +107,7 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
         if (row.state !== 'pending' && row.state !== 'allowed') throw new Error('Approval cannot be denied now');
         db.update(approvals).set({ state: 'denied', decidedBy: member, decidedAt: now(), expiresAt: null }).where(eq(approvals.id, id)).run();
         record(row, 'deny', basis ?? member);
-        const older = db.select().from(approvals).where(and(eq(approvals.agent, row.agent), eq(approvals.kind, row.kind), eq(approvals.target, row.target), eq(approvals.state, 'allowed'))).all();
+        const older = db.select().from(approvals).where(and(eq(approvals.agent, row.agent), eq(approvals.kind, row.kind), eq(approvals.target, row.target), row.kind === 'command' ? sameCommandForm(db,isShell(row)) : undefined, eq(approvals.state, 'allowed'))).all();
         for (const previous of older) {
           db.update(approvals).set({ state: 'denied', overriddenBy: id, expiresAt: null }).where(eq(approvals.id, previous.id)).run();
           record(previous, 'deny', `Overridden by ${id}`);
@@ -132,10 +136,10 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
       });
     },
     /** A refused spend is a result rather than an exception so its audit commits. */
-    use(id: string, agent: string, kind: Approval['kind'], target: string): { ok: boolean; approval: Approval } {
+    use(id: string, agent: string, kind: Approval['kind'], target: string, literalShell = false): { ok: boolean; approval: Approval } {
       return db.transaction(() => {
         const row = expire(get(id));
-        if (row.agent !== agent || row.kind !== kind || row.target !== target || row.state !== 'allowed' || row.operation) {
+        if (row.agent !== agent || row.kind !== kind || row.target !== target || literalShell !== isShell(row) || row.state !== 'allowed' || row.operation) {
           record(row, 'refused-use', 'Agent, kind, target or allowance does not match');
           return { ok: false, approval: row };
         }

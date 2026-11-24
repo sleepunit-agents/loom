@@ -77,13 +77,3 @@ it('shows any other approval, and a household card of a kind it does not know, i
   const unknown = stored('somethingNew', { a: 1 }, { what: 'A stored title' });
   expect(approvalTitle(unknown)).toBe('A stored title');
 });
-
-
-it('puts the full command before the decision on both the standalone and inline shell card', () => {
-  const shell = { ...grant, kind: 'command' as const, operation: null, target: 'shell:sha256:'+'a'.repeat(64),
-    details: JSON.stringify('printf one && printf two'), what:'Run shell command', ask:'Allow this shell command?' };
-  for (const markup of [app(shell), chat(shell)]) {
-    expect(markup).toContain('Full command');
-    expect(markup.indexOf('Full command')).toBeLessThan(markup.indexOf('Answer approval'));
-  }
-});

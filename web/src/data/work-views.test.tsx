@@ -646,3 +646,18 @@ it('opens the owner explanation when Allow is refused on a collapsed Inbox kit g
  expect(words()).toContain('Art does not know this Slack contact.');
  expect(tree.root.findByType('Error').props.title).toBe('Couldn’t save your answer');
 });
+
+it.each(['app','inline'])('reveals the complete quoted command only for a literal card in the %s', async surface => {
+ fixture();feed.owner=true;
+ const card=feed.approvals.approvals[0];
+ const script='# '+'pump '.repeat(60)+'\nprintf "distinctive suffix"\r\n';
+ Object.assign(card,{kind:'command',operation:null,target:'shell:sha256:'+'a'.repeat(64),details:JSON.stringify(script)});
+ const view=()=>surface==='app'?h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id}):h(LiveApprovalCard,{id:card.id});
+ await draw(view());
+ const full=()=>tree.root.findAllByType('Disclosure').filter((n:{props:{label:string}})=>n.props.label==='Full command');
+ expect(full()).toHaveLength(0);
+ feed.approvals.approvalRecord=[{seq:1,at:card.askedAt,event:'request',approval:card.id,agent:card.agent,note:'Literal shell command'}];
+ await act(async()=>tree.update(view()));
+ expect(full()).toHaveLength(1);
+ expect(full()[0].findByType('pre').children).toEqual([JSON.stringify(script)]);
+});

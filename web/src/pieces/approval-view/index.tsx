@@ -1,3 +1,4 @@
+import { shellCommandRecord } from '../../../../src/apps/shell-command-record';
 import { RuleEditor } from './rule-editor';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Split, List, Row, NoteRow, Empty, Error, Loading, Button, Actions, Textarea, Search, Reader, Meta, Title, Facts, Fact, Section, Disclosure, Body } from '../../kit';
@@ -88,7 +89,7 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false,
   const card = a.card;
   const title = card?.title ?? displayTitle ?? approvalTitle(a);
   const exact = card?.exact ?? a.exactRequest;
-  const shell = a.kind === 'command' && /^shell:sha256:[0-9a-f]{64}$/.test(a.target);
+  const shell = a.kind === 'command' && record.some(event => event.event === 'request' && event.note === shellCommandRecord);
   const fullCommand = shell && <Disclosure label="Full command"><pre className="whitespace-pre-wrap break-words">{a.details}</pre></Disclosure>;
   const exactRequest = exact && <Disclosure label="Exact request"><pre className="whitespace-pre-wrap break-words">{exact}</pre></Disclosure>;
   const storedSummary = !household && !change && a.changeSummary;
