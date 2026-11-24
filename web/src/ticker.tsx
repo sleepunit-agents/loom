@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { motionQuery, reducedMotion } from './access';
-export type TickPart = { text: string; tone?: string; href?: string };
+export type TickPart = { text: string; tone?: string; capacity?: 'getting full' | 'almost full'; href?: string };
 const TICK_PX_S = 24;
 const TICK_GAP = 40;
 
@@ -51,7 +51,7 @@ export function Ticker({ live, parts, go }: { live: boolean; parts: TickPart[]; 
       <span className="loom-tick__live" data-off={live ? undefined : ''}>{live ? 'live' : 'data unavailable'}</span>
       {parts.map((p, i) => (go && p.href
         // The copy that follows it round is the same words again: out of the tab order, and not read twice.
-        ? <a key={i} href={p.href} className="loom-tick__part" data-tone={p.tone} tabIndex={copy ? -1 : undefined}
+        ? <a key={i} href={p.href} className="loom-tick__part" data-tone={p.tone} data-capacity={p.capacity} tabIndex={copy ? -1 : undefined}
             onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button) return; e.preventDefault(); go(p.href!); }}>{p.text}</a>
         : <span key={i} className="loom-tick__part" data-tone={p.tone}>{p.text}</span>))}
     </span>
