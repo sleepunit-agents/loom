@@ -67,9 +67,9 @@ export function useApprovalSnapshot(timezone?: string) {
   const zone = useHouseholdZone();
   return approvalSnapshot(useDataQuery<ApprovalsResult>(approvalsQuery), timezone ?? zone ?? localTimezone());
 }
-export function useApprovalList(ids: string[]) {
+export function useInboxApprovalLabels(ids: string[]) {
   const reading=useDataQuery<{approvals: Pick<ApprovalsResult['approvals'][number],'id'|'operation'|'what'|'details'>[]}>(inboxApprovalsQuery,{ids},{pause:!ids.length});
-  return {status:reading.status,approvals:reading.status==='live' ? reading.data?.approvals ?? [] : []};
+  return reading.status==='live' ? reading.data?.approvals ?? [] : [];
 }
 export function useChangeSnapshot(timezone?: string) {
   const zone = useHouseholdZone();
@@ -184,18 +184,12 @@ export function LiveApprovalCard(props: LiveApprovalProps) {
   return <CurrentApprovalCard {...props} base={base}/>;
 }
 
-export function InboxApprovalCard(props: LiveApprovalProps) {
-  const zone=useHouseholdZone();
-  const reading=useDataQuery<Pick<ApprovalsResult,'approvals'|'approvalRecord'>>(inlineApprovalQuery,{id:props.id});
-  const data=reading.status==='live' ? reading.data : undefined;
-  const base:ApprovalSnapshot={
-    status:reading.status==='live' && !data ? 'loading' : reading.status, timezone:props.timezone ?? zone ?? localTimezone(),
-    approvals:data?.approvals ?? [], record:data?.approvalRecord ?? [], rules:[], notices:[],
-  };
-  return <CurrentApprovalCard {...props} base={base}/>;
+export function useInboxApproval(id: string | undefined, zone: string | undefined) {
+  const read=useDataQuery<Pick<ApprovalsResult,'approvals'|'approvalRecord'>>(inlineApprovalQuery,{id:id ?? ''},{pause:!id});
+  return approvalSnapshot({...read,data:read.data && {...read.data,approvalRules:[],approvalNotices:[]}},zone ?? localTimezone());
 }
 
-function CurrentApprovalCard({ id, actions, displayTitle, showBlocker = false, base }: LiveApprovalProps & {base:ApprovalSnapshot}) {
+export function CurrentApprovalCard({ id, actions, displayTitle, showBlocker = false, base }: LiveApprovalProps & {base:ApprovalSnapshot}) {
   const owner=useWorkAccess().owner, names=useAgentNames(), viewer=useViewer();
   const [details, setDetails] = useState<string>();
   const open = details === id;
