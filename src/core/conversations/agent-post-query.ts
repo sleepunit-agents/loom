@@ -39,9 +39,11 @@ GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
   };
   const args = { agent: { type: string }, limit: { type: GraphQLInt, defaultValue: 20 } };
   return {
-    agentActivityFeed: { type: new GraphQLList(new GraphQLNonNull(preview)), args,
-      async resolve(_row, { agent, limit }, { viewer }) {
-        const rows = await agentPostPreviews(db, key, source(viewer, agent), size(limit));
+    agentActivityFeed: { type: new GraphQLList(new GraphQLNonNull(preview)), args: { ...args, thread: { type: GraphQLString } },
+      async resolve(_row, { agent, limit, thread }, { viewer }) {
+        const visibleSource = source(viewer, agent);
+        const selection = thread == null ? visibleSource : and(visibleSource, eq(agentPostThreads.id, thread))!;
+        const rows = await agentPostPreviews(db, key, selection, size(limit));
         if (!rows.length) return [];
         const current = visibleThreads(viewer, agent, rows.map(row => row.thread));
         const stillReadable = visibleSources(viewer,agent,rows.flatMap(row=>row.sources));

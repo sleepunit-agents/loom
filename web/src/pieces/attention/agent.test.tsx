@@ -114,11 +114,11 @@ it('says plainly what it cannot read, and shows no last answer and no stale word
 
 it('keeps the selected activity beside the agent identity, session details and Talk', async()=>{
  const words='The console moves now.';
- f.extra.AgentActivityHistory={status:'live',data:{agentActivityHistory:[
+ f.extra.AgentActivityHistory={status:'live',data:{selected:[{title:'Boot console'}],agentActivityHistory:[
   {id:'p1',at:'2026-11-22T12:02:00Z',words,work:[],source:'source-1'}
  ]}};
  await draw('/p/agents-preview/agent/art?activity=activity%3Aboot');
  expect(text()).toContain(words);
- for(const name of ['Art E Fish agent window','Activity thread','Doing now','Conversations · 1 unread'])
+ for(const name of ['Art E Fish agent window','Boot console','Doing now','Conversations · 1 unread'])
   expect(tree!.root.findAllByProps({'aria-label':name}).length).toBeGreaterThan(0);
 });
