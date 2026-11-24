@@ -103,7 +103,7 @@ export function TempoCalendar({week,showDay,clearReader,zone,triggers,pauses,ope
   // Weeks start on Monday. Work in civil dates so DST never shifts a column.
   const start = week && date ? shift(date,-((new Date(date+'T12:00:00Z').getUTCDay()+6)%7)) : date;
   const waiting = triggers.filter(t=>t.enabled && t.sourceKind!=='time');
-  return <div className="grid gap-3 p-3">
+  return <div className="tempo-calendar grid gap-3 p-3">
     {date && start && <nav aria-label="Calendar date" className="flex flex-wrap items-center gap-2">
       <Button aria-label={week?'Previous week':'Previous day'} onClick={()=>select(shift(date,week?-7:-1))}>‹</Button>
       <span><time dateTime={start}>{formatDate(start)}</time>{week && <> – <time dateTime={shift(start,6)}>{formatDate(shift(start,6))}</time></>}</span>

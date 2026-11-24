@@ -7,7 +7,7 @@
 .tempo-week:not([data-open]) > .loom-split__reader {
   display: none;
 }
-.tempo-week .loom-split__rows {
+.tempo-week .tempo-calendar {
   container: tempo-week / inline-size;
 }
 .tempo-week-days {
