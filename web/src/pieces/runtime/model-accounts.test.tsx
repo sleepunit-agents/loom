@@ -64,7 +64,7 @@ it('keeps visible preferences while the agent roster is unavailable',async()=>{
 
 it('shows each provider window and sign-in only while detail remains visible',async()=>{
  const windows=[{window:'week',usage:.41,reserve:.05,usageReadAt:'2026-11-15T12:00:00Z',resetsAt:null}];
- const logins=[{reporting:true,needsSignIn:true,canRequest:true,box:{id:'box',name:'Workshop'},place:'containers' as const,harness:'Codex',state:'signed-out' as const,expiresAt:null,checkedAt:'2026-11-15T12:00:00Z'}];
+ const logins=[{reporting:true,expired:false,needsSignIn:true,canRequest:true,box:{id:'box',name:'Workshop'},place:'containers' as const,harness:'Codex',state:'signed-out' as const,expiresAt:null,checkedAt:'2026-11-15T12:00:00Z'}];
  f.snapshot={status:'live',data:{modelAccounts:[{...detail,windows,logins}]}};
  await act(async()=>{tree=create(h(RuntimeAccounts));});
  expect(tree.root.findByType('meter').props.value).toBe(.41);
@@ -80,7 +80,7 @@ it('shows each provider window and sign-in only while detail remains visible',as
 });
 
 it('updates the closed account row when sign-ins change and clears it on a visibility change',async()=>{
- const healthy={reporting:true,needsSignIn:false,canRequest:false,box:{id:'a',name:'Studio'},place:'host' as const,harness:'codex',state:'signed-in' as const,expiresAt:null,checkedAt:'2026-11-15T12:00:00Z'};
+ const healthy={reporting:true,expired:false,needsSignIn:false,canRequest:false,box:{id:'a',name:'Studio'},place:'host' as const,harness:'codex',state:'signed-in' as const,expiresAt:null,checkedAt:'2026-11-15T12:00:00Z'};
  const missing={...healthy,box:{id:'b',name:'Library'},state:'signed-out' as const,needsSignIn:true};
  const offline={...healthy,box:{id:'c',name:'Workshop'},reporting:false};
  const account={...detail,logins:[healthy,missing,offline],pendingSignIns:[missing.box]};
@@ -116,7 +116,7 @@ it('marks an open usage reading stale after one hour and clears the warning on r
 
 it('filters by visible owner and machines together with sign-in or capacity warnings',async()=>{
  const nearlyFull:RuntimeAccount={__typename:'RuntimeAccountSummary',label:'Shared account',level:'almost full'};
- const login={reporting:true,needsSignIn:true,canRequest:false,box:{id:'observed',name:'Studio'},place:'host' as const,harness:'claude',state:'signed-out' as const,expiresAt:null,checkedAt:'2026-11-15T12:00:00Z'};
+ const login={reporting:true,expired:false,needsSignIn:true,canRequest:false,box:{id:'observed',name:'Studio'},place:'host' as const,harness:'claude',state:'signed-out' as const,expiresAt:null,checkedAt:'2026-11-15T12:00:00Z'};
  const account={...detail,logins:[login],pendingSignIns:[{id:'waiting',name:'Library'}]};
  f.snapshot={status:'live',data:{modelAccounts:[account,nearlyFull,{__typename:'RuntimeAccountSummary',label:'Quiet account',level:'plenty'}]}};
  await act(async()=>{tree=create(h(RuntimeAccounts));});

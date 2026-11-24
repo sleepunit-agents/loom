@@ -39,5 +39,18 @@ export async function subscriptionLoginRows({page,account,worker,clock}){
  await action(machine).waitFor();
  assert.equal(await color(machine),fresh);
  assert.equal(await signins.getByText(/^Last known/).count(),0);
+ const previousEnd=await machine.getByText(/^Ends /).innerText();
+ const nearEnd=new Date(clock.now()+1000).toISOString();
+ await reportWorkerAccountLogins(worker,[{...host,state:'signed-in',expiresAt:nearEnd},house]);
+ await machine.getByText(previousEnd,{exact:true}).waitFor({state:'detached'});
+ await machine.getByText(/^Ends /).waitFor();
+ clock.advance(1000);
+ await machine.getByText(/^Expired · Checked /).waitFor();
+ await machine.getByText(/^Ended /).waitFor();
+ await summary.filter({hasText:'1 signed in · 1 needs attention'}).waitFor();
+ await action(machine).waitFor();
+ await reportWorkerAccountLogins(worker,[{...host,state:'signed-in',expiresAt:null},house]);
+ await summary.filter({hasText:'2 signed in'}).waitFor();
+ await action(machine).waitFor({state:'hidden'});
  return {ok:true,reason:'Chromium displayed separate host and house sign-ins with their harness and machine. A signed-out or three-days-left sign-in offered Sign in; a healthy Codex sign-in had no end date. After worker silence both rows were muted, last known and had no action. A new worker check-in restored the current state.'};
 }
