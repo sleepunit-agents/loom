@@ -10,7 +10,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { workAnswersAllowed } from './shared-work-access.js';
 import type { DataDatabase } from './core/data/database.js';
-import { approvals, changes } from './core/data/schema.js';
+import { approvals, changes, conversations } from './core/data/schema.js';
 import { type Operations, type Context, OperationError } from './core/operations/index.js';
 import type { approvalService, Approval } from './apps/approvals.js';
 import { changeAnswers } from './apps/changes-answers.js';
@@ -86,14 +86,27 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
     may(viewer, input) {
       const row = approval(input.id);
       if (!workAnswersAllowed(db, viewer) && !sources.bodyJob(viewer) && !(viewer.kind === 'agent' && viewer.atTerminalOf !== undefined && sources.terminal?.(viewer))) return false;
+      const proofs = evidenceCandidates(db, sources, viewer, input.onWord);
+      if (!row) return false;
       if (input.reason) {
         if (input.answer !== 'deny') return false;
-        if (input.onWord) {
-          if (viewer.kind !== 'agent' || !('venue' in input.onWord) || input.onWord.quote !== input.reason) return false;
-        } else if (viewer.kind !== 'member' || sources.isProgram(viewer)) return false;
+        const word = input.onWord;
+        if (!word) {
+          if (viewer.kind !== 'member' || sources.isProgram(viewer)) return false;
+        } else {
+          if (word.quote !== input.reason) return false;
+          if ('venue' in word) {
+            if (viewer.kind !== 'agent') return false;
+          } else {
+            // Only return the owner's quoted reason to the private Comms thread that supplied it.
+            const job = sources.bodyJob(viewer)?.job, proof = proofs[0];
+            if (!word.item || !proof?.sealed || !job?.conversation || row.conversation !== job.conversation ||
+                row.agent !== job.agent || row.member !== proof.member) return false;
+            const cv = db.select().from(conversations).where(eq(conversations.id, job.conversation)).get();
+            if (cv?.venue !== 'loom' || cv.place !== proof.thread || cv.agent !== job.agent || cv.member !== proof.member) return false;
+          }
+        }
       }
-      evidenceCandidates(db, sources, viewer, input.onWord);
-      if (!row) return false;
       if (input.review && (viewer.kind !== 'member' || sources.isProgram(viewer) || input.onWord || input.answer !== 'allow' || row.operation !== 'household.change' || !workAnswersAllowed(db, viewer))) return false;
       const merge = mergeTarget(row);
       // A yes to a merge needs its change to still be here; a no is always possible.
