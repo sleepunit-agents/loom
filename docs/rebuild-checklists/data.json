@@ -245,7 +245,11 @@
     {
       "id": "data-030",
       "promise": "secret_write_journal A two-step record between loom and the key holder so a value change interrupted by a crash is finished or undone, never half done.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "action",
+        "action": "journalRecovery"
+      }
     },
     {
       "id": "data-031",

@@ -289,6 +289,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith(('Keeps notes: longer working documents','A memory is a fact. A note is a document:')):row['probe']={'kind':'action','action':'noteLifetimes'}
  if f.stem=='data':
   for row in rows:
+   if row['promise'].startswith('secret_write_journal '):row['probe']={'kind':'action','action':'journalRecovery'}
    if row['promise'].startswith('bridge_raw_events '):row['probe']={'kind':'action','action':'bridgeRetention'}
    if row['promise'].startswith('bridge_resume '):row['probe']={'kind':'action','action':'discordResume'}
    if row['promise'].startswith('bridge_file_messages '):row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['slackFileRetention','discordFileRetention']]}
