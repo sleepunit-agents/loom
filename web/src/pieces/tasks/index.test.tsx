@@ -32,7 +32,7 @@ it('keeps pending and rejected creates out of the list until the canonical feed 
   await act(async () => { reject(new Error('Write denied')); await saving; });
   expect(tree.root.findByProps({role:'alert'}).children).toEqual(['Write denied']);
   expect(tree.root.findAllByType('Row')).toHaveLength(0);
-  feed.current = { status: 'live', data: { tasks: [{ id:'t-1', title:'Server pump', type:'task', status:'open', priority:2, position:1, ownerKind:'agent', owner:'art', project:null, assigneeKind:null, assignee:null, goal:'Works', why:'Broken', doneWhen:'', description:'', ask:null, ifYes:null, ifNo:null, closeReason:null, sourceKind:null, sourceId:null, isReady:true, changeTasksByTask:[], taskLinksByTask:[] }] } };
+  feed.current = { status: 'live', data: { tasks: [{ id:'t-1', title:'Server pump', type:'task', status:'open', priority:2, position:1, ownerKind:'agent', owner:'art', project:null, assigneeKind:null, assignee:null, goal:'Works', why:'Broken', description:'', ask:null, closeReason:null, isReady:true, isShelved:false, taskLinksByTask:[] }] } };
   await act(async () => tree.update(h(Tasks, { submit })));
   expect(tree.root.findAllByType('Row').map((node: {props: {title: string}}) => node.props.title)).toEqual(['Server pump']);
 });
@@ -57,7 +57,7 @@ it('opens on the folder and the one agent its path asks for, and shows everyoneâ
 
 it('claims, unclaims and reopens at once with no form, one at a time, and says a refusal under the actions', async () => {
   const row = { id:'t-1', title:'Pump', type:'task', status:'open', priority:2, position:1, ownerKind:'agent', owner:'art', project:null, assigneeKind:null, assignee:null, goal:'Works', why:'Broken', doneWhen:'', description:'', ask:null, ifYes:null, ifNo:null, closeReason:null, sourceKind:null, sourceId:null, isReady:true, isShelved:false, changeTasksByTask:[], taskLinksByTask:[] };
-  feed.current = { status: 'live', data: { tasks: [row] } } as typeof feed.current;
+  feed.current = { status: 'live', data: { tasks: [row], selectedTask:{...row,taskCommentsByTask:[]} } } as typeof feed.current;
   let reject!: (error: Error) => void;
   const submit = vi.fn(() => new Promise<void>((_, no) => { reject = no; }));
   await act(async () => { tree = create(h(Tasks, { path: '/p/tasks-preview/task/t-1', go: vi.fn(), submit })); });
