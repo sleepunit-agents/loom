@@ -29,6 +29,17 @@ it('selects the requested model, denies native tools, and reports response model
   f.finish(f.rows([{ type: 'assistant', parent_tool_use_id: null, message: { model: 'tool-model', content: [{ type: 'tool_use', name: 'Edit' }] } }]));
   expect(await result).toMatchObject({ text: 'Answer é', model: 'observed-model', actions: [{ model: 'tool-model' }] });
 });
+it('adds scheduled omissions to full-reach jobs and preserves the restricted tool floor', async () => {
+  for (const reach of ['all','loom'] as const) {
+    const f = fixture();
+    const run = claudeBody({ command:'/private/claude', cwd:'/house', env:f.env, spawn:f.launch,
+      reach, omitClaudeTools:['Workflow','ScheduleWakeup'] });
+    const done = run(job, 'mail', f.abort.signal), args = f.launch.mock.calls[0][1];
+    const withheld = args.slice(args.indexOf('--disallowedTools') + 1);
+    expect(withheld).toEqual(reach === 'all' ? ['Read','Workflow','ScheduleWakeup'] : [...new Set(['Read',...claudeBuiltInTools])]);
+    f.finish(f.rows()); await done;
+  }
+});
 it.each([1, 2, null] as const)('applies guest-only native denials for tier %s', async tier => {
   const f = fixture(), configured = structuredClone(job); configured.run!.policy!.people = [{ kind: 'outside', person: 'outside-key', tier }]; configured.run!.policy!.word = 'others';
   const result = f.run(configured, 'mail', f.abort.signal); expect(ownDenials(f.launch.mock.calls[0][1])).toEqual(['Read', 'Bash(*)']); f.finish(f.rows()); await result;

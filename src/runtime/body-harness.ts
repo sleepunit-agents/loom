@@ -12,6 +12,7 @@
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Writable } from 'node:stream';
+import type { OmittedWakeTools } from './wake-tool-profiles.js';
 import type { WorkerAssignment } from './worker.js';
 import type { HarnessTraits } from './harness-traits.js';
 import { BODY_EXTENSION_TOOLS_MAX, TOOL_NAME } from './body-model-tools.js';
@@ -41,6 +42,7 @@ export interface HarnessInput {
   mcpTools?: readonly string[];
   /** 'loom': loom's tools only. 'all': the harness's own tools too (files, shell, the web). */
   reach?: 'loom' | 'all';
+  omitClaudeTools?: Readonly<OmittedWakeTools>;
 }
 export type HarnessRun = (job: WorkerAssignment, words: string, signal: AbortSignal, session?: HarnessSession) => Promise<HarnessReply>;
 export type BodyHarness = (input: HarnessInput) => HarnessRun;

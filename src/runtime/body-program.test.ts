@@ -537,6 +537,35 @@ it.each([true,false])('continues an acknowledged wake when the coordinator suppo
  expect(native).toHaveBeenCalledWith(expect.anything(),supported ? expect.stringContaining(lesson) : expect.not.stringContaining(lesson),expect.any(AbortSignal));
 });
 
+it.each(['scheduled','mixed','older coordinator','unknown tool'] as const)('selects the wake tool profile for %s mail', async mode => {
+ const f = fixture(), assignment = JSON.parse(f.input.toString());
+ Object.assign(assignment.job,{venue:'wake',thread:null});
+ const harness = vi.spyOn(adapters,'bodyHarness').mockImplementation(() => async () => ({text:'done',model:'fixture',actions:[]}));
+ let queried = false;
+ const fetcher:typeof fetch = async (url, init) => {
+   const path = String(url).split('/').at(-1);
+   if (path === 'wakeLessons') return Response.json({ok:true,value:null});
+   if (path === 'wakeToolProfile') {
+     queried = true;
+     expect(JSON.parse(String(init?.body)).input).toEqual({items:['mail']});
+     return mode === 'older coordinator' ? Response.json({ok:false,code:'not-found',message:'Unknown operation'},{status:404})
+       : Response.json({ok:true,value:mode === 'unknown tool' ? ['Workflow','Bash'] : ['Workflow','ReportFindings','ScheduleWakeup']});
+   }
+   const response = await f.options.fetch(url,init);
+   if (path !== 'take') return response;
+   const result = await response.json(), original = result.value.items[0];
+   if (mode === 'mixed') result.value.items.push({...original,id:'other',seq:2});
+   Object.assign(original,{source:'trigger',fromKind:'schedule',fromId:'art'});
+   return Response.json(result);
+ };
+ try {
+   expect(await bodyProgram({...f.options,native:undefined,fetch:fetcher,stdin:async()=>Buffer.from(JSON.stringify(assignment)),
+     read:async()=>JSON.stringify({command:'/native/claude',cwd:'/house',reach:'all'})})).toBe(0);
+   expect(queried).toBe(mode !== 'mixed');
+   expect(harness.mock.calls[0][1].omitClaudeTools).toEqual(mode === 'scheduled' ? ['Workflow','ReportFindings','ScheduleWakeup'] : []);
+ } finally { harness.mockRestore(); }
+});
+
 it.each(['all','loom'] as const)('hands the note capability to the house harness only with full reach (%s)',async reach=>{
  const f=fixture();
  let issued:string|undefined;
