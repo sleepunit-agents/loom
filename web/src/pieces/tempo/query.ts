@@ -4,7 +4,7 @@ import type { AgentPause, Trigger } from './model';
  * visibility for each table; this module never chooses a caller or a policy. */
 const triggerFields = `
   id ownerKind owner sourceKind watches times days lifespan targetKind target toKind to
-  project needs prefers instructions file note enabled state nextDueAt lastFiredAt createdAt changedAt
+  project needs prefers wantsModel instructions file note enabled state nextDueAt lastFiredAt createdAt changedAt
 `;
 const householdFields = 'tempoTimezone agentPauses { agent since }';
 export const tempoQuery = `query Tempo {
