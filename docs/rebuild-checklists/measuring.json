@@ -22,17 +22,29 @@
     {
       "id": "measuring-004",
       "promise": "Sends measurements to a tool you already run, to loom's own store, or both.",
-      "source": "docs/how-it-works/site/measuring.html"
+      "source": "docs/how-it-works/site/measuring.html",
+      "probe": {
+        "kind": "action",
+        "action": "measuringDestinations"
+      }
     },
     {
       "id": "measuring-005",
       "promise": "Lets agents read the local store, so work that judges loom has real numbers.",
-      "source": "docs/how-it-works/site/measuring.html"
+      "source": "docs/how-it-works/site/measuring.html",
+      "probe": {
+        "kind": "action",
+        "action": "measuringDestinations"
+      }
     },
     {
       "id": "measuring-006",
       "promise": "An agent asks for it through the same data endpoint as everything else.",
-      "source": "docs/how-it-works/site/measuring.html#con-h"
+      "source": "docs/how-it-works/site/measuring.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "measuringDestinations"
+      }
     },
     {
       "id": "measuring-007",
@@ -42,7 +54,11 @@
     {
       "id": "measuring-008",
       "promise": "Household owners turn it on and see it. Agents read it.",
-      "source": "docs/how-it-works/site/measuring.html#con-h"
+      "source": "docs/how-it-works/site/measuring.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "measuringDestinations"
+      }
     },
     {
       "id": "measuring-009",
@@ -57,7 +73,11 @@
     {
       "id": "measuring-011",
       "promise": "A rolled-up record per day of how long each kind of request, operation and background job took, and how often it ran.",
-      "source": "docs/how-it-works/site/measuring.html#how-h"
+      "source": "docs/how-it-works/site/measuring.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "measuringDestinations"
+      }
     },
     {
       "id": "measuring-012",

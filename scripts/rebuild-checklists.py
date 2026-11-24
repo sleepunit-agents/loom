@@ -102,6 +102,10 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   if text=='Knowledge offers search and freshness folders.':probe={'kind':'action','action':'knowledgeSearchFolders'}
   if app=='Activity':probe['patterns']=[r'Repair the garden pump\s+[^\n]*\b[1-9][0-9]* turns\b']
   add(text,'',probe)
+ if f.stem=='measuring':
+  for row in rows:
+   if row['promise'] in ("Sends measurements to a tool you already run, to loom's own store, or both.",'Lets agents read the local store, so work that judges loom has real numbers.','An agent asks for it through the same data endpoint as everything else.','Household owners turn it on and see it. Agents read it.','A rolled-up record per day of how long each kind of request, operation and background job took, and how often it ran.'):
+    row['probe']={'kind':'action','action':'measuringDestinations'}
  if f.stem=='tempo':
   for row in rows:
    if row['promise']=='Shows a day as a calendar, with each trigger at the time it fires.':row['probe']={'kind':'action','action':'tempoCalendar'}

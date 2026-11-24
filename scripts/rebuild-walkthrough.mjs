@@ -51,6 +51,7 @@ import {inboxDiscussion} from './rebuild-inbox-discussion.mjs';
 import {inboxCallers} from './rebuild-inbox-callers.mjs';
 import {inboxDocumentation,inboxVolume} from './rebuild-inbox-volume.mjs';
 import {scheduledInbox} from './rebuild-scheduled-inbox.mjs';
+import {measuringDestinations} from './rebuild-measuring.mjs';
 import {tempoCalendar} from './rebuild-tempo-calendar.mjs';
 import {pausedWake} from './rebuild-paused-wake.mjs';
 import {installedSecretHolder} from './rebuild-installed-secret-holder.mjs';
@@ -476,6 +477,8 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'secret-source',actions:safeReport(report.actions)};
   for await(const step of conversationMailSteps({page,app,clock,example:report.example,out,open:openApp})){Object.assign(report.actions,step.actions);save();yield {phase:step.phase,actions:safeReport(report.actions)};}
   report.actions.scheduledInbox=await scheduledInbox({browser,home:join(parent,'scheduled-home'),out});
+  try{report.actions.measuringDestinations=await measuringDestinations({home:join(parent,'measuring-home')});}
+  catch(error){report.actions.measuringDestinations={ok:false,error:String(error)};}
   try{report.actions.tempoCalendar=await tempoCalendar({browser,home:join(parent,'tempo-calendar')});}
   catch(error){report.actions.tempoCalendar={ok:false,error:String(error)};}
   try{report.actions.pausedWake=await pausedWake({browser,home:join(parent,'paused-wake')});}
