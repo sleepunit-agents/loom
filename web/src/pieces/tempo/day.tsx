@@ -10,6 +10,14 @@ const headerQuery = `query TempoDayHeader {
   modelAccounts { ... on RuntimeAccount { label level } }
 }`;
 type Header = { deskTime: {at: number} | null; modelAccounts: {label: string; level: string}[] };
+type Reading = {at:string;usage:number};
+type DayUsage = {date:string;peak:Reading|null;weekly:Reading|null;highHours:string[]};
+type SubscriptionUsage = {label:string;calendarUsage?:DayUsage[]};
+const calendarUsageQuery = `query TempoSubscriptionHistory($start:String!,$days:Int!) {
+  modelAccounts { ... on RuntimeAccount {label} ... on RuntimeAccountDetail {
+    calendarUsage(start:$start,days:$days){date peak{at usage} weekly{at usage} highHours}
+  }}
+}`;
 const historyQuery = `query TempoDayHistory($from: String!, $until: String!, $dueFrom:String!, $dueUntil:String!, $calendar:Boolean!) {
   stopped:triggerLog(where:{event:{eq:"stopped"},note:{gte:$dueFrom,lt:$dueUntil}}) @include(if:$calendar) {
     trigger seq at note triggerRow { state scheduleRemovedAt triggerLogByTrigger(where:{event:{eq:"stopped"}},orderBy:{seq:{direction:desc,priority:0}},limit:1){seq} }
@@ -60,7 +68,7 @@ function DayHistory({events,triggers,zone,open}:{events:Event[];triggers:readonl
   </section>;
 }
 
-function DayHours({date, zone, now, triggers, pauses, open, log, stops}: ScheduleProps & {date: string; log: Event[] | undefined; stops:Stop[]|undefined}) {
+function DayHours({date, zone, now, triggers, pauses, open, log, stops, subscriptions}: ScheduleProps & {date: string; log: Event[] | undefined; stops:Stop[]|undefined; subscriptions:{label:string;day:DayUsage}[]}) {
   const {entries, frequent} = useMemo(() => {
     const items: Entry[] = [];
     const frequentIds = new Set<string>();
@@ -105,9 +113,19 @@ function DayHours({date, zone, now, triggers, pauses, open, log, stops}: Schedul
   const hours = new Map<string, (Entry | 'now')[]>();
   const add = (at:number, entry: Entry | 'now') => {
     const hour = hourFormat.format(at);
+    firstAt.set(hour,at);
     const group = hours.get(hour);
     if (group) group.push(entry); else hours.set(hour,[entry]);
   };
+  const firstAt = new Map<string,number>();
+  const high = new Map<string,string[]>();
+  for (const {label,day} of subscriptions) for (const sample of day.highHours) {
+    const at=Date.parse(sample), hour=hourFormat.format(at);
+    const labels=high.get(hour) ?? [];
+    labels.push(label); high.set(hour,labels);
+    if (!hours.has(hour)) hours.set(hour,[]);
+    firstAt.set(hour,at);
+  }
   const today = localDate(now,zone) === date;
   let marked = false;
   for (const entry of entries) {
@@ -116,13 +134,19 @@ function DayHours({date, zone, now, triggers, pauses, open, log, stops}: Schedul
   }
   if (today && !marked) add(now,'now');
   return <section aria-label="Day schedule" className="grid gap-1">
+    {subscriptions.length > 0 && <section aria-label="Subscription readings" className="grid gap-1">
+      {subscriptions.map(({label,day},i)=><p key={i}><strong>{label}</strong>{[
+        day.peak && Math.round(day.peak.usage*100)+'% five-hour peak at '+format.format(Date.parse(day.peak.at)),
+        day.weekly && Math.round(day.weekly.usage*100)+'% of the week at '+format.format(Date.parse(day.weekly.at)),
+      ].filter(Boolean).map(words=>' · '+words).join('')}</p>)}
+    </section>}
     {frequent.size > 0 && <section aria-label="Frequent triggers" className="grid gap-1">
       <h3 className="text-sm">Frequent triggers</h3>
       {[...frequent].map(([id,group])=><FrequentTriggerRow key={id} entries={group} format={format} open={open}/>)}
     </section>}
-    {[...hours].map(([hour,items])=><div key={hour} className="tempo-hour grid grid-cols-[5em_minmax(0,1fr)] gap-2 border-t py-2">
+    {[...hours].sort(([a],[b])=>firstAt.get(a)!-firstAt.get(b)!).map(([hour,items])=><div key={hour} data-high-usage={high.has(hour)||undefined} className="tempo-hour grid grid-cols-[5em_minmax(0,1fr)] gap-2 border-t py-2">
       <h3 className="pt-1 text-sm">{hour}</h3>
-      <div className="grid gap-1 border-l pl-2">{items.map(entry=>entry === 'now'
+      <div className="grid gap-1 border-l pl-2">{high.get(hour)?.map((label,i)=><small key={i}>{label} · five-hour window almost full</small>)}{items.map(entry=>entry === 'now'
         ? <div key="now" className="border-b text-sm" role="separator" aria-label="Now">Now · {format.format(now)}</div>
         : <Row key={entry.key} title={entry.state==='stopped'||entry.state.toLowerCase().startsWith('held')
             ? <s>{title(entry.trigger)}</s> : title(entry.trigger)} className={entry.trigger.sourceKind==='time'?undefined:'tempo-event-firing'}
@@ -151,6 +175,8 @@ function CalendarHours({start,week,history,selectDay,...schedule}: ScheduleProps
   const feed = useDataQuery<{triggerLog: Event[];tempoCalendarOutcomes:Outcome[];stopped?:Stop[]}>(historyQuery,
     {from,until,dueFrom:'Next due '+from,dueUntil:'Next due '+until,calendar:!history});
 
+  const usage = useDataQuery<{modelAccounts:SubscriptionUsage[]}>(calendarUsageQuery,{start,days:length},{pause:history});
+  const accounts = usage.status==='live' && !usage.settling ? usage.data?.modelAccounts : undefined;
   const log = feed.status === 'live' ? feed.data?.triggerLog : undefined;
   const outcomes=feed.status==='live' ? feed.data?.tempoCalendarOutcomes : undefined;
   const events = useMemo(()=>{
@@ -180,7 +206,8 @@ function CalendarHours({start,week,history,selectDay,...schedule}: ScheduleProps
       const date = shift(start,offset);
       return <div key={date} role={week ? 'group' : undefined} aria-label={week ? formatDate(date) : undefined}>
         {week && <h3><Button onClick={()=>selectDay(date)} aria-label={'Open '+formatDate(date)}><time dateTime={date}>{formatDate(date)}</time></Button></h3>}
-        {!history && <DayHours {...schedule} stops={feed.status==='live'?feed.data?.stopped:undefined} date={date} log={log ? events.get(date) ?? noEvents : undefined}/>}
+        {!history && <DayHours {...schedule} subscriptions={(accounts??[]).flatMap(account=>
+          (account.calendarUsage??[]).filter(day=>day.date===date).map(day=>({label:account.label,day})))} stops={feed.status==='live'?feed.data?.stopped:undefined} date={date} log={log ? events.get(date) ?? noEvents : undefined}/>}
       </div>;
     })}
   </div>;

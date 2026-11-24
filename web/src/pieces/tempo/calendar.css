@@ -37,3 +37,7 @@
 .tempo-calendar .tempo-event-firing {
   border: 1px dashed var(--v-text-3);
 }
+
+.tempo-calendar .tempo-hour[data-high-usage] {
+  background-image: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--v-text-3) 12%, transparent) 6px 8px);
+}

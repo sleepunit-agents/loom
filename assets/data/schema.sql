@@ -1490,6 +1490,19 @@ CREATE TABLE `account_week_readings` (
 	CONSTRAINT "account_week_readings_reset_utc" CHECK("account_week_readings"."resets_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "account_week_readings"."resets_at") = "account_week_readings"."resets_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "account_week_readings"."resets_at") = "account_week_readings"."resets_at", 0))
 );
 
+CREATE TABLE `account_calendar_readings` (
+	`account` text NOT NULL,
+	`read_at` text NOT NULL,
+	`window` text NOT NULL,
+	`duration_ms` integer NOT NULL,
+	`usage` real NOT NULL,
+	PRIMARY KEY(`account`, `read_at`, `window`),
+	FOREIGN KEY (`account`) REFERENCES `model_accounts`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "account_calendar_readings_usage" CHECK("account_calendar_readings"."usage" between 0 and 1),
+	CONSTRAINT "account_calendar_readings_duration" CHECK("account_calendar_readings"."duration_ms" in (18000000, 604800000)),
+	CONSTRAINT "account_calendar_readings_utc" CHECK("account_calendar_readings"."read_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "account_calendar_readings"."read_at") = "account_calendar_readings"."read_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "account_calendar_readings"."read_at") = "account_calendar_readings"."read_at", 0))
+);
+
 CREATE TABLE `change_review_rounds` (
 	`job` text PRIMARY KEY NOT NULL,
 	`change` text NOT NULL,
