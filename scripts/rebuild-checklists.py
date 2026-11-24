@@ -280,6 +280,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith(('Keeps notes: longer working documents','A memory is a fact. A note is a document:')):row['probe']={'kind':'action','action':'noteLifetimes'}
  if f.stem=='data':
   for row in rows:
+   if row['promise'].startswith('machine_reads '):row['probe']={'kind':'action','action':'machineHistory'}
    if row['promise'].startswith('operation_results '):row['probe']={'kind':'action','action':'dataWriteReceipt'}
    if row['promise'].startswith('migrations The list of changes'):row['probe']={'kind':'action','action':'dataMigrations'}
    if row['promise'].startswith('A tile names exactly the fields'):row['probe']={'kind':'action','action':'dataSelectionSQL'}

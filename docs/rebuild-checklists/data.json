@@ -118,7 +118,11 @@
     {
       "id": "data-017",
       "promise": "machine_reads Diagnostic request metadata for the machine owner’s history. The answer text is never stored here.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "action",
+        "action": "machineHistory"
+      }
     },
     {
       "id": "data-018",
