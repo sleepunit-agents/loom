@@ -189,7 +189,7 @@ export function useInboxApproval(id: string | undefined, zone: string | undefine
   return approvalSnapshot({...read,data:read.data && {...read.data,approvalRules:[],approvalNotices:[]}},zone ?? localTimezone());
 }
 
-export function CurrentApprovalCard({ id, actions, displayTitle, showBlocker = false, base }: LiveApprovalProps & {base:ApprovalSnapshot}) {
+export function CurrentApprovalCard({ id, actions, displayTitle, showBlocker = false, base }: Omit<LiveApprovalProps,'timezone'> & {base:ApprovalSnapshot}) {
   const owner=useWorkAccess().owner, names=useAgentNames(), viewer=useViewer();
   const [details, setDetails] = useState<string>();
   const open = details === id;

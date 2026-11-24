@@ -78,7 +78,7 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
   } : undefined;
   return <InboxView zone={zone} snapshot={{ status, settling: reading.settling, folder: drawnFolder, folders: data?.folders, items: data?.items.slice(0, inboxPageSize).map(row => retainedInboxItem(row, Math.max(now, Date.now()))) ?? [] }}
     selected={selected} select={select} detail={{ status: detailStatus, item: current }} actions={actions}
-    words={row => { const approval = approvalRequestId(row) ? (row.id===current?.id ? selectedCard : cardOf(row)) : undefined; return approval?.operation === 'household.change' ? named.get(approval.id) ?? approvalTitle(approval) : undefined; }}
+    words={row => { const approval = approvalRequestId(row) ? (row.id===current?.id && selectedApproval.status!=='loading' ? selectedCard : cardOf(row)) : undefined; return approval?.operation === 'household.change' ? named.get(approval.id) ?? approvalTitle(approval) : undefined; }}
     sourceCard={item => {
       const card = item.source === 'notice' && item.sourceId?.startsWith('worker-join:') ? <WorkerJoinCard key={item.id} item={item}/>
       : item.source === 'task' && item.waitsOnKind === 'task' ? <TaskQuestionAnswer key={item.id} item={item}/>
