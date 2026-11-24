@@ -48,7 +48,8 @@ export async function tempoCalendar({ browser, home }) {
     await checkFrequentRows(page,app);
     await checkDayHistory(page,app,clock);
     await checkStoppedSchedule(page,app,clock);
-    return {ok:true,reason:'The scheduled wake appeared at its household time. Navigating away and back preserved its day. Firing it early moved it to the actual firing time with a fired result, and its reader opened after reload. Four recurring times shared one row in Day and Week, with live outcomes and the next time; three times kept their hourly rows. The selected day’s history showed recurring work, a lost worker’s reason, a delivered notice and a stopped trigger in order. A stopped schedule retained its former deadline and restarted at its next future time.'};
+    await checkKindFilters(page,app,clock);
+    return {ok:true,reason:'The scheduled wake appeared at its household time. Navigating away and back preserved its day. Firing it early moved it to the actual firing time with a fired result, and its reader opened after reload. Four recurring times shared one row in Day and Week, with live outcomes and the next time; three times kept their hourly rows. The selected day’s history showed recurring work, a lost worker’s reason, a delivered notice and a stopped trigger in order. A stopped schedule retained its former deadline and restarted at its next future time. Each of four trigger kinds had a distinct word and colour. Kind and household filters kept the selected day.'};
   } finally {
     await context?.close();
     await app.close();
@@ -167,4 +168,38 @@ async function checkStoppedSchedule(page,app,clock) {
   await former.click();await page.getByRole('button',{name:'Start',exact:true}).click();
   await former.waitFor({state:'hidden'});
   await day.getByRole('button',{name:new RegExp(later)}).filter({hasText:'standing'}).waitFor();
+}
+
+async function checkKindFilters(page,app,clock) {
+  const engine=app.services.tempo.triggers;
+  const later=new Date(clock.now()+30*60000);
+  const base={ownerKind:'agent',owner:'fern',targetKind:'inbox',toKind:'agent',to:'fern',
+    sourceKind:'time',times:later.toTimeString().slice(0,5),lifespan:'until-stopped',instructions:'Check the gauge'};
+  app.writes.run(()=>{
+    engine.set({...base,ownerKind:'household',owner:null,note:'Gauge rounds'});
+    engine.set({...base,program:{name:'read-gauge',program:'tools/gauge',repository:'https://example.org/house.git',
+      commit:'1'.repeat(40),image:'sha256:'+'a'.repeat(64),args:[],secrets:{},timeoutMs:5000},note:'Gauge program'});
+    engine.set({...base,ownerKind:'member',owner:'alex',toKind:'person',to:'alex',note:'Gauge notice'});
+    engine.set({...base,lifespan:'once',times:later.toISOString(),note:'Gauge follow-up'});
+  });
+  await page.goto(app.url+'/p/tempo');
+  await page.getByText('Gauge rounds',{exact:true}).waitFor();
+  const search=page.getByRole('searchbox',{name:'Search tempo'});
+  await search.click();await search.fill('Gauge');
+  assert.equal(await search.inputValue(),'Gauge');
+  const day=page.getByRole('region',{name:'Day schedule'});
+  const rows=day.locator('[data-trigger-kind]');
+  for(const word of ['Wakes an agent','A program decides','Loom itself','Once']) await rows.getByText(word,{exact:true}).waitFor();
+  assert.equal(await rows.count(),4);
+  assert.equal(new Set(await rows.evaluateAll(items=>items.map(item=>getComputedStyle(item).borderInlineStartColor))).size,4);
+  const kind=page.getByRole('combobox',{name:'Kind',exact:true});
+  await kind.selectOption('program');
+  await day.getByText('Gauge rounds',{exact:true}).waitFor({state:'hidden'});
+  assert.equal(await rows.count(),1);
+  await page.getByRole('button',{name:'Next day'}).click();
+  await day.getByText('Gauge program',{exact:true}).waitFor();
+  await kind.selectOption('');
+  await page.getByRole('combobox',{name:'Whose',exact:true}).selectOption('lanes');
+  await day.getByText('Gauge rounds',{exact:true}).waitFor();
+  assert.equal(await rows.count(),1);
 }

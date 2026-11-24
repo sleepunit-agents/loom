@@ -80,6 +80,9 @@ export function dataQueries(client: Database.Database, options: {
     const fieldsSelected = selectedFields(sets, querySelection.getStore()!);
     return {
       ...config,
+      ...(name === 'triggers' && fieldsSelected.has('hasProgram') ? {
+        extras: (fields:Fields) => ({hasProgram:sql`${fields.program} is not null`.mapWith(Boolean).as('data_has_program')}),
+      } : {}),
       ...(name === 'tasks' && (fieldsSelected.has('isReady') || fieldsSelected.has('isShelved') || selected.has('taskComments') && fieldsSelected.has('commentCount')) ? {
         extras: (fields: Fields) => {
           const extras: Record<string, SQL.Aliased> = {};
@@ -168,6 +171,11 @@ export function dataQueries(client: Database.Database, options: {
       // drizzle-graphql may stringify SQLite JSON objects before field resolution.
       fields.lastLines.resolve = row => typeof row.lastLines === 'string' ? JSON.parse(row.lastLines) : row.lastLines;
     }
+    if (name === 'triggers') fields.hasProgram = {
+      name:'hasProgram',type:new GraphQLNonNull(GraphQLBoolean),args:[],
+      description:'Whether this trigger runs a household program.',
+      resolve:row=>row.hasProgram, extensions:{},astNode:undefined,deprecationReason:undefined,
+    };
     if (name === 'tasks') fields.isReady = {
       name: 'isReady', type: new GraphQLNonNull(GraphQLBoolean), args: [],
       description: 'Open non-epic task with no unclosed blocker, computed in this SQL statement.',

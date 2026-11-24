@@ -41,3 +41,9 @@
 .tempo-calendar .tempo-hour[data-high-usage] {
   background-image: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--v-text-3) 12%, transparent) 6px 8px);
 }
+
+[data-trigger-kind="agent"] { --tempo-kind: var(--v-pink); }
+[data-trigger-kind="program"] { --tempo-kind: var(--v-blue); }
+[data-trigger-kind="loom"] { --tempo-kind: var(--v-olive); }
+[data-trigger-kind="once"] { --tempo-kind: var(--v-yellow); }
+.loom-split [data-trigger-kind] { border-inline-start: 3px solid var(--tempo-kind); }

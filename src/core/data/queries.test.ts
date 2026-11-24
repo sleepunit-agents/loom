@@ -5,7 +5,7 @@ import { eq, ne, sql } from 'drizzle-orm';
 import { graphql, GraphQLObjectType, GraphQLString, printSchema } from 'graphql/index.js';
 import { createDataSchema } from './database.js';
 import { dataQueries } from './queries.js';
-import { members, projects, tasks, taskComments, taskLinks } from './schema.js';
+import { members, projects, tasks, taskComments, taskLinks, triggers } from './schema.js';
 
 const opened: Database.Database[] = [];
 const at = '2026-11-14T00:00:00.000Z';
@@ -288,4 +288,16 @@ it('orders the actual Tasks selection by urgency, then position, then ID', async
   const result = await graphql({ schema, source: tasksQuery });
   expect(result.errors).toBeUndefined();
   expect((result.data!.tasks as { id: string }[]).map(row => row.id)).toEqual(['c', 'b', 'd', 'a']);
+});
+
+it('returns only the program flag on visible triggers in the list and reader', async () => {
+  const {client,db}=fixture();
+  const base={ownerKind:'member',owner:'sam',sourceKind:'time',lifespan:'until-stopped',targetKind:'inbox',
+    toKind:'person',to:'sam',note:'Check',enabled:true,state:'standing',createdAt:at,changedAt:at} as const;
+  for(const id of ['plain','program','hidden']) db.insert(triggers).values({...base,id}).run();
+  client.prepare("UPDATE triggers SET program = ? WHERE id != 'plain'").run(JSON.stringify({name:'fixture'}));
+  const schema=dataQueries(client,{tables:['triggers'],visibility:{triggers:f=>ne(f.id,'hidden')}});
+  const result=await graphql({schema,source:'{triggers(orderBy:{id:{direction:asc,priority:0}}){id hasProgram} card:triggersSingle(where:{id:{eq:"program"}}){hasProgram}}'});
+  expect(result).toEqual({data:{triggers:[{id:'plain',hasProgram:false},{id:'program',hasProgram:true}],card:{hasProgram:true}}});
+  expect((await graphql({schema,source:'{triggers{program programState}}'})).data).toBeUndefined();
 });
