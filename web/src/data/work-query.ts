@@ -47,11 +47,15 @@ export function approvalSnapshot(feed: Feed<ApprovalsResult>, timezone: string):
   const data = feed.status === 'live' ? feed.data : undefined;
   // Private reports inherit their approval's sharing labels through the
   // permanent record query. Never copy their words to unlabelled notices.
+  const cards = new Map(data?.approvals.map(card => [card.id, card]));
   const recordNotices = (data?.approvalRecord ?? []).flatMap(event => {
-    const card = data?.approvals.find(card => card.id === event.approval);
     const decision = quotedDecision(event);
-    if (card && decision) return [{id:`record:${event.seq}`,agent:card.agent,kind:card.kind,target:card.operation==='household.change'?'':card.target,what:approvalTitle(card)+' — '+decision,at:event.at}];
-    return card?.member && event.event === 'use' && event.note.startsWith('Reported step: ')
+    const report = event.event === 'use' && event.note.startsWith('Reported step: ');
+    if (!decision && !report) return [];
+    const card = cards.get(event.approval);
+    if (!card) return [];
+    if (decision) return [{id:`record:${event.seq}`,agent:card.agent,kind:card.kind,target:card.operation==='household.change'?'':card.target,what:approvalTitle(card)+' — '+decision,at:event.at}];
+    return card.member && report
       ? [{id:`record:${event.seq}`,agent:card.agent,kind:card.kind,target:card.target,what:event.note.slice('Reported step: '.length),at:event.at}] : [];
   });
   return { status: feed.status === 'live' && !data ? 'loading' : feed.status, timezone,

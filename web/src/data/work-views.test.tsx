@@ -3,7 +3,7 @@ import { createElement as h, Suspense, type ReactNode } from 'react';
 // @ts-expect-error The renderer dependency has no declarations.
 import { act, create } from 'react-test-renderer';
 import type { ReviewRound } from '../pieces/change-view/model';
-import type { ApprovalsResult, ChangesResult } from './work-query';
+import { approvalSnapshot, type ApprovalsResult, type ChangesResult } from './work-query';
 const queryCalls = vi.hoisted(() => vi.fn());
 const feed = vi.hoisted(() => ({ reviews: [] as ReviewRound[], status: 'live', ownerStatus:'live', owner:false, refresh:false, people:[] as {id:string;role:string}[], changeStatus:undefined as string|undefined, requestStatus:undefined as string|undefined, approvals: {} as ApprovalsResult, changes: {} as ChangesResult }));
 vi.mock('./graphql', () => ({ useDataQuery: (query: string, variables?: unknown, options?: unknown) => {
@@ -457,6 +457,26 @@ it('sends the revision shown on an updated approval',async()=>{
  const allow=tree.root.findAllByType('Button' as never).find((entry:{props:{children:unknown}})=>entry.props.children==='Allow')!;
  await act(async()=>allow.props.onClick());
  expect(JSON.parse(String(request.mock.calls[1][1]?.body)).input).toEqual({id:selected.id,answer:'allow',review});
+});
+
+it('joins history to visible cards in one pass and keeps unmatched notices private', () => {
+  fixture();
+  const card = feed.approvals.approvals[0];
+  let reads = 0;
+  const approvals = Array.from({ length: 137 }, (_, i) => ({
+    ...card, get id() { reads++; return 'approval-' + i; },
+  }));
+  const approvalRecord = Array.from({ length: 409 }, (_, seq) => ({
+    seq, at: card.askedAt, event: 'deny' as const, agent: 'art',
+    approval: seq % 2 === 0 ? 'approval-136' : 'invisible', note: 'Denied by owner',
+  }));
+  const data = { ...feed.approvals, approvals, approvalRecord };
+  const live = approvalSnapshot({ status: 'live', data }, 'UTC');
+  expect(live.notices.map(row => row.id)).toEqual([
+    'n-one', ...approvalRecord.filter(row => row.approval !== 'invisible').map(row => 'record:' + row.seq),
+  ]);
+  expect(reads).toBeLessThanOrEqual(approvals.length);
+  expect(approvalSnapshot({ status: 'denied', data }, 'UTC').notices).toEqual([]);
 });
 
 it('shows a quoted decision in approval notices while the card is visible', async () => {
