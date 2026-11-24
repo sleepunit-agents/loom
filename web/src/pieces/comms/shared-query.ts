@@ -43,3 +43,7 @@ export function retainedCommsMessage(row: CommsMessage, now: number): CommsMessa
   return row.wordsKeepUntil && Date.parse(row.wordsKeepUntil) > now ? row : { ...row, words: null, stepDetails:null };
 }
 export function commsThreadPath(id: string) { return `/p/comms-preview/thread/${encodeURIComponent(id.replace(/^th:/,''))}`; }
+
+/** Where a conversation opens: a Comms thread for the app's own and a terminal's, its history for any other. */
+export const talkPath = (row: { id: string; venue: string; place: string }) =>
+  row.venue === 'loom' || row.venue === 'terminal' ? commsThreadPath(row.place) : `/p/comms-preview/conversation/${encodeURIComponent(row.id)}`;

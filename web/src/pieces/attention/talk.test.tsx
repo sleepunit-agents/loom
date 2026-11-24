@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
-import { cardTalk, cardTalkQuery, talkPath } from './talk';
+import { talkPath } from '../comms/shared-query';
+import { cardTalk, cardTalkQuery } from './talk';
 
 const row = (id: string, fields: object = {}) => ({ id, agent: 'art', label: `Talk ${id}`, venue: 'loom', place: `th:${id}`, lastAt: '2026-11-14T10:00:00Z', ...fields });
 const answered = (id: string, at: string, words: string) => row(id, { lastAnswer: { at, words } });
