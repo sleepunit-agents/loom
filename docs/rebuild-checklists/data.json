@@ -183,7 +183,11 @@
     {
       "id": "data-025",
       "promise": "bridge_send_files The files a post carries, kept only until the post is sent, dismissed or left in doubt.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "action",
+        "action": "outgoingFileRetention"
+      }
     },
     {
       "id": "data-026",

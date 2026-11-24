@@ -20,6 +20,7 @@ import {secretValueAction} from './rebuild-secret-value-actions.mjs';
 import {secretDefaultAction,verifySecretDefaultAfterReload} from './rebuild-secret-actions.mjs';
 import {workVisibility} from './rebuild-work-visibility.mjs';
 import {changeActions,changeInline} from './rebuild-change-actions.mjs';
+import {outgoingFileRetention} from './rebuild-outgoing-files.mjs';
 import {bridgeReceipts} from './rebuild-bridge-receipts.mjs';
 import {bridgeContactTiers} from './rebuild-bridge-contact-tiers.mjs';
 import {bridgeAttachments} from './rebuild-bridge-attachments.mjs';
@@ -477,6 +478,8 @@ export async function* walkthroughSteps(output) {
     try {report.actions[action]=await bridgeAttachments(platform);}
     catch(error){report.actions[action]={ok:false,error:String(error)};}
   }
+  try {report.actions.outgoingFileRetention=await outgoingFileRetention();}
+  catch(error){report.actions.outgoingFileRetention={ok:false,error:String(error)};}
   try {report.actions.bridgeMail=await bridgeMail({app,clock});}
   catch(error){report.actions.bridgeMail={ok:false,error:String(error)};}
   try {report.actions.bridgeReceipts=await bridgeReceipts({app,clock,page,open:openApp});}
