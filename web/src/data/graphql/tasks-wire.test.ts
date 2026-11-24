@@ -47,7 +47,7 @@ it('feeds the registered Tasks selection and a second reader over one authentica
   const b = client.query<{ tasks: { title: string }[] }>('{ tasks { id title } }', {}).subscribe(detail.push);
   clean.push(() => { a.unsubscribe(); b.unsubscribe(); });
   const initial = await tasks.next(); await detail.next();
-  expect(initial.data?.tasks).toMatchObject([{ id: 't-1', title: 'Fictional pump', isReady: true, commentCount: 0 }]);
+  expect(initial.data?.tasks).toMatchObject([{ id: 't-1', title: 'Fictional pump', isReady: true }]);
   expect(connections).toBe(1);
   data.writes.run(() => db.exec("UPDATE tasks SET title='Updated fictional pump'"));
   expect((await tasks.next()).data?.tasks[0].title).toBe('Updated fictional pump');

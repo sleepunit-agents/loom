@@ -32,12 +32,12 @@ it('runs the mounted Tasks selection in one SQL statement and respects hidden bl
     expect(result.errors).toBeUndefined();
     expect(statements).toHaveLength(1);
     expect(result.data?.tasks).toMatchObject([
-      {id:'a',isReady:false,commentCount:1,taskLinksByTask:[]},
+      {id:'a',isReady:false,taskLinksByTask:[]},
       {id:'b',isReady:true,taskLinksByTask:[{task:'b',dependsOn:'epic',type:'parent-child'}]},
       {id:'epic',isReady:false},
     ]);
     expect(JSON.stringify(result.data)).not.toContain('Visible comment');
-    expect(statements[0]).not.toMatch(/change_tasks/i);
+    expect(statements[0]).not.toMatch(/change_tasks|task_comments/i);
     const detail = (selected:string) => graphql({schema,source:tasksQuery,variableValues:{selected,withComments:true}});
     statements.length = 0;
     const opened = await detail('a');
