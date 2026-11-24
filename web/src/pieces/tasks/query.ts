@@ -38,3 +38,8 @@ export interface TasksSelection {
 
 /** Choices inherit each generated table's current outside-door visibility. */
 export const taskChoicesQuery = `query TaskChoices { projects { id name projectMembersByProject { member } } agents { id removedAt } members { id } }`;
+
+/** The task’s reader and the source conversation may have different audiences. */
+export const taskSourceQuery = `query TaskSource($id:String!) {
+  source:conversationsSingle(where:{id:{eq:$id}}) { id venue place }
+}`;

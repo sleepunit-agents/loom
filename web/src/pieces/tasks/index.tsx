@@ -1,9 +1,10 @@
+import { talkPath } from '../comms/shared-query';
 import { useEffect, useRef, useState } from 'react';
 import { useDataQuery } from '../../data/graphql';
 import { SharedTasks, type SharedTask, type TaskAction } from './shared-view';
 import { SharedTaskForm, type TaskFormProps } from './shared-form';
 import { taskId, taskSegment } from '../../../../src/task-route';
-import { taskCommentsQuery, tasksQuery, type TasksSelection } from './query';
+import { taskCommentsQuery, taskSourceQuery, tasksQuery, type TasksSelection } from './query';
 
 export interface TasksAppProps {
   path?: string;
@@ -39,6 +40,12 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
   const snapshot = useDataQuery<TasksSelection>(tasksQuery, listVariables, { keep: true });
   const status = snapshot.status === 'offline' ? 'unavailable' : snapshot.status;
   const tasks = status === 'live' ? snapshot.data?.tasks ?? [] : [];
+  const selectedTask = tasks.find(task => task.id === selected);
+  const sourceId = selectedTask?.sourceKind === 'conversation' ? selectedTask.sourceId : null;
+  const sourceFeed = useDataQuery<{source: Parameters<typeof talkPath>[0] | null}>(
+    taskSourceQuery, {id:sourceId}, {pause:!sourceId || !go || !!openConversation});
+  const source = sourceFeed.status === 'live' ? sourceFeed.data?.source : null;
+  const openSource = openConversation ?? (go && source && source.id === sourceId ? () => go(talkPath(source)) : undefined);
   const readComments = !combined && selected !== undefined && tasks.some(task => task.id === selected);
   const comments = useDataQuery<Pick<TasksSelection, 'selectedTask'>>(taskCommentsQuery, { selected }, { pause: !readComments });
   // Claim, Unclaim and Reopen are sent at once: one at a time, and what the program says if it refuses is shown.
@@ -83,7 +90,7 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
     links={links} comments={detail && detail.id === selected ? detail.taskCommentsByTask : []}
     loadingComments={(combined || readComments) && (commentFeed.status === 'loading' || commentFeed.settling)}
     commentsUnavailable={readComments && (comments.status === 'offline' || comments.status === 'denied')}
-    ready={tasks.filter(task => task.isReady).map(task => task.id)} conversation={openConversation}
+    ready={tasks.filter(task => task.isReady).map(task => task.id)} conversation={openSource}
     openChange={go ? id => go(`/p/changes-preview/change/${encodeURIComponent(id)}`) : undefined}
     names={names} zone={zone} busy={sending} problem={problem || undefined} act={act}
     form={open ? { action: action.action, node: <SharedTaskForm status={status} action={action.action} task={target} tasks={tasks} links={links}
