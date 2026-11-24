@@ -145,11 +145,17 @@ export function dataQueries(client: Database.Database, options: {
     const type = generated.getType(name);
     if (isInputObjectType(type)) for (const key of programColumns) delete type.getFields()[key];
   }
+  // A pending placement diagnosis belongs to dispatch. Only jobHistory projects its terminal outcome.
+  for (const name of ['JobsOrderBy', 'JobsFilters', 'JobsFiltersOr']) {
+    const type = generated.getType(name);
+    if (isInputObjectType(type)) delete type.getFields().signInBlocked;
+  }
   const visited = new Set<object>();
   function addCounts(name: TableName, output: ReturnType<typeof getNamedType>) {
     if (!output || !isObjectType(output) || visited.has(output)) return;
     visited.add(output);
     const fields = output.getFields();
+    if (name === 'jobs') delete fields.signInBlocked;
     if (name === 'triggers') for (const key of programColumns) delete fields[key];
     // drizzle-graphql returns SQLite JSON arrays intact but declares them as scalar strings.
     if (name === 'triggers' || name === 'jobs' || name === 'agentRunSettings' || name === 'boxes') {

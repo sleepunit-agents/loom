@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {browserRead} from './rebuild-conversation-visibility.mjs';
 import {exampleHome} from '../dist/example-home.js';
 import {startSharedHome} from '../dist/shared-startup.js';
 import {FakeClock} from '../dist/core/clock.js';
@@ -11,11 +12,19 @@ export async function machineSignInWarnings({browser,home}){
  assert(example.fictional);
  const clock=new FakeClock(Date.parse(example.createdAt));
  const app=await startSharedHome({home,clock,port:0,stdout(){}});
- let context;
+ let context,memberContext;
  try{
   context=await browser.newContext({reducedMotion:'reduce',serviceWorkers:'block'});
   await context.route('**/*',route=>new URL(route.request().url()).origin===app.url?route.continue():route.abort());
-  await context.routeWebSocket(url=>url.origin!==app.url.replace(/^http/,'ws'),route=>route.close());
+  let offline=false;
+  const sockets=new Set();
+  await context.routeWebSocket('**/*',socket=>{
+   if(offline || new URL(socket.url()).origin!==app.url.replace(/^http/,'ws'))return socket.close();
+   const server=socket.connectToServer();
+   sockets.add(socket);
+   socket.onClose(()=>{sockets.delete(socket);server.close();});
+   server.onClose(()=>{sockets.delete(socket);socket.close();});
+  });
   const page=await context.newPage();
   page.setDefaultTimeout(10000);
   await page.goto(app.signinLink('alex'));
@@ -37,8 +46,19 @@ export async function machineSignInWarnings({browser,home}){
   await warning.waitFor({state:'hidden'});
   await reportWorkerHealth(worker);
   await warning.waitFor();
+  await reportWorkerAccountLogins(worker,[login]);
+  await warning.waitFor({state:'hidden'});
+  assert(sockets.size>0);
+  offline=true;
+  for(const socket of sockets)await socket.close({code:1012,reason:'Fixture disconnect'});
   await reportWorkerAccountLogins(worker,[{...login,state:'signed-out'}]);
+  offline=false;
+  await warning.waitFor();
   assert.equal(await httpWorkerControl(worker).next(),undefined);
+  const readDiagnosis=async()=> (await browserRead(page,'{jobHistory(agent:"moss",id:'+JSON.stringify(job.id)+'){ signInBlocked }}')).jobHistory;
+  assert.deepEqual(await readDiagnosis(),[{signInBlocked:false}]);
+  const rawTypes=await browserRead(page,'{filters:__type(name:"JobsFilters"){inputFields{name}} order:__type(name:"JobsOrderBy"){inputFields{name}}}');
+  for(const type of Object.values(rawTypes))assert(!type?.inputFields.some(field=>field.name==='signInBlocked'));
   await page.getByLabel('Jobs for').selectOption('moss');
   const jobRow=page.getByRole('button').filter({has:page.getByText(job.title,{exact:true})});
   await jobRow.waitFor();
@@ -50,12 +70,30 @@ export async function machineSignInWarnings({browser,home}){
   clock.advance(30_000);
   await jobWarning.waitFor();
   assert.match(await jobRow.innerText(),/Failed/);
+  assert.deepEqual(await readDiagnosis(),[{signInBlocked:true}]);
   await reportWorkerAccountLogins(worker,[login]);
   await warning.waitFor({state:'hidden'});
   await page.reload();
   await page.getByLabel('Jobs for').selectOption('moss');
   await jobWarning.waitFor();
   assert.equal(await warning.count(),0);
-  return {ok:true,reason:'The machine warning appeared at the three-day boundary, disappeared while offline and cleared on renewal. A real worker could not claim a signed-out job. The deadline ended it and its historical warning survived renewal and reload.'};
- }finally{try{await context?.close();}finally{await app.close();}}
+  // A member can own a worker without owning the subscription reported there.
+  app.writes.run(()=>app.services.comms.db.$client.prepare("UPDATE boxes SET owner='robin' WHERE id=?").run(box));
+  await reportWorkerHealth(worker);
+  await reportWorkerAccountLogins(worker,[{...login,state:'signed-out'}]);
+  const other=page.getByRole('region',{name:'Other visible machines'}).getByRole('heading',{name:/Example workshop/});
+  await other.getByRole('img',{name:'A sign-in needs attention'}).waitFor();
+  memberContext=await browser.newContext({reducedMotion:'reduce',serviceWorkers:'block'});
+  await memberContext.route('**/*',route=>new URL(route.request().url()).origin===app.url?route.continue():route.abort());
+  await memberContext.routeWebSocket(url=>url.origin!==app.url.replace(/^http/,'ws'),socket=>socket.close());
+  const member=await memberContext.newPage();
+  member.setDefaultTimeout(10000);
+  await member.goto(app.signinLink('robin'));
+  await member.getByRole('button',{name:'Sign in',exact:true}).click();
+  await member.locator('.next-shell').waitFor();
+  await member.goto(app.url+'/p/machines');
+  await member.getByRole('button',{name:'Example workshop',exact:true}).waitFor();
+  assert.equal(await member.getByRole('img',{name:'A sign-in needs attention'}).count(),0);
+  return {ok:true,reason:'The machine warning appeared at the three-day boundary, cleared during worker silence, and returned after the browser reconnected to a signed-out worker. Only the member with account detail saw it on a shared machine. The job warning appeared after the missed deadline and survived renewal and reload.'};
+ }finally{try{await memberContext?.close();await context?.close();}finally{await app.close();}}
 }

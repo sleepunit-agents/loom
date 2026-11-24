@@ -42,6 +42,18 @@ describe('upgrading a household database', () => {
     expect(old.pragma('foreign_key_check')).toEqual([]);
   });
 
+  it('leaves the sign-in diagnosis unknown for preexisting unplaced jobs', () => {
+    const old = household(38);
+    old.exec(`INSERT INTO agents (id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('art','','','','pebble','dot');
+      INSERT INTO jobs (id,agent,state,title,brief,model,started_by_kind,started_by,house_repository,house_file,house_branch,queued_at,exit_by,exit_code)
+      VALUES ('earlier','art','failed','Earlier job','','model','agent','art','','','main','${at}','loom',31)`);
+    upgradeDataSchema(old, () => at);
+    expect(old.prepare('SELECT id,title,state,exit_code,sign_in_blocked FROM jobs').all()).toEqual([
+      {id:'earlier',title:'Earlier job',state:'failed',exit_code:31,sign_in_blocked:0}
+    ]);
+    expect(dataSchemaShape(old)).toEqual(dataSchemaShape(fresh()));
+  });
+
   it('posts to an existing terminal conversation after schema 36 upgrades', async () => {
     const old = household(36);
     const db = dataDatabase(old, () => at);

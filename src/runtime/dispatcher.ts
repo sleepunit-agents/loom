@@ -16,7 +16,7 @@ import type { DataDatabase } from '../core/data/database.js';
 import { agentModels, agentRunSettings, agentHousePorts, boxes, programFirings, changes, changeReviewRounds, jobNeeds, jobs, inbox, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
 import { Jobs, workingIn, type Job } from './jobs.js';
 import { Machines } from './machines.js';
-import { blockedBySignIn, decidePlacement, type ModelRole } from './placement.js';
+import { decidePlacement, type ModelRole } from './placement.js';
 import type { WorkerRunPolicy } from './worker.js';
 import type { WorkerExitBy } from './job-exit.js';
 import { SILENCE_MS } from './silence.js';
@@ -129,7 +129,7 @@ export class Dispatcher {
           continue;
         }
         const policy = jobRoom(this.db, job);
-        const { placement, decision } = decidePlacement(this.db, { agent: job.agent, now: at, eligibleBoxes: round ? this.coldReviewBoxes : review ? this.reviewBoxes : undefined, roles: workRole ? eligibleModels(workRole,roles,this.nativeHarnesses) : review ? roles.filter(role=>role.harness==='codex') : roles, needs, prefers: job.prefers ?? [], wants: this.wants(job.conversation),
+        const { placement, decision, signInBlocked } = decidePlacement(this.db, { agent: job.agent, now: at, eligibleBoxes: round ? this.coldReviewBoxes : review ? this.reviewBoxes : undefined, roles: workRole ? eligibleModels(workRole,roles,this.nativeHarnesses) : review ? roles.filter(role=>role.harness==='codex') : roles, needs, prefers: job.prefers ?? [], wants: this.wants(job.conversation),
           cannotRun: harness => this.cannotRun(harness, policy) });
         // A job on anybody else's word runs with loom's tools only, and a harness that always has a shell does
         // not run it. When every model the agent has is on such a harness, no machine will ever take the job:
@@ -139,7 +139,6 @@ export class Dispatcher {
         if (!placement && loomToolsOnly(policy.word) && this.unheld(job.agent, roles, policy)) { if (this.jobs.unplaceable(job.id, UNHELD_NOTE, othersMail(this.db, job))) ended?.push(job.id); continue; }
         // Remember the obstruction without retaining anyone's account or machine identifiers.
         // Idle polls only write on a transition, including when a different worker can take the job.
-        const signInBlocked = !placement && blockedBySignIn(decision);
         if (job.signInBlocked !== signInBlocked)
           this.db.update(jobs).set({signInBlocked}).where(eq(jobs.id, job.id)).run();
         if (!placement || placement.box !== box) continue;

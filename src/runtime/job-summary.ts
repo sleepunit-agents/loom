@@ -225,7 +225,7 @@ export class JobSummaries {
   }
   history(agent: string, first = 20, id?: string) {
     return this.db.select({ id: jobs.id, agent: jobs.agent, title: jobs.title, state: jobs.state, box: jobs.box,
-      signInBlocked: jobs.signInBlocked, prefers: jobs.prefers, placementDecision: jobs.placementDecision,
+      signInBlocked: sql<boolean>`(${jobs.state} = 'failed' and ${jobs.signInBlocked})`.mapWith(jobs.signInBlocked), prefers: jobs.prefers, placementDecision: jobs.placementDecision,
       conversation: jobs.conversation, project: jobs.project, brief: jobs.brief, model: jobs.model,
       startedByKind: jobs.startedByKind, startedBy: jobs.startedBy, retryOf: jobs.retryOf, exitCode: jobs.exitCode, exitBy: jobs.exitBy, logTail: jobs.logTail,
       endedBy: jobs.endedBy, endedReason: jobs.endedReason, endedNote: jobs.endedNote, queuedAt: jobs.queuedAt, claimedAt: jobs.claimedAt, heardAt: jobs.heardAt, endedAt: jobs.endedAt }).from(jobs)
