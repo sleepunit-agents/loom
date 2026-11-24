@@ -396,7 +396,7 @@ it.each(['list','card','history'] as const)('withdraws the Tempo %s selection af
   expect(withdrawn.payload.data.observe.patches).toContainEqual({path:[view !== 'history' ? 'triggers' : 'triggerLog',0],removed:true,value:null});
   const removed = await (await request()).json();
   expect(removed.errors).toBeUndefined();
-  expect(removed.data).toEqual(view !== 'history' ? {triggers:[],agentPauses:[],tempoTimezone:'UTC'} : {triggerLog:[]});
+  expect(removed.data).toEqual(view !== 'history' ? {triggers:[],agentPauses:[],tempoTimezone:'UTC'} : {triggerLog:[],tempoRecentRuns:[]});
 });
 it('projects only the household timezone for Tempo and publishes changes through the same selection',async()=>{
  const f=await setup();
