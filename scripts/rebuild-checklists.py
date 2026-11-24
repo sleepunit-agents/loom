@@ -120,6 +120,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    'Lets an agent request a secret, and a person or a rule answer.':'installedSecretHolder',
    'Grants access for a set time, to one agent or to one job.':'installedSecretHolder',
    'Writes down every time a value is handed out.':'installedSecretHolder',
+   'A rule is a standing answer for one secret, for the agents it lists. Answering always makes a rule. The household has a default for a secret with no rule of its own.':'secretStandingAnswer',
    'A grant goes to one agent and can be limited to one job. Each use names the job.':'installedSecretHolder',
    'An agent requests a secret with a reason and a length of time. A person answers, or a rule answers for them. A yes creates a grant that lasts a set time.':'installedSecretHolder',
    'c Agents. An agent is handed a value only under a grant, and each hand-off is recorded.':'installedSecretHolder',

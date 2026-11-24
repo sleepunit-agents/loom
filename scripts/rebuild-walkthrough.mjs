@@ -413,7 +413,11 @@ export async function* walkthroughSteps(output) {
   report.actions.inboxSecretRequest=await inboxSecretRequest({page,tile:await openApp('Inbox'),app,out,clock});
   try{report.actions.settingsGrant=await settingsGrant({app,page});}
   catch(error){report.actions.settingsGrant={ok:false,error:String(error)};}
-  try{report.actions.installedSecretHolder=await installedSecretHolder();}
+  try {
+    const {standingAnswer,...holder}=await installedSecretHolder();
+    report.actions.installedSecretHolder=holder;
+    report.actions.secretStandingAnswer=standingAnswer;
+  }
   catch(error){report.actions.installedSecretHolder={ok:false,error:String(error)};}
   save();yield {phase:'secret-source',actions:safeReport(report.actions)};
   for await(const step of conversationMailSteps({page,app,clock,example:report.example,out,open:openApp})){Object.assign(report.actions,step.actions);save();yield {phase:step.phase,actions:safeReport(report.actions)};}
