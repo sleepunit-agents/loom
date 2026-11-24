@@ -125,12 +125,42 @@
     {
       "id": "tempo-019",
       "promise": "A trigger never wakes anyone directly. It drops an item in an inbox, with trigger as its source.",
-      "source": "docs/how-it-works/site/tempo.html#con-h"
+      "source": "docs/how-it-works/site/tempo.html#con-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "conversationTempoDelivery"
+          },
+          {
+            "kind": "action",
+            "action": "tempoSettled"
+          }
+        ]
+      }
     },
     {
       "id": "tempo-020",
       "promise": "The agent's body starts in that conversation and takes everything waiting at once.",
-      "source": "docs/how-it-works/site/tempo.html#con-h"
+      "source": "docs/how-it-works/site/tempo.html#con-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "scheduledWorker"
+          },
+          {
+            "kind": "action",
+            "action": "privateConversationBatch"
+          },
+          {
+            "kind": "action",
+            "action": "conversationSingleJob"
+          }
+        ]
+      }
     },
     {
       "id": "tempo-021",
