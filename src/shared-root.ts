@@ -182,7 +182,17 @@ export function sharedRoot(options: {
   // as the program, so a card left waiting over a restart is refused as changed and has to be asked for again.
   const proposalKey = options.commsKey ? undefined : randomBytes(32);
   const proposalDigest = (words: string) => proposalKey ? createHmac('sha256', proposalKey).update(words).digest('hex') : options.commsKey!.hash('household-proposal\0' + words);
-  const proposalNames = (viewer: Viewer) => outsideNames(db, (platform, workspace, user) => memory.people.outsideName(viewer, platform, workspace, user));
+  const proposalNames = (viewer: Viewer) => {
+    const cache = new Map<string, string | undefined>();
+    return {
+      ...outsideNames(db, (platform, workspace, user) => memory.people.outsideName(viewer, platform, workspace, user)),
+      slackRecipient(workspace: string, user: string) {
+        const key = JSON.stringify([workspace, user]);
+        if (!cache.has(key)) cache.set(key, memory.people.slackRecipient(viewer, workspace, user));
+        return cache.get(key);
+      },
+    };
+  };
   const householdProposals = sharedHouseholdProposals(db, householdSettings, projectSettings, ruleSettings, fingerprint => tokenSettings.revoke(fingerprint), now,
     { roles, setAccounts: input => householdAccess.setAccounts(input) },
     { secrets: { setRule: input => late.requests!.setRule(input) },

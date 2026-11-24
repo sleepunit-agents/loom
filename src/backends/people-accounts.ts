@@ -37,7 +37,7 @@ export function legacySlackHolder(db:Database, workspace:string, user:string, sc
   if(holders.length===1&&(holders[0].workspace===null||holders[0].workspace===workspace))return holders[0].slug;
 }
 
-/** A registry-derived match applies only to sightings. An outbound address still requires a single scoped account value. */
+/** Resolve the current holder of a sighting. Recipient display requires its separate approval for that same slug. */
 export function sightingHolder(db:Database, platform:AccountPlatform, workspace:string, user:string):string|undefined {
   const scoped=accountHolders(db,platform,workspace,user).map(row=>row.slug);
   const alias=platform==='slack'

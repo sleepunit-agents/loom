@@ -240,3 +240,20 @@ it('shows that measuring sends nothing while off and report-only machines run no
   const machine = proposalCard('boxSettings', { box: 'one', name: 'one', reportOnly: true, agents: [{ agent: 'art', lent: false }] })!;
   expect(factLines(machine.facts)).toContain('Agents it runs: None while report-only. Configured: art');
 });
+
+it('uses a Last seen name only for a Slack access recipient without an existing name', () => {
+  const names: CardNames = { person: () => null, channel: () => null, workspace: () => null,
+    slackRecipient: () => 'Sample Contact' };
+  for (const change of ['kitGrant', 'colleague', 'projectOutsidePerson']) {
+    const input = kinds[change]![0]![0];
+    const card = proposalCard(change, input, {names})!;
+    expect(card.title).toContain('Sample Contact (Slack)');
+    expect(card.facts).toContainEqual({label: 'Name from', value: 'People directory match used for Last seen'});
+    const linked = {...names, person: () => ({name: 'Linked Member', source: 'household'})};
+    expect(proposalCard(change, input, {names: linked})!.title).toContain('Linked Member (Slack)');
+  }
+  const address = {platform: 'slack', workspace: 'fixture', user: 'example'};
+  const bridge = proposalCard('bridge', {action: 'person', ...address, member: 'example'}, {names});
+  expect(bridge?.title).toContain('unnamed Slack account');
+  expect(proposalCard('kitGrant', {agent:'art', kit:'sample', grant:true, to:{...address, platform:'discord'}}, {names})!.title).not.toContain('Sample Contact');
+});
