@@ -6,6 +6,7 @@ export interface Trigger {
   targetKind: 'operation' | 'inbox'; target: string | null; toKind: 'person' | 'agent' | null; to: string | null;
   project: string | null; instructions: string | null; file: string | null; note: string; enabled: boolean;
   scheduleRemovedAt?: string | null;
+  hasProgram?: boolean;
   wantsModel?: string | null; needs?: string[] | null; prefers?: string[] | null;
   state: 'standing' | 'due' | 'firing' | 'held' | 'fired' | 'stopped' | 'failed';
   nextDueAt: string | null; lastFiredAt: string | null; createdAt: string; changedAt: string;
@@ -38,6 +39,19 @@ export const folders: { id: Folder | 'history'; label: string }[] = [
   { id: 'all', label: 'All triggers' }, { id: 'due', label: 'Due' }, { id: 'standing', label: 'Standing' },
   { id: 'lanes', label: 'Household lanes' }, { id: 'history', label: 'Recent history' },
 ];
+export const kindLabels = {agent:'Wakes an agent', program:'A program decides', loom:'Loom itself', once:'Once'} as const;
+export type TriggerKind = keyof typeof kindLabels;
+export function triggerKind(trigger: Trigger): TriggerKind {
+  if (trigger.lifespan === 'once') return 'once';
+  if (trigger.hasProgram) return 'program';
+  return trigger.targetKind === 'inbox' && trigger.toKind === 'agent' ? 'agent' : 'loom';
+}
+export const stateLabels = {standing:'Standing', due:'Due', firing:'Firing', held:'Held', spent:'Spent', stopped:'Stopped', failed:'Failed'} as const;
+export function calendarState(trigger:Trigger, pauses:readonly AgentPause[]):keyof typeof stateLabels {
+  if (trigger.state === 'fired') return 'spent';
+  if (status(trigger,pauses) === 'Held · agent paused') return 'held';
+  return trigger.state;
+}
 export const title = (trigger: Trigger) => trigger.note || trigger.file || trigger.id;
 export const triggerAgent = (trigger: Trigger) => trigger.toKind === 'agent' ? trigger.to : !trigger.toKind && trigger.ownerKind === 'agent' ? trigger.owner : null;
 export const terminal = (trigger: Trigger) => ['fired', 'stopped', 'failed'].includes(trigger.state);
@@ -62,8 +76,8 @@ export function rows(triggers: readonly Trigger[], folder: Folder, search = '', 
   const query = search.trim().toLocaleLowerCase();
   return triggers.filter(trigger => inFolder(trigger, folder)
     && (!agent || triggerAgent(trigger) === agent)
-    && [title(trigger), trigger.id, trigger.to, trigger.owner, trigger.project, trigger.watches,
-      trigger.instructions, trigger.file].join(' ').toLocaleLowerCase().includes(query))
+    && (!query || [title(trigger), trigger.id, trigger.to, trigger.owner, trigger.project, trigger.watches,
+      trigger.instructions, trigger.file].join(' ').toLocaleLowerCase().includes(query)))
     .sort((a, b) => nextOrder(a) - nextOrder(b) || a.id.localeCompare(b.id));
 }
 

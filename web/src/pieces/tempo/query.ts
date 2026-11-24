@@ -3,7 +3,7 @@ import type { AgentPause, Trigger } from './model';
 /** Generated shared-schema selection. The outside door supplies current SQL
  * visibility for each table; this module never chooses a caller or a policy. */
 const triggerFields = `
-  id ownerKind owner sourceKind watches times days lifespan targetKind target toKind to
+  id hasProgram ownerKind owner sourceKind watches times days lifespan targetKind target toKind to
   project needs prefers wantsModel instructions file note enabled state nextDueAt lastFiredAt createdAt changedAt scheduleRemovedAt
 `;
 const householdFields = 'tempoTimezone agentPauses { agent since }';

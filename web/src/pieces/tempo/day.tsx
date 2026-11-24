@@ -3,7 +3,7 @@ import { localDate, timesOnDate } from '../../../../src/core/tempo/calendar';
 import { DAY_MS } from '../../../../src/core/day';
 import { useDataQuery } from '../../data/graphql';
 import { Button, Row } from '../../kit';
-import { eventLabels, recordedOutcomes, status, title, type AgentPause, type Trigger } from './model';
+import { eventLabels, kindLabels, triggerKind, recordedOutcomes, status, title, triggerAgent, type AgentPause, type Trigger } from './model';
 
 const headerQuery = `query TempoDayHeader {
   deskTime { at }
@@ -63,7 +63,7 @@ function DayHistory({events,triggers,zone,open}:{events:Event[];triggers:readonl
       if(event.failure) details.push(event.failure);
       if(event.event==='missed') details.push(...recordedOutcomes([{state:'missed',note:event.note,scheduled:false}]));
       return <Row key={event.seq} title={title(trigger)} status={outcomeWords(event)}
-        meta={[time.format(Date.parse(event.at)),...details].join(' · ')} onClick={()=>open(trigger.id)}/>;
+        data-trigger-kind={triggerKind(trigger)} trailing={kindLabels[triggerKind(trigger)]} meta={[time.format(Date.parse(event.at)),...details].join(' · ')} onClick={()=>open(trigger.id)}/>;
     }) : <p>No recorded activity for this day.</p>}
   </section>;
 }
@@ -73,6 +73,7 @@ function DayHours({date, zone, now, triggers, pauses, open, log, stops, subscrip
     const items: Entry[] = [];
     const frequentIds = new Set<string>();
     const byId = new Map(triggers.map(t => [t.id,t]));
+    const pauseTimes=new Map(pauses.map(pause=>[pause.agent,Date.parse(pause.since)]));
     const here=new Set<number>();
     for(const stop of stops??[]){
       const trigger=byId.get(stop.trigger), due=Date.parse(stop.note.slice('Next due '.length));
@@ -84,6 +85,11 @@ function DayHours({date, zone, now, triggers, pauses, open, log, stops, subscrip
     for (const event of log ?? []) {
       const t = byId.get(event.trigger), at = Date.parse(event.at);
       if (!t || here.has(event.seq) || event.event==='failure') continue;
+      // A current pause is already drawn at the time its wake was due.
+      // Keep the change of state at its actual timestamp in Day history.
+      const since=pauseTimes.get(triggerAgent(t) ?? '');
+      if (event.event==='held' && since!==undefined && at>=since && t.state==='held'
+        && t.enabled && t.sourceKind==='time' && t.nextDueAt && event.note==='Next due '+t.nextDueAt) continue;
       items.push({trigger:t, at, key:'event-'+event.seq, state:event.outcomes?.every(run=>run.kind==='notice') ? event.event : outcomeWords(event), note:event.note, scheduled:false});
     }
     for (const t of triggers) {
@@ -150,7 +156,7 @@ function DayHours({date, zone, now, triggers, pauses, open, log, stops, subscrip
         ? <div key="now" className="border-b text-sm" role="separator" aria-label="Now">Now · {format.format(now)}</div>
         : <Row key={entry.key} title={entry.state==='stopped'||entry.state.toLowerCase().startsWith('held')
             ? <s>{title(entry.trigger)}</s> : title(entry.trigger)} className={entry.trigger.sourceKind==='time'?undefined:'tempo-event-firing'}
-          meta={[format.format(entry.at), entry.trigger.sourceKind !== 'time' && eventLabels[entry.trigger.sourceKind],
+          data-trigger-kind={triggerKind(entry.trigger)} trailing={kindLabels[triggerKind(entry.trigger)]} meta={[format.format(entry.at), entry.trigger.sourceKind !== 'time' && eventLabels[entry.trigger.sourceKind],
             entry.stoppedAt && 'Stopped '+full.format(Date.parse(entry.stoppedAt)),
             (entry.state==='stopped'||entry.state==='held') && stoppedDue(entry.note,full)].filter(Boolean).join(' · ')}
           status={entry.state} onClick={()=>open(entry.trigger.id)}/>)}</div>
@@ -165,7 +171,7 @@ function FrequentTriggerRow({entries,format,open}: {entries: Entry[]; format: In
   const summary = recordedOutcomes(entries);
   const next = upcoming[0];
   if (next) summary.push(upcoming.length+(next.state.startsWith('Held') ? ' held' : ' scheduled'), 'Next '+format.format(next.at));
-  return <Row title={next?.state.startsWith('Held') ? <s>{title(trigger)}</s> : title(trigger)} status={next?.state} meta={summary.join(' · ')} onClick={()=>open(trigger.id)}/>;
+  return <Row title={next?.state.startsWith('Held') ? <s>{title(trigger)}</s> : title(trigger)} status={next?.state} data-trigger-kind={triggerKind(trigger)} trailing={kindLabels[triggerKind(trigger)]} meta={summary.join(' · ')} onClick={()=>open(trigger.id)}/>;
 }
 
 function CalendarHours({start,week,history,selectDay,...schedule}: ScheduleProps & {start:string; week:boolean; history:boolean; selectDay:(date:string)=>void}) {
@@ -243,7 +249,7 @@ export function TempoCalendar({week,history,chosen,setChosen,showDay,clearReader
     {!history && waiting.size > 0 && <section aria-label="Event triggers"><h3>Waiting for an event now</h3>
       {[...waiting].map(([label, group])=><div key={label} role="group" aria-label={label}>
         <h4 className="text-sm">{label}</h4>
-        {group.map(t=><Row key={t.id} title={title(t)} onClick={()=>open(t.id)}/>)}
+        {group.map(t=><Row key={t.id} title={title(t)} data-trigger-kind={triggerKind(t)} meta={kindLabels[triggerKind(t)]} onClick={()=>open(t.id)}/>)}
       </div>)}
     </section>}
     {start && now != null ? <CalendarHours start={start} week={week} history={history} selectDay={day=>{select(day);showDay();}} now={now} zone={zone} triggers={triggers} pauses={pauses} open={open}/>

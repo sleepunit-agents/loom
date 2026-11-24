@@ -9,7 +9,7 @@ import type { TempoActions } from './actions';
 import { CreateTrigger } from './create';
 import { useEffect, useRef, useState } from 'react';
 import { Split, List, Row, Empty, Error, Loading, Input, Button } from '../../kit';
-import { folders, rows, title, source, nextScheduledAt, target, history, status, terminal, triggerAgent, type Trigger, type TriggerEvent, type AgentPause, type Folder } from './model';
+import { folders, rows, kindLabels, stateLabels, triggerKind, calendarState, lane, title, source, nextScheduledAt, target, history, status, terminal, triggerAgent, type Trigger, type TriggerEvent, type AgentPause, type Folder } from './model';
 
 export interface TempoSnapshot {
   status: 'loading' | 'live' | 'offline' | 'denied';
@@ -80,7 +80,7 @@ function TriggerDetails({ snapshot, trigger, actions, go }: { snapshot: TempoSna
   });
   const time = (at:string) => format.format(new Date(at));
   return trigger ? <article className="grid gap-4 p-5">
-    <header><h1 className="text-2xl font-semibold">{title(trigger)}</h1><p>{trigger.sourceKind} · {trigger.lifespan} · {status(trigger, snapshot.pauses)}</p></header>
+    <header><h1 className="text-2xl font-semibold">{title(trigger)}</h1><p>{kindLabels[triggerKind(trigger)]} · {trigger.sourceKind} · {trigger.lifespan} · {status(trigger, snapshot.pauses)}</p></header>
     <p>{source(trigger)}</p>
     {next && <p>Due: {time(next)} · {snapshot.timezone}</p>}
     <dl className="grid gap-2">
@@ -124,29 +124,43 @@ export default function Tempo({ snapshot, actions, inUse, go }: { snapshot: Temp
   const [folder, setFolder] = useState<Folder | 'day' | 'week' | 'history'>('day');
   const [query, setQuery] = useState('');
   const [chosenDay,setChosenDay]=useState<string>();
-  const [agent, setAgent] = useState('');
+  const [whose, setWhose] = useState('');
+  const [kind,setKind] = useState('');
+  const [state,setState] = useState('');
   const [selected, setSelected] = useState<string>();
   const live = snapshot.status === 'live';
   // Never keep displaying a previous viewer's rows during reconnect or access loss.
   const triggers = live ? snapshot.triggers : [];
+  const agent = whose.startsWith('agent:') ? whose.slice(6) : '';
   const selectedAgent = agent && (!inUse || inUse.has(agent)) ? agent : '';
   const calendar = folder === 'day' || folder === 'week' || folder === 'history';
-  const shown = rows(triggers, calendar ? 'all' : folder, query, selectedAgent);
+  const filtered = triggers.filter(trigger=>(!kind || triggerKind(trigger)===kind)
+    && (!state || calendarState(trigger,snapshot.pauses)===state) && (whose!=='lanes' || lane(trigger)));
+  const shown = rows(filtered, calendar ? 'all' : folder, query, selectedAgent);
   const trigger = triggers.find(item => item.id === selected);
   const agents = [...new Set(triggers.map(triggerAgent).filter((agent): agent is string => !!agent && (!inUse || inUse.has(agent))))].sort();
   const reader = live && creating && actions?.create ? <CreateTrigger timezone={snapshot.timezone} submit={actions.create} done={() => setCreating(false)} /> : trigger ? <TriggerDetails key={trigger.id} snapshot={snapshot} trigger={trigger} actions={actions} go={go} /> : null;
   const time = (at: string) => new Intl.DateTimeFormat(undefined, { timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(at));
-  return <Split label="Tempo" className={folder === 'week' ? 'h-full tempo-week' : 'h-full'} folders={[{id:'day',label:'Day'}, {id:'week',label:'Week'}, ...folders.map(item => ({ ...item, count: live && item.id!=='history' ? rows(triggers, item.id, '', selectedAgent).length : undefined }))]}
+  return <Split label="Tempo" className={folder === 'week' ? 'h-full tempo-week' : 'h-full'} folders={[{id:'day',label:'Day'}, {id:'week',label:'Week'}, ...folders.map(item => ({ ...item, count: live && item.id!=='history' ? rows(filtered, item.id, '', selectedAgent).length : undefined }))]}
     folder={folder} onFolder={id => { setFolder(id as Folder | 'day' | 'week' | 'history'); setCreating(false); setSelected(undefined); }}
     search={<div className="grid gap-2"><label>Search tempo<Input type="search" value={query} onChange={event => setQuery(event.target.value)} /></label>
-      <label>Agent<NativeSelect value={selectedAgent} onChange={event => { setAgent(event.target.value); setSelected(undefined); }}><option value="">All agents</option>{agents.map(id => <option key={id}>{id}</option>)}</NativeSelect></label></div>}
+      <label>Whose<NativeSelect value={selectedAgent ? 'agent:'+selectedAgent : whose==='lanes' ? 'lanes' : ''} onChange={event=>{setWhose(event.target.value);setSelected(undefined);}}>
+        <option value="">Everyone</option><option value="lanes">Household lanes</option>
+        {agents.map(id=><option key={id} value={'agent:'+id}>{id}</option>)}
+      </NativeSelect></label>
+      <label>Kind<NativeSelect value={kind} onChange={event=>{setKind(event.target.value);setSelected(undefined);}}>
+        <option value="">All kinds</option>{Object.entries(kindLabels).map(([id,label])=><option key={id} value={id}>{label}</option>)}
+      </NativeSelect></label>
+      <label>State<NativeSelect value={state} onChange={event=>{setState(event.target.value);setSelected(undefined);}}>
+        <option value="">All states</option>{Object.entries(stateLabels).map(([id,label])=><option key={id} value={id}>{label}</option>)}
+      </NativeSelect></label></div>}
     listTitle={folder==='day' ? 'Day' : folder==='week' ? 'Week' : folders.find(item => item.id === folder)?.label} listMeta={live && !calendar ? shown.length : undefined}
     listTop={live ? <div className="grid gap-2 p-3">{actions?.create && <Button onClick={() => setCreating(true)}>Create trigger</Button>}{snapshot.pauses.length > 0 && <p>Paused: {snapshot.pauses.map(pause => pause.agent).join(', ')}</p>}</div> : undefined}
     list={!live ? snapshot.status === 'loading' ? <Loading label="Opening Tempo…" /> : <Error text={snapshot.status === 'denied' ? 'Sign in with access to see Tempo.' : 'Waiting for connection.'} />
       : calendar ? <TempoCalendar week={folder==='week'} history={folder==='history'} chosen={chosenDay} setChosen={setChosenDay} showDay={()=>setFolder('day')} clearReader={()=>{setSelected(undefined);setCreating(false);}} zone={snapshot.timezone} triggers={shown} pauses={snapshot.pauses} open={setSelected}/>
       : shown.length ? <List label="Triggers">{shown.map(item => {
           const next = nextScheduledAt(item);
-          return <Row key={item.id} title={title(item)} meta={`${next ? time(next) : terminal(item) ? 'No next firing' : source(item)} · ${item.to ?? 'operation'}`} status={status(item, snapshot.pauses)} selected={item.id === selected} onClick={() => setSelected(item.id)} />;
+          return <Row key={item.id} title={title(item)} data-trigger-kind={triggerKind(item)} trailing={kindLabels[triggerKind(item)]} meta={`${next ? time(next) : terminal(item) ? 'No next firing' : source(item)} · ${item.to ?? 'operation'}`} status={item.state==='fired' ? stateLabels.spent : status(item, snapshot.pauses)} selected={item.id === selected} onClick={() => setSelected(item.id)} />;
         })}</List>
         : <Empty title={query ? `Nothing matches “${query}”` : 'No triggers here'} text="Ask an agent in chat to set a trigger." />}
     reader={reader} open={!!reader} onBack={() => { setCreating(false); setSelected(undefined); }} backLabel="Tempo"

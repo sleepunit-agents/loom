@@ -105,6 +105,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='tempo':
   for row in rows:
    if row['promise']=='Shows a day as a calendar, with each trigger at the time it fires.':row['probe']={'kind':'action','action':'tempoCalendar'}
+   if row['promise'].startswith('Each block is one of four kinds,'):row['probe']={'kind':'action','action':'tempoCalendar'}
    if row['promise']=="Holds an agent's triggers while the agent is paused.":row['probe']={'kind':'action','action':'pausedWake'}
    if row['promise'].startswith('Each recipient sets a volume on an inbox item.'):row['probe']={'kind':'action','action':'inboxVolume'}
    if row['promise']=='A pull request changing can fire a trigger.':row['probe']={'kind':'action','action':'pullRequestTrigger'}

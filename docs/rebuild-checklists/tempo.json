@@ -55,7 +55,11 @@
     {
       "id": "tempo-009",
       "promise": "Each block is one of four kinds, with its own colour and its own word. Wakes an agent: a body of the agent does a job each time. A program decides: a small program of the household's runs with no model, and wakes an agent or tells a person only when there is something to do. Loom itself: no agent and no program of the household's, such as the nightly backup or watching model sign-ins on every machine. Once: it fires one time at a set time, and then it is spent.",
-      "source": "docs/how-it-works/site/tempo.html#how-h"
+      "source": "docs/how-it-works/site/tempo.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "tempoCalendar"
+      }
     },
     {
       "id": "tempo-010",
