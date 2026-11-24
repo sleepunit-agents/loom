@@ -23,7 +23,7 @@ vi.mock('../../data/graphql', () => ({ useDataQuery(query: string, variables: Re
 vi.mock('../../data', () => ({ callOnce: (name: string, input: unknown) => f.call(name, input), call: (name: string, input: unknown) => f.queued(name, input), useRecords: f.records }));
 // The kit's Menu is the real one (over the mocked Button), so what is behind More is still seen.
 vi.mock('../../components/ui/button', () => ({ Button: (props: { children?: ReactNode }) => h('Button', props, props.children) }));
-vi.mock('../../kit', async () => ({ Menu: (await vi.importActual<typeof import('../../kit/menu')>('../../kit/menu')).Menu, ...Object.fromEntries(['RefCard','Split','List','Row','NoteRow','Empty','Error','Loading','Button','LinkButton','Input','Textarea','Actions','Search','Pager','Reader','Head','Meta','Title','Facts','Fact','Section','Body','Foot','Chips','Chip'].map(name => [name,
+vi.mock('../../kit', async () => ({ Menu: (await vi.importActual<typeof import('../../kit/menu')>('../../kit/menu')).Menu, ...Object.fromEntries(['RefCard','Split','List','Row','NoteRow','Empty','Error','Loading','Button','LinkButton','Input','Textarea','Actions','Search','Pager','Reader','Head','Meta','Title','Facts','Fact','Section','Disclosure','Body','Foot','Chips','Chip'].map(name => [name,
   (props: { children?: ReactNode; listTop?: ReactNode; listAction?: ReactNode; list?: ReactNode; reader?: ReactNode; search?: ReactNode; folders?: unknown; onFolder?: unknown; listBusy?: boolean; icon?: ReactNode }) => name === 'Split'
     ? h(name, { folders: props.folders, onFolder: props.onFolder, listBusy: props.listBusy }, props.listAction, props.listTop, props.list, props.reader, props.search)
     // (A row's icon is an element: drawn as a child, so the tree still prints.)
