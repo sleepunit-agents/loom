@@ -26,6 +26,7 @@ import {discordResume} from './rebuild-discord-resume.mjs';
 import {bridgeSendParts} from './rebuild-bridge-send-parts.mjs';
 import {outgoingFileRetention} from './rebuild-outgoing-files.mjs';
 import {bridgeReceipts} from './rebuild-bridge-receipts.mjs';
+import {bridgeMessageVisibility} from './rebuild-bridge-message-visibility.mjs';
 import {bridgeContactTiers} from './rebuild-bridge-contact-tiers.mjs';
 import {bridgeAttachments} from './rebuild-bridge-attachments.mjs';
 import {providerConversations} from './rebuild-provider-conversations.mjs';
@@ -512,6 +513,8 @@ export async function* walkthroughSteps(output) {
     try {report.actions[action]=await providerConversations(platform);}
     catch(error){report.actions[action]={ok:false,error:String(error)};}
   }
+  try {report.actions.bridgeMessageVisibility=await bridgeMessageVisibility();}
+  catch(error){report.actions.bridgeMessageVisibility={ok:false,error:String(error)};}
   try {report.actions.bridgeContactTiers=await bridgeContactTiers({app,clock});}
   catch(error){report.actions.bridgeContactTiers={ok:false,error:String(error)};}
   for(const platform of ['slack','discord']) {
