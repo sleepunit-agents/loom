@@ -1245,6 +1245,20 @@ export const accountWeekReadings = sqliteTable('account_week_readings', {
   check('account_week_readings_reset_utc', utc(t.resetsAt)),
 ]);
 
+/** Provider observations for the calendar, independent of the current reset period. */
+export const accountCalendarReadings = sqliteTable('account_calendar_readings', {
+  account: text('account').notNull().references(() => modelAccounts.id, { onDelete: 'cascade' }),
+  readAt: text('read_at').notNull(),
+  window: text('window').notNull(),
+  durationMs: integer('duration_ms').notNull(),
+  usage: real('usage').notNull(),
+}, t => [
+  primaryKey({columns:[t.account,t.readAt,t.window]}),
+  check('account_calendar_readings_usage', sql`${t.usage} between 0 and 1`),
+  check('account_calendar_readings_duration', sql`${t.durationMs} in (18000000, 604800000)`),
+  check('account_calendar_readings_utc', utc(t.readAt)),
+]);
+
 /** Which worker machines an account is signed in on. */
 export const modelAccountBoxes = sqliteTable('model_account_boxes', {
   account: text('account').notNull().references((): AnySQLiteColumn => modelAccounts.id),
@@ -2415,6 +2429,7 @@ export const plumbing = {
   workerJoinRequests,
   archivedQuestions,
   accountWeekReadings,
+  accountCalendarReadings,
   changeReviewRounds,
   importedTaskSequence,
   triggerAcceptances,

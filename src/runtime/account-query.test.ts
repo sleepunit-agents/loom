@@ -12,7 +12,7 @@ import { SILENCE_MS } from './silence.js';
 import { LOGIN_ENDING_MS } from './account-logins.js';
 import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
-import { accountWeekReadings, conversations, inbox, inboxRefs, triggers, jobs, jobUsage, agents, boxes, members, memberAgents, modelAccounts, modelAccountBoxes, modelAccountLogins, modelAccountWindows, tokens } from '../core/data/schema.js';
+import { household, accountCalendarReadings, accountWeekReadings, conversations, inbox, inboxRefs, triggers, jobs, jobUsage, agents, boxes, members, memberAgents, modelAccounts, modelAccountBoxes, modelAccountLogins, modelAccountWindows, tokens } from '../core/data/schema.js';
 import { nextData } from '../next-data.js';
 import { modelAccountQueries } from './account-query.js';
 import { readModelAccounts } from '../core/data/model-account-read.js';
@@ -64,6 +64,23 @@ it('shows full account data only to its actual member owner or a household owner
   const house = await (await f.post('house')).json(); expect(house.data.modelAccounts.map((row: { id: string }) => row.id)).toEqual(['private-a', 'private-b']);
   expect(house.data.modelAccounts[1]).toMatchObject({ owner: 'bob', provider: 'private-provider', usage: 0.58 });
   const bob = await (await f.post('bob')).json(); expect(bob.data.modelAccounts[0]).toEqual(coarse[0]); expect(bob.data.modelAccounts[1].owner).toBe('bob');
+});
+it('reports measured usage on the household date, preserving both repeated hours and account privacy',async () => {
+  const f=fixture();
+  f.db.insert(household).values({singleton:1,timezone:'America/Chicago'}).onConflictDoUpdate({target:household.singleton,set:{timezone:'America/Chicago'}}).run();
+  for(const [at,usage] of [['04:55',1],['06:10',.85],['06:20',.9],['07:10',.91],['09:00',.3]] as const) {
+    f.db.insert(accountCalendarReadings).values({account:'private-a',readAt:'2026-11-01T'+at+':00.000Z',window:'session',durationMs:18_000_000,usage}).run();
+  }
+  for(const [at,usage] of [['08:00',.8],['09:00',0]] as const) {
+    f.db.insert(accountCalendarReadings).values({account:'private-a',readAt:'2026-11-01T'+at+':00.000Z',window:'week',durationMs:604_800_000,usage}).run();
+  }
+  const query='{modelAccounts {... on RuntimeAccount {label} ... on RuntimeAccountDetail {calendarUsage(start:"2026-11-01",days:1){date peak{at usage} weekly{at usage} highHours}}}}';
+  const read=async(who:keyof typeof keys)=>(await (await f.post(who,query)).json()).data.modelAccounts;
+  const expected={date:'2026-11-01',peak:{at:'2026-11-01T07:10:00.000Z',usage:.91},weekly:{at:'2026-11-01T09:00:00.000Z',usage:0},
+    highHours:['2026-11-01T06:10:00.000Z','2026-11-01T07:10:00.000Z']};
+  expect(await read('alice')).toEqual([{label:'Main subscription',calendarUsage:[expected]},{label:'Other subscription'}]);
+  expect(await read('house')).toEqual([{label:'Main subscription',calendarUsage:[expected]},{label:'Other subscription',calendarUsage:[]}]);
+  expect(await read('guest')).toEqual([{label:'Main subscription'},{label:'Other subscription'}]);
 });
 it('uses current shared capacity for coarse levels without fabricating a fresh reading at reset', async () => {
   const f = fixture();

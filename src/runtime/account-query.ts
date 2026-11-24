@@ -1,5 +1,7 @@
+import {accountCalendarUsage} from './account-calendar-usage.js';
+import {householdTimezone} from '../core/data/household-settings.js';
 /** Account column privacy at the shared GraphQL door. No credentials are read. */
-import { GraphQLBoolean, GraphQLFloat, GraphQLInterfaceType, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, GraphQLUnionType, type GraphQLFieldConfigMap, type GraphQLOutputType } from 'graphql/index.js';
+import { GraphQLInt, GraphQLBoolean, GraphQLFloat, GraphQLInterfaceType, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, GraphQLUnionType, type GraphQLFieldConfigMap, type GraphQLOutputType } from 'graphql/index.js';
 import { sharedSharing } from '../shared-sharing.js';
 import { SILENCE_MS } from './silence.js';
 import { LOGIN_ENDING_MS, loginMachineReporting } from './account-logins.js';
@@ -16,9 +18,9 @@ const text = new GraphQLNonNull(GraphQLString);
 const common = { label: { type: text }, level: { type: text } };
 const account = new GraphQLInterfaceType({ name: 'RuntimeAccount', fields: common });
 const summary = new GraphQLObjectType({ name: 'RuntimeAccountSummary', interfaces: [account], fields: common });
-type PrivateColumn = 'id' | 'owner' | 'provider' | 'usage' | 'usageReadAt' | 'resetsAt' | 'hasRoom' | 'signedInOn' | 'logins' | 'windows' | 'pendingSignIns' | 'weeklyUsage';
+type PrivateColumn = 'id' | 'owner' | 'provider' | 'usage' | 'usageReadAt' | 'resetsAt' | 'hasRoom' | 'signedInOn' | 'logins' | 'windows' | 'pendingSignIns' | 'weeklyUsage' | 'calendarUsage';
 const column = (name: PrivateColumn, type: GraphQLOutputType) => ({ type,
-  resolve: (value: { read(name: PrivateColumn, viewer: Viewer): unknown }, _args: unknown, context: { viewer: Viewer }) => value.read(name, context.viewer),
+  resolve: (value: { read(name: PrivateColumn, viewer: Viewer, range?: {start:string;days:number}): unknown }, _args: unknown, context: { viewer: Viewer }) => value.read(name, context.viewer),
 });
 const machine = new GraphQLObjectType({ name: 'RuntimeAccountBox', fields: { id: { type: text }, name: { type: text } } });
 /** One sign-in of the account as loom last learned it (account-logins.ts). Usage is the account's, not a sign-in's. */
@@ -39,7 +41,13 @@ const weeklyUsage = new GraphQLObjectType({name:'AccountWeeklyUsage',fields:{
   window:{type:text},usage:{type:GraphQLFloat},readAt:{type:text},resetsAt:{type:text},
   unattributed:{type:GraphQLFloat},agents:groups,triggers:groups,conversations:groups,
 }});
+const observed = new GraphQLObjectType({name:'AccountCalendarReading',fields:{at:{type:text},usage:{type:new GraphQLNonNull(GraphQLFloat)}}});
+const calendarDay = new GraphQLObjectType({name:'AccountCalendarDay',fields:{
+  date:{type:text},peak:{type:observed},weekly:{type:observed},highHours:{type:new GraphQLNonNull(new GraphQLList(text))},
+}});
 const detail = new GraphQLObjectType({ name: 'RuntimeAccountDetail', interfaces: [account], fields: {
+  calendarUsage:{type:new GraphQLList(new GraphQLNonNull(calendarDay)),args:{start:{type:text},days:{type:new GraphQLNonNull(GraphQLInt)}},
+    resolve:(value,{start,days},{viewer})=>value.read('calendarUsage',viewer,{start,days})},
   weeklyUsage:column('weeklyUsage',new GraphQLList(new GraphQLNonNull(weeklyUsage))),
   ...common, id: column('id', text), owner: column('owner', text), provider: column('provider', text), usage: column('usage', GraphQLFloat),
   usageReadAt: column('usageReadAt', GraphQLString), resetsAt: column('resetsAt', GraphQLString),
@@ -134,7 +142,7 @@ export function modelAccountQueries(db: DataDatabase, now: () => string, usageSc
           return {...login,reporting,needsSignIn,canRequest,expired};
         });
         const values = { ...privateRow, logins, hasRoom, windows: row.modelAccountWindowsByAccount };
-        return { __typename: detail.name, ...publicFields, read(name: PrivateColumn, actor: Viewer) {
+        return { __typename: detail.name, ...publicFields, read(name: PrivateColumn, actor: Viewer, range?:{start:string;days:number}) {
           if (actor !== viewer) throw new Error('Account access ended');
           // Unscoped public-only selections never acquire a private witness. Record an
           // actual private column access before checking its current authority.
@@ -156,6 +164,10 @@ export function modelAccountQueries(db: DataDatabase, now: () => string, usageSc
                   if (warning > nowMs) wakeForLogins(warning);
                 }
               }
+            }
+            if (name === 'calendarUsage') {
+              if (!range) throw new Error('Missing calendar range');
+              return accountCalendarUsage(db,row.id,range.start,range.days,householdTimezone(db));
             }
             if (name !== 'weeklyUsage') return values[name];
             return weekly(row.id,values.windows);

@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { afterEach, it, expect } from 'vitest';
 import { createDataSchema } from '../core/data/database.js';
-import { accountWeekReadings, agents, jobs, jobUsage, members, modelAccounts, modelAccountWindows } from '../core/data/schema.js';
+import { accountCalendarReadings, accountWeekReadings, agents, jobs, jobUsage, members, modelAccounts, modelAccountWindows } from '../core/data/schema.js';
 import { recordAccountWindows, readAccountWindows, currentAccountCapacity, refreshAccountWindows } from './account-windows.js';
 import {accountWeeklyUsage} from './account-weekly-usage.js';
 const opened: Database.Database[] = [];
@@ -133,6 +133,19 @@ it('records accepted readings once per weekly window and retires them at reset',
   expect(db.select({at:accountWeekReadings.readAt,usage:accountWeekReadings.usage}).from(accountWeekReadings).orderBy(accountWeekReadings.readAt).all()).toEqual([{at:now,usage:0.2},{at:later,usage:0.26}]);
   recordAccountWindows(db,identity,[{...window,usage:0,readAt:window.resetsAt,resetsAt:'2026-11-21T21:00:00.000Z'}],window.resetsAt);
   expect(db.select().from(accountWeekReadings).all()).toMatchObject([{readAt:window.resetsAt,usage:0}]);
+});
+
+it('keeps the actual five-hour and weekly readings across a reset, including corrected samples', () => {
+  const db = fixture();
+  const short = {...window,name:'session',durationMs:18_000_000,usage:.9};
+  const unrelated = {...short,name:'other',durationMs:86_400_000};
+  expect(recordAccountWindows(db,identity,[short,window,unrelated],now)).toBe(true);
+  expect(recordAccountWindows(db,identity,[{...short,usage:.92},window],now)).toBe(true);
+  const afterReset = window.resetsAt;
+  expect(recordAccountWindows(db,identity,[{...short,usage:0,readAt:afterReset,resetsAt:null}],afterReset)).toBe(true);
+  const rows = db.select({at:accountCalendarReadings.readAt,name:accountCalendarReadings.window,usage:accountCalendarReadings.usage})
+    .from(accountCalendarReadings).orderBy(accountCalendarReadings.readAt,accountCalendarReadings.window).all();
+  expect(rows).toEqual([{at:now,name:'session',usage:.92},{at:now,name:'week',usage:.2},{at:afterReset,name:'session',usage:0}]);
 });
 
 it('attributes only the measured rise to work placed on that account and expires the report at reset', () => {

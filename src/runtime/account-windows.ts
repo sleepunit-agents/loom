@@ -4,7 +4,7 @@ import {DAY_MS} from '../core/day.js';
 import { accountCompletion, accountObservationCommitted } from './account-completion.js';
 import { eq, lte } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { accountWeekReadings, modelAccounts, modelAccountWindows } from '../core/data/schema.js';
+import { accountCalendarReadings, accountWeekReadings, modelAccounts, modelAccountWindows } from '../core/data/schema.js';
 import { accountUsageUnavailable } from './account-usage.js';
 import { accountCapacity, type QuotaWindow } from './quota.js';
 
@@ -88,6 +88,17 @@ export function recordAccountWindows(db: DataDatabase, identity: Identity, windo
     if (!result.recorded) return false;
     // Include the last installed reading when upgrading a household midweek.
     recordWeekReadings(db, identity.account, [...before, ...windows], now);
+    for (const row of windows) {
+      if ((row.durationMs !== 18_000_000 && row.durationMs !== 7 * DAY_MS) || row.usage === null || !row.readAt) continue;
+      const read = Date.parse(row.readAt);
+      if (!Number.isFinite(read) || read > Date.parse(now)) continue;
+      db.insert(accountCalendarReadings).values({account:identity.account, window:row.name,
+        readAt:new Date(read).toISOString(), durationMs:row.durationMs, usage:row.usage,
+      }).onConflictDoUpdate({
+        target:[accountCalendarReadings.account,accountCalendarReadings.readAt,accountCalendarReadings.window],
+        set:{durationMs:row.durationMs,usage:row.usage},
+      }).run();
+    }
     db.delete(modelAccountWindows).where(eq(modelAccountWindows.account, identity.account)).run();
     for (const row of windows) db.insert(modelAccountWindows).values({ account: identity.account,
       window: row.name, usage: row.usage, usageReadAt: row.readAt === null ? null : new Date(row.readAt).toISOString(),

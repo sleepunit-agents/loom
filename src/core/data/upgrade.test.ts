@@ -42,6 +42,22 @@ describe('upgrading a household database', () => {
     expect(old.pragma('foreign_key_check')).toEqual([]);
   });
 
+  it('carries actual weekly and five-hour samples into the calendar on upgrade from 39', () => {
+    const old=household(39);
+    old.exec(`INSERT INTO members(id,role,joined_at) VALUES ('alex','owner','2025-01-01T00:00:00Z');
+      INSERT INTO model_accounts(id,owner,provider,label,has_room) VALUES ('a','alex','example','Test',0);
+      INSERT INTO account_week_readings(account,window,read_at,resets_at,usage) VALUES
+        ('a','week','2025-01-01T10:00:00.000Z','2025-01-07T00:00:00.000Z',0.3);
+      INSERT INTO model_account_windows(account,window,duration_ms,usage_read_at,resets_at,usage) VALUES
+        ('a','session',18000000,'2025-01-01T10:15:00Z','2025-01-01T15:00:00Z',0.9),
+        ('a','unread',18000000,NULL,NULL,NULL);`);
+    upgradeDataSchema(old, () => at);
+    expect(old.prepare('SELECT window,read_at,usage FROM account_calendar_readings ORDER BY read_at').all()).toEqual([
+      {window:'week',read_at:'2025-01-01T10:00:00.000Z',usage:.3},
+      {window:'session',read_at:'2025-01-01T10:15:00.000Z',usage:.9},
+    ]);
+  });
+
   it('leaves the sign-in diagnosis unknown for preexisting unplaced jobs', () => {
     const old = household(38);
     old.exec(`INSERT INTO agents (id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('art','','','','pebble','dot');
