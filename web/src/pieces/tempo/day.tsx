@@ -56,7 +56,7 @@ function DayHours({date, zone, now, triggers, pauses, open, log}: ScheduleProps 
   }
   if (today && !marked) add(now,'now');
   return <section aria-label="Day schedule" className="grid gap-1">
-    {[...hours].map(([hour,items])=><div key={hour} className="grid grid-cols-[5em_minmax(0,1fr)] gap-2 border-t py-2">
+    {[...hours].map(([hour,items])=><div key={hour} className="tempo-hour grid grid-cols-[5em_minmax(0,1fr)] gap-2 border-t py-2">
       <h3 className="pt-1 text-sm">{hour}</h3>
       <div className="grid gap-1 border-l pl-2">{items.map(entry=>entry === 'now'
         ? <div key="now" className="border-b text-sm" role="separator" aria-label="Now">Now · {format.format(now)}</div>
@@ -80,7 +80,7 @@ function CalendarHours({start,week,selectDay,...schedule}: ScheduleProps & {star
     }
     return days;
   },[log,schedule.zone]);
-  return <div aria-label={week ? 'Week schedule' : undefined} role={week ? 'region' : undefined} className="grid gap-3">
+  return <div aria-label={week ? 'Week schedule' : undefined} role={week ? 'region' : undefined} className={week ? 'tempo-week-days' : 'grid gap-3'}>
     {!log && <p>{feed.status === 'loading' ? 'Loading firing history…' : 'Firing history unavailable.'}</p>}
     {Array.from({length},(_,offset)=>{
       const date = shift(start,offset);
@@ -103,7 +103,7 @@ export function TempoCalendar({week,showDay,clearReader,zone,triggers,pauses,ope
   // Weeks start on Monday. Work in civil dates so DST never shifts a column.
   const start = week && date ? shift(date,-((new Date(date+'T12:00:00Z').getUTCDay()+6)%7)) : date;
   const waiting = triggers.filter(t=>t.enabled && t.sourceKind!=='time');
-  return <div className="grid gap-3 p-3">
+  return <div className="tempo-calendar grid gap-3 p-3">
     {date && start && <nav aria-label="Calendar date" className="flex flex-wrap items-center gap-2">
       <Button aria-label={week?'Previous week':'Previous day'} onClick={()=>select(shift(date,week?-7:-1))}>‹</Button>
       <span><time dateTime={start}>{formatDate(start)}</time>{week && <> – <time dateTime={shift(start,6)}>{formatDate(shift(start,6))}</time></>}</span>

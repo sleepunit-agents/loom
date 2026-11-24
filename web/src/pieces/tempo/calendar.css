@@ -1,0 +1,35 @@
+.loom-split.tempo-week[data-mode="three"]:not([data-open]) {
+  grid-template-columns: 210px minmax(0, 1fr);
+}
+.loom-split.tempo-week[data-mode="two"]:not([data-open]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.tempo-week:not([data-open]) > .loom-split__reader {
+  display: none;
+}
+.tempo-week .tempo-calendar {
+  container: tempo-week / inline-size;
+}
+.tempo-week-days {
+  display: grid;
+  gap: .75rem;
+}
+@container tempo-week (min-width: 52rem) {
+  .tempo-week-days {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    align-items: start;
+    gap: .4rem;
+  }
+  .tempo-week-days > p {
+    grid-column: 1 / -1;
+  }
+  .tempo-week-days > [role="group"] {
+    min-width: 0;
+    border-inline-start: 1px solid var(--v-edge);
+    padding-inline-start: .35rem;
+    overflow-wrap: anywhere;
+  }
+  .tempo-week-days .tempo-hour {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
