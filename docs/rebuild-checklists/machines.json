@@ -2,7 +2,7 @@
   "page": "machines",
   "title": "Machines and jobs",
   "ownerTask": "t-2241",
-  "sourceSha256": "b2c72d0a82645bf4da8b741abe1e632b8cefa05a54098aa715e45219d93eabcf",
+  "sourceSha256": "7eddc9a88f7ae59708889fb7b76452d3d67519409f1b23bd202f6beac4bdb9e7",
   "promises": [
     {
       "id": "machines-001",
@@ -137,7 +137,7 @@
     },
     {
       "id": "machines-016",
-      "promise": "b Who sees it. A household owner sees everything, including what is private to another member. Anyone else sees jobs in their projects and jobs of agents they own. Private to a member means that member plus household owners.",
+      "promise": "b Who sees it. Members see jobs in their projects and jobs of agents they own. For another member’s private job on their machine, a household owner sees the agent, machine, state, times and digest summary. The conversation, title, brief and log stay private.",
       "source": "docs/how-it-works/site/machines.html#see-h"
     },
     {

@@ -11,7 +11,7 @@ export async function workVisibility({page,app,example,out}){
   const result=await response.json();check(response.ok&&result.ok===true,`Disposable operation refused: ${path}`);return result.value;
  };
  const query=async (credential,deniedMachine=false)=>{
-  const response=await app.http.request(app.url+'/graphql',{method:'POST',headers:{'content-type':'application/json',...(credential?{authorization:'Bearer '+credential}:{})},body:JSON.stringify({query:'{ tasks { id ownerKind owner project } approvals { id member project agent } approvalRecord { approval } changes { id project agent } }'})});
+  const response=await app.http.request(app.url+'/graphql',{method:'POST',headers:{'content-type':'application/json',...(credential?{authorization:'Bearer '+credential}:{})},body:JSON.stringify({query:'{ tasks { id ownerKind owner project } approvals { id member project agent what ask ifYes ifNo } approvalRecord { approval } changes { id project agent } }'})});
   const result=await response.json();if(deniedMachine&&response.status===403){check(result.data===undefined,'Denied machine received data');return {tasks:[],approvals:[],approvalRecord:[],changes:[]};}check(response.ok&&!result.errors,`Work GraphQL read failed (${response.status}): ${JSON.stringify(result.errors??result.code)}`);return result.data;
  };
  const has=(rows,id)=>rows.some(row=>row.id===id);
@@ -24,7 +24,10 @@ export async function workVisibility({page,app,example,out}){
   const memberTask=task({kind:'member',id:'robin'}),agentTask=task({kind:'agent',id:'moss'}),directTask=task({kind:'agent',id:'fern'}),houseTask=task({kind:'household'});
   const projectTask=write(()=>s.tasks.create({title:'Fictitious project precedence',goal:'Project overrides owner.',why:'Prove labelled task scope.',owner:{kind:'member',id:'robin'},project:'garden'},actor));
   const card=extra=>write(()=>s.approvals.request({kind:'command',target:'fictitious:visibility',what:'Fictitious visibility request',why:'Prove work labels.',agent:'fern',askedFrom:'fictitious-proof',actingFor:'alex',ask:'Allow the fictitious visibility action?',ifYes:'Proceed.',ifNo:'Wait.',...extra}));
-  const privateCard=card({project:'garden',member:'robin'}),projectCard=card({project:'garden'}),agentCard=card({agent:'moss'}),sharedAgentCard=card({agent:'moss',project:'garden'}),directCard=card({});
+  const thread=write(()=>s.comms.threads.open({member:'robin',agent:'fern',title:'Robin’s private approval context'}));
+  const cardWords={what:'Inspect the fictional garden fixture',ask:'Allow the fixture inspection?',ifYes:'Fern inspects it.',ifNo:'Fern waits.'};
+  const privateCard=card({...cardWords,askedFrom:thread.conversation,conversation:thread.conversation,actingFor:'robin',project:'garden',member:'robin'});
+  const projectCard=card({project:'garden'}),agentCard=card({agent:'moss'}),sharedAgentCard=card({agent:'moss',project:'garden'}),directCard=card({});
   write(()=>s.projects.save({id:'shed',name:'Example shed',members:['alex'],agents:['moss'],repositories:['github:example-house/shed']}));
   write(()=>s.householdAccess.setAccounts({agent:'moss',github:['example-moss']}));
   const at=new Date().toISOString(),privateChange=s.changes.put({id:'github:example-house/shed#99',repo:'github:example-house/shed',number:99,page:'',title:'Fictitious private shed change',body:'Visibility proof.',url:'https://github.com/example-house/shed/pull/99',state:'closed',draft:false,author:{login:'example-moss'},created:at,updated:at,closed:at,head:{ref:'visibility',id:'c'.repeat(40)},base:{ref:'next'},checks:{state:'none',failing:[],running:[],total:0},review:{state:'not_required',by:[]},mergeable:'yes',conflicts:false,people:[]});
@@ -35,6 +38,15 @@ export async function workVisibility({page,app,example,out}){
   const owner=await query(alex),member=await query(robin),agent=await query(fern),box=await query(runner,true);
   for(const key of ['tasks','approvals','changes'])check(owner[key].map(row=>row.id).sort().join(',')===trusted[key].map(row=>row.id).sort().join(','),'Household owner did not see all trusted work');
   check(owner.approvalRecord.some(event=>event.approval===example.approval)&&owner.approvalRecord.some(event=>event.approval===privateCard.id),'Fixture audit events were not present for privacy checks');
+  const ownerCard=owner.approvals.find(row=>row.id===privateCard.id);
+  check(Object.entries(cardWords).every(([key,value])=>ownerCard?.[key]===value),'Household owner could not read the approval terms from a private conversation');
+  const threadQuery={query:'query ReadPrivateThread($id:String!){commsThread(id:$id){id title}}',variables:{id:thread.id}};
+  for(const [credential,participates] of [[alex,false],[robin,true]]){
+   const response=await app.http.request(app.url+'/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+credential},body:JSON.stringify(threadQuery)});
+   const result=await response.json();
+   check(response.ok&&!result.errors,'Private thread query failed');
+   check(participates?result.data.commsThread?.title===thread.title:result.data.commsThread===null,'Private thread access differed from its member');
+  }
   check(privateChange.project==='shed'&&s.changes.get(example.change).project==='garden','Household changes did not span its projects');
   const columns=await app.http.request(app.url+'/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+alex},body:JSON.stringify({query:'{ readyTasks { id } garden:tasks(where:{project:{eq:"garden"}}){id status priority ownerKind owner project assigneeKind assignee} assigned:tasks(where:{assignee:{eq:"moss"},status:{eq:in_progress}}){id} }'})});
   const selections=await columns.json();check(columns.ok&&!selections.errors,'Column-based work queries failed');

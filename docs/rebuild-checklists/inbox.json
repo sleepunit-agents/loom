@@ -2,7 +2,7 @@
   "page": "inbox",
   "title": "Inbox",
   "ownerTask": "t-2237",
-  "sourceSha256": "e4e334a345960df06d323cffefa79219b149d742841c44b29fb56726e5979b85",
+  "sourceSha256": "96be0ac290df0467fe76258d8c5418773fdd3f559aa15b45c99eb2055fafee63",
   "promises": [
     {
       "id": "inbox-001",
@@ -194,11 +194,20 @@
     },
     {
       "id": "inbox-019",
-      "promise": "b Who else sees it. An item also carries the usual labels: a project's people, an agent's owners, or one member alone. A household owner sees everything, including what is private to another member. Private to a member means that member plus household owners.",
+      "promise": "b Who else sees it. Conversation mail follows its thread. Only the participating member can read their private conversation with an agent. An approval card from that thread still reaches every household owner.",
       "source": "docs/how-it-works/site/inbox.html#see-h",
       "probe": {
-        "kind": "action",
-        "action": "inboxVisibility"
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "inboxVisibility"
+          },
+          {
+            "kind": "action",
+            "action": "workVisibility"
+          }
+        ]
       }
     },
     {

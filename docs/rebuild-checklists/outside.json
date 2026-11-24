@@ -2,7 +2,7 @@
   "page": "outside",
   "title": "Outside programs",
   "ownerTask": "t-2236",
-  "sourceSha256": "ca4bb7d76002b4d104a659fda0168c458912cf84bd463e3a7aaabb0a52b33136",
+  "sourceSha256": "f2cd244a8b69561e11c7639a7c19c004243366a7e99c1acddcc8ce8896903928",
   "promises": [
     {
       "id": "outside-001",
@@ -86,7 +86,7 @@
     },
     {
       "id": "outside-017",
-      "promise": "c The rule. A household owner sees everything, including what is private to another member. Anyone else sees what is in their projects, plus what belongs to agents they own. Private to a member means that member plus household owners.",
+      "promise": "c The rule. Household owners can read these records. Anyone else sees what is in their projects, plus what belongs to agents they own. Only the participating member can read their private conversation with an agent.",
       "source": "docs/how-it-works/site/outside.html#see-h"
     }
   ],

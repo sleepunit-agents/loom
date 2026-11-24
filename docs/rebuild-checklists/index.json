@@ -2,7 +2,7 @@
   "page": "index",
   "title": "Everything is a conversation .",
   "ownerTask": "t-2190",
-  "sourceSha256": "7ae0efc966ca36c181facb374015b1281a1c9162d61d2ed13f4dc079ca840621",
+  "sourceSha256": "37605991cdd175d6ff20073a5b45064ffdbe3188f54cb6462b80213ad9b81ba1",
   "promises": [
     {
       "id": "index-001",
@@ -31,7 +31,7 @@
     },
     {
       "id": "index-006",
-      "promise": "3 A small team that trusts each other The project is the unit of sharing. No fine-grained permissions. Household owners see everything.",
+      "promise": "3 A small team that trusts each other The project is the unit of sharing. Members can also talk privately with an agent.",
       "source": "docs/how-it-works/site/index.html"
     },
     {

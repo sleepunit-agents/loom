@@ -236,6 +236,9 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   for row in rows:
    if row['promise'].startswith(('terminal_credentials ', 'terminal_sessions ', 'terminal_runs ')):row['probe']={'kind':'action','action':'deskJobs'}
    if row['promise'].startswith('A query names a table from the model'):row['probe']={'kind':'legacy-data-socket'}
+ if f.stem in ('approvals','changes'):
+  for row in rows:
+   if 'Who sees it. Household owners can read these records.' in row['promise']:row['probe']={'kind':'action','action':'workVisibility'}
  if f.stem=='desk':
   for row in rows:
    if row['promise'].startswith('Each tile asks for its rows over the one live connection'):row['probe']={'kind':'legacy-data-socket'}
@@ -311,6 +314,9 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise']=='The connection knows the caller from its session or token.':row['probe']={'kind':'action','action':'dataCaller'}
    if row['promise'].startswith(('After the first rows, loom sends only', 'After the first rows, changes arrive')):row['probe']={'kind':'action','action':'dataTaskPatches'}
    if row['promise'].startswith('A new inbox item reaches an open Inbox'):row['probe']={'kind':'action','action':'dataInboxChange'}
+ if f.stem in ('approvals','changes'):
+  for row in rows:
+   if 'Who sees it. Household owners can read these records.' in row['promise']:row['probe']={'kind':'action','action':'workVisibility'}
  if f.stem=='desk':
   for row in rows:
    if row['promise'].startswith('Each tile asks for its rows over the one live connection'):row['probe']={'kind':'action','action':'dataDoor'}
@@ -318,7 +324,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   for row in rows:
    if row['promise'].startswith(('A conversation belongs to one agent', 'a Three labels.')):row['probe']={'kind':'action','action':'conversationLabels'}
    if row['promise'].startswith('b Who sees it.'):row['probe']={'kind':'action','action':'conversationVisibility'}
-   if row['promise'].startswith('c Private.'):row['probe']={'kind':'action','action':'commsPrivacy'}
+   if row['promise'].startswith('c Private.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':name} for name in ['commsPrivacy','workVisibility']]}
  if f.stem=='inbox':
   for row in rows:
    if row['promise'].startswith('c Checked at the door.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':name} for name in ['inboxCallers','inboxVisibility']]}
@@ -326,7 +332,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise']=='Each incoming message becomes one item.':row['probe']={'kind':'action','action':'bridgeMail'}
    if row['promise'].startswith(('One inbox for everything sent to anyone','Every item has a recipient. An agent')):row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['inboxRecipients','privateConversationBatch','privateConversationQuestion']]}
    if row['promise'].startswith(('Every item has one recipient:', 'a The recipient.')):row['probe']={'kind':'action','action':'inboxRecipients'}
-   if row['promise'].startswith('b Who else sees it.'):row['probe']={'kind':'action','action':'inboxVisibility'}
+   if row['promise'].startswith('b Who else sees it.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':name} for name in ['inboxVisibility','workVisibility']]}
  # Carry source hashes so a changed approved page cannot silently reuse old results.
  obj={'page':f.stem,'title':next(n.text() for n in nodes if n.tag=='h1'),'ownerTask':owners[f.stem],'sourceSha256':source_hash,'promises':rows,'modelTables':[n.attrs['id'][2:] for n in nodes if n.tag=='details' and n.cls('tbl') and n.attrs.get('id','').startswith('t-')]}
  payload=(json.dumps(obj,indent=2,ensure_ascii=False)+'\n').encode('utf-8')

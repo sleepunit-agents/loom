@@ -2,7 +2,7 @@
   "page": "decided",
   "title": "What we decided",
   "ownerTask": "t-2190",
-  "sourceSha256": "6d497f5357bb146fd1bd1c0c993b901b83554640c5da3d83dcfd458880cfb39e",
+  "sourceSha256": "c3a9f3964daa68b6d0129bf33e90f4d30ded60c62384306f0837803577b02916",
   "promises": [
     {
       "id": "decided-001",
@@ -66,7 +66,7 @@
     },
     {
       "id": "decided-013",
-      "promise": "Household owners see everything, including another member's private thread.",
+      "promise": "Only the participating member can read their private thread with an agent. An approval card from it still reaches every household owner.",
       "source": "docs/how-it-works/site/decided.html"
     },
     {

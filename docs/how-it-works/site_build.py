@@ -325,7 +325,7 @@ def index():
     <ol class="rules">
       <li class="t-pink"><span class="key" aria-hidden="true">1</span><b>Chat controls, screens show</b><span>You control loom by talking to your agents. Screens are for seeing. A settings change or a dangerous action asked for in chat gets an approval card inline, with before and after. Ordinary work needs no card.</span></li>
       <li class="t-cyan"><span class="key" aria-hidden="true">2</span><b>Installed means trusted</b><span>Loom's own parts never ask each other for permission. Loom checks permission only for callers from outside.</span></li>
-      <li class="t-violet"><span class="key" aria-hidden="true">3</span><b>A small team that trusts each other</b><span>The project is the unit of sharing. No fine-grained permissions. Household owners see everything.</span></li>
+      <li class="t-violet"><span class="key" aria-hidden="true">3</span><b>A small team that trusts each other</b><span>The project is the unit of sharing. Members can also talk privately with an agent.</span></li>
       <li class="t-amber"><span class="key" aria-hidden="true">4</span><b>Real columns</b><span>Every fact is a named column, defined once with Drizzle. The database does the work. SQLite by default; the database is a configuration choice.</span></li>
       <li class="t-pink"><span class="key" aria-hidden="true">5</span><b>One query endpoint</b><span>A GraphQL endpoint generated from the same schema. A tile names the fields it wants, and changes arrive as subscriptions over one websocket.</span></li>
       <li class="t-cyan"><span class="key" aria-hidden="true">6</span><b>Only memories are precious</b><span>Agents' memories are the one kind of data loom treats as irreplaceable. Notes come second: looked after, but not irreplaceable.</span></li>
@@ -506,8 +506,8 @@ def conversations():
     <div class="labels"><span class="t-cyan">agent</span><span class="t-violet">project</span><span class="t-pink">member, when private</span></div>
     <ul class="see">
       <li><span class="key key--sm t-ink" aria-hidden="true">a</span><span><b>Three labels.</b> Each conversation carries its agent, its project if it has one, and a member when it is private to one person.</span></li>
-      <li><span class="key key--sm t-ink" aria-hidden="true">b</span><span><b>Who sees it.</b> A household owner sees everything, including another member's private thread. Anyone else sees conversations in their projects and conversations of agents they own.</span></li>
-      <li><span class="key key--sm t-ink" aria-hidden="true">c</span><span><b>Private.</b> A thread in loom is private to its member. Private to a member means that member plus household owners.</span></li>
+      <li><span class="key key--sm t-ink" aria-hidden="true">b</span><span><b>Who sees it.</b> Project conversations are shared with the project. For a direct message from a nonmember or a group, only the receiving agent’s owners can read it.</span></li>
+      <li><span class="key key--sm t-ink" aria-hidden="true">c</span><span><b>Private.</b> Only the participating member can read their private thread with an agent. An approval card from that thread still reaches every household owner with the words on the card.</span></li>
       <li><span class="key key--sm t-ink" aria-hidden="true">d</span><span><b>Checked at the door.</b> Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.</span></li>
       <li><span class="key key--sm t-ink" aria-hidden="true">e</span><span><b>Words.</b> Message words are kept for the household's keep time, 14 days at most, then removed. They are encrypted where they are stored.</span></li>
     </ul>
