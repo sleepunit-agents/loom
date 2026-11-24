@@ -144,3 +144,18 @@ it('names its folders as the site does, counts projects and epics, and heads nei
   await act(async () => tree.update(h(SharedTasks,props({tasks:[task('t-1')]}))));
   expect(folders().some(f=>f.heading)).toBe(false);
 });
+it('counts open epic children once across a household-sized sidebar',async()=>{
+ const tasks=Array.from({length:2384},(_,i)=>task(String(i),{
+  type:i<14?'epic':'task',status:i>=429?'closed':'open',project:'project-'+i%25
+ }));
+ let childReads=0;
+ const links:SharedTaskLink[]=Array.from({length:1104},(_,i)=>({
+  get task(){childReads++;return String(i+14);},dependsOn:String(i%14),
+  type:i<824?'parent-child':'blocks'
+ }));
+ await draw(props({tasks,links}));
+ const folders=tree.root.findByType('Split').props.folders as {id?:string;count?:number}[];
+ const counts=folders.filter(f=>f.id?.startsWith('epic:')).map(f=>f.count);
+ expect(counts).toEqual(Array.from({length:14},(_,i)=>i<9?30:29));
+ expect(childReads).toBeLessThanOrEqual(links.length);
+});
