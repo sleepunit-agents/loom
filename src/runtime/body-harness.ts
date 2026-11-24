@@ -41,6 +41,7 @@ export interface HarnessInput {
   mcpTools?: readonly string[];
   /** 'loom': loom's tools only. 'all': the harness's own tools too (files, shell, the web). */
   reach?: 'loom' | 'all';
+  omitClaudeTools?: readonly string[];
 }
 export type HarnessRun = (job: WorkerAssignment, words: string, signal: AbortSignal, session?: HarnessSession) => Promise<HarnessReply>;
 export type BodyHarness = (input: HarnessInput) => HarnessRun;

@@ -63,7 +63,7 @@ export const claudeBody: BodyHarness = input => {
     // The reach this job's body really has: loom's tools only on anybody else's word, whatever the machine gives (bodyReach).
     const reach = bodyReach(input.reach ?? 'loom', job.run?.policy);
     // The agent's own denials first, as written; then every built-in tool not among them.
-    const withheld = reach === 'all' ? denied : [...new Set([...denied, ...claudeBuiltInTools])];
+    const withheld = [...new Set([...denied, ...(reach === 'all' ? input.omitClaudeTools ?? [] : claudeBuiltInTools)])];
     if (denied.some(pattern => !pattern.trim() || pattern.trim().startsWith('-') || /[\0\r\n]/.test(pattern))){control?.fill(0);throw harnessUnavailable();}
     // Asked to keep a session, Claude Code writes its transcript under its own directory (sessionFiles below)
     // and can continue one by id. Otherwise nothing is written, as before. A continued session keeps its id

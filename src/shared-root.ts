@@ -117,6 +117,7 @@ import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
 import { createRuntime } from './runtime/runtime.js';
 import type { ModelRole } from './runtime/placement.js';
 import { applyProgramResult } from './shared-program-result.js';
+import {wakeToolProfiles,type WakeToolProfiles} from './runtime/wake-tool-profiles.js';
 import {workRoleCatalog,type WorkRoleConfig} from './runtime/work-roles.js';
 import { registerSharedRuntime } from './shared-runtime.js';
 import { installMeasuring } from './core/measuring/install.js';
@@ -160,11 +161,13 @@ export function sharedRoot(options: {
   startupNote?(line: string): void;
   bridges?: Omit<SharedBridgeOptions,'db'|'clock'|'writes'|'changed'|'reportError'>;
   workRoles?: WorkRoleConfig;
+  wakeToolProfiles?: WakeToolProfiles;
   modelRoles?(): readonly ModelRole[];
   runtimeJobEnded?(id: string): void;
 }) {
   if(options.secretWrites && (!(options.secretWrites.fingerprintKey instanceof Uint8Array) || options.secretWrites.fingerprintKey.byteLength!==32))throw Error('Invalid secret retry key');
   const roles = () => modelCatalog(options.modelRoles?.() ?? []);
+  const profiles=wakeToolProfiles.parse(options.wakeToolProfiles??[]);
   const workRoles=workRoleCatalog.parse(options.workRoles??[]);
   roles(); // Refuse invalid startup configuration before opening services.
   const { db, clock } = options;
@@ -592,7 +595,7 @@ export function sharedRoot(options: {
 
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
-  if(options.commsKey)registerTriggerJournal(operations, db, bodyScope, text => options.commsKey!.hash(text));
+  if(options.commsKey)registerTriggerJournal(operations, db, bodyScope, text => options.commsKey!.hash(text), profiles);
   if(options.commsKey)registerSharedWorkBody(operations,db,services.approvals,services.approvalRules,bodyScope,words=>options.commsKey!.hash(words),credentials.agentSession,held('approval'));
   registerSharedWorkCommands(operations,db,services.approvals, {
     now, bodyJob, isProgram: viewer => !!credentials.program(viewer), words: comms?.service.words.bind(comms.service),
