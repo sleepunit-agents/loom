@@ -262,6 +262,8 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('A change saves the earlier version first.'):row['probe']={'kind':'action','action':'memoryRevisions'}
    if row['promise']=='Shows what happened each day in Activity.':row['probe']={'kind':'action','action':'activityDays'}
    if row['promise']=='Activity lists the tasks and pull requests each conversation touched.':row['probe']={'kind':'action','action':'activityWorkLinks'}
+   if row['promise']=="each agent's folder Its memories and their history, drafts awaiting ratification, its notes and their earlier versions, people cards, project cards, and its identity files.":
+    row['probe']={'kind':'action','action':'agentFolderContents'}
    if row['promise'].startswith(("Keeps each agent's memories in that agent's own files.","A memory belongs to one agent.","a Memories, notes and cards.")):row['probe']={'kind':'action','action':'agentMemoryFiles'}
    if row['promise'].startswith('Each memory has a temperature.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['semanticRecall','memoryTemperature']]}
    if row['promise'].startswith('Recalls by meaning, and keeps what is used most'):row['probe']={'kind':'action','action':'semanticRecall'}

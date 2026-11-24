@@ -309,6 +309,7 @@ export async function* walkthroughSteps(output) {
    const {agentMemoryFiles}=await import('./rebuild-agent-memory-files.mjs');
    report.actions.agentMemoryFiles=await agentMemoryFiles();
   } catch(error) { report.actions.agentMemoryFiles={ok:false,error:String(error)}; }
+  report.actions.agentFolderContents=report.actions.agentMemoryFiles;
   save();yield {phase:'agent-memory-files',actions:safeReport(report.actions)};
   phase='semantic recall';
   try {
