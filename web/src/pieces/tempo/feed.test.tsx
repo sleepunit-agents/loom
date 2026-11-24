@@ -5,20 +5,22 @@ import { act, create } from 'react-test-renderer';
 import type { DataQuerySnapshot } from '../../data/graphql';
 import type { TempoData } from './feed';
 const state = vi.hoisted(() => ({ feed: { status: 'loading' } as DataQuerySnapshot<TempoData>, query: vi.fn() }));
-vi.mock('../../data/graphql', () => ({ useDataQuery: (query: string) => { state.query(query); return state.feed; } }));
+vi.mock('../../data/graphql', () => ({ useDataQuery: (query: string, variables?: unknown) => { state.query(query, variables); return state.feed; } }));
 vi.mock('./index', () => ({ default: (props: unknown) => h('tempo', props), TempoCard: (props: unknown) => h('card', props) }));
+import { tempoCardQuery } from './query';
 import { TempoApp, LiveTempoCard, tempoQuery } from './feed';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
 afterEach(async () => { await act(async () => tree?.unmount()); });
 const data: TempoData = { triggers: [], agentPauses: [{ agent: 'art', since: '2026-11-14T00:00:00Z' }] };
-it('binds the tile and inline card to the same generated selection and root actions', async () => {
+it('binds the tile and inline card to their respective live selections and root actions', async () => {
   state.feed = { status: 'live', data };
   const actions = { runNow: vi.fn(), stop: vi.fn(), pause: vi.fn(), resume: vi.fn() };
   await act(async () => { tree = create(h(TempoApp, { timezone: 'America/Chicago', actions })); });
-  expect(state.query).toHaveBeenCalledWith(tempoQuery);
+  expect(state.query).toHaveBeenCalledWith(tempoQuery, undefined);
   expect(tree.root.findByType('tempo').props).toMatchObject({ snapshot: { status: 'live', pauses: data.agentPauses, timezone: 'America/Chicago' }, actions });
   await act(async () => tree.update(h(LiveTempoCard, { triggerId: 'tr-1', timezone: 'America/Chicago', actions })));
+  expect(state.query).toHaveBeenCalledWith(tempoCardQuery, {id:'tr-1'});
   expect(tree.root.findByType('card').props).toMatchObject({ triggerId: 'tr-1', actions, snapshot: { pauses: data.agentPauses } });
 });
 it.each(['loading', 'offline', 'denied'] as const)('drops retained data immediately on %s', async status => {
