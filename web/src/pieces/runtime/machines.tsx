@@ -1,3 +1,4 @@
+import {SignInWarning} from './sign-in-warning';
 import { NativeSelect } from '../../kit/native-select';
 import {useEffect, useState} from 'react';
 import {useDataQuery} from '../../data/graphql';
@@ -99,14 +100,14 @@ function MachineSettings({box, agents}: {box:Machine; agents:string[]}) {
  </div>;
 }
 
-export function OwnerMachines({member}:{member:string}) {
+export function OwnerMachines({member,signInWarnings}:{member:string;signInWarnings?:ReadonlySet<string>}) {
  const feed=useDataQuery<{boxes:Machine[]; boxReadings?:Reading[]; agents:{id:string}[]}>(query);
  const [open, setOpen]=useState('');
  const machines=feed.status==='live'?feed.data?.boxes?.filter(box=>box.owner===member):undefined;
  if(!machines?.length)return null;
  return <section aria-label="Your machines" className="grid gap-3"><h2>Your machines</h2>
   {machines.map(box=><article key={box.id} className="grid gap-3 rounded-xl border p-4"><h3>
-   <Button variant="outline" aria-expanded={open===box.id} onClick={()=>setOpen(open===box.id?'':box.id)}>{box.name}{box.revokedAt?' (revoked)':''}</Button></h3>
+   <Button variant="outline" aria-expanded={open===box.id} onClick={()=>setOpen(open===box.id?'':box.id)}>{box.name}{box.revokedAt?' (revoked)':''}</Button>{!box.revokedAt&&signInWarnings?.has(box.id)&&<SignInWarning/>}</h3>
    <MachineHostingDetails box={box}/>
    {!box.revokedAt&&box.readingsLeftOut>0&&<p role="status">More than 24 things reported; {box.readingsLeftOut} were left out.</p>}
    {!box.revokedAt&&<MachineReadings readings={readingsOf(feed.data?.boxReadings,box.id)}/>}

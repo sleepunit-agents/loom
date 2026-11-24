@@ -36,6 +36,13 @@ export const QUOTA_WAIT_REASON='An eligible worker reported a signed-in account.
 
 export const QUOTA_REFRESH_REASON = 'An eligible worker reported a signed-in account. Loom needs a current quota reading before it can start this job.';
 
+const expiredLoginReason = 'A sign-in for an allowed model has expired on this machine.';
+const signedOutReason = 'An account for an allowed model is signed out on this machine.';
+
+export function blockedBySignIn(decision: readonly Decision[]) {
+  return decision.some(row => row.reason === expiredLoginReason || row.reason === signedOutReason);
+}
+
 type Candidate = { box: string; reason: string } | { box: string; placement: Placement; missingPreferred: string[] };
 type Decision = { box: string; outcome: 'taken' | 'passed'; reason: string };
 
@@ -119,7 +126,7 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
           continue;
         }
         if (login?.state === 'signed-out' || expired) {
-          signInReason ??= expired ? 'A sign-in for an allowed model has expired on this machine.' : 'An account for an allowed model is signed out on this machine.';
+          signInReason ??= expired ? expiredLoginReason : signedOutReason;
           continue;
         }
         return { box: id, placement: { box: id, model: role.model, account: account.id, harness: role.harness },

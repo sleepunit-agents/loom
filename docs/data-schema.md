@@ -46,6 +46,8 @@ must be exactly a fresh database's shape. Only then are the steps run on the rea
 file. A foreign, interim, hand-altered or newer database is refused untouched;
 moving older data in is the separate real-data move.
 
+Schema 39 records whether a sign-in prevented the last placement attempt. Earlier jobs begin with the warning off.
+
 To change the schema:
 
 1. Edit `src/core/data/schema.ts` and run `npm run schema:generate`.

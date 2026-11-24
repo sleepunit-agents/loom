@@ -413,6 +413,8 @@ const upgrades: readonly (readonly string[])[] = [
    "CREATE TABLE `agent_post_names` (\n\t`thread` text PRIMARY KEY NOT NULL,\n\t`source` text NOT NULL,\n\t`title` blob NOT NULL,\n\tFOREIGN KEY (`thread`) REFERENCES `agent_post_threads`(`id`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`source`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade\n);"],
   // 38: a delivered contact sighting can be retried after its raw receipt expires.
   ["CREATE TABLE `bridge_person_sightings` (\n\t`incoming` text PRIMARY KEY NOT NULL,\n\t`seen_at` text NOT NULL,\n\t`platform` text NOT NULL,\n\t`workspace` text NOT NULL,\n\t`label` text,\n\tFOREIGN KEY (`incoming`) REFERENCES `bridge_incoming`(`id`) ON UPDATE no action ON DELETE cascade\n);"],
+  // 39: retain an anonymous sign-in obstruction from the most recent placement check.
+  ["ALTER TABLE jobs ADD COLUMN sign_in_blocked integer DEFAULT false NOT NULL"],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

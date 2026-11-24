@@ -986,6 +986,7 @@ CREATE TABLE `jobs` (
 	`ended_at` text,
 	`prefers` text,
 	`placement_decision` text,
+	`sign_in_blocked` integer DEFAULT false NOT NULL,
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,

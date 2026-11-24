@@ -116,7 +116,11 @@
     {
       "id": "models-018",
       "promise": "A dot beside a machine or a harness. It shows only when a sign-in is signed out or ends in three days or less. It is on the Machines and jobs page beside a machine, and on a job that could not be placed because its machine is signed out.",
-      "source": "docs/how-it-works/site/models.html#how-h"
+      "source": "docs/how-it-works/site/models.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "machineSignInWarnings"
+      }
     },
     {
       "id": "models-019",

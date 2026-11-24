@@ -408,6 +408,10 @@ export async function* walkthroughSteps(output) {
    report.actions.subscriptionCapacity=await subscriptionCapacity({browser,home:join(parent,'subscription-capacity')});
   } catch(error){report.actions.subscriptionCapacity={ok:false,error:String(error)};}
   try {
+   const {machineSignInWarnings}=await import('./rebuild-machine-sign-in-warnings.mjs');
+   report.actions.machineSignInWarnings=await machineSignInWarnings({browser,home:join(parent,'machine-sign-in-warnings')});
+  } catch(error){report.actions.machineSignInWarnings={ok:false,error:String(error)};}
+  try {
    const {subscriptionGroups}=await import('./rebuild-subscription-groups.mjs');
    Object.assign(report.actions,await subscriptionGroups({browser,home:join(parent,'subscription-groups')}));
   } catch(error){report.actions.subscriptionGroups=report.actions.subscriptionLoginRows={ok:false,error:String(error)};}

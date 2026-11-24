@@ -37,6 +37,8 @@ describe('the approved data model', () => {
     // The schema keeps these three with its plumbing; the approved model describes each column by column.
     const described = [plumbing.modelAccountLogins, plumbing.jobUsage, plumbing.programFirings];
     for (const table of described) actual[getTableName(table)] = columnsOf(table);
+    // The dispatcher retains one anonymous diagnostic across polls and queue expiry.
+    expect(actual.jobs.pop()).toBe('sign_in_blocked');
     // Delivery bookkeeping is recorded by the mail service.
     actual.inbox = actual.inbox.filter(n => !['taken_volume','first_accepted_at'].includes(n));
     // The provider read outcome is internal bookkeeping for handoff diagnostics.

@@ -1086,6 +1086,7 @@ export const jobs = sqliteTable('jobs', {
   endedAt: text('ended_at'),
   prefers: text('prefers', { mode: 'json' }).$type<string[]>(),
   placementDecision: text('placement_decision', { mode: 'json' }).$type<{ box: string; outcome: 'taken' | 'passed'; reason: string }[]>(),
+  signInBlocked: integer('sign_in_blocked', {mode:'boolean'}).notNull().default(false),
 }, t => [
   check('jobs_retry_at_utc', utc(t.retryAt)),
   check('jobs_queued_at_utc', utc(t.queuedAt)),
