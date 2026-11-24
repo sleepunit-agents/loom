@@ -11,19 +11,25 @@ export interface Trigger {
 }
 export interface TriggerEvent { seq: number; trigger: string; at: string; event: string; note: string }
 export interface AgentPause { agent: string; since: string }
-export type Folder = 'due' | 'standing' | 'lanes' | 'history';
+export type Folder = 'all' | 'due' | 'standing' | 'lanes' | 'history';
 export const folders: { id: Folder; label: string }[] = [
-  { id: 'due', label: 'Due' }, { id: 'standing', label: 'Standing' },
+  { id: 'all', label: 'All triggers' }, { id: 'due', label: 'Due' }, { id: 'standing', label: 'Standing' },
   { id: 'lanes', label: 'Household lanes' }, { id: 'history', label: 'Recent history' },
 ];
 export const title = (trigger: Trigger) => trigger.note || trigger.file || trigger.id;
 export const triggerAgent = (trigger: Trigger) => trigger.toKind === 'agent' ? trigger.to : !trigger.toKind && trigger.ownerKind === 'agent' ? trigger.owner : null;
 export const terminal = (trigger: Trigger) => ['fired', 'stopped', 'failed'].includes(trigger.state);
+export const nextScheduledAt = (trigger: Trigger) => trigger.enabled && !terminal(trigger) ? trigger.nextDueAt : null;
+function nextOrder(trigger: Trigger) {
+  const at = nextScheduledAt(trigger);
+  return at ? Date.parse(at) : Infinity;
+}
 export const lane = (trigger: Trigger) => trigger.ownerKind === 'household' && trigger.sourceKind === 'time'
   && trigger.lifespan !== 'once' && !!(trigger.instructions || trigger.file);
 
 /** A held once-only wait stays in Due, including waits with no time deadline. */
 export function inFolder(trigger: Trigger, folder: Folder): boolean {
+  if (folder === 'all') return true;
   if (folder === 'history') return terminal(trigger);
   if (terminal(trigger)) return false;
   if (folder === 'lanes') return lane(trigger);
@@ -39,7 +45,7 @@ export function rows(triggers: readonly Trigger[], folder: Folder, search = '', 
       trigger.instructions, trigger.file].join(' ').toLocaleLowerCase().includes(query))
     .sort((a, b) => folder === 'history'
       ? Date.parse(b.changedAt) - Date.parse(a.changedAt) || a.id.localeCompare(b.id)
-      : (a.nextDueAt ? Date.parse(a.nextDueAt) : Infinity) - (b.nextDueAt ? Date.parse(b.nextDueAt) : Infinity) || a.id.localeCompare(b.id));
+      : nextOrder(a) - nextOrder(b) || a.id.localeCompare(b.id));
 }
 
 export function source(trigger: Trigger): string {
