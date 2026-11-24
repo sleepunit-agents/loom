@@ -76,6 +76,27 @@ it('shows each provider window and sign-in only while detail remains visible',as
  expect(JSON.stringify(tree.toJSON())).not.toContain('Workshop');
 });
 
+it('updates the closed account row when sign-ins change and clears it on a visibility change',async()=>{
+ const healthy={reporting:true,needsSignIn:false,canRequest:false,box:{id:'a',name:'Studio'},place:'host' as const,harness:'codex',state:'signed-in' as const,expiresAt:null,checkedAt:'2026-11-15T12:00:00Z'};
+ const missing={...healthy,box:{id:'b',name:'Library'},state:'signed-out' as const,needsSignIn:true};
+ const offline={...healthy,box:{id:'c',name:'Workshop'},reporting:false};
+ const account={...detail,logins:[healthy,missing,offline],pendingSignIns:[missing.box]};
+ f.snapshot={status:'live',data:{modelAccounts:[account]}};
+ await act(async()=>{tree=create(h(RuntimeAccounts));});
+ const title=()=>tree.root.findAllByType('summary').map(node=>node.children.join('')).find(words=>words.includes('Main subscription'));
+ expect(title()).toBe('Main subscription · alice · plenty · 1 signed in · 1 needs attention · 1 last known · Sign-in requested');
+ f.snapshot={status:'live',data:{modelAccounts:[{...account,logins:[healthy,{...healthy,box:missing.box},offline],pendingSignIns:[]}]}};
+ await act(async()=>tree.update(h(RuntimeAccounts)));
+ expect(title()).toBe('Main subscription · alice · plenty · 2 signed in · 1 last known');
+ f.snapshot={status:'live',data:{modelAccounts:[detail]}};
+ await act(async()=>tree.update(h(RuntimeAccounts)));
+ expect(title()).toContain('No sign-ins reported');
+ f.snapshot={status:'live',data:{modelAccounts:[{__typename:'RuntimeAccountSummary',label:detail.label,level:detail.level}]}};
+ await act(async()=>tree.update(h(RuntimeAccounts)));
+ expect(title()).toBeUndefined();
+ expect(JSON.stringify(tree.toJSON())).not.toContain('No sign-ins reported');
+});
+
 it('marks an open usage reading stale after one hour and clears the warning on refresh',async()=>{
  vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-15T12:59:59Z'));
  try{
