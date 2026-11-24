@@ -66,7 +66,7 @@ export async function subscriptionSignIn({browser,home}) {
   await page.reload();
   await summary.click();
   assert.doesNotMatch(await summary.innerText(),/Sign-in requested/);
-  await summary.locator('..').getByText('Configured machines: '+machine,{exact:true}).waitFor();
+  await summary.locator('..').getByRole('region',{name:'Settings',exact:true}).getByText(machine,{exact:true}).waitFor();
   return {ok:true,reason:'Alex added a second subscription with the desktop form, received its device link and code in Inbox, and saw the selected machine after the fixture provider completed the worker sign-in and the desktop reloaded.'};
  }finally{await context?.close();await app.close();}
 }

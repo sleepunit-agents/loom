@@ -58,7 +58,9 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   if(title==='Comms'){const result=step.value.report.actions?.conversationRecords;expect(typeof result?.ok).toBe('boolean');if(!result.ok)expect(result.error).toBeTruthy();}
   if(['Your account','Household setup','Sharing'].includes(title))expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true});
   if(title==='Home'){const result=step.value.report.actions?.homeMessage;expect(result,JSON.stringify(result)).toMatchObject({ok:true,inboxCopies:1,persistedAfterReload:true});}
-  if(title==='Subscriptions')expect(step.value.report.actions.modelsMachines,JSON.stringify(step.value.report.actions.modelsMachines)).toMatchObject({ok:true});
+  if(title==='Subscriptions'){
+   for(const key of ['modelsMachines','modelsAccountDetail'])expect(step.value.report.actions[key],JSON.stringify(step.value.report.actions[key])).toMatchObject({ok:true});
+  }
   if(title==='Activity')for(const action of ['activityWorkLinks','activityDays']){
    const result=step.value.report.actions[action];
    expect(result,JSON.stringify(result)).toMatchObject({ok:true});

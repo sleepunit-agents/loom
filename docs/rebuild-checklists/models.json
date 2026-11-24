@@ -30,7 +30,11 @@
     {
       "id": "models-004",
       "promise": "Opens one to show its usage, its sign-ins and its settings.",
-      "source": "docs/how-it-works/site/models.html"
+      "source": "docs/how-it-works/site/models.html",
+      "probe": {
+        "kind": "action",
+        "action": "modelsAccountDetail"
+      }
     },
     {
       "id": "models-005",

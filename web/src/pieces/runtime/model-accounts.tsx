@@ -1,6 +1,6 @@
 import {memberOperation} from '../../data/operation';
 import {WeeklyUsage} from './weekly-usage';
-import {useState} from 'react';
+import {Fragment,useState} from 'react';
 import {useDeadline} from '../comms/use-deadline';
 import {fullTime} from '../../kit/time';
 import {useDataQuery} from '../../data/graphql';
@@ -16,7 +16,7 @@ export type RuntimeAccount=Summary|Detail;
 export type AgentModel={agent:string;model:string;position:number};
 const time=(value:string|null,zone?:string)=>value?fullTime(value,zone):'Not available';
 const percent=(n:number)=>Math.round(n*100)+'%';
-const windowName=(name:string)=>({week:'Week',weekly:'Week','five-hour':'Five hours','5h':'Five hours'}[name]??name);
+const windowName=(name:string)=>({session:'Session',week:'Week',weekly:'Week','five-hour':'Five hours','5h':'Five hours'}[name]??name);
 function SignInButton({account,box}:{account:string;box:string}){
  const [state,setState]=useState<'ready'|'sending'|'sent'|'failed'>('ready');
  async function ask(){
@@ -49,13 +49,11 @@ function AccountCard({account,zone,active}:{account:Detail;zone?:string;active:b
    {!!account.pendingSignIns?.length && ' · Sign-in requested'}
   </summary>
   <div className="grid gap-4">
-  <p>Owner: {account.owner} · Provider: {account.provider}</p>
   <section aria-label="Usage"><h4>Usage</h4>
    {account.windows?.length?account.windows.map(w=><div key={w.window} className="grid gap-1">
     <strong>{windowName(w.window)}</strong>
     {w.usage===null?<p>Not read yet</p>:<p><meter aria-label={windowName(w.window)} min={0} max={1} value={w.usage}/> {percent(w.usage)}</p>}
     {w.usageReadAt&&<p>Read <UsageReadTime at={w.usageReadAt} zone={zone}/></p>}{w.resetsAt&&<p>Resets {time(w.resetsAt,zone)}</p>}
-    {w.reserve!==null&&<p>Reserve {percent(w.reserve)}</p>}
    </div>):<dl><dt>Usage</dt><dd>{account.usage===null?'Not read yet':percent(account.usage)}</dd>
     <dt>Read</dt><dd><UsageReadTime at={account.usageReadAt} zone={zone}/></dd><dt>Resets</dt><dd>{time(account.resetsAt,zone)}</dd></dl>}
    {open&&<WeeklyUsage accountId={account.id}/>}
@@ -69,7 +67,17 @@ function AccountCard({account,zone,active}:{account:Detail;zone?:string;active:b
     {login.expiresAt&&<p>Ends {time(login.expiresAt,zone)}</p>}
     {active&&login.canRequest&&<SignInButton account={account.id} box={login.box.id}/>}
    </div>):!account.pendingSignIns?.length&&<p>No sign-ins reported.</p>}
-   <p>Configured machines: {account.signedInOn.map(box=>box.name).join(' · ')||'No machines'}</p>
+  </section>
+  <section aria-label="Settings"><h4>Settings</h4>
+   <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 [overflow-wrap:anywhere]">
+    <dt>Label</dt><dd>{account.label}</dd>
+    <dt>Owner</dt><dd>{account.owner}</dd>
+    <dt>Service</dt><dd>{account.provider}</dd>
+    <dt>Configured machines</dt><dd>{account.signedInOn.map(box=>box.name).join(' · ')||'No machines'}</dd>
+    {account.windows?.map(w=>w.reserve!==null&&<Fragment key={w.window}>
+     <dt>{windowName(w.window)} reserve</dt><dd>{percent(w.reserve)}</dd>
+    </Fragment>)}
+   </dl>
   </section>
  </div></details>;
 }
