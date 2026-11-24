@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,6 +39,20 @@ it('lets a generated endpoint compose typed file-backed fields and return exactl
  expect(await f.query('{ memoryKnowledgePage(slug:"hose") { fresh } }')).toMatchObject({data:{memoryKnowledgePage:{fresh:'due'}}});
  await store.archivePage({slug:'hose'});
  expect(await f.query('{ memoryKnowledgePage(slug:"hose") { title } memoryKnowledge { total } }')).toMatchObject({data:{memoryKnowledgePage:null,memoryKnowledge:{total:1}}});
+});
+it('reads only the selected overview and shares its work across aliases',async()=>{
+ const path=join(home(),'knowledge.db'),store=new KnowledgePages({dbPath:path});closes.push(()=>store.close());
+ await store.writePage({slug:'hose',title:'Hose',domain:'pond',body:'A fixture'});
+ const f=fixture(path);
+ const statements=vi.spyOn(Database.prototype,'prepare');
+ try{
+  expect(await f.query('{memoryKnowledge{total again:total}}')).toMatchObject({data:{memoryKnowledge:{total:1,again:1}}});
+  expect(statements.mock.calls.map(([query])=>query)).toEqual([expect.stringMatching(/SELECT COUNT\(\*\).*FROM pages/i)]);
+  statements.mockClear();
+  expect(await f.query('{memoryKnowledge{pages{slug} again:pages{slug} total}}')).toMatchObject({data:{memoryKnowledge:{pages:[{slug:'hose'}],again:[{slug:'hose'}],total:1}}});
+  expect(statements.mock.calls.filter(([query])=>query.includes('SELECT id, slug, title'))).toHaveLength(1);
+  expect(statements.mock.calls.some(([query])=>query.includes('SELECT COUNT(*)'))).toBe(false);
+ }finally{statements.mockRestore();}
 });
 it('uses the current authenticated context and central sharing on every execution, with no viewer argument or mutations',async()=>{
  const f=fixture(join(home(),'absent.db'));
