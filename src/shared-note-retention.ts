@@ -27,9 +27,12 @@ function snapshot<T>(file: string, dryRun: boolean, read: (source: Database.Data
   } finally { source.close(); }
 }
 
-/** The published v28 agent store before its first semantic write. Unknown layouts cannot establish
+/** Known prepared agent stores before their first semantic write. Unknown layouts cannot establish
  * that there are no memory citations. Keep the comparison inside the same snapshot as the sweep. */
-const notesOnlySchema = '8dfc8af0a62b03cd8a96d35a884ef25fd02832f6e44af0833bcfbe4bd719b6c0';
+const notesOnlySchemas = new Map([
+  [28, '8dfc8af0a62b03cd8a96d35a884ef25fd02832f6e44af0833bcfbe4bd719b6c0'],
+  [29, 'ca949eee7efd4199377b9ea99f2abcb497ac3640c56630f593ef361e8964500e'],
+]);
 
 function collectMemoryCitations(cited: Set<string>, source: Database.Database) {
   if (source.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memories'").get()) {
@@ -38,8 +41,8 @@ function collectMemoryCitations(cited: Set<string>, source: Database.Database) {
   }
   const objects = source.prepare(`SELECT type,name,tbl_name,sql FROM sqlite_schema
     WHERE name NOT IN ('sqlite_stat1','sqlite_stat4') ORDER BY type,name`).raw().all();
-  if (source.pragma('user_version', { simple: true }) !== 28 ||
-      createHash('sha256').update(JSON.stringify(objects)).digest('hex') !== notesOnlySchema ||
+  const expected = notesOnlySchemas.get(source.pragma('user_version', { simple: true }) as number);
+  if (createHash('sha256').update(JSON.stringify(objects)).digest('hex') !== expected ||
       !semanticMemoryReady(source) || !semanticCardsReady(source) ||
       source.prepare(`SELECT 1 FROM memory_command_receipts UNION ALL SELECT 1 FROM memory_command_preparations
         UNION ALL SELECT 1 FROM memory_card_references LIMIT 1`).get()) {

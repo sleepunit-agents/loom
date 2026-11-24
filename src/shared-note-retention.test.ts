@@ -87,6 +87,14 @@ it('sweeps a prepared notes-only store, preserving citations and stopping on an 
     const sweep = (dryRun=false) => sweepAgentNotes(db,agent,knowledgeFile,()=>due,dryRun);
     expect(sweep(true)).toEqual({gone:['scratch'],keptCited:['garden']});
     memory = new Database(agent.memories);
+    // A version number alone cannot establish the schema. Both known layouts are safe only at their own version.
+    memory.pragma('user_version=28');
+    expect(()=>sweep(true)).toThrow();
+    memory.exec('ALTER TABLE person_sighting_aliases DROP COLUMN recipient_display_slug');
+    expect(sweep(true)).toEqual({gone:['scratch'],keptCited:['garden']});
+    memory.pragma('user_version=29');
+    expect(()=>sweep(true)).toThrow();
+    memory.exec('ALTER TABLE person_sighting_aliases ADD COLUMN recipient_display_slug TEXT');
     memory.exec('ANALYZE');
     expect(sweep(true)).toEqual({gone:['scratch'],keptCited:['garden']});
     memory.exec('CREATE TABLE unavailable(title, content, metadata, provenance, archived)');
