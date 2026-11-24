@@ -36,7 +36,7 @@ function UsageReadTime({at,zone}:{at:string|null;zone?:string}){
  if(!deadline)return <>Not available</>;
  return <>{time(at,zone)}{now-read>3_600_000&&' · Stale reading (over an hour old)'}</>;
 }
-function AccountCard({account,zone,active}:{account:Detail;zone?:string;active:boolean}){
+function AccountCard({account,zone,active,go}:{account:Detail;zone?:string;active:boolean;go?:(path:string)=>void}){
  const [open,setOpen]=useState(false);
  const logins=account.logins ?? [];
  const signedIn=logins.filter(login=>login.reporting && !login.expired && login.state==='signed-in').length;
@@ -56,7 +56,7 @@ function AccountCard({account,zone,active}:{account:Detail;zone?:string;active:b
     {w.usageReadAt&&<p>Read <UsageReadTime at={w.usageReadAt} zone={zone}/></p>}{w.resetsAt&&<p>Resets {time(w.resetsAt,zone)}</p>}
    </div>):<dl><dt>Usage</dt><dd>{account.usage===null?'Not read yet':percent(account.usage)}</dd>
     <dt>Read</dt><dd><UsageReadTime at={account.usageReadAt} zone={zone}/></dd><dt>Resets</dt><dd>{time(account.resetsAt,zone)}</dd></dl>}
-   {open&&<WeeklyUsage accountId={account.id}/>}
+   {open&&<WeeklyUsage accountId={account.id} go={go}/>}
    <p>Has room: {account.hasRoom?'Yes':'No'}</p>
   </section>
   <section aria-label="Sign-ins"><h4>Sign-ins</h4>
@@ -83,7 +83,7 @@ function AccountCard({account,zone,active}:{account:Detail;zone?:string;active:b
 }
 /** Current query policy chooses account columns and visible agents.
  * No retained private details survive an unavailable selection. */
-export function RuntimeAccounts({active=true}:{active?:boolean}={}){
+export function RuntimeAccounts({active=true,go}:{active?:boolean;go?:(path:string)=>void}={}){
  const feed=useDataQuery<{modelAccounts:RuntimeAccount[];agentModels:AgentModel[];agents?:{id:string;removedAt:string|null}[]|null;deskTime:{timezone:string}|null}>(runtimeAccountsQuery);
  const [weeklyOpen,setWeeklyOpen]=useState(false);
  const [search,setSearch]=useState('');
@@ -113,7 +113,7 @@ export function RuntimeAccounts({active=true}:{active?:boolean}={}){
  return <section aria-label="Subscriptions" className="grid gap-4">
   {feed.status==='loading'?<Loading label="Opening subscriptions…"/>:!rows?<ErrorView text="Subscriptions are unavailable. Check the connection."/>:<>
    {rows.some(row=>row.__typename==='RuntimeAccountDetail')&&<details onToggle={event=>setWeeklyOpen(event.currentTarget.open)}>
-    <summary>Weekly usage across subscriptions</summary>{weeklyOpen&&<WeeklyUsage/>}
+    <summary>Weekly usage across subscriptions</summary>{weeklyOpen&&<WeeklyUsage go={go}/>}
    </details>}
    <Search label="Search subscriptions" value={search} onChange={setSearch}/>
    <label><input type="checkbox" checked={attentionOnly} onChange={event=>setAttentionOnly(event.target.checked)}/> Needs attention</label>
@@ -121,7 +121,7 @@ export function RuntimeAccounts({active=true}:{active?:boolean}={}){
     const level=accounts.some(a=>a.level==='almost full')?'almost full':accounts.some(a=>a.level==='getting full')?'getting full':accounts[0].level;
     return <details open key={JSON.stringify(provider)} className="grid gap-2"><summary>{provider??'Shared summaries'} · {accounts.length} · {level}{accounts.some(a=>a.__typename==='RuntimeAccountDetail'&&a.logins?.some(l=>l.needsSignIn))&&' · Sign-in needed'}</summary>
      {accounts.map((account,index)=>account.__typename==='RuntimeAccountSummary'?<p key={index}>{account.label} · {account.level}</p>:
-      <AccountCard key={account.id} account={account} zone={zone} active={active}/>)}
+      <AccountCard key={account.id} account={account} zone={zone} active={active} go={go}/>)}
     </details>;
    })}
    <section aria-label="Agent models" className="grid gap-3"><h3>Models in preference order</h3>
