@@ -153,6 +153,11 @@ it('attributes only the measured rise to work placed on that account and expires
   db.insert(jobs).values({id:'just-started',account:'shared',agent:'art',title:'Next run',state:'running',
     brief:'',model:'m',startedByKind:'member',startedBy:'owner',houseRepository:'r',houseFile:'f',houseBranch:'b',
     queuedAt:end,claimedAt:end}).run();
+  // SQLite rounds this open job to the exact upper bound. Its unknown tokens
+  // must not take away the measured job's share of the preceding interval.
+  db.insert(jobs).values({id:'fractional-start',account:'shared',agent:'art',title:'Fractional start',state:'running',
+    brief:'',model:'m',startedByKind:'member',startedBy:'owner',houseRepository:'r',houseFile:'f',houseBranch:'b',
+    queuedAt:now,claimedAt:'2026-11-14T20:09:59.9999Z'}).run();
   const report = accountWeeklyUsage(db,'shared',last,end);
   expect([...report!.shares]).toEqual([['placed',.25]]);
   expect(report!.unattributed).toBe(.25);

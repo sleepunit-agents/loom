@@ -54,35 +54,27 @@ export function weeklyWindowEstimates(db:DataDatabase, selections:Selection[], n
   for (const row of history) stored[row.index].push(row);
   const readings = windows.map((w,i) => contiguousReadings(w.latest,w.reset,stored[i]));
   const intervals = windows.flatMap((w,i) => readings[i].length > 1 ?
-    [{i,account:w.account,from:new Date(readings[i][0].at).toISOString(),to:w.to}] : []);
+    [{i,account:w.account,from:new Date(readings[i][0].at).toISOString(),to:selections[w.index].window.readAt}] : []);
   const weights = windows.map(():Weight[] => []);
   if (intervals.length) {
-    const perAccount = new Map<string,number[]>();
-    let from = intervals[0].from, to = intervals[0].to;
-    for (const interval of intervals) {
-      const indices = perAccount.get(interval.account) ?? [];
-      indices.push(interval.i);
-      perAccount.set(interval.account,indices);
-      if (interval.from < from) from = interval.from;
-      if (interval.to > to) to = interval.to;
-    }
-    // One scan of the jobs in this period. A join against a JSON row per window
-    // would rescan the entire request for every historical job.
-    const rows = db.select({account:jobs.account,id:jobs.id,start:jobs.claimedAt,end:jobs.endedAt,
-      input:jobUsage.tokensIn,output:jobUsage.tokensOut}).from(jobs)
+    // Materializing makes SQLite build an account index over the request. Scanning jobs
+    // once then probing that index avoids reparsing all windows for every historical job.
+    // Keep membership comparisons in SQLite: julianday and Date.parse round fractional
+    // seconds differently, and a running job at the upper bound must be excluded.
+    const requested = sql`(with bounds as materialized (
+      select value ->> 'i' as i, cast(value ->> 'account' as text) as account,
+        julianday(value ->> 'from') as lower, julianday(value ->> 'to') as upper
+      from json_each(${JSON.stringify(intervals)})) select * from bounds) as request`;
+    const rows = db.select({i:sql<number>`request.i`,id:jobs.id,start:jobs.claimedAt,end:jobs.endedAt,
+      input:jobUsage.tokensIn,output:jobUsage.tokensOut}).from(jobs).crossJoin(requested)
       .leftJoin(jobUsage,eq(jobUsage.job,jobs.id)).where(sql`
-        ${jobs.account} in (select value from json_each(${JSON.stringify([...perAccount.keys()])}))
-        and julianday(${jobs.claimedAt}) <= julianday(${to})
-        and (${jobs.endedAt} is null or julianday(${jobs.endedAt}) > julianday(${from}))`).all();
-    for (const row of rows) {
-      const start = Date.parse(row.start!), end = row.end ? Date.parse(row.end) : null;
-      for (const i of perAccount.get(row.account!)!) {
-        const latest = windows[i].latest.at;
-        if (start > latest || (start === latest && end === null) || (end !== null && end <= readings[i][0].at)) continue;
-        weights[i].push({id:row.id,start,end:end ?? latest,
-          tokens:end !== null && row.input !== null && row.output !== null ? row.input + row.output : null});
-      }
-    }
+        ${jobs.account} = request.account
+        and (julianday(${jobs.claimedAt}) < request.upper
+          or (${jobs.endedAt} is not null and julianday(${jobs.claimedAt}) = request.upper))
+        and (${jobs.endedAt} is null or julianday(${jobs.endedAt}) > request.lower)`).all();
+    for (const row of rows) weights[row.i].push({id:row.id,start:Date.parse(row.start!),
+      end:row.end ? Date.parse(row.end) : windows[row.i].latest.at,
+      tokens:row.end && row.input !== null && row.output !== null ? row.input + row.output : null});
   }
   windows.forEach((w,i) => results.set(w.index,estimateWeeklyUsage(readings[i],weights[i])));
   return results;
