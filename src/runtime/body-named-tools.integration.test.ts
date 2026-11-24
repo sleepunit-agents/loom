@@ -257,10 +257,10 @@ it('identifies the scheduled instant and job of one accepted journal delivery', 
  expect((await read('another-delivery')).text).toContain('denied');
 });
 
-it.each(['matched','no configuration','other trigger','other agent'] as const)('checks a clock batch against its profile (%s)', async mode => {
+it.each(['matched','no configuration','other trigger','other agent','unknown tool'] as const)('checks a clock batch against its profile (%s)', async mode => {
  const trigger = 'tr-clock';
  const b = await body({wakeToolProfiles:mode === 'no configuration' ? [] : [{
-   agent:mode === 'other agent' ? 'mark' : 'art', trigger:mode === 'other trigger' ? 'tr-other' : trigger, omitClaudeTools:['Workflow'],
+   agent:mode === 'other agent' ? 'mark' : 'art', trigger:mode === 'other trigger' ? 'tr-other' : trigger, omitClaudeTools:mode === 'unknown tool' ? ['Workflow','Bash'] : ['Workflow'],
  }]});
  const {db,root,clock} = b.fixture;
  db.insert(schema.household).values({timezone:'UTC'}).onConflictDoUpdate({target:schema.household.singleton,set:{timezone:'UTC'}}).run();

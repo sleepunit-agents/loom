@@ -8,7 +8,7 @@ import { TRIGGER_JOURNAL_BYTES, appendLesson, hasAgentJournal, readJournal, repl
 import type { Viewer } from './policy.js';
 import { jobWord } from './shared-place-mail.js';
 
-import { omittedWakeTools, type WakeToolProfiles } from './runtime/wake-tool-profiles.js';
+import { omittedWakeTools, wakeToolProfiles } from './runtime/wake-tool-profiles.js';
 
 type Scope = NonNullable<ReturnType<ReturnType<typeof conversationBodyScope>>>;
 
@@ -21,7 +21,7 @@ function ownTrigger(db: DataDatabase, viewer: Viewer, scope?: Scope) {
 }
 
 export function registerTriggerJournal(operations: Operations, db: DataDatabase,
-  current: ReturnType<typeof conversationBodyScope>, hash: (text: string) => string, profiles: WakeToolProfiles) {
+  current: ReturnType<typeof conversationBodyScope>, hash: (text: string) => string, profiles: z.output<typeof wakeToolProfiles>) {
   function acceptedMail(scope: Scope, trigger: string) {
     const {job, cv} = scope;
     return and(eq(inbox.job, job.id), eq(triggerAcceptances.job, job.id), inArray(inbox.state, ['taken', 'done']),

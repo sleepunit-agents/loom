@@ -49,6 +49,13 @@ async function signedIn(home:string,url:string,member='owner'){
  const response=await fetch(url+link.path,{method:'POST',redirect:'manual',headers:{origin:url,'user-agent':'Fictional browser'}});
  expect(response.status).toBe(303);return response.headers.get('set-cookie')!.split(';',1)[0];
 }
+it('starts when an optional clock profile mentions a tool from another version', async () => {
+ const f = await fixture();
+ writeFileSync(f.config, JSON.stringify({...f.program,wakeToolProfiles:[{agent:'fiction',trigger:'daily',omitClaudeTools:['Workflow','Bash']}]}));
+ const app = await startSharedHome({home:f.home,program:f.config,host:'127.0.0.1',port:0});
+ cleanups.push(()=>app.close());
+});
+
 it('normal serve --http installs public assets, current sign-in, Memory, Comms and Tempo on the same real door',async()=>{
  const f=await fixture(),errors:string[]=[],printed:string[]=[];let ready!:(url:string)=>void;
  symlinkSync(f.program.commsKey,join(f.program.webRoot,'key.js'));
