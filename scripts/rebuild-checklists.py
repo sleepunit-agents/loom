@@ -188,6 +188,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   for row in rows:
    if row['promise']=='Adds a subscription: choose the service, label it, choose its machines, sign in.':row['probe']={'kind':'action','action':'subscriptionSignIn'}
    if row['promise'].startswith('The second part. One line for each sign-in:'):row['probe']={'kind':'action','action':'subscriptionLoginRows'}
+   if row['promise']=='Gives each agent a primary conversational model, and the models it may use in order.':row['probe']={'kind':'action','action':'primaryModelOrder'}
    if row['promise']=='Opens one to show its usage, its sign-ins and its settings.':row['probe']={'kind':'action','action':'modelsAccountDetail'}
    if row['promise']=='Lists every subscription to a model service, grouped by service, with how full it is.':row['probe']={'kind':'action','action':'subscriptionGroups'}
    if row['promise'].startswith("One subscription's fullest window, as a tiny bar and a word,"):row['probe']={'kind':'action','action':'subscriptionCapacity'}

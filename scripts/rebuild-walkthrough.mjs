@@ -411,6 +411,10 @@ export async function* walkthroughSteps(output) {
    const {subscriptionGroups}=await import('./rebuild-subscription-groups.mjs');
    Object.assign(report.actions,await subscriptionGroups({browser,home:join(parent,'subscription-groups')}));
   } catch(error){report.actions.subscriptionGroups=report.actions.subscriptionLoginRows={ok:false,error:String(error)};}
+  try {
+   const {primaryModelOrder}=await import('./rebuild-primary-model-order.mjs');
+   report.actions.primaryModelOrder=await primaryModelOrder({browser,parent});
+  } catch(error){report.actions.primaryModelOrder={ok:false,error:String(error)};}
   save();yield {phase:'subscription-capacity',actions:safeReport(report.actions)};
   phase='sign-in door';
   report.actions.signinDoor=await signinDoorEvidence();
