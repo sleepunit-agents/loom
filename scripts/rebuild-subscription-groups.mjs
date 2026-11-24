@@ -1,3 +1,4 @@
+import {subscriptionLoginRows} from './rebuild-subscription-login-rows.mjs';
 import assert from 'node:assert/strict';
 import {readFile,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -73,6 +74,11 @@ export async function subscriptionGroups({browser,home}){
   await summary(first,provider+' · 2 · plenty').click();
   await summary(first,'Workshop spare · alex · plenty').waitFor();
   await summary(second,'Garden subscription · alex · almost full').waitFor();
-  return {ok:true,reason:'Three subscriptions appeared under the two corresponding services. Each card showed its own usage level, and a collapsed service updated its fullest level after a worker reading while the other service retained its level.'};
+  const groups={ok:true,reason:'Three subscriptions appeared under the two corresponding services. Each card showed its own usage level, and a collapsed service updated its fullest level after a worker reading while the other service retained its level.'};
+  try{
+   const signins=await subscriptionLoginRows({page,account:example.runtime.account,worker,clock});
+   return {subscriptionGroups:groups,subscriptionLoginRows:signins};
+  }catch(error){return {subscriptionGroups:groups,subscriptionLoginRows:{ok:false,error:String(error)}};}
+
  }finally{try{await context?.close();}finally{await app.close();}}
 }

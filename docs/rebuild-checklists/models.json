@@ -79,7 +79,11 @@
     {
       "id": "models-013",
       "promise": "The second part. One line for each sign-in: the machine, the harness, the place, its state and when it ends. In houses is the sign-in the houses on a machine use. On the machine itself is the machine user's own. A sign-in that is signed out, or ends in three days or less, has a Sign in action. A harness whose files give no end date, such as Codex, shows none. A machine that is not reporting shows its sign-ins in grey as last known, with no warning, because loom cannot tell.",
-      "source": "docs/how-it-works/site/models.html#how-h"
+      "source": "docs/how-it-works/site/models.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "subscriptionLoginRows"
+      }
     },
     {
       "id": "models-014",
