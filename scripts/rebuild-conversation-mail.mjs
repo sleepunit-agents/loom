@@ -72,11 +72,16 @@ export async function* conversationMailSteps({page,app,clock,example,out,open}){
   const wakeConversation=app.services.conversations.conversation(wake.conversation);
   check(wake.to_kind==='agent'&&wake.to==='moss'&&wakeConversation.agent==='moss'&&wakeConversation.venue==='wake'&&wakeConversation.place===trigger.id,'The scheduled item did not address Moss in the conversation for this trigger');
   const settle=app.services.tempo.volume.timings({kind:'agent',id:wake.to}).settleSeconds;
-  clock.advance(settle*1000);
+  const waiting=()=>db.select({job:inbox.job,state:inbox.state}).from(inbox).where(eq(inbox.id,wake.id)).get();
+  const jobCount=()=>db.select({id:jobs.id}).from(jobs).where(eq(jobs.conversation,wake.conversation)).all().length;
+  check(settle>0&&waiting()?.state==='waiting'&&waiting()?.job===null&&jobCount()===0,'Tempo started a job when it fired instead of delivering waiting mail');
+  clock.advance(settle*1000-1);
+  check(waiting()?.job===null&&jobCount()===0,'The job started before the Inbox settle deadline');
+  clock.advance(1);
   const admitted=db.select().from(jobs).where(eq(jobs.conversation,wake.conversation)).all();
   check(admitted.length===1&&admitted[0].state==='queued'&&admitted[0].agent===wake.to&&db.select().from(inbox).where(eq(inbox.id,wake.id)).get()?.job===admitted[0].id,'Settled trigger mail did not admit exactly one job for its recipient and conversation');
   const wakeBody=await body(wakeConversation);let wakeTaken=0;await wakeBody.client.takeAndAccept(async item=>{check(item.id===wake.id&&item.source==='trigger'&&item.words===wakeWords,'The real wake did not use the same receiving Inbox client');wakeTaken++;});await wakeBody.client.settle();check(wakeTaken===1,'The real wake did not arrive once');
-  evidence.conversationTempoDelivery={ok:true,reason:'The household scheduled a real Tempo firing for Moss. It created an agent Inbox item in the conversation for that trigger, and Moss’s receiving client accepted the item once.',trigger:trigger.id,conversation:wake.conversation,item:wake.id,recipient:wake.to,queuedJob:admitted[0].id};
+  evidence.conversationTempoDelivery={ok:true,reason:'The household scheduled a real Tempo firing for Moss. Its agent Inbox item remained unassigned up to the last millisecond before settlement. One job started at the deadline in that conversation and Moss accepted the trigger mail once.',trigger:trigger.id,conversation:wake.conversation,item:wake.id,recipient:wake.to,queuedJob:admitted[0].id};
   evidence.conversationInboxIngress={ok:true,reason:'Actual Comms, time-trigger and native-handoff producers each delivered through the same current-body Inbox SDK.',sources:['thread','trigger','handoff'],currentJobFixtures:true,providerStarted:false};
   try {evidence.conversationTurns=await conversationTurns({app,clock,parent,cv:parentCv,thread:opened.thread,box:example.runtime.box,owner,wake});}
   catch(error){evidence.conversationTurns={ok:false,error:redactSignin(error)};}
