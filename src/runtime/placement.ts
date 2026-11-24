@@ -102,27 +102,32 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
     if (input.programBoxes) return { box: id, placement: { box: id, model: '', account: '', harness: 'house-program' },
       missingPreferred: (input.prefers ?? []).filter(fact => !meetsNeed(facts, fact)) };
     if (!roles.length) return { box: id, reason: 'No allowed model and harness can run this job.' };
-    let signedOut = false;
+    let signInReason: string | undefined;
     let quotaReason: string | undefined;
     for (const role of roles) {
       const enabled = accounts.filter(account => account.provider === role.provider && bindings.some(binding => binding.account === account.id && binding.box === id));
       for (const account of enabled) {
         const login = logins.find(row => row.account === account.id && row.box === id && row.harness === role.harness);
+        // The reported end remains binding between worker checks.
+        const expired = login?.expiresAt != null && Date.parse(login.expiresAt) <= now;
         if (!account.capacity.hasRoom) {
-          if (account.usageReadSucceeded && login?.state === 'signed-in' && Date.parse(login.checkedAt) <= now && (!login.expiresAt || Date.parse(login.expiresAt) > now)) {
+          if (account.usageReadSucceeded && login?.state === 'signed-in' && Date.parse(login.checkedAt) <= now && !expired) {
             const windows = account.capacity.windows;
             if (windows.some(window => window.estimatedUsage !== null && !window.hasRoom)) quotaReason = QUOTA_WAIT_REASON;
             else if (windows.some(window => window.estimatedUsage === null)) quotaReason ??= QUOTA_REFRESH_REASON;
           }
           continue;
         }
-        if (login?.state === 'signed-out') { signedOut = true; continue; }
+        if (login?.state === 'signed-out' || expired) {
+          signInReason ??= expired ? 'A sign-in for an allowed model has expired on this machine.' : 'An account for an allowed model is signed out on this machine.';
+          continue;
+        }
         return { box: id, placement: { box: id, model: role.model, account: account.id, harness: role.harness },
           missingPreferred: (input.prefers ?? []).filter(fact => !meetsNeed(facts, fact)) };
       }
     }
     if (quotaReason) return { box: id, reason: quotaReason };
-    return { box: id, reason: signedOut ? 'An account for an allowed model is signed out on this machine.' : 'No signed-in account with room for an allowed model.' };
+    return { box: id, reason: signInReason ?? 'No signed-in account with room for an allowed model.' };
   });
   const eligible = candidates.filter(candidate => 'placement' in candidate);
   const winner = eligible.find(candidate => !candidate.missingPreferred.length) ?? eligible[0];

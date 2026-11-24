@@ -206,6 +206,26 @@ it('passes over a machine whose houses were last found signed out of the account
   expect(selectPlacement(db, input)?.box).toBe('local');
 });
 
+it('stops assigning a container sign-in at its reported expiry and falls back without a new report',()=>{
+  const {db,input}=fixture();
+  const selection={...input,wants:'preferred',eligibleBoxes:new Set(['local'])};
+  const start=Date.parse(input.now), at=(offset:number)=>new Date(start+offset).toISOString();
+  const login={account:'shared',box:'local',harness:'runner',state:'signed-in',since:at(0),checkedAt:at(0),learnedFrom:'check'} as const;
+  db.insert(modelAccountLogins).values([{...login,place:'host',expiresAt:at(0)},{...login,place:'containers',expiresAt:at(1)}]).run();
+  expect(selectPlacement(db,selection)?.account).toBe('shared');
+  const expired={...selection,now:at(1)};
+  expect(decidePlacement(db,expired)).toMatchObject({quotaLimited:false,decision:[{box:'local',outcome:'passed',reason:expect.stringMatching(/sign-in.*expired/i)},{box:'remote'}]});
+  expect(selectPlacement(db,expired)).toBeUndefined();
+  db.insert(modelAccounts).values({id:'spare',owner:'owner',label:'Spare',provider:'provider',hasRoom:true}).run();
+  db.insert(modelAccountBoxes).values({account:'spare',box:'local'}).run();
+  db.insert(modelAccountWindows).values({account:'spare',window:'week',usage:.2,usageReadAt:at(0),resetsAt:at(3600000),durationMs:7*86400000}).run();
+  db.insert(modelAccountLogins).values({...login,account:'spare',place:'containers',expiresAt:null}).run();
+  expect(selectPlacement(db,expired)).toEqual({box:'local',model:'preferred',harness:'runner',account:'spare'});
+  db.update(modelAccountLogins).set({expiresAt:at(10)}).where(eq(modelAccountLogins.account,'shared')).run();
+  db.delete(modelAccountBoxes).where(eq(modelAccountBoxes.account,'spare')).run();
+  expect(selectPlacement(db,{...selection,now:at(2)})?.account).toBe('shared');
+});
+
 it('explains quota only for an eligible container sign-in and a usable window reading',()=>{
   const {db,input}=fixture();
   const quotaLimited=()=>decidePlacement(db,input).quotaLimited;
