@@ -2,7 +2,7 @@
   "page": "conversations",
   "title": "Conversations",
   "ownerTask": "t-2237",
-  "sourceSha256": "882d27f67c5e0f73996ed374b6e358216bdcf69dcfebea40c6886482b68efd30",
+  "sourceSha256": "4d1da7c0e69dae72d592c81fa66590a978d554e299491d318a023487495ba02e",
   "promises": [
     {
       "id": "conversations-001",
@@ -239,7 +239,7 @@
     },
     {
       "id": "conversations-024",
-      "promise": "b Who sees it. A household owner sees everything, including another member's private thread. Anyone else sees conversations in their projects and conversations of agents they own.",
+      "promise": "b Who sees it. Project conversations are shared with the project. For a direct message from a nonmember or a group, only the receiving agent’s owners can read it.",
       "source": "docs/how-it-works/site/conversations.html#see-h",
       "probe": {
         "kind": "action",
@@ -248,11 +248,20 @@
     },
     {
       "id": "conversations-025",
-      "promise": "c Private. A thread in loom is private to its member. Private to a member means that member plus household owners.",
+      "promise": "c Private. Only the participating member can read their private thread with an agent. An approval card from that thread still reaches every household owner with the words on the card.",
       "source": "docs/how-it-works/site/conversations.html#see-h",
       "probe": {
-        "kind": "action",
-        "action": "commsPrivacy"
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "commsPrivacy"
+          },
+          {
+            "kind": "action",
+            "action": "workVisibility"
+          }
+        ]
       }
     },
     {

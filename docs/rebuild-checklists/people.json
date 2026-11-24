@@ -2,7 +2,7 @@
   "page": "people",
   "title": "People and projects",
   "ownerTask": "t-2236",
-  "sourceSha256": "88d873df41934eb09e7cebdb8e08f961ace8d25001b3baa7cc65841b6c085efd",
+  "sourceSha256": "e944fd0160759dd47d6c979805933a99900289b5f06659baa411e8cfc4578161",
   "promises": [
     {
       "id": "people-001",
@@ -65,7 +65,7 @@
     },
     {
       "id": "people-012",
-      "promise": "A member is a person who can sign in. A household owner sees everything, including another member's private thread. Everyone else reaches things through their projects and the agents they own.",
+      "promise": "A member is a person who can sign in. A household owner can read household records. Private conversations with an agent belong to the participating member. Everyone else reaches things through their projects and the agents they own.",
       "source": "docs/how-it-works/site/people.html#how-h"
     },
     {
@@ -85,12 +85,12 @@
     },
     {
       "id": "people-016",
-      "promise": "a The rule. A household owner sees everything, including what is private to another member. Anyone else sees what is in their projects, plus what belongs to agents they own.",
+      "promise": "a The rule. Household owners can read these records. Anyone else sees what is in their projects, plus what belongs to agents they own.",
       "source": "docs/how-it-works/site/people.html#see-h"
     },
     {
       "id": "people-017",
-      "promise": "b Private. Private to a member means that member plus household owners.",
+      "promise": "b Private. Only the participating member can read their private conversation with an agent.",
       "source": "docs/how-it-works/site/people.html#see-h"
     },
     {

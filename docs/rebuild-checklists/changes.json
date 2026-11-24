@@ -2,7 +2,7 @@
   "page": "changes",
   "title": "Changes",
   "ownerTask": "t-2239",
-  "sourceSha256": "f39bbd95d66c680a013f8ca9354be8df353c9dc3c67942d77422492c21290747",
+  "sourceSha256": "91504b0828d9d384afcc7f8f0046e09c634e1b921b306afbe14b5e2c859f74ed",
   "promises": [
     {
       "id": "changes-001",
@@ -132,7 +132,7 @@
     },
     {
       "id": "changes-015",
-      "promise": "b Who sees it. A household owner sees everything, including what is private to another member. Anyone else sees changes in their projects and changes opened by agents they own.",
+      "promise": "b Who sees it. Household owners can read these records. Anyone else sees changes in their projects and changes opened by agents they own.",
       "source": "docs/how-it-works/site/changes.html#see-h",
       "probe": {
         "kind": "action",

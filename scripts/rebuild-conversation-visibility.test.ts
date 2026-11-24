@@ -15,12 +15,23 @@ it('uses the approved private-member override before project or owned-agent acce
  expect(visibleTo(robin,{member:null,project:null,agent:'moss',direct:true})).toBe(true);
 });
 it('binds the actual conversation and Inbox promises to visibility and mailbox evidence',()=>{
- for(const [page,mapping] of [['conversations',{'conversations-022':'conversationLabels','conversations-023':'conversationLabels','conversations-024':'conversationVisibility','conversations-025':'commsPrivacy'}],['inbox',{'inbox-006':'inboxRecipients','inbox-018':'inboxRecipients','inbox-019':'inboxVisibility'}]]){
+ for(const [page,mapping] of [['conversations',{'conversations-022':'conversationLabels','conversations-023':'conversationLabels','conversations-024':'conversationVisibility'}],['inbox',{'inbox-006':'inboxRecipients','inbox-018':'inboxRecipients'}]]){
   const checklist=JSON.parse(readFileSync(new URL('../docs/rebuild-checklists/'+page+'.json',import.meta.url),'utf8'));
   for(const [id,action] of Object.entries(mapping)){
    const promise=checklist.promises.find(row=>row.id===id);expect(promise.probe).toEqual({kind:'action',action});
    for(const [result,status] of [[{ok:true},'met'],[{ok:false,error:'Hidden row was received'},'not met'],[{inconclusive:true},'not checkable yet']])expect(evaluate(promise,{actions:{[action]:result}}).status).toBe(status);
   }
+ }
+});
+
+it.each([['conversations','conversations-025','commsPrivacy'],['inbox','inbox-019','inboxVisibility']])('requires both private mail and approval evidence for %s', (page,id,privacy)=>{
+ const checklist=JSON.parse(readFileSync(new URL('../docs/rebuild-checklists/'+page+'.json',import.meta.url),'utf8'));
+ const row=checklist.promises.find(promise=>promise.id===id);
+ expect(row.probe).toEqual({kind:'all',probes:[privacy,'workVisibility'].map(action=>({kind:'action',action}))});
+ for(const action of [privacy,'workVisibility']){
+  const other=action===privacy?'workVisibility':privacy;
+  for(const [result,status] of [[{ok:true},'met'],[{ok:false,error:'Unexpected access'},'not met'],[{inconclusive:true},'not checkable yet']])
+   expect(evaluate(row,{actions:{[other]:{ok:true},[action]:result}}).status).toBe(status);
  }
 });
 

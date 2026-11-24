@@ -2,7 +2,7 @@
   "page": "bridges",
   "title": "Discord and Slack",
   "ownerTask": "t-2242",
-  "sourceSha256": "261778a8bd6dd171438dfb2d6d95a9d7db42e8d075424e4b16edcc21519cca59",
+  "sourceSha256": "b5489d68bb4bcec4a408ab3bf6b12b94bd23c3f4d04823eac39d0cc9f95f5d61",
   "promises": [
     {
       "id": "bridges-001",
@@ -190,7 +190,7 @@
     },
     {
       "id": "bridges-017",
-      "promise": "c Messages. An incoming message follows the labels of the conversation it goes into. A household owner sees everything, including what is private to another member.",
+      "promise": "c Messages. An incoming message follows its conversation. A linked member’s private direct message belongs to that member. Only the receiving agent’s owners can read direct messages from nonmembers and groups.",
       "source": "docs/how-it-works/site/bridges.html#see-h"
     },
     {

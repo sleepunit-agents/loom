@@ -2,7 +2,7 @@
   "page": "approvals",
   "title": "Approvals",
   "ownerTask": "t-2239",
-  "sourceSha256": "ebdaf89ab3196eb24ed7800ab73f41194402fc144638538ec87440f6279d248d",
+  "sourceSha256": "619bac8fa5824afb674acbfb436980ca0d3c888f9634b9ab2e0419a15db7efe5",
   "promises": [
     {
       "id": "approvals-001",
@@ -177,7 +177,7 @@
     },
     {
       "id": "approvals-018",
-      "promise": "b Who sees it. A household owner sees everything, including what is private to another member. Anyone else sees approvals in their projects and approvals of agents they own. Private to a member means that member plus household owners.",
+      "promise": "b Who sees it. Household owners can read these records. Anyone else sees approvals in their projects and approvals of agents they own. An approval card from a private conversation still reaches every household owner with the words on the card.",
       "source": "docs/how-it-works/site/approvals.html#see-h",
       "probe": {
         "kind": "action",

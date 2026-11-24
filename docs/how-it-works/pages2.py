@@ -109,8 +109,8 @@ def hero_wide(title, kind, lead, does, blocks, cap):
   </figure>
 </section>"""
 
-OWNER = "A household owner sees everything, including what is private to another member."
-PRIVATE = "Private to a member means that member plus household owners."
+OWNER = "Household owners can read these records."
+PRIVATE = "Only the participating member can read their private conversation with an agent."
 DOOR = "Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking."
 
 def see(labels, items):
@@ -210,7 +210,7 @@ def approvals():
         "Requests, rules, chat, dangerous actions and the record", panels,
         [("agent", "cyan"), ("project", "violet"), ("member, when private", "pink")],
         [("Three labels.", "An approval carries the agent asking, the project it concerns, and a member when it is private to them."),
-         ("Who sees it.", f"{OWNER} Anyone else sees approvals in their projects and approvals of agents they own. {PRIVATE}"),
+         ("Who sees it.", f"{OWNER} Anyone else sees approvals in their projects and approvals of agents they own. An approval card from a private conversation still reaches every household owner with the words on the card."),
          ("Checked at the door.", DOOR)],
         [("", ["approvals", "approval_rules", "approval_notices", "approval_record"])], ctl=True,
         chat=(chat("Pond pump", c_art('The order script is ready in <span class="chip">github:owner/repo#12</span>.')
@@ -480,7 +480,7 @@ def inbox():
         "Recipients, questions, settling and read marks", panels,
         [("recipient", "cyan"), ("project", "violet"), ("agent", "cyan"), ("member, when private", "pink")],
         [("The recipient.", "An item is for one person or one agent. A person's Inbox shows the waiting items addressed to them."),
-         ("Who else sees it.", f"An item also carries the usual labels: a project's people, an agent's owners, or one member alone. {OWNER} {PRIVATE}"),
+         ("Who else sees it.", f"Conversation mail follows its thread. {PRIVATE} An approval card from that thread still reaches every household owner."),
          ("Checked at the door.", DOOR)],
         [("", ["inbox", "inbox_refs", "inbox_reads", "action_results"])],
         note="The same inbox table is drawn from the agent's side on the " + plink("Conversations") + " page. Volume (full, dim, mute) is explained on the " + plink("Tempo") + " page.",
@@ -529,7 +529,7 @@ def machines():
         "Jobs, retries, boxes and run settings", panels,
         [("agent", "cyan"), ("project", "violet"), ("member, when private", "pink")],
         [("Jobs.", "A job carries its agent, the project it is for, and a member when the work is private."),
-         ("Who sees it.", f"{OWNER} Anyone else sees jobs in their projects and jobs of agents they own. {PRIVATE}"),
+         ("Who sees it.", "Members see jobs in their projects and jobs of agents they own. For another member’s private job on their machine, a household owner sees the agent, machine, state, times and digest summary. The conversation, title, brief and log stay private."),
          ("Boxes.", "A box belongs to the member who owns it, and lists the agents allowed to run there."),
          ("Checked at the door.", DOOR)],
         [("Machines", ["boxes", "box_agents", "box_facts", "box_readings", "box_alert_settings"]), ("Jobs", ["jobs", "job_needs", "job_usage"]),
@@ -573,7 +573,7 @@ def bridges():
         "Messages in, replies out, channel rules and connections", panels, [],
         [("Household things.", "Connections, channel rules and person links belong to the household. Household owners manage them and see them all."),
          ("An agent's owners.", "An agent's owners see their agent's connections."),
-         ("Messages.", f"An incoming message follows the labels of the conversation it goes into. {OWNER}"),
+         ("Messages.", "An incoming message follows its conversation. A linked member’s private direct message belongs to that member. Only the receiving agent’s owners can read direct messages from nonmembers and groups."),
          ("Checked at the door.", DOOR)],
         [("Connections and rules", ["bridge_connections", "bridge_channel_filters", "bridge_channels", "bridge_people"]),
          ("Messages", ["bridge_incoming", "bridge_sends", "bridge_files"])], ctl=True)
@@ -632,14 +632,14 @@ def people():
     anat = anatomy("the labels on a record", "Who sees it", [
         ("project", "the project's people see it", "r", "Changes", "A pull request gets its project from its repository."),
         ("agent", "the agent's owners see it", "l", "Conversations", "Every conversation belongs to one agent."),
-        ("member", "private: that member plus household owners", "r", "Inbox", "An item can be for one member alone."),
+        ("member", "a private conversation belongs to its member", "r", "Inbox", "An item can be for one member alone."),
         ("owner", "a member, an agent or the household", "l", "Tasks", "Every task has an owner. Without a project, its owner decides who sees it."),
-        ("role = owner", "a household owner sees everything", "r", "Signing in", "A token says which member or agent is calling."),
+        ("role = owner", "household authority", "r", "Signing in", "A token says which member or agent is calling."),
         ("boxes.owner", "a member owns each machine", "l", "Machines and jobs", "A box's owner says which agents may run there."),
     ])
     panels = [
         ("Members and owners", "amber", opts(("owner", "household authority"), ("full owner", "owns every agent, present and future"), ("member", "access through projects and owned agents")),
-         "A member is a person who can sign in. A household owner sees everything, including another member's private thread. Everyone else reaches things through their projects and the agents they own."),
+         "A member is a person who can sign in. A household owner can read household records. Private conversations with an agent belong to the participating member. Everyone else reaches things through their projects and the agents they own."),
         ("Agents", "violet", f'<div style="display:flex;gap:14px"><div class="agent" style="flex:1">{FACE_A}<div><b>Art</b><span>owned by jonathan</span></div></div><div class="agent" style="flex:1">{FACE_B}<div><b>Mark</b><span>owned by jonathan, sam</span></div></div></div>',
          "An agent is one of the household's assistants. A member owns any number of agents, and an agent can have more than one owner. Each agent has a short description of itself, badge colours and a drawn face."),
         ("Projects", "cyan", card("violet", "Project", "Pond", "members jonathan, sam · agent art · repository github:owner/repo"),
@@ -1319,7 +1319,7 @@ def decided():
         ]),
         ("People and trust", "amber", [
             d("A small team that trusts each other. The project is the unit of sharing. No fine-grained permissions.", "People and projects"),
-            d("Household owners see everything, including another member's private thread.", "People and projects", "Conversations"),
+            d("Only the participating member can read their private thread with an agent. An approval card from it still reaches every household owner.", "People and projects", "Conversations"),
             d("Whatever is installed is trusted. Permission is checked only for callers from outside.", "Signing in", "Outside programs"),
             d("An outside program has one door: the API with a token.", "Outside programs"),
             d("An agent reaches loom through MCP: named tools for what it does every session, three general tools for everything else. It cannot make credentials, and it proposes a settings change instead of making it.", "Tools for agents"),
