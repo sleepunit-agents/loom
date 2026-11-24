@@ -1089,7 +1089,10 @@ presence implementation here. See `src/pieces/bridges/presence.ts`.
   `projects/<directory>/<session>.jsonl` and the tool results beside it), gzipped, and hands them to loom;
   loom keeps one for a conversation and harness (`conversation_sessions`), sealed with the household's
   words key. The next body of the same harness is handed it, puts the files back and tells the harness to
-  continue (`claude --resume`). It receives new mail and retained history missing from the checkpoint. Only Claude Code keeps sessions so far; another harness starts fresh.
+  continue. Claude Code uses `claude --resume`. Codex keeps the thread's dated rollout JSONL under
+  `.codex/sessions` and uses `codex exec resume <uuid>` in the replacement body's working directory.
+  Each body supplies its current tools. Prior tool results remain part of the conversation history.
+  Both harnesses receive new mail and retained history missing from the checkpoint.
 - Not for a job on anybody else's word. A session holds what the bodies before read and used, tool
   results included, and a guest's job that continued it would be handed all of that with nothing to
   check its answer against. Both doors refuse such a job on loom's own reading of its word (`jobHeld`),
@@ -1102,8 +1105,7 @@ presence implementation here. See `src/pieces/bridges/presence.ts`.
   conversation, whichever owner asked; each body, continued or fresh, is told who asked this time.
 - Where a session is kept at all: only where the place the harness keeps its sessions is that body's
   alone for that one job. A restored session is the conversation's words in plain files. In a house that
-  place is the container's own home (`/home/agent/.claude` for Claude Code; `houseSessions` in
-  `src/runtime/house-layout.ts` states the places once), thrown away with the body, and the account's
+  place is the container's own home (`/home/agent/.claude` for Claude Code and `/home/agent/.codex` for Codex), thrown away with the body, and the account's
   sign-in is mounted elsewhere (`/run/loom/login/<harness>`), so the two do not meet. The worker always
   tells the body, `LOOM_BODY_OWN_HARNESS=1` or `=0`, so an image's own value never stands: 1 unless a
   mount is, holds, or is inside the place. An agent's own mount at `.claude` or under it turns resume off

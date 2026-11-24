@@ -37,7 +37,7 @@ it('lets the Claude adapter alone say which paths are a session\'s: its transcri
     `/projects/-house/${session}.jsonl`, `projects//${session}.jsonl`, `.credentials.json`, `projects/-house/${session}.jsonl/x`]) expect(claude.owns(rel, session), rel).toBe(false);
   expect(claude.owns(`projects/-house/x.jsonl`, '../x')).toBe(false);
   // A harness that keeps no sessions has no layout at all.
-  expect(harnessSessions('codex')).toBeUndefined(); expect(harnessSessions('constructor')).toBeUndefined();
+  expect(harnessSessions('agy')).toBeUndefined(); expect(harnessSessions('constructor')).toBeUndefined();
 });
 
 it('finds a Claude session\'s files, packs them and puts them back in another place exactly', () => {
@@ -216,7 +216,7 @@ it('keeps no session unless the worker said the place is the body\'s own, the ha
   expect(bodySessions(nothing as never, 'claude', at.env, at.root, join(at.base, 'another-home'))).toBeUndefined();
   expect(keep(nothing, at, at.env, 'codex')).toBeUndefined();
   // With nothing said about the place, it is the layout's: a house's own home.
-  expect(houseSessions('claude')).toBe('/home/agent/.claude'); expect(houseSessions('codex')).toBeUndefined(); expect(houseSessions('constructor')).toBeUndefined();
+  expect(houseSessions('claude')).toBe('/home/agent/.claude'); expect(houseSessions('codex')).toBe('/home/agent/.codex'); expect(houseSessions('constructor')).toBeUndefined();
   expect(bodySessions(nothing as never, 'claude', at.env)).toBeUndefined();
 });
 
@@ -241,4 +241,20 @@ it('lets a replacement worker recover a committed session after the save acknowl
   expect(await next.take()).toBeUndefined();
   expect(await next.take()).toBe(session);
   expect(readFileSync(join(replacementRoot, 'projects','-house',session+'.jsonl'),'utf8')).toContain('assistant');
+});
+
+it('packs only the Codex rollout for the requested thread and restores it in an empty home', () => {
+  const layout = harnessSessions('codex')!, root = fresh(), target = fresh();
+  const day = 'sessions/2026/11/21';
+  const relative = day + '/rollout-2026-11-21T09-10-11-' + session + '.jsonl';
+  mkdirSync(join(root,day),{recursive:true});
+  writeFileSync(join(root,relative),'fixture conversation');
+  writeFileSync(join(root,'auth.json'),'fixture login');
+  writeFileSync(join(root,relative.replace(session,'019a9bdd-4e2e-7ade-91ec-4dafbbc44202')),'unrelated');
+  symlinkSync(join(root,'auth.json'),join(root,relative.replace('09-10-11','09-10-12')));
+  expect(layout.files(root,session)).toEqual([relative]);
+  const packed = packSession(layout,root,session)!;
+  expect(unpackSession(layout,target,packed,session)).toEqual([relative]);
+  expect(readFileSync(join(target,relative),'utf8')).toBe('fixture conversation');
+  expect(readdirSync(target)).toEqual(['sessions']);
 });
