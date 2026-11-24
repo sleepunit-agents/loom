@@ -79,6 +79,19 @@ export function SharedTasks(props: SharedTasksProps) {
   const links = live ? props.links : [];
   const selected = tasks.find(t => t.id === props.selected);
   const name = (id: string | null) => displayName(id, props.names);
+  const openTaskIds = new Set(tasks.filter(task => task.status !== 'closed').map(task => task.id));
+  const epicChildren = new Map<string, Set<string>>();
+  for (const link of links) {
+    if (link.type !== 'parent-child') continue;
+    const child = link.task;
+    if (!openTaskIds.has(child)) continue;
+    let children = epicChildren.get(link.dependsOn);
+    if (!children) {
+      children = new Set();
+      epicChildren.set(link.dependsOn, children);
+    }
+    children.add(child);
+  }
   const inFolder = (task: Task, id: string) => {
     if (id === 'closed') return task.status === 'closed';
     if (task.status === 'closed') return false;
@@ -89,13 +102,13 @@ export function SharedTasks(props: SharedTasksProps) {
     if (id === 'progress') return task.status === 'in_progress';
     if (id === 'questions') return task.assigneeKind === 'member' && task.assignee === props.questionFor && !!task.ask;
     if (id.startsWith('project:')) return task.project === id.slice(8);
-    if (id.startsWith('epic:')) return links.some(l => l.task === task.id && l.dependsOn === id.slice(5) && l.type === 'parent-child');
+    if (id.startsWith('epic:')) return epicChildren.get(id.slice(5))?.has(task.id) ?? false;
     return true;
   };
   const count = (id: string) => tasks.filter(t => inFolder(t,id)).length;
   // A project whose work is all closed has nothing to list, so it is not offered; a heading shows only over something.
   const projects = [...new Set(tasks.flatMap(t => t.project ? [t.project] : []))].sort().map(project => ({id:`project:${project}`,label:project,count:count(`project:${project}`)})).filter(f => f.count > 0);
-  const epics = tasks.filter(t => t.type === 'epic' && t.status !== 'closed').map(t => ({id:`epic:${t.id}`,label:t.title,count:count(`epic:${t.id}`)}));
+  const epics = tasks.filter(t => t.type === 'epic' && t.status !== 'closed').map(t => ({id:`epic:${t.id}`,label:t.title,count:epicChildren.get(t.id)?.size ?? 0}));
   const folders: SplitFolder[] = [
     ...[['ready','Ready'],['progress','In progress'],['questions',props.questionFor ? `Needs ${name(props.questionFor)}` : 'Needs you'],['open','All open'],['closed','Recently closed'],['shelved','Shelved']].map(([id,label]) => ({id,label,count:count(id)})),
     ...(projects.length ? [{heading:'Projects'}, ...projects] : []),
