@@ -19,6 +19,11 @@ export async function deskDataDoor({browser,home,device,inventory}) {
   await context.routeWebSocket(url=>url.origin!==app.url.replace(/^http/,'ws'),route=>route.close());
   const page=await context.newPage();
   page.setDefaultTimeout(8000);
+  if(phone){
+   // The startup notice overlaps tile controls on a phone. Use its normal close button.
+   const dismiss=page.getByRole('button',{name:'Dismiss Inbox notification',exact:true});
+   await page.addLocatorHandler(dismiss,button=>button.tap());
+  }
   await installDataProbe(page);
   const sockets=[],unexpected=[],acks=[],folders=[],readers=[],tiles=[];
   const expectedSocket=app.url.replace(/^http/,'ws')+'/graphql';

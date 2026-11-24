@@ -27,6 +27,7 @@ import {sharedSigninLinks} from './core/signin/shared-links.js';
 import {LINK_MS} from './core/signin/link-lifetime.js';
 import {privateBytes} from './pieces/secrets/local-holder.js';
 import {readKey,wordsKey,type WordsKey} from './pieces/comms/crypto.js';
+import {wakeToolProfiles} from './runtime/wake-tool-profiles.js';
 import {workRoleCatalog} from './runtime/work-roles.js';
 import {serveShared} from './shared-serve.js';
 import {StartupRefusal} from './core/startup-refusal.js';
@@ -41,6 +42,7 @@ const githubBindings=z.record(z.string(),z.string()).refine(value=>{try{githubBi
  * and neither decides anything: local sign-in is for a current household owner, and an agent's files are
  * in `<home>/agents/<its id>` for every agent in the `agents` table. */
 const programSchema=z.object({
+ wakeToolProfiles: wakeToolProfiles.optional(),
  workRoles: workRoleCatalog.optional(),
  githubBindings:githubBindings.optional(),
  secretHolder:z.literal(true).optional(),database:path,commsKey:path,signinMember:z.string().optional(),webRoot:path.optional(),repository:path.optional(),adapters:path.optional(),
@@ -140,7 +142,7 @@ export async function startSharedHome(options:{home:string;program?:string;host?
    originAllowed:request=>sameIncomingOrigin(request,publicOrigin),publicOrigin,
    changes,
    tempo:{...adapters.tempo,...(program.repository?{repository:program.repository}:{})},
-   secretWrites:adapters.secretWrites??(holder?{holder:holder.holder,fingerprintKey:holder.fingerprintKey}:undefined),secretInputs:adapters.secretInputs??(holder?{source:holder.source}:undefined),bridges,modelRoles:adapters.modelRoles,workRoles:program.workRoles,runtimeJobEnded:adapters.runtimeJobEnded,approvedOperations:adapters.approvedOperations,memoryEmbedding:adapters.memoryEmbedding,
+   secretWrites:adapters.secretWrites??(holder?{holder:holder.holder,fingerprintKey:holder.fingerprintKey}:undefined),secretInputs:adapters.secretInputs??(holder?{source:holder.source}:undefined),bridges,modelRoles:adapters.modelRoles,workRoles:program.workRoles,wakeToolProfiles:program.wakeToolProfiles,runtimeJobEnded:adapters.runtimeJobEnded,approvedOperations:adapters.approvedOperations,memoryEmbedding:adapters.memoryEmbedding,
    reportError:options.reportError??(()=>{}),startupNote:line=>(options.stdout??(text=>{process.stdout.write(text);}))(line+'\n'),host:options.host,port:options.port,webRoot,
   });
   const signin=sharedSigninLinks(db,clock),issuer=sharedTokens(db,clock);

@@ -1,7 +1,7 @@
 import { TASK_ID } from '../../slug.js';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq, gt, inArray, isNull, notExists, notInArray, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, gt, lt, inArray, isNull, notExists, notInArray, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { DataDatabase } from '../data/database.js';
 import { agentPostNames, agentPosts, agentPostThreads, conversations, threads } from '../data/schema.js';
@@ -80,7 +80,7 @@ export async function prepareAgentPost(db: DataDatabase, key: WordsKey, source: 
 
 /** Feed queries supply a source predicate computed for the authenticated viewer.
  * Choose the limited page before decrypting words. Sequence orders equal clock times. */
-export async function agentPostPreviews(db: DataDatabase, key: WordsKey, visibleSource: SQL, limit: number) {
+export async function agentPostPreviews(db: DataDatabase, key: WordsKey, visibleSource: SQL, limit: number, before = 0) {
   const latest = sql<number>`(select max(p.seq) from agent_posts p where p.thread = ${agentPostThreads.id})`;
   const parent = alias(agentPosts, 'parent_post');
   const previous = sql<number>`(select max(p.seq) from agent_posts p
@@ -93,7 +93,7 @@ export async function agentPostPreviews(db: DataDatabase, key: WordsKey, visible
     .leftJoin(agentPostNames, eq(agentPostNames.thread,agentPostThreads.id))
     .innerJoin(agentPosts, eq(agentPosts.seq, latest))
     .leftJoin(parent, eq(parent.seq, previous))
-    .where(visibleSource).orderBy(desc(agentPosts.seq)).limit(limit).all();
+    .where(and(visibleSource, before ? lt(agentPosts.seq, before) : undefined)).orderBy(desc(agentPosts.seq)).limit(limit).all();
   return Promise.all(rows.map(async row => ({
     thread: row.thread, sources: [row.source,row.latest.source,...(row.parent?[row.parent.source]:[]),...(row.rename?[row.rename.source]:[])],
     title: await key.open(row.rename?.title ?? row.title),
@@ -104,11 +104,12 @@ export async function agentPostPreviews(db: DataDatabase, key: WordsKey, visible
 
 /** Page forward in insertion order so a new reply never shifts a reader's place. */
 export async function agentPostHistory(db: DataDatabase, key: WordsKey, visibleSource: SQL,
-  thread: string, after: number, limit: number) {
+  thread: string, after: number, limit: number, newestFirst = false) {
+  const cursor = after === 0 ? undefined : newestFirst ? lt(agentPosts.seq, after) : gt(agentPosts.seq, after);
   const rows = db.select({ source: agentPosts.source, seq: agentPosts.seq, words: agentPosts.words, at: agentPosts.at, workRefs: agentPosts.workRefs })
     .from(agentPostThreads).innerJoin(agentPosts, eq(agentPosts.thread, agentPostThreads.id))
-    .where(and(visibleSource, eq(agentPostThreads.id, thread), gt(agentPosts.seq, after)))
-    .orderBy(agentPosts.seq).limit(limit).all();
+    .where(and(visibleSource, eq(agentPostThreads.id, thread), cursor))
+    .orderBy(newestFirst ? desc(agentPosts.seq) : agentPosts.seq).limit(limit).all();
   return Promise.all(rows.map(async row => ({ source: row.source, id: String(row.seq), at: row.at, refs: await openRefs(key,row.workRefs), words: await key.open(row.words) })));
 }
 

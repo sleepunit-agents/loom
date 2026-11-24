@@ -18,15 +18,14 @@ export const HH_MM = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 export function localDate(at: number, zone: string): string {
   return new Date(calendar(zone).nominal(at)).toISOString().slice(0, 10);
 }
-/** Times are comma separated HH:MM. Dates are explicit ISO instants with offset.
- * Skip missing DST times; run a repeated wall time only at its first instant. */
-export function nextTime(times: string, days: string | null, after: number, zone: string): number {
-  if (/^\d{4}-/.test(times)) {
-    if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d{1,3})?)?(?:Z|[+-]\d\d:\d\d)$/.test(times)) throw new Error('A date must include a timezone offset');
-    const at = Date.parse(times);
-    if (!Number.isFinite(at)) throw new Error('Invalid trigger date');
-    return at > after ? at : Infinity;
-  }
+function datedInstant(times: string) {
+  if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d{1,3})?)?(?:Z|[+-]\d\d:\d\d)$/.test(times)) throw new Error('A date must include a timezone offset');
+  const at = Date.parse(times);
+  if (!Number.isFinite(at)) throw new Error('Invalid trigger date');
+  return at;
+}
+
+function recurring(times: string, days: string | null, zone: string) {
   const minutes = times.split(',').map(s => s.trim());
   if (!minutes.length || minutes.some(s => !HH_MM.test(s))) throw new Error('Times must be HH:MM');
   const allowed = new Set<number>();
@@ -38,15 +37,43 @@ export function nextTime(times: string, days: string | null, after: number, zone
     const end = names.indexOf(m[2] ?? m[1]);
     for (let d = names.indexOf(m[1]);; d = (d + 1) % 7) { allowed.add(d); if (d === end) break; }
   }
-  const c = calendar(zone), today = Math.floor(c.nominal(after) / day) * day;
-  for (let d = 0; d < 15; d++) {
-    const date = today + d * day;
-    if (!allowed.has(new Date(date).getUTCDay())) continue;
-    for (const t of [...new Set(minutes)].sort()) {
-      const [h, m] = t.split(':').map(Number);
-      const first = c.instants(date + h * 3_600_000 + m * 60_000)[0];
-      if (first !== undefined && first > after) return first;
+  const clock = calendar(zone);
+  const offsets = [...new Set(minutes)].sort().map(time => {
+    const [h, m] = time.split(':').map(Number);
+    return h * 3_600_000 + m * 60_000;
+  });
+  function* onDate(date: number) {
+    if (!allowed.has(new Date(date).getUTCDay())) return;
+    for (const offset of offsets) {
+      const first = clock.instants(date + offset)[0];
+      if (first !== undefined) yield first;
     }
+  }
+  return { clock, onDate };
+}
+
+/** Instants on one household calendar date, under the same DST and weekday rules as the scheduler. */
+export function timesOnDate(times: string, days: string | null, date: string, zone: string): number[] {
+  const midnight = Date.parse(date + 'T00:00:00Z');
+  if (!Number.isFinite(midnight) || new Date(midnight).toISOString().slice(0, 10) !== date) throw Error('Invalid calendar date');
+  if (/^\d{4}-/.test(times)) {
+    const at = datedInstant(times);
+    return localDate(at, zone) === date ? [at] : [];
+  }
+  return [...recurring(times, days, zone).onDate(midnight)];
+}
+
+/** Times are comma separated HH:MM. Dates are explicit ISO instants with offset.
+ * Skip missing DST times; run a repeated wall time only at its first instant. */
+export function nextTime(times: string, days: string | null, after: number, zone: string): number {
+  if (/^\d{4}-/.test(times)) {
+    const at = datedInstant(times);
+    return at > after ? at : Infinity;
+  }
+  const { clock, onDate } = recurring(times, days, zone);
+  const today = Math.floor(clock.nominal(after) / day) * day;
+  for (let d = 0; d < 15; d++) {
+    for (const first of onDate(today + d * day)) if (first > after) return first;
   }
   throw new Error('No next time');
 }

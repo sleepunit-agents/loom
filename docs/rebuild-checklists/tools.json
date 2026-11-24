@@ -65,7 +65,11 @@
     {
       "id": "tools-011",
       "promise": "Change a knowledge page, mark it still true or due a check, and restore an earlier version of it.",
-      "source": "docs/how-it-works/site/tools.html"
+      "source": "docs/how-it-works/site/tools.html",
+      "probe": {
+        "kind": "action",
+        "action": "namedKnowledgeHistory"
+      }
     },
     {
       "id": "tools-012",

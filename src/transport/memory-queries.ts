@@ -1,21 +1,20 @@
 /** File-backed Memory joins the generated schema; no copied tables or second door. */
 import type { DataDatabase } from '../core/data/database.js';
-import { householdTimezone } from '../core/data/household-settings.js';
+import { householdSettings, householdTimezone } from '../core/data/household-settings.js';
 import type { Sharing } from '../core/index.js';
 import type { MindSources } from '../pieces/mind/sources.js';
-import type { createActivityReader } from '../pieces/mind/activity.js';
 import { knowledgeQueryFields } from '../pieces/mind/knowledge-query.js';
 import { peopleQueryFields } from '../pieces/mind/people-query.js';
 import {QueryDeadlines} from '../pieces/mind/query-deadlines.js';
 import { projectsQueryFields, type ProjectQueryReader } from '../pieces/mind/projects-query.js';
-import { activityQueryFields } from '../pieces/mind/activity-query.js';
+import { activityQueryFields,type ActivityQueryReader } from '../pieces/mind/activity-query.js';
 import { sharedPeopleConversations } from '../pieces/mind/people-conversations.js';
 import {memoryIdentityFields,type TapeDigestReader} from '../pieces/mind/identity-query.js';
 import {readActivityWindow} from '../core/data/activity-read.js';
 
 export function memoryQueryFields(db: DataDatabase, options: {
   sources?: MindSources; sharing(): Sharing; now(): number;
-  projects: ProjectQueryReader; activity: Pick<ReturnType<typeof createActivityReader>, 'window' | 'read'> & Partial<Pick<ReturnType<typeof createActivityReader>,'access'|'episodePage'>> & {nextDeadline?():number|undefined};
+  projects: ProjectQueryReader; activity: ActivityQueryReader & {nextDeadline?():number|undefined};
   conversationHref(id: string): string; projectHref(agent: string, slug: string): string;
 }) {
   const deadlines=new QueryDeadlines(options.now);
@@ -25,7 +24,7 @@ export function memoryQueryFields(db: DataDatabase, options: {
     // The list of agents is read through each time: it follows the household (pieces/mind/sources.ts).
     const sources = options.sources;
     const people = peopleQueryFields({directory: sources?.commons.people, get agents() { return sources?.agents ?? []; },
-      sharing: options.sharing, now: options.now, projectHref: options.projectHref,
+      defaultAgent:()=>householdSettings(db).defaultAgent??undefined, sharing: options.sharing, now: options.now, projectHref: options.projectHref,
       conversations: hasConversations ? sharedPeopleConversations(db, options.sharing, options.conversationHref) : undefined});
     try{
       // The newest 200 digests in the window: far more than the tape's budget keeps, which drops the oldest first.

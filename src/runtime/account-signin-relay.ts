@@ -16,7 +16,7 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -65,7 +65,13 @@ export async function relaySignIn(program: SignInProgram, request: SignInRequest
         let answer = await ask();
         if (answer?.answered && !answer.code && !answer.stop) { await remote.take(request.id, take).catch(() => {}); answer = await ask(); }
         if (answer?.stop) { why = 'ended'; break; }
-        if (answer?.code && !device) { writeFileSync(at('code'), answer.code, { mode: 0o600 }); typed = true; }
+        if (answer?.code && !device) {
+          // The provider can open code as soon as that name exists.
+          const pending = at('code.pending');
+          writeFileSync(pending, answer.code, { mode: 0o600, flag: 'wx' });
+          renameSync(pending, at('code'));
+          typed = true;
+        }
       }
       await delay(every, undefined, { signal: options.signal }).catch(() => {});
     }

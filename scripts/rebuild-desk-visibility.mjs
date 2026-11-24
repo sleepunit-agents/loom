@@ -35,6 +35,8 @@ async function addControls(app){
  const at=new Date().toISOString();
  const change=s.changes.put({id:repository+'#1',repo:repository,number:1,page:'',title:'Archive panel change',body:'Fictitious archived pump drawing',url:'https://github.com/example-house/archive/pull/1',state:'open',draft:false,author:{login:'example-fern'},created:at,updated:at,closed:null,head:{ref:'archive',id:'a'.repeat(40)},base:{ref:'next'},checks:{state:'none',failing:[],running:[],total:0},review:{state:'not_required',by:[]},mergeable:'yes',conflicts:false,people:[]});
  assert.equal(change.project,'archive');
+ write(()=>s.tempo.triggers.set({ownerKind:'member',owner:'robin',sourceKind:'answer',watches:'approval:fixture-rain-gauge',lifespan:'once',
+  targetKind:'inbox',toKind:'person',to:'robin',instructions:'Check the rain gauge.',note:'Robin rain gauge reminder'}));
  const thread=write(()=>s.comms.threads.open({member:'robin',agent:'moss',title:'Robin panel conversation'}));
  await s.comms.ask(thread.id,'moss','panel-question',{words:'Robin panel question?',answers:'yes-no',ifYes:'Proceed fictitiously.',ifNo:'Wait fictitiously.'});
  write(()=>s.tasks.create({title:'Alex panel task',goal:'A fictitious personal task.',why:'Check visibility.',owner:{kind:'member',id:'alex'}},{kind:'member',id:'alex'}));
@@ -48,7 +50,7 @@ const panels={
  Sharing:['Example garden','Household owners manage sharing',[],['Example garden']],
  Changes:['Archive panel change','Plan the pump repair',[],['Archive panel change']],
  Inbox:['Spend up to 180','Robin panel question?',['Robin panel question?'],['Spend up to 180']],
- Tempo:['Continue the pump inspection','No triggers here',[],['Continue the pump inspection']],
+ Tempo:['Continue the pump inspection','Robin rain gauge reminder',[],['Continue the pump inspection']],
  Home:['Fern','Moss',[],['Repair the garden pump']],
  Projects:['fern sample project','moss sample project',[],['fern sample project']],
  Activity:['Repair the garden pump','Inspect the shared garden path',[],['Repair the garden pump']],
@@ -91,6 +93,9 @@ async function inspectPanels(browser,app,member,out){
    const [owner,peer,ownerAbsent=[],peerAbsent=[]]=panels[title],positive=member==='alex'?owner:peer;
    if(title==='Tasks')await tile.getByRole('button',{name:/^All open/}).click();
    await tile.getByText(positive,{exact:false}).first().waitFor();
+   if(title==='Bridges'&&member==='alex'){
+    await tile.getByText('moss sample workspace',{exact:false}).first().waitFor();
+   }
    if(title==='Appearance'){
     const selected=tile.getByRole('radiogroup',{name:'Desk background'}).getByRole('radio',{checked:true});
     assert.equal(await selected.innerText(),member==='alex'?'Depth':'Contours');
@@ -104,7 +109,7 @@ async function inspectPanels(browser,app,member,out){
   // Check delivered data as well as rendered DOM. Global check uses content
   // markers, never IDs that a legitimately shared row may reference.
   const forbidden=member==='alex'?['Robin panel question?','Robin panel conversation']:
-   ['Alex panel task','Archive panel change','Spend up to 180 example dollars','Inspect the example shed','fern sample workspace','fern sample project','Sample orchid fact','Fictitious connector credential'];
+   ['Continue the pump inspection','Alex panel task','Archive panel change','Spend up to 180 example dollars','Inspect the example shed','fern sample workspace','fern sample project','Sample orchid fact','Fictitious connector credential'];
   const exposed=await page.evaluate(markers=>{
    const state=globalThis.__loomDataProbe;
    return markers.filter(marker=>state.sockets.some(socket=>state.entries.get(socket).frames.some(frame=>JSON.stringify(frame.patches).includes(marker))));

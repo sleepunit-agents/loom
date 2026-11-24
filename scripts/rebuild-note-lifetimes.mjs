@@ -17,7 +17,12 @@ export function noteLifetimeEvidence() {
     assert.deepEqual(await read(name),expected);
    }
   }
-  await command('memory/remember',{title:'Fictional orchard date',category:'reference',content:'The fictional orchard was planted in January.',ttl:'permanent'});
+  const edited='revised', editedPath=path(edited);
+  const marker='Violet grafting instructions';
+  const revisedBody=marker+'\n\nReplace the original handoff in full.';
+  const pointer='Find the orchard handoff at '+editedPath;
+  const fact=await command('memory/remember',{title:'Fictional orchard handoff',category:'reference',content:pointer,ttl:'permanent'});
+  assert.equal(fact.ids.length,1);
   for(const name of names)await command('memory/noteWrite',{path:path(name),body:body(name),lifespan:name==='cited'?'short':name});
   const task=await command('tasks/command',{action:'create',input:{title:'Fictional orchard follow-up',goal:'Review note:'+path('cited'),why:'Fictional retention evidence',owner:{kind:'agent',id:'fern'}}});
   await verify(names);
@@ -29,7 +34,17 @@ export function noteLifetimeEvidence() {
   }));
   const byPath=(a,b)=>a.path.localeCompare(b.path);
   assert.deepEqual(data.memoryNotes.sort(byPath),expectedRows.sort(byPath));
+  await command('memory/noteWrite',{path:editedPath,body:'Old orchard handoff',lifespan:'short'});
   await open(start+13*day);
+  await command('memory/noteWrite',{path:editedPath,body:revisedBody});
+  assert.deepEqual(await read(edited),{path:editedPath,body:revisedBody,lifespan:'short'});
+  const listing=await post('/graphql',{query:'query($path:String!){memoryNotes(agent:"fern",prefix:$path){path expires}}',variables:{path:editedPath}});
+  assert.deepEqual(listing.data.memoryNotes,[{path:editedPath,expires:new Date(start+27*day).toISOString()}]);
+  const recalled=await command('memory/recall',{query:marker,limit:20});
+  assert.deepEqual(recalled.ids,fact.ids);
+  const identity=await post('/graphql',{query:'{memoryIdentity(agent:"fern"){topOfMind}}'});
+  assert.ok(identity.data.memoryIdentity.topOfMind.includes(pointer));
+  assert.ok(!identity.data.memoryIdentity.topOfMind.includes(marker));
   advance(1);
   await verify(names);
   await open(start+14*day);
@@ -40,6 +55,10 @@ export function noteLifetimeEvidence() {
   await open(start+15*day);
   advance(1);
   await verify(['keep','while']);
+  await open(start+27*day);
+  assert.equal((await read(edited)).body,revisedBody);
+  advance(1);
+  assert.equal(await read(edited),null);
   await open(start+59*day);
   advance(1);
   await verify(['keep','while']);
@@ -48,6 +67,6 @@ export function noteLifetimeEvidence() {
   await verify(['keep','while']);
   advance(1);
   await verify(['keep']);
-  return {ok:true,reason:'The configured agent wrote and read whole documents by path. After restart, the nightly sweep expired an uncited short note at 14 days and a while note at 60 days. A keep note survived, as did a short note while its task was open.',configuredAgent:'fern',bodiesAndPathsRetained:true,after14DaySweep:['keep','while','cited'],afterCitingTaskClosed:['keep','while'],after60Days:['keep']};
+  return {ok:true,reason:'A whole-note edit replaced the previous body and renewed the 14-day deadline. Recall and top of mind contained the pointing fact. The note text was available by path. After restart, the nightly sweep expired an uncited short note at 14 days and a while note at 60 days. A keep note survived, as did a short note while its task was open.',editedNoteExpiredAfterRenewal:true,onlyFactRecalled:true,configuredAgent:'fern',bodiesAndPathsRetained:true,after14DaySweep:['keep','while','cited'],afterCitingTaskClosed:['keep','while'],after60Days:['keep']};
  });
 }

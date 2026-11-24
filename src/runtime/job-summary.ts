@@ -214,16 +214,22 @@ export class JobSummaries {
     return { items: items.slice(0, limit), more: Math.max(0, items.length - limit), claimed: inProgress - said.size - working.length };
   }
   /** An agent's jobs, ended ones included, newest first. Same visibility as current(). */
-  history(agent: string, first = 20, id?: string) {
+  private historyFilter(agent: string, id?: string) {
     const allowed = this.allowed();
     const visibleParents = this.db.select({id:jobs.id}).from(jobs).where(allowed);
     const visibleRuns = this.db.select({id:terminalRuns.job}).from(terminalRuns).where(inArray(terminalRuns.parent,visibleParents));
+    return and(allowed, eq(jobs.agent, agent), id === undefined ? undefined : eq(jobs.id, id), or(ne(jobs.startedByKind,'terminal'),inArray(jobs.id,visibleRuns)));
+  }
+  subscriptionAccount(agent: string, id: string) {
+    return this.db.select({account: jobs.account}).from(jobs).where(this.historyFilter(agent, id)).get()?.account;
+  }
+  history(agent: string, first = 20, id?: string) {
     return this.db.select({ id: jobs.id, agent: jobs.agent, title: jobs.title, state: jobs.state, box: jobs.box,
       prefers: jobs.prefers, placementDecision: jobs.placementDecision,
       conversation: jobs.conversation, project: jobs.project, brief: jobs.brief, model: jobs.model,
       startedByKind: jobs.startedByKind, startedBy: jobs.startedBy, retryOf: jobs.retryOf, exitCode: jobs.exitCode, exitBy: jobs.exitBy, logTail: jobs.logTail,
       endedBy: jobs.endedBy, endedReason: jobs.endedReason, endedNote: jobs.endedNote, queuedAt: jobs.queuedAt, claimedAt: jobs.claimedAt, heardAt: jobs.heardAt, endedAt: jobs.endedAt }).from(jobs)
-      .where(and(allowed, eq(jobs.agent, agent), id === undefined ? undefined : eq(jobs.id, id), or(ne(jobs.startedByKind,'terminal'),inArray(jobs.id,visibleRuns)))).orderBy(desc(jobs.queuedAt), desc(jobs.id)).limit(Math.min(Math.max(first, 1), 100)).all()
+      .where(this.historyFilter(agent, id)).orderBy(desc(jobs.queuedAt), desc(jobs.id)).limit(Math.min(Math.max(first, 1), 100)).all()
       // Where a failed job failed, read from its exit code and whose code it is: what a private conversation's job keeps.
       .map(row => ({ ...row, exitStage: exitStage(row.exitCode, row.exitBy) ?? null }));
   }

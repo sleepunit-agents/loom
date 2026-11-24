@@ -10,7 +10,8 @@ import { channelTarget, type ChannelTarget } from './core/conversations/channel-
 import { z } from 'zod';
 import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
-import { bridgeChannels,bridgeIncoming,bridgeConnections,bridgeFileMessages,bridgeFiles,bridgeSends,bridgeSendJobs,bridgeSendParts,inbox,inboxRefs,turns } from './core/data/schema.js';
+import { readBridgeAttachments } from './core/data/bridge-attachment-read.js';
+import { bridgeChannels,bridgeIncoming,bridgeConnections,bridgeSends,bridgeSendJobs,bridgeSendParts,inbox,inboxRefs,turns } from './core/data/schema.js';
 import { householdOwners,sharedSharing } from './shared-sharing.js';
 import { membersWithAgent } from './policy.js';
 import { bridgeSecretsVisibility } from './core/data/bridge-secrets-visibility.js';
@@ -272,12 +273,10 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
   may:(viewer,input)=>readable(viewer,input.incoming),
   run(_ctx,input){
    // By the message's links: a file shared in two messages is kept once and listed under both.
-   const rows=db.select(getTableColumns(bridgeFiles)).from(bridgeFiles)
-    .innerJoin(bridgeFileMessages,and(eq(bridgeFileMessages.connection,bridgeFiles.connection),eq(bridgeFileMessages.file,bridgeFiles.file)))
-    .where(and(eq(bridgeFileMessages.incoming,input.incoming),input.file?eq(bridgeFiles.file,input.file):undefined)).orderBy(asc(bridgeFiles.file)).all();
+   const rows=readBridgeAttachments(db,input,MAX);
    if(input.file&&!rows.length)throw new OperationError('not-found','That attachment is not kept');
-   if(input.file&&rows[0].contents.byteLength>MAX)throw new OperationError('invalid','That attachment is too large to return');
-   return{files:rows.map(row=>({file:row.file,name:row.name,bytes:row.contents.byteLength,fetchedAt:row.fetchedAt,...(input.file?{contents:row.contents.toString('base64')}:{})}))};
+   if(input.file&&rows[0].bytes>MAX)throw new OperationError('invalid','That attachment is too large to return');
+   return{files:rows.map(row=>({file:row.file,name:row.name,bytes:row.bytes,fetchedAt:row.fetchedAt,...(row.contents===null?{}:{contents:row.contents.toString('base64')})}))};
   },
  });
 }

@@ -31,6 +31,9 @@ export const deskTasksQuery = `query DeskTasks {
 export interface DeskTasksData { inProgress: { id: string; isShelved: boolean }[]; readyTasks: { id: string }[] }
 /** Counts only the policy-filtered records in this window. No legacy tile programs or health guesses. */
 export function useDeskStats() {
+  const subscriptions = useDataQuery<{modelAccounts:{label:string;level:string}[]}>(
+    'query DeskSubscriptionLevels { modelAccounts { ... on RuntimeAccount { label level } } }');
+  const accounts = subscriptions.status === 'live' ? subscriptions.data?.modelAccounts ?? [] : [];
   const boxes = useDataQuery<DeskBoxesData>(deskBoxesQuery);
   const tasks = useDataQuery<DeskTasksData>(deskTasksQuery);
   const taskData = tasks.status === 'live' ? tasks.data : undefined;
@@ -57,6 +60,11 @@ export function useDeskStats() {
     {text:bridgeData ? `Bridges · ${enabledConnections} enabled connection${enabledConnections===1?'':'s'}` : 'Bridges unavailable',href:'/p/bridges-preview'},
     {text:changeData ? `Changes · ${open.length} open${failing?` · ${failing} CI red`:''}` : 'Changes unavailable',href:'/p/changes-preview',tone:failing?'bad':undefined},
   ];
+  for (const {label,level} of accounts) {
+    if (level === 'getting full' || level === 'almost full') {
+      parts.push({text:label+' · '+level, href:'/p/subscriptions', capacity:level, tone:level === 'almost full' ? 'bad' : 'warn'});
+    }
+  }
   // Trouble first, preserving the normal order for equal tones.
   parts.sort((a,b)=>Number(b.tone==='bad')-Number(a.tone==='bad'));
   parts.push({text:enrolled===undefined?'Boxes unavailable':`${enrolled} enrolled box${enrolled===1?'':'es'}${needLook?` · ${needLook} need${needLook===1?'s':''} a look`:''}`,tone:needLook?'bad':undefined});

@@ -48,6 +48,14 @@ it('shows ordered comments, provenance and task actions without offering claim o
   expect(tree.root.findAllByType('strong').map((node:{props:{children:string}})=>node.props.children)).toEqual(['Art','Jonathan']);
   expect(json).not.toContain('agent'); expect(json).not.toContain('member');
 });
+it('labels an archived conversation without offering a link to a missing thread', async () => {
+  const archived = task('t-1', {sourceKind:'old-conversation', sourceId:'cv-old'});
+  await draw(props({tasks:[archived], selected:archived.id, conversation:vi.fn()}));
+  const text = visibleText(tree.toJSON());
+  expect(text).toContain('From an archived conversation');
+  expect(text).not.toContain('cv-old');
+  expect(tree.root.findAllByType('LinkButton').some((link:{props:{children:string}}) => link.props.children.includes('conversation'))).toBe(false);
+});
 it('clears task detail, comments, folders and actions as soon as the authorized snapshot is lost',async () => {
   const p=props({tasks:[task('t-1',{title:'Private pump',project:'private'})],ready:['t-1'],selected:'t-1',comments:[{task:'t-1',seq:1,actorKind:'agent',actor:'art',at:'2026-11-14T19:00:00Z',text:'Private comment'}]});
   await draw(p);
@@ -143,4 +151,19 @@ it('names its folders as the site does, counts projects and epics, and heads nei
   expect(tree.root.findByType('Split').props.listTitle).toBe('Ready'); expect(tree.root.findByType('Split').props.backLabel).toBe('Back to Tasks');
   await act(async () => tree.update(h(SharedTasks,props({tasks:[task('t-1')]}))));
   expect(folders().some(f=>f.heading)).toBe(false);
+});
+it('counts open epic children once across a household-sized sidebar',async()=>{
+ const tasks=Array.from({length:2384},(_,i)=>task(String(i),{
+  type:i<14?'epic':'task',status:i>=429?'closed':'open',project:'project-'+i%25
+ }));
+ let childReads=0;
+ const links:SharedTaskLink[]=Array.from({length:1104},(_,i)=>({
+  get task(){childReads++;return String(i+14);},dependsOn:String(i%14),
+  type:i<824?'parent-child':'blocks'
+ }));
+ await draw(props({tasks,links}));
+ const folders=tree.root.findByType('Split').props.folders as {id?:string;count?:number}[];
+ const counts=folders.filter(f=>f.id?.startsWith('epic:')).map(f=>f.count);
+ expect(counts).toEqual(Array.from({length:14},(_,i)=>i<9?30:29));
+ expect(childReads).toBeLessThanOrEqual(links.length);
 });

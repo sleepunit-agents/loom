@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { agents } from './core/data/schema.js';
@@ -5,6 +6,7 @@ import type { Clock } from './core/clock.js';
 import type { DataDatabase } from './core/data/database.js';
 import { householdTimezone } from './core/data/household-settings.js';
 import { nextTime } from './core/tempo/calendar.js';
+import { semanticMemoryReady, semanticCardsReady } from './pieces/mind/semantic-schema.js';
 import { Notes } from './notes.js';
 import type { AgentSource, MindSources } from './pieces/mind/sources.js';
 
@@ -25,6 +27,29 @@ function snapshot<T>(file: string, dryRun: boolean, read: (source: Database.Data
   } finally { source.close(); }
 }
 
+/** Known prepared agent stores before their first semantic write. Unknown layouts cannot establish
+ * that there are no memory citations. Keep the comparison inside the same snapshot as the sweep. */
+const notesOnlySchemas = new Map([
+  [28, '8dfc8af0a62b03cd8a96d35a884ef25fd02832f6e44af0833bcfbe4bd719b6c0'],
+  [29, 'ca949eee7efd4199377b9ea99f2abcb497ac3640c56630f593ef361e8964500e'],
+]);
+
+function collectMemoryCitations(cited: Set<string>, source: Database.Database) {
+  if (source.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memories'").get()) {
+    collect(cited, source.prepare('SELECT title, content, metadata, provenance FROM memories WHERE archived=0').raw().iterate() as Iterable<unknown[]>);
+    return;
+  }
+  const objects = source.prepare(`SELECT type,name,tbl_name,sql FROM sqlite_schema
+    WHERE name NOT IN ('sqlite_stat1','sqlite_stat4') ORDER BY type,name`).raw().all();
+  const expected = notesOnlySchemas.get(source.pragma('user_version', { simple: true }) as number);
+  if (createHash('sha256').update(JSON.stringify(objects)).digest('hex') !== expected ||
+      !semanticMemoryReady(source) || !semanticCardsReady(source) ||
+      source.prepare(`SELECT 1 FROM memory_command_receipts UNION ALL SELECT 1 FROM memory_command_preparations
+        UNION ALL SELECT 1 FROM memory_card_references LIMIT 1`).get()) {
+    throw new Error('Cannot establish an empty memory citation source');
+  }
+}
+
 export function sweepAgentNotes(db: DataDatabase, agent: AgentSource, knowledgeFile: string, now: () => number, dryRun: boolean) {
   const cited = new Set<string>();
   const tx = db.$client.transaction(() => {
@@ -40,7 +65,7 @@ export function sweepAgentNotes(db: DataDatabase, agent: AgentSource, knowledgeF
         UNION ALL SELECT words, evidence, NULL FROM page_annotations JOIN pages ON pages.id=page_id WHERE pages.status='active'
         UNION ALL SELECT reason, evidence, NULL FROM page_supersessions JOIN pages ON pages.id=page_id WHERE pages.status='active'`).raw().iterate() as Iterable<unknown[]>);
       return snapshot(agent.memories, dryRun, memories => {
-        collect(cited, memories.prepare('SELECT title, content, metadata, provenance FROM memories WHERE archived=0').raw().iterate() as Iterable<unknown[]>);
+        collectMemoryCitations(cited, memories);
         const notes = new Notes(agent.directory, now, { prepared: true, readonly: dryRun });
         try { return notes.sweep(cited, { dryRun }); } finally { notes.close(); }
       });

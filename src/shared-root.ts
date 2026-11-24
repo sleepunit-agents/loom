@@ -119,6 +119,7 @@ import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
 import { createRuntime } from './runtime/runtime.js';
 import type { ModelRole } from './runtime/placement.js';
 import { applyProgramResult } from './shared-program-result.js';
+import {wakeToolProfiles,type WakeToolProfiles} from './runtime/wake-tool-profiles.js';
 import {workRoleCatalog,type WorkRoleConfig} from './runtime/work-roles.js';
 import { registerSharedRuntime } from './shared-runtime.js';
 import { installMeasuring } from './core/measuring/install.js';
@@ -162,11 +163,13 @@ export function sharedRoot(options: {
   startupNote?(line: string): void;
   bridges?: Omit<SharedBridgeOptions,'db'|'clock'|'writes'|'changed'|'reportError'>;
   workRoles?: WorkRoleConfig;
+  wakeToolProfiles?: WakeToolProfiles;
   modelRoles?(): readonly ModelRole[];
   runtimeJobEnded?(id: string): void;
 }) {
   if(options.secretWrites && (!(options.secretWrites.fingerprintKey instanceof Uint8Array) || options.secretWrites.fingerprintKey.byteLength!==32))throw Error('Invalid secret retry key');
   const roles = () => modelCatalog(options.modelRoles?.() ?? []);
+  const profiles=wakeToolProfiles.parse(options.wakeToolProfiles??[]);
   const workRoles=workRoleCatalog.parse(options.workRoles??[]);
   roles(); // Refuse invalid startup configuration before opening services.
   const { db, clock } = options;
@@ -184,7 +187,17 @@ export function sharedRoot(options: {
   // as the program, so a card left waiting over a restart is refused as changed and has to be asked for again.
   const proposalKey = options.commsKey ? undefined : randomBytes(32);
   const proposalDigest = (words: string) => proposalKey ? createHmac('sha256', proposalKey).update(words).digest('hex') : options.commsKey!.hash('household-proposal\0' + words);
-  const proposalNames = (viewer: Viewer) => outsideNames(db, (platform, workspace, user) => memory.people.outsideName(viewer, platform, workspace, user));
+  const proposalNames = (viewer: Viewer) => {
+    const cache = new Map<string, string | undefined>();
+    return {
+      ...outsideNames(db, (platform, workspace, user) => memory.people.outsideName(viewer, platform, workspace, user)),
+      slackRecipient(workspace: string, user: string) {
+        const key = JSON.stringify([workspace, user]);
+        if (!cache.has(key)) cache.set(key, memory.people.slackRecipient(viewer, workspace, user));
+        return cache.get(key);
+      },
+    };
+  };
   const householdProposals = sharedHouseholdProposals(db, householdSettings, projectSettings, ruleSettings, fingerprint => tokenSettings.revoke(fingerprint), now,
     { roles, setAccounts: input => householdAccess.setAccounts(input) },
     { secrets: { setRule: input => late.requests!.setRule(input) },
@@ -595,7 +608,7 @@ export function sharedRoot(options: {
 
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
-  if(options.commsKey)registerTriggerJournal(operations, db, bodyScope, text => options.commsKey!.hash(text));
+  if(options.commsKey)registerTriggerJournal(operations, db, bodyScope, text => options.commsKey!.hash(text), profiles);
   if(options.commsKey)registerSharedWorkBody(operations,db,services.approvals,services.approvalRules,bodyScope,words=>options.commsKey!.hash(words),credentials.agentSession,held('approval'));
   registerSharedWorkCommands(operations,db,services.approvals, {
     now, bodyJob, isProgram: viewer => !!credentials.program(viewer), words: comms?.service.words.bind(comms.service),

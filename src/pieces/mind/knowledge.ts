@@ -48,6 +48,10 @@ export interface KnowledgeView { total: number; checkDays: number; recentDays: n
 /** How many days back "Recently verified" reaches. */
 export const RECENT_DAYS = 7;
 
+export function knowledgeTotal(db: Database): number {
+  return (db.prepare("SELECT COUNT(*) AS n FROM pages WHERE status = 'active'").get() as { n: number }).n;
+}
+
 /** Every active page's line (title, domain, freshness), and the one asked for whole: Knowledge's own view. */
 export function knowledgeView(db: Database | undefined, nowMs: number, open?: string, detailOnly = false): KnowledgeView {
   const empty: KnowledgeView = { total: 0, checkDays: CHECK_DAYS, recentDays: RECENT_DAYS, pages: [] };
@@ -73,7 +77,7 @@ export function knowledgeView(db: Database | undefined, nowMs: number, open?: st
     const recent = (r: { verified_at?: string | null }) => !!r.verified_at && nowMs - Date.parse(r.verified_at) < RECENT_DAYS * day;
     const line = (r: PageRow & { id: number }): KnowledgeRow => ({ ...(retired.has(r.id) ? {archiveCandidate:true as const} : {}), slug: r.slug, title: r.title, domain: r.domain, updated: r.updated,
       ...(r.verified_at ? { verified_at: r.verified_at } : {}), ...(r.freshness_anchor ? { freshness_anchor: r.freshness_anchor } : {}), ...(r.sla_class ? { sla_class: r.sla_class } : {}), ...(last.has(r.id) ? {checked: last.get(r.id)} : {}), fresh: fresh(r), ...(recent(r) ? { recent: true as const } : {}), ...((r.created_by ?? r.author) ? { by: (r.created_by ?? r.author)! } : {}) });
-    const out: KnowledgeView = { total: (db.prepare("SELECT COUNT(*) AS n FROM pages WHERE status = 'active'").get() as { n: number }).n, checkDays: CHECK_DAYS, recentDays: RECENT_DAYS, pages: rows.map(line) };
+    const out: KnowledgeView = { total: detailOnly ? knowledgeTotal(db) : rows.length, checkDays: CHECK_DAYS, recentDays: RECENT_DAYS, pages: rows.map(line) };
     if (open) {
       const r = db.prepare("SELECT id, slug, title, domain, body, updated, sourcing, created_by, author, verified_at, freshness_anchor, sla_class FROM pages WHERE slug = ? AND status = 'active'").get(open) as (PageRow & { id: number }) | undefined;
       if (r) {

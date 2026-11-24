@@ -38,8 +38,16 @@ function UsageReadTime({at,zone}:{at:string|null;zone?:string}){
 }
 function AccountCard({account,zone,active}:{account:Detail;zone?:string;active:boolean}){
  const [open,setOpen]=useState(false);
+ const logins=account.logins ?? [];
+ const signedIn=logins.filter(login=>login.reporting && login.state==='signed-in').length;
+ const attention=logins.filter(login=>login.reporting && login.needsSignIn).length;
+ const lastKnown=logins.filter(login=>!login.reporting).length;
  return <details className="rounded-xl border p-4" onToggle={event=>setOpen(event.currentTarget.open)}>
-  <summary>{account.label} · {account.owner} · {account.level}</summary>
+  <summary>{account.label} · {account.owner} · {account.level} · {logins.length ? `${signedIn} signed in` : 'No sign-ins reported'}
+   {attention>0 && ` · ${attention} ${attention===1?'needs':'need'} attention`}
+   {lastKnown>0 && ` · ${lastKnown} last known`}
+   {!!account.pendingSignIns?.length && ' · Sign-in requested'}
+  </summary>
   <div className="grid gap-4">
   <p>Owner: {account.owner} · Provider: {account.provider}</p>
   <section aria-label="Usage"><h4>Usage</h4>

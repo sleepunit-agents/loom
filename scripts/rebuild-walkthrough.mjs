@@ -6,6 +6,7 @@ import {nativeProtocolAction,scheduledWorker} from './rebuild-native-protocol.mj
 import {conversationLinks} from './rebuild-conversation-links.mjs';
 import {conversationMailSteps} from './rebuild-conversation-mail.mjs';
 import {machineRoster} from './rebuild-machine-roster.mjs';
+import {machineHistory} from './rebuild-machine-history.mjs';
 import {modelAccountActions} from './rebuild-model-actions.mjs';
 /** Real built startup and first-run sign-in. No seeded session or mock transport. */
 import {approvalCaution} from './rebuild-approval-caution.mjs';
@@ -19,12 +20,19 @@ import {secretValueAction} from './rebuild-secret-value-actions.mjs';
 import {secretDefaultAction,verifySecretDefaultAfterReload} from './rebuild-secret-actions.mjs';
 import {workVisibility} from './rebuild-work-visibility.mjs';
 import {changeActions,changeInline} from './rebuild-change-actions.mjs';
+import {bridgeRetention} from './rebuild-bridge-retention.mjs';
+import {discordResume} from './rebuild-discord-resume.mjs';
+import {bridgeSendParts} from './rebuild-bridge-send-parts.mjs';
+import {outgoingFileRetention} from './rebuild-outgoing-files.mjs';
 import {bridgeReceipts} from './rebuild-bridge-receipts.mjs';
+import {bridgeContactTiers} from './rebuild-bridge-contact-tiers.mjs';
+import {bridgeAttachments} from './rebuild-bridge-attachments.mjs';
 import {providerConversations} from './rebuild-provider-conversations.mjs';
 import {bridgeMail} from './rebuild-bridge-mail.mjs';
 import {bridgeSettingsAction} from './rebuild-bridge-actions.mjs';
 import {taskStructure} from './rebuild-task-structure.mjs';
 import {maskCredentialScreenshots} from './rebuild-credential-evidence.mjs';
+import {signinDoorEvidence} from './rebuild-signin-door.mjs';
 import {accessAction} from './rebuild-access-actions.mjs';
 
 import {taskActions} from './rebuild-task-actions.mjs';
@@ -42,7 +50,10 @@ import {inboxDiscussion} from './rebuild-inbox-discussion.mjs';
 import {inboxCallers} from './rebuild-inbox-callers.mjs';
 import {inboxDocumentation,inboxVolume} from './rebuild-inbox-volume.mjs';
 import {scheduledInbox} from './rebuild-scheduled-inbox.mjs';
-import {inboxSecretRequest} from './rebuild-inbox-secret.mjs';
+import {tempoCalendar} from './rebuild-tempo-calendar.mjs';
+import {pausedWake} from './rebuild-paused-wake.mjs';
+import {installedSecretHolder} from './rebuild-installed-secret-holder.mjs';
+import {inboxSecretRequest,settingsGrant} from './rebuild-inbox-secret.mjs';
 import {inboxTaskSource} from './rebuild-inbox-task-source.mjs';
 
 
@@ -62,6 +73,7 @@ import {deskTicker} from './rebuild-desk-ticker.mjs';
 import {deskWaiting} from './rebuild-desk-waiting.mjs';
 import {deskFaces} from './rebuild-desk-faces.mjs';
 import {deskActions} from './rebuild-desk-actions.mjs';
+import {phoneTask} from './rebuild-phone-task.mjs';
 import {memberAppearance} from './rebuild-member-appearance.mjs';
 import {appearanceActions} from './rebuild-appearance-actions.mjs';
 import {tempoWalkthrough} from './rebuild-tempo.mjs';
@@ -202,9 +214,13 @@ export async function* walkthroughSteps(output) {
      }catch(error){row.selectionError=String(error);}
      row.detailText=await tile.innerText();
     }
+    if(title==='Household setup'){
+     const {householdAgentOwners}=await import('./rebuild-household-agent-owners.mjs');
+     report.actions.householdAgentOwners=await householdAgentOwners({app,page,tile});
+    }
     if(title==='Machines and jobs'){
      await tile.getByRole('combobox',{name:'Jobs for'}).selectOption('moss');
-     const jobs=tile.getByRole('group',{name:'moss queued jobs',exact:true}).locator('.loom-kit-note');
+     const jobs=tile.getByRole('group',{name:'moss queued jobs',exact:true}).getByRole('button');
      await jobs.filter({hasText:report.example.runtime.job.title}).waitFor();
      report.actions.machineRoster=await machineRoster({page,tile,example:report.example,out});
      row.queuedShownAsRunning=await tile.getByRole('group',{name:'moss jobs now',exact:true}).getByText(report.example.runtime.job.title,{exact:true}).count();
@@ -216,7 +232,7 @@ export async function* walkthroughSteps(output) {
      report.actions.activityWorkLinks=await activityWorkLinks(input);
      report.actions.activityDays=await activityDays({...input,now:clock.now(),householdZone});
     }
-    if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out,app});report.actions={...report.actions,bridgeSettings:row.action};}
+    if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out,app,home});report.actions={...report.actions,bridgeSettings:row.action};}
     if(['Your account','Household setup','Sharing'].includes(title))row.action=await accessAction({page,tile,title,app,out});
     if(title==='Subscriptions')Object.assign(report.actions,await modelAccountActions({page,tile,example:report.example,subscriptions,out}));
     if(title==='Knowledge'){
@@ -295,11 +311,19 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'desk-faces',actions:safeReport(report.actions)};
   report.actions.memberAppearance=await memberAppearance({page,app,browser,out});
   save();yield {phase:'member-appearance',actions:safeReport(report.actions)};
+  phase='phone task';
+  report.actions.phoneTask=await phoneTask({browser,home:join(parent,'phone-home'),out});
+  save();yield {phase:'phone-task',actions:safeReport(report.actions)};
   phase='agent memory files';
   try {
    const {agentMemoryFiles}=await import('./rebuild-agent-memory-files.mjs');
    report.actions.agentMemoryFiles=await agentMemoryFiles();
   } catch(error) { report.actions.agentMemoryFiles={ok:false,error:String(error)}; }
+  report.actions.agentFolderContents=report.actions.agentMemoryFiles;
+  try {
+   const {identityPages}=await import('./rebuild-identity-pages.mjs');
+   report.actions.identityPages=await identityPages();
+  } catch(error) { report.actions.identityPages={ok:false,error:String(error)}; }
   save();yield {phase:'agent-memory-files',actions:safeReport(report.actions)};
   phase='semantic recall';
   try {
@@ -316,7 +340,11 @@ export async function* walkthroughSteps(output) {
    const {sessionEpisode,...temperature}=JSON.parse(stdout);
    report.actions.memoryTemperature=temperature;
    report.actions.sessionEpisode=sessionEpisode;
-  } catch(error) { report.actions.memoryTemperature={ok:false,error:String(error)}; }
+  } catch(error) {
+   const failed={ok:false,error:String(error)};
+   report.actions.memoryTemperature=failed;
+   report.actions.sessionEpisode=failed;
+  }
   save();yield {phase:'memory-temperature',actions:safeReport(report.actions)};
   phase='knowledge due delivery';
   try {
@@ -324,19 +352,33 @@ export async function* walkthroughSteps(output) {
    report.actions.knowledgeDue=await dueKnowledgeDelivery();
   } catch(error) { report.actions.knowledgeDue={ok:false,error:String(error)}; }
   save();yield {phase:'knowledge-due',actions:safeReport(report.actions)};
+  phase='job labels';
+  try {
+   const {jobLabelsEvidence}=await import('./rebuild-job-labels.mjs');
+   report.actions.jobLabels=await jobLabelsEvidence();
+  } catch(error) { report.actions.jobLabels={ok:false,error:String(error)}; }
+  save();yield {phase:'job-labels',actions:safeReport(report.actions)};
   phase='worker start retries';
   try {
    const {workerRetryEvidence}=await import('./rebuild-worker-retries.mjs');
    report.actions.workerRetries=await workerRetryEvidence();
   } catch(error) { report.actions.workerRetries={ok:false,error:String(error)}; }
+  try {
+   const {jobOutcomeEvidence}=await import('./rebuild-job-outcomes.mjs');
+   report.actions.jobOutcomes=await jobOutcomeEvidence();
+  } catch(error) { report.actions.jobOutcomes={ok:false,error:String(error)}; }
   save();yield {phase:'worker-start-retries',actions:safeReport(report.actions)};
   phase='named agent tools';
   try {
    const {agentToolsEvidence}=await import('./rebuild-agent-tools.mjs');
    Object.assign(report.actions,await agentToolsEvidence());
   } catch(error) {
-   for(const name of ['namedNotes','namedKnowledge','sharedKnowledgeAudience'])report.actions[name]={ok:false,error:String(error)};
+   for(const name of ['namedNotes','namedKnowledge','namedKnowledgeHistory','sharedKnowledgeAudience'])report.actions[name]={ok:false,error:String(error)};
   }
+  try {
+   const {sharedHouseholdFiles}=await import('./rebuild-shared-household-files.mjs');
+   report.actions.sharedHouseholdFiles=await sharedHouseholdFiles();
+  } catch(error) { report.actions.sharedHouseholdFiles={ok:false,error:String(error)}; }
   save();yield {phase:'named-agent-tools',actions:safeReport(report.actions)};
   phase='note lifetimes';
   try {
@@ -350,6 +392,21 @@ export async function* walkthroughSteps(output) {
    report.actions.memoryRevisions=await memoryRevisionEvidence();
   } catch(error) { report.actions.memoryRevisions={ok:false,error:String(error)}; }
   save();yield {phase:'memory-revisions',actions:safeReport(report.actions)};
+  phase='subscription sign-in';
+  try {
+   const {subscriptionSignIn}=await import('./rebuild-subscription-signin.mjs');
+   report.actions.subscriptionSignIn=await subscriptionSignIn({browser,home:join(parent,'subscription-sign-in')});
+  } catch(error){report.actions.subscriptionSignIn={ok:false,error:String(error)};}
+  save();yield {phase:'subscription-sign-in',actions:safeReport(report.actions)};
+  phase='subscription capacity';
+  try {
+   const {subscriptionCapacity}=await import('./rebuild-subscription-capacity.mjs');
+   report.actions.subscriptionCapacity=await subscriptionCapacity({browser,home:join(parent,'subscription-capacity')});
+  } catch(error){report.actions.subscriptionCapacity={ok:false,error:String(error)};}
+  save();yield {phase:'subscription-capacity',actions:safeReport(report.actions)};
+  phase='sign-in door';
+  report.actions.signinDoor=await signinDoorEvidence();
+  save();yield {phase:'signin-door',actions:safeReport(report.actions)};
   phase='migration measurements';
   try {
    // SQLite upgrades are synchronous. Keep the coordinator available for desk heartbeats.
@@ -380,10 +437,23 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'approval-source',actions:safeReport(report.actions)};
   Object.assign(report.actions,await inboxTaskSource({page,tile:await openApp('Inbox'),app,example:report.example,out,approval:report.actions.approvalInbox,open:openApp}));
   save();yield {phase:'task-source',actions:safeReport(report.actions)};
-  report.actions.inboxSecretRequest=await inboxSecretRequest({page,tile:await openApp('Inbox'),app,out});
+  report.actions.inboxSecretRequest=await inboxSecretRequest({page,tile:await openApp('Inbox'),app,out,clock});
+  try{report.actions.settingsGrant=await settingsGrant({app,page});}
+  catch(error){report.actions.settingsGrant={ok:false,error:String(error)};}
+  try {
+    const {callers,standingAnswer,...holder}=await installedSecretHolder();
+    report.actions.installedSecretHolder=holder;
+    report.actions.secretStandingAnswer=standingAnswer;
+    report.actions.secretCallers=callers;
+  }
+  catch(error){report.actions.installedSecretHolder={ok:false,error:String(error)};}
   save();yield {phase:'secret-source',actions:safeReport(report.actions)};
   for await(const step of conversationMailSteps({page,app,clock,example:report.example,out,open:openApp})){Object.assign(report.actions,step.actions);save();yield {phase:step.phase,actions:safeReport(report.actions)};}
   report.actions.scheduledInbox=await scheduledInbox({browser,home:join(parent,'scheduled-home'),out});
+  try{report.actions.tempoCalendar=await tempoCalendar({browser,home:join(parent,'tempo-calendar')});}
+  catch(error){report.actions.tempoCalendar={ok:false,error:String(error)};}
+  try{report.actions.pausedWake=await pausedWake({browser,home:join(parent,'paused-wake')});}
+  catch(error){report.actions.pausedWake={ok:false,error:String(error)};}
   save();yield {phase:'scheduled-inbox',actions:safeReport(report.actions)};
   report.actions.inboxDocumentation=await inboxDocumentation(browser);
   report.actions.inboxVolume=await inboxVolume({browser,home:join(parent,'volume-home'),out});
@@ -400,10 +470,26 @@ export async function* walkthroughSteps(output) {
   catch(error){report.actions.scheduledWorker={ok:false,error:String(error)};}
   save();yield {phase:'scheduled-worker',actions:safeReport(report.actions)};
   phase='bridge delivery';
+  try {report.actions.bridgeRetention=bridgeRetention();}
+  catch(error){report.actions.bridgeRetention={ok:false,error:String(error)};}
+  try {report.actions.discordResume=await discordResume();}
+  catch(error){report.actions.discordResume={ok:false,error:String(error)};}
   for(const [platform,action] of [['discord','discordConversations'],['slack','slackConversations']]) {
     try {report.actions[action]=await providerConversations(platform);}
     catch(error){report.actions[action]={ok:false,error:String(error)};}
   }
+  try {report.actions.bridgeContactTiers=await bridgeContactTiers({app,clock});}
+  catch(error){report.actions.bridgeContactTiers={ok:false,error:String(error)};}
+  for(const platform of ['slack','discord']) {
+    const action=platform+'FileRetention';
+    const parts=platform+'SendParts';
+    try {report.actions[parts]=await bridgeSendParts(platform);}
+    catch(error){report.actions[parts]={ok:false,error:String(error)};}
+    try {report.actions[action]=await bridgeAttachments(platform);}
+    catch(error){report.actions[action]={ok:false,error:String(error)};}
+  }
+  try {report.actions.outgoingFileRetention=await outgoingFileRetention();}
+  catch(error){report.actions.outgoingFileRetention={ok:false,error:String(error)};}
   try {report.actions.bridgeMail=await bridgeMail({app,clock});}
   catch(error){report.actions.bridgeMail={ok:false,error:String(error)};}
   try {report.actions.bridgeReceipts=await bridgeReceipts({app,clock,page,open:openApp});}
@@ -411,6 +497,8 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'bridge-mail',actions:safeReport(report.actions)};
   try {report.actions.conversationCallers=await conversationCallers({app,example:report.example});}
   catch(error){report.actions.conversationCallers={ok:false,error:String(error)};}
+  try {report.actions.machineHistory=await machineHistory({app,example:report.example});}
+  catch(error){report.actions.machineHistory={ok:false,error:String(error)};}
   report.actions.inboxCallers=await inboxCallers({app,example:report.example});
   save();yield {phase:'inbox-callers',actions:safeReport(report.actions)};
 

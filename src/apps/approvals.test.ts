@@ -134,10 +134,10 @@ it('projects approvals to every owner and returns one source answer to the origi
 
 it('settles denial and withdrawal while preserving question history and notifying later revocation', () => {
   const denied = service.request(proposal());
-  service.deny(denied.id, 'jonathan');
+  service.deny(denied.id, 'jonathan', undefined, 'Please split out the pump fix.');
   expect(db.select().from(inbox).all()).toEqual(expect.arrayContaining([
     expect.objectContaining({ toKind: 'person', waitsOnId: denied.id, state: 'resolved', resolution: 'Denied' }),
-    expect.objectContaining({ toKind: 'agent', fromId: 'jonathan', conversation: null, words: `Deny\n${denied.ask}\n${denied.ifNo}` }),
+    expect.objectContaining({ toKind: 'agent', fromId: 'jonathan', conversation: null, words: `Deny\n${denied.ask}\n${denied.ifNo}\nPlease split out the pump fix.` }),
   ]));
   const withdrawn = service.request(proposal());
   service.withdraw(withdrawn.id, 'art');

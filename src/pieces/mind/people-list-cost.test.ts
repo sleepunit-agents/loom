@@ -24,6 +24,9 @@ it('reads the sharing facts once for a whole listing, and afresh for each listin
     const people = peopleReader({ agents: [{ agent: 'fiction', memories }], sharing, now: () => Date.parse('2026-11-19T12:00:00Z') });
     const viewer: Viewer = { kind: 'member', id: 'owner' };
     try {
+      expect(people.access(viewer).agents).toEqual(['fiction']);
+      expect(asked).toBe(1);
+      asked=0;
       const listed = people.list(viewer);
       expect(listed).toHaveLength(12);
       expect(listed[0].projects).toEqual([expect.objectContaining({ slug: 'pond' })]);
@@ -37,4 +40,20 @@ it('reads the sharing facts once for a whole listing, and afresh for each listin
       expect(people.list(viewer)).toHaveLength(12);
     } finally { people.close(); }
   } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+it('offers Add only with a current default agent and access to both halves of the card',()=>{
+  let agent:string|undefined;
+  const people=peopleReader({agents:[],defaultAgent:()=>agent,now:()=>0,sharing:()=>({
+    members:{owner:{owner:true,agents:[]},member:{owner:false,agents:['fern']}},projects:{},
+  })});
+  try{
+    const owner:Viewer={kind:'member',id:'owner'};
+    expect(people.access(owner).canAdd).toBe(false);
+    agent='fern';
+    expect(people.access(owner).canAdd).toBe(true);
+    expect(people.access({kind:'member',id:'member'}).canAdd).toBe(false);
+    agent=undefined;
+    expect(people.access(owner).canAdd).toBe(false);
+  }finally{people.close();}
 });

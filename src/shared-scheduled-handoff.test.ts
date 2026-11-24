@@ -6,6 +6,8 @@ import {FakeClock} from './core/clock.js';
 import {dataDatabase} from './core/data/database.js';
 import * as s from './core/data/schema.js';
 import {bodyConversationClient} from './runtime/conversation-client.js';
+import {reviewPlace} from './core/conversations/review-place.js';
+import {bodyProgramTools} from './runtime/body-program-tools.js';
 import {Jobs} from './runtime/jobs.js';
 import {sharedRoot} from './shared-root.js';
 
@@ -109,4 +111,63 @@ it('recognizes the same scheduled request from the coordinator’s automatic ret
  expect(resumed.status,await resumed.clone().text()).toBe(200);
  expect((await resumed.json()).value).toEqual(saved);
  expect(f.db.select().from(s.conversations).where(eq(s.conversations.venue,'handoff')).all()).toHaveLength(1);
+});
+
+it('withdraws an unadmitted scheduled brief only from the private owner thread that requested it',async()=>{
+ const f=await bodyFixture(cleanup);
+ await f.send('Schedule a fictional check','owner');
+ const notBefore=new Date(f.clock.now()+60*60_000).toISOString();
+ const request={harness:'codex',clientId:'tomorrow',label:'Fictional check',words:'Compare garden notes.',notBefore};
+ const issued=await f.call('handoff',request,'schedule');
+ expect(issued.status).toBe(200);
+ const handle=(await issued.json()).value;
+ const input={conversation:handle.conversation};
+ const cancel=(id:string,token=bodyCredentials.body)=>f.call('handoffCancel',input,id,token);
+ expect((await cancel('member',bodyCredentials.member)).status).toBe(403);
+ const foreign=f.root.services.comms!.threads.open({member:'alice',agent:'art',project:'pond',title:'Other thread'});
+ const original=f.db.select().from(s.jobs).where(eq(s.jobs.id,'job')).get()!;
+ f.db.insert(s.jobs).values({...original,id:'other-job',conversation:foreign.conversation,state:'done',endedAt:notBefore}).run();
+ const other=f.root.services.conversations.open({agent:'art',member:'alice',project:'pond',venue:'handoff',place:reviewPlace('other-job','brief'),label:'Other child',direct:false,handoffNotBefore:notBefore});
+ expect((await f.call('handoffCancel',{conversation:other.id},'wrong-thread')).status).toBe(403);
+ const tools=bodyProgramTools({url:'https://loom.invalid',token:bodyCredentials.body,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>f.root.http.request(new Request(String(url),init)),onStop:()=>{},onStatus:()=>{}});
+ cleanup.push(()=>tools.close());
+ const withdrawn=await tools.call('loom_command',{operation:'conversation.handoffCancel',input,id:'withdraw'});
+ expect(withdrawn.isError,withdrawn.content[0].text).not.toBe(true);
+ expect(JSON.parse(withdrawn.content[0].text).value).toEqual({cancelled:true});
+ for(const id of ['withdraw','confirm-again']){
+  const response=await cancel(id);
+  expect(response.status,await response.clone().text()).toBe(200);
+  expect((await response.json()).value).toEqual({cancelled:true});
+ }
+ expect((await (await f.call('handoffStatus',input,'status')).json()).value).toEqual({jobState:null,resultDelivered:false,notBefore,cancelled:true});
+ expect((await (await f.call('handoff',request,'recover')).json()).value).toEqual(handle);
+ const second=await f.call('handoff',{...request,clientId:'outside-window'},'later');
+ const queued=(await second.json()).value;
+ f.db.insert(s.agentModels).values({agent:'art',model:'fixture',position:0}).run();
+ f.db.insert(s.agentRunSettings).values({agent:'art',houseRepository:'fixture',houseFile:'Housefile',houseBranch:'main',gpu:false,nestedContainers:false}).run();
+ const restored=new Database(f.db.$client.serialize());
+ try {
+  const due=()=>notBefore;
+  const db=dataDatabase(restored,due);
+  const root=sharedRoot({db,clock:f.clock,originAllowed:()=>true,commsKey:f.key});
+  try {
+   const status=await root.http.request('/api/conversation/handoffStatus',{method:'POST',headers:{authorization:'Bearer '+bodyCredentials.body,'content-type':'application/json'},body:JSON.stringify({id:'reopened',input})});
+   expect((await status.json()).value).toEqual({jobState:null,resultDelivered:false,notBefore,cancelled:true});
+   const jobs=new Jobs(db,due);
+   expect(jobs.admit(handle.conversation)).toBeUndefined();
+   expect(jobs.admit(queued.conversation)?.state).toBe('queued');
+  }finally{await root.close();}
+  expect(db.select().from(s.jobs).where(eq(s.jobs.conversation,handle.conversation)).all()).toHaveLength(0);
+  expect(db.select().from(s.inbox).where(eq(s.inbox.id,handle.item)).get()?.state).toBe('resolved');
+ }finally{restored.close();}
+ const admitted=new Jobs(f.db,()=>notBefore).admit(queued.conversation);
+ expect(admitted?.state).toBe('queued');
+ expect((await f.call('handoffCancel',{conversation:queued.conversation},'too-late')).status).toBe(409);
+ expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,queued.item)).get()).toMatchObject({state:'waiting',job:admitted?.id});
+ // A failed attempt can release waiting mail; it still has an admission history.
+ f.db.update(s.jobs).set({state:'failed',endedAt:notBefore}).where(eq(s.jobs.id,admitted!.id)).run();
+ f.db.update(s.inbox).set({job:null}).where(eq(s.inbox.id,queued.item)).run();
+ expect((await f.call('handoffCancel',{conversation:queued.conversation},'already-admitted')).status).toBe(409);
+ f.db.update(s.threads).set({archivedAt:notBefore}).where(eq(s.threads.id,f.thread.id)).run();
+ expect((await cancel('withdraw')).status).toBe(403);
 });

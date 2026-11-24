@@ -39,7 +39,7 @@ export const sharedQueryTables = ['boxes', 'boxAgents', 'boxFacts', 'boxReadings
 export const STAMP_WAKE_MS = 60_000;
 export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>, measure?: MeasureRead, programRecords?: (viewer:Viewer)=>readonly string[]|undefined, canReadUsage: (viewer:Viewer)=>boolean = () => true, canReadProgram: (viewer:Viewer)=>boolean = canReadUsage) {
   const summaries = (viewer:Viewer) => new JobSummaries(db, () => ({ ...talkVisibility(viewer), ...conversationVisibility(viewer), ...boxVisibility(viewer), ...taskVisibility(viewer), ...tempoVisibility(viewer) }), () => clock.now(), () => { if (!currentJobsRead) { currentJobsRead = true; schedule(); } });
-  const accounts = modelAccountQueries(db, () => new Date(clock.now()).toISOString(),viewer=>canReadUsage(viewer) ? summaries(viewer) : undefined);
+  const accounts = modelAccountQueries(db, () => new Date(clock.now()).toISOString(),viewer=>canReadUsage(viewer) ? summaries(viewer) : undefined, summaries);
   const resolve = authentication ?? dataAuthentication(db, () => clock.now());
   const authenticate = (request: Request) => {
     if (!admitted()) return;

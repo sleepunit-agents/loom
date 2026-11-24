@@ -73,7 +73,7 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
  function* visibleEpisodes(rows:Iterable<unknown>,v:Viewer,agent:string,size:number){
   const role=options.conversations;
   if(!role?.conversations){
-   for(const raw of rows){const row=raw as Episode,entry=episode(v,agent,row);if(entry)yield {entry,ref:row.ref};}
+   for(const raw of rows){const row=raw as Episode,entry=episode(v,agent,row);if(entry)yield {entry,ref:row.ref,row};}
    return;
   }
   const batchRead=role.conversations.bind(role);
@@ -98,7 +98,7 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
      // Read each needed fact through the original scoped role in that case.
     }
    }
-   for(const row of batch){const entry=episode(v,agent,row,lookup);if(entry)yield {entry,ref:row.ref};}
+   for(const row of batch){const entry=episode(v,agent,row,lookup);if(entry)yield {entry,ref:row.ref,row};}
   }
   let batch:Episode[]=[];
   for(const raw of rows){
@@ -168,6 +168,33 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
   const sorted=[...new Map(entries.map(e=>[e.id,e])).values()].sort((a,b)=>Date.parse(b.at)-Date.parse(a.at)||a.id.localeCompare(b.id));
   return {id:scope,to,days,...(days.at(-1)!>dayBefore(today,MAX_BACK)?{earlier:dayBefore(days.at(-1)!)}:{}),entries:sorted.slice(0,MAX_ENTRIES),conversations,episodes,truncated:truncated||sorted.length>MAX_ENTRIES,expires:Math.min(...deadlines)};
  }
+ function ownEpisodeSessions(v:Viewer){
+  if(v.kind!=='agent'||!allowed(v,v.id))return;
+  const db=sources.get(v.id);
+  if(!db||!has(db))throw Error('Episode store unavailable');
+  const now=new Date(clock.now()).toISOString();
+  const rows=db.prepare(`SELECT ref,title,content,created,project,metadata,expires_at FROM memories
+   WHERE ${active} AND julianday(created)<=julianday(?)`);
+  const ids=new Set<string>();
+  let expires:number|undefined;
+  for(const {entry,row} of visibleEpisodes(rows.iterate(now,now),v,v.id,25)){
+   if(entry.expires!==undefined)expires=Math.min(expires??Infinity,entry.expires);
+   const meta=parse(row.metadata);
+   const markers=new Set<string>();
+   const add=(value:unknown)=>{
+    if(typeof value==='string'&&/^[0-9a-f]{8}(?:-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?$/i.test(value))markers.add(value.toLowerCase());
+   };
+   add(meta.session_id);
+   if(typeof meta.transcript_path==='string')add(/(?:^|[/\\])([^/\\]+)\.jsonl$/.exec(meta.transcript_path)?.[1]);
+   const words=`${row.title}\n${row.content}`;
+   for(const match of words.matchAll(/\bsession ([0-9a-f-]+)\b/gi))add(match[1]);
+   for(const match of words.matchAll(/\btranscript [^\s]*[/\\]([0-9a-f-]+)\.jsonl\b/gi))add(match[1]);
+   // Fallback episodes carry both forms. Prefer the precise identifier for that episode.
+   for(const marker of markers)if(marker.length>8)markers.delete(marker.slice(0,8));
+   for(const marker of markers)ids.add(marker);
+  }
+  return {ids:[...ids].sort(),expires};
+ }
  function episodePage(agent:string,v:Viewer,first:number,before?:string|null){
   if(!allowed(v,agent)||!options.agents.some(source=>source.agent===agent))return;
   if(!Number.isInteger(first)||first<1||first>25||before!=null&&(!before.length||before.length>300))throw Error('Invalid episode page');
@@ -231,6 +258,6 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
   }catch{/* A failed source remains an explicit reader error, not a timer failure. */}
   return next;
  }
- const reader={episodePage:(agent:string,v:Viewer,first:number,before?:string|null)=>once(()=>episodePage(agent,v,first,before)),allowed:(v:Viewer)=>once(()=>agents(v).length>0),access:(v:Viewer)=>once(()=>access(v)),window:(scope:string,v:Viewer)=>once(()=>window(scope,v)),read:(id:string,v:Viewer)=>once(()=>read(id,v)),nextDeadline,close(){if(closed)return;closed=true;for(const db of sources.end())db.close();}};
+ const reader={ownEpisodeSessions:(v:Viewer)=>once(()=>ownEpisodeSessions(v)),episodePage:(agent:string,v:Viewer,first:number,before?:string|null)=>once(()=>episodePage(agent,v,first,before)),allowed:(v:Viewer)=>once(()=>agents(v).length>0),access:(v:Viewer)=>once(()=>access(v)),window:(scope:string,v:Viewer)=>once(()=>window(scope,v)),read:(id:string,v:Viewer)=>once(()=>read(id,v)),nextDeadline,close(){if(closed)return;closed=true;for(const db of sources.end())db.close();}};
  return reader;
 }

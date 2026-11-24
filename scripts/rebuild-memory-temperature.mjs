@@ -60,10 +60,17 @@ const evidence=await withFictionalMemoryHome(async({home,start,open,command,post
   const [episodeDay,personDay]=temperatures();
   assert.equal(episodeDay,0.5);
   assert.ok(personDay>0.99 && personDay<1);
+  const nextStory='Watered the orchard this morning.';
+  await remember('episode','Orchard visit',nextStory);
+  await advanceTo(start+day+1);
+  const pastWindow=await post('/graphql',{query:'{memoryIdentity(agent:"fern"){recent}}'},200,reader);
+  assert.ok(pastWindow.data.memoryIdentity.recent.includes(nextStory));
+  assert.ok(!pastWindow.data.memoryIdentity.recent.includes(story));
+  assert.equal((await post('/graphql',{query:'query($id:String!){memoryProjectMemory(id:$id){content}}',variables:{id:episode}},200,reader)).data.memoryProjectMemory.content,story);
   await advanceTo(start+90*day);
   const [,personDay90]=temperatures();
   assert.equal(personDay90,0.5);
-  return {ok:true,sessionEpisode:{ok:true,day:note.day,reason:"A fresh Fern session read the prior episode from its identity after restart. Alex opened the same story on the correct Activity day."},episodeDay,personDay,personDay90,expiryAtDeadline:true,confidenceObservations:contradicted.observations,
+  return {ok:true,sessionEpisode:{ok:true,day:note.day,reason:"A fresh Fern session read the prior episode from its identity after restart. Alex opened the same story on the correct Activity day. After 24 hours a newer episode remained in the summary and the older episode remained in memory only."},episodeDay,personDay,personDay90,expiryAtDeadline:true,confidenceObservations:contradicted.observations,
    reason:'The stored episode lost half its heat in a day. The personal fact took 90 days to reach the same point. The temporary memory moved from live results to the archive at its deadline, and confirming then contradicting a lesson raised then lowered its confidence.'};
  }finally{db?.close();mock.timers.reset();}
 });

@@ -74,6 +74,23 @@ const names: CardNames = {
   channel: (_platform, _workspace, channel) => channel === 'C9' ? { name: '#pond', source: 'The name Discord gave with a message from there' } : null,
   workspace: (_platform, workspace) => workspace === 'T02AYL3QM' ? { name: 'art-slack', source: 'reached by the connection' } : null,
 };
+it('keeps Slack IDs in secondary policy facts and distinguishes identically labelled contacts', () => {
+  const policy = (user: string) => ({ agent: 'art', people: [{ ...gage, user, tier: 2 }], deniedTools: [] });
+  const card = proposalCard('bodyPolicy', policy('U0SECOND'), { names, before: { value: policy('U0FIRST') } })!;
+  const main = factLines(card.facts.filter(fact => !fact.small));
+  expect(main).toContain('an unnamed Slack account: tier 2');
+  expect(main).toContain('Slack connection art-slack');
+  expect(main).toContain('The contact list changes');
+  expect(main).not.toMatch(/U0FIRST|U0SECOND|T02AYL3QM/);
+  expect(card.facts.filter(fact => fact.small).map(fact => fact.value)).toEqual([
+    '1. U0FIRST in T02AYL3QM (tier 2)', '1. U0SECOND in T02AYL3QM (tier 2)',
+  ]);
+  expect(card.nothing).toBe(false);
+  const unchanged = proposalCard('bodyPolicy', policy('U0FIRST'), { names, before: { value: policy('U0FIRST') } })!;
+  expect(unchanged.nothing).toBe(true);
+  expect(unchanged.facts.some(fact => fact.small)).toBe(false);
+});
+
 it('says who an outside account is for a household owner, and says so when loom holds no name', () => {
   const state = { agentLive: true, tools: [tool], known: true, linked: null, on: false };
   const named = proposalCard('kitGrant', { agent: 'art', kit: 'pond-et-livonia', to: gage, grant: true }, { names, before: { value: state } })!;
@@ -222,4 +239,21 @@ it('shows that measuring sends nothing while off and report-only machines run no
   expect(factLines(measuring.facts)).toContain('Sends measurements outside: Off while measuring is off');
   const machine = proposalCard('boxSettings', { box: 'one', name: 'one', reportOnly: true, agents: [{ agent: 'art', lent: false }] })!;
   expect(factLines(machine.facts)).toContain('Agents it runs: None while report-only. Configured: art');
+});
+
+it('uses a Last seen name only for a Slack access recipient without an existing name', () => {
+  const names: CardNames = { person: () => null, channel: () => null, workspace: () => null,
+    slackRecipient: () => 'Sample Contact' };
+  for (const change of ['kitGrant', 'colleague', 'projectOutsidePerson']) {
+    const input = kinds[change]![0]![0];
+    const card = proposalCard(change, input, {names})!;
+    expect(card.title).toContain('Sample Contact (Slack)');
+    expect(card.facts).toContainEqual({label: 'Name from', value: 'People directory match used for Last seen'});
+    const linked = {...names, person: () => ({name: 'Linked Member', source: 'household'})};
+    expect(proposalCard(change, input, {names: linked})!.title).toContain('Linked Member (Slack)');
+  }
+  const address = {platform: 'slack', workspace: 'fixture', user: 'example'};
+  const bridge = proposalCard('bridge', {action: 'person', ...address, member: 'example'}, {names});
+  expect(bridge?.title).toContain('unnamed Slack account');
+  expect(proposalCard('kitGrant', {agent:'art', kit:'sample', grant:true, to:{...address, platform:'discord'}}, {names})!.title).not.toContain('Sample Contact');
 });

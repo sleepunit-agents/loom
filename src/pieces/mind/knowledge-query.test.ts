@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,6 +39,20 @@ it('lets a generated endpoint compose typed file-backed fields and return exactl
  expect(await f.query('{ memoryKnowledgePage(slug:"hose") { fresh } }')).toMatchObject({data:{memoryKnowledgePage:{fresh:'due'}}});
  await store.archivePage({slug:'hose'});
  expect(await f.query('{ memoryKnowledgePage(slug:"hose") { title } memoryKnowledge { total } }')).toMatchObject({data:{memoryKnowledgePage:null,memoryKnowledge:{total:1}}});
+});
+it('reads only the selected overview and shares its work across aliases',async()=>{
+ const path=join(home(),'knowledge.db'),store=new KnowledgePages({dbPath:path});closes.push(()=>store.close());
+ await store.writePage({slug:'hose',title:'Hose',domain:'pond',body:'A fixture'});
+ const f=fixture(path);
+ const statements=vi.spyOn(Database.prototype,'prepare');
+ try{
+  expect(await f.query('{memoryKnowledge{total again:total}}')).toMatchObject({data:{memoryKnowledge:{total:1,again:1}}});
+  expect(statements.mock.calls.map(([query])=>query)).toEqual([expect.stringMatching(/SELECT COUNT\(\*\).*FROM pages/i)]);
+  statements.mockClear();
+  expect(await f.query('{memoryKnowledge{pages{slug} again:pages{slug} total}}')).toMatchObject({data:{memoryKnowledge:{pages:[{slug:'hose'}],again:[{slug:'hose'}],total:1}}});
+  expect(statements.mock.calls.filter(([query])=>query.includes('SELECT id, slug, title'))).toHaveLength(1);
+  expect(statements.mock.calls.some(([query])=>query.includes('SELECT COUNT(*)'))).toBe(false);
+ }finally{statements.mockRestore();}
 });
 it('uses the current authenticated context and central sharing on every execution, with no viewer argument or mutations',async()=>{
  const f=fixture(join(home(),'absent.db'));
@@ -166,6 +180,24 @@ it('reviews active shared pages by sourcing and pages through candidates by slug
  expect(await f.query(query('after:"b",first:2'),{viewer:{kind:'agent',id:'fiction'}})).toEqual({data:{memoryKnowledgeFilingReview:[{slug:'c',reason:'Provisional sourcing'}]}});
  expect(await f.query(query('first:0'),{viewer:{kind:'runner',id:'fixture'}})).toEqual({data:{memoryKnowledgeFilingReview:null}});
  expect((await f.query(query('first:101'))).errors?.[0].message).toContain('1 to 100');
+});
+
+it('counts citations across active pages, including a classified page with no citations',async()=>{
+ const path=join(home(),'knowledge.db'),store=new KnowledgePages({dbPath:path});closes.push(()=>store.close());
+ const conversation={claim:'Fictional claim',source_kind:'conversation' as const,excerpt:'Fictional discussion'};
+ const web={...conversation,source_kind:'web' as const};
+ for(const [slug,citations] of [['a',[]],['b',[conversation,web]],['c',[conversation]],['d',[web]]] as const){
+  await store.writePage({slug,title:slug,domain:'world',sourcing:'sourced',citations:[...citations],body:'Fictional text'});
+ }
+ await store.archivePage({slug:'d'});
+ const {query}=fixture(path),selection='{memoryKnowledge{citationCounts{slug sourcing total conversations}}}';
+ expect(await query(selection)).toEqual({data:{memoryKnowledge:{citationCounts:[
+  {slug:'a',sourcing:'sourced',total:0,conversations:0},{slug:'b',sourcing:'sourced',total:2,conversations:1},
+  {slug:'c',sourcing:'sourced',total:1,conversations:1},
+ ]}}});
+ expect(await query(selection,{viewer:{kind:'member',id:'member'}})).toEqual({data:{memoryKnowledge:null}});
+ const legacy=new Database(path);try{legacy.exec('DROP TABLE citations');}finally{legacy.close();}
+ expect(await query(selection)).toEqual({data:{memoryKnowledge:{citationCounts:null}}});
 });
 
 it('reviews recorded provisional sourcing in older Knowledge files without a citations table',async()=>{

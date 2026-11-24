@@ -137,6 +137,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('member-appearance');
   expect(step.value.actions.memberAppearance,JSON.stringify(step.value.actions.memberAppearance)).toMatchObject({ok:true});
  });
+ it('answers a desktop task question through a single tap on the phone Inbox dock icon',{retry:0,timeout:60_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('phone-task');
+  expect(step.value.actions.phoneTask).toMatchObject({ok:true});
+ });
  it('keeps each agent’s memories in its own file across a restart',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('agent-memory-files');
   expect(step.value.actions.agentMemoryFiles,JSON.stringify(step.value.actions.agentMemoryFiles)).toMatchObject({ok:true});
@@ -154,21 +158,30 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('knowledge-due');
   expect(step.value.actions.knowledgeDue,JSON.stringify(step.value.actions.knowledgeDue)).toMatchObject({ok:true,days:30});
  });
+ it('retains the project and private member on admitted jobs',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('job-labels');
+  expect(step.value.actions.jobLabels,JSON.stringify(step.value.actions.jobLabels)).toMatchObject({ok:true});
+ });
  it('keeps three linked worker start retries across coordinator restarts',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('worker-start-retries');
   expect(step.value.actions.workerRetries,JSON.stringify(step.value.actions.workerRetries)).toMatchObject({ok:true,attempts:4});
  });
  it('writes and reads notes and shared Knowledge through the named MCP tools',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('named-agent-tools');
-  for(const name of ['namedNotes','namedKnowledge','sharedKnowledgeAudience'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
+  for(const name of ['namedNotes','namedKnowledge','namedKnowledgeHistory','sharedKnowledgeAudience','sharedHouseholdFiles'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
  });
  it('keeps and expires notes by path and lifespan across restarts',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('note-lifetimes');
-  expect(step.value.actions.noteLifetimes,JSON.stringify(step.value.actions.noteLifetimes)).toMatchObject({ok:true,after60Days:['keep']});
+  expect(step.value.actions.noteLifetimes,JSON.stringify(step.value.actions.noteLifetimes)).toMatchObject({ok:true,editedNoteExpiredAfterRenewal:true,onlyFactRecalled:true,after60Days:['keep']});
  });
  it('restores every retained version of memories, person cards and Knowledge pages',{retry:0,timeout:120_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('memory-revisions');
   expect(step.value.actions.memoryRevisions,JSON.stringify(step.value.actions.memoryRevisions)).toMatchObject({ok:true,originalVersionsRestoredPerType:10,restoreCallsPerType:11});
+ });
+ it('measures browser lifetime, owner revocation and credential storage through the sign-in door',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('signin-door');
+  const door=step.value.actions.signinDoor;
+  expect(door,door.error).toMatchObject({ok:true,checks:{memberIdentityBound:true,sixHourAutomatedSession:true,personSessionRetained:true,ownerHouseholdList:true,ownerSessionRevocation:true,ownerTokenRevocation:true,tokenCookieLinkFingerprints:true,rawSecretsNeverPersisted:true,closed:true}});
  });
  it('upgrades every shipped database and checks its migration ledger on reopen',{retry:0,timeout:300_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('migrations');
@@ -255,7 +268,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  });
  it('starts a worker body from a timed agent Inbox item',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('scheduled-worker');
-  expect(step.value.actions.scheduledWorker,JSON.stringify(step.value.actions.scheduledWorker)).toMatchObject({ok:true});
+  expect(step.value.actions.scheduledWorker,JSON.stringify(step.value.actions.scheduledWorker)).toMatchObject({ok:true,completedConversations:2});
  });
  it('delivers Discord and Slack messages into the receiving agent Inbox',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('bridge-mail');

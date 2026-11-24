@@ -1,6 +1,7 @@
+import { shellCommandRecord } from '../../../../src/apps/shell-command-record';
 import { RuleEditor } from './rule-editor';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Split, List, Row, NoteRow, Empty, Error, Loading, Button, Actions, Search, Reader, Meta, Title, Facts, Fact, Section, Disclosure, Body } from '../../kit';
+import { Split, List, Row, NoteRow, Empty, Error, Loading, Button, Actions, Textarea, Search, Reader, Meta, Title, Facts, Fact, Section, Disclosure, Body } from '../../kit';
 import { briefTime, fullTime } from '../../kit/time';
 import { displayName } from '../../kit/words';
 import { approvalTitle, type CardFact, quotedDecision, folders, matches, rows, kindWord, kindChoice, tierWord, scopeWord, ruleKey, recordWord, type Approval, type ApprovalSnapshot, type Rule } from './model';
@@ -19,7 +20,7 @@ export interface ApprovalActions {
   supports?(approval: Approval): boolean;
   /** confirm is the second, explicit yes a dangerous action needs. */
   allow(id: string, confirm?: boolean, review?: string): Promise<void>;
-  deny(id: string): Promise<void>;
+  deny(id: string, reason?: string): Promise<void>;
   always?: { label: string; approval: string; run(id: string): Promise<void> };
 }
 function Unavailable({ status }: { status: ApprovalSnapshot['status'] }) {
@@ -36,6 +37,7 @@ const cardFacts = (facts: readonly CardFact[]) => facts.map((fact, index) => <Fa
 function Answer({ approval, actions, caution }: { approval: Approval; actions?: ApprovalActions; caution?: ReactNode }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [confirming, setConfirming] = useState(false);
   const [allowed, setAllowed] = useState(false);
+  const [reason, setReason] = useState('');
   const dangerous = approval.kind === 'dangerous';
   const active = useRef(false);
   async function send(action: () => Promise<void>, allowing = false) {
@@ -59,13 +61,16 @@ function Answer({ approval, actions, caution }: { approval: Approval; actions?: 
     {!allowed && caution}
     {approval.state === 'pending' && actions && (!actions.supports || actions.supports(approval)) && <>
       {dangerous && confirming && <Body>This cannot be undone.</Body>}
+      <Disclosure label="Add a reason for denying">
+        <label>Reason for the requesting agent<Textarea value={reason} maxLength={2000} disabled={busy} onChange={event => setReason(event.target.value)} /></label>
+      </Disclosure>
       <Actions label="Answer approval">
         {dangerous && confirming
           ? <><Button variant="primary" disabled={busy} onClick={() => void send(() => allow(true), true)}>Yes, allow it</Button>
             <Button disabled={busy} onClick={() => setConfirming(false)}>Cancel</Button></>
           : <Button variant="primary" disabled={busy} onClick={() => dangerous ? setConfirming(true) : void send(() => allow(), true)}>Allow</Button>}
         {actions.always?.approval === approval.id && <Button disabled={busy} onClick={() => void send(() => actions.always!.run(approval.id))}>{actions.always.label}</Button>}
-        <Button disabled={busy} onClick={() => void send(() => actions.deny(approval.id))}>Deny</Button>
+        <Button disabled={busy} onClick={() => void send(() => reason.trim() ? actions.deny(approval.id, reason.trim()) : actions.deny(approval.id))}>Deny</Button>
       </Actions></>}
     {busy && <Body quiet role="status">Saving answer…</Body>}
     {error && <Error title="Couldn’t save your answer" text={error} />}
@@ -84,6 +89,8 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false,
   const card = a.card;
   const title = card?.title ?? displayTitle ?? approvalTitle(a);
   const exact = card?.exact ?? a.exactRequest;
+  const shell = a.kind === 'command' && record.some(event => event.event === 'request' && event.note === shellCommandRecord);
+  const fullCommand = shell && <Disclosure label="Full command"><pre className="whitespace-pre-wrap break-words">{a.details}</pre></Disclosure>;
   const exactRequest = exact && <Disclosure label="Exact request"><pre className="whitespace-pre-wrap break-words">{exact}</pre></Disclosure>;
   const storedSummary = !household && !change && a.changeSummary;
   const ifYes = card?.ifYes ?? a.ifYes, ifNo = card?.ifNo ?? a.ifNo;
@@ -103,6 +110,7 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false,
     {storedSummary && <Body>{storedSummary}</Body>}
     {change}
     {!household && <Meta>Allows {kindWord[a.kind] ?? a.kind}: {a.target}</Meta>}
+    {fullCommand}
     <Answer key={a.review ?? a.id} approval={a} actions={actions} caution={caution} />
     {exactRequest}
     {showStored && <>{answered}{ends}</>}
@@ -121,10 +129,11 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false,
       {!household && <Fact label="Exactly what this allows">{`${kindWord[a.kind] ?? a.kind}: ${a.target}`}</Fact>}
     </Facts>
     {change}
+    {fullCommand}
     <Answer key={a.review ?? a.id} approval={a} actions={actions} caution={caution} />
     {showStored && <>{!decision && answered}{ends}</>}
     {exactRequest}
-    {!household && !change && a.details && <Section label="Details"><Body>{a.details}</Body></Section>}
+    {!household && !shell && !change && a.details && <Section label="Details"><Body>{a.details}</Body></Section>}
     {showStored && record.length > 0 && <Section label="History"><ol className="grid gap-1.5">{record.map(r => <li key={r.seq}><Body>{recordWord(r, name)} <span className="loom-reader__meta">{time(r.at)}</span></Body></li>)}</ol></Section>}
   </Reader>;
 }

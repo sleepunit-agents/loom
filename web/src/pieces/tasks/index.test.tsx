@@ -32,14 +32,14 @@ it('keeps pending and rejected creates out of the list until the canonical feed 
   await act(async () => { reject(new Error('Write denied')); await saving; });
   expect(tree.root.findByProps({role:'alert'}).children).toEqual(['Write denied']);
   expect(tree.root.findAllByType('Row')).toHaveLength(0);
-  feed.current = { status: 'live', data: { tasks: [{ id:'t-1', title:'Server pump', type:'task', status:'open', priority:2, position:1, ownerKind:'agent', owner:'art', project:null, assigneeKind:null, assignee:null, goal:'Works', why:'Broken', doneWhen:'', description:'', ask:null, ifYes:null, ifNo:null, closeReason:null, sourceKind:null, sourceId:null, commentCount:0, isReady:true, changeTasksByTask:[], taskLinksByTask:[], taskCommentsByTask:[] }] } };
+  feed.current = { status: 'live', data: { tasks: [{ id:'t-1', title:'Server pump', type:'task', status:'open', priority:2, position:1, ownerKind:'agent', owner:'art', project:null, assigneeKind:null, assignee:null, goal:'Works', why:'Broken', doneWhen:'', description:'', ask:null, ifYes:null, ifNo:null, closeReason:null, sourceKind:null, sourceId:null, commentCount:0, isReady:true, changeTasksByTask:[], taskLinksByTask:[] }] } };
   await act(async () => tree.update(h(Tasks, { submit })));
   expect(tree.root.findAllByType('Row').map((node: {props: {title: string}}) => node.props.title)).toEqual(['Server pump']);
 });
 
 it('opens on the folder and the one agent its path asks for, and shows everyoneâ€™s again when asked', async () => {
   const task = (id: string, fields: object) => ({ id, title: `Task ${id}`, type: 'task', status: 'in_progress', priority: 2, position: 1, ownerKind: 'agent', owner: 'art', project: null, assigneeKind: 'agent', assignee: 'art',
-    goal: '', why: '', doneWhen: '', description: '', ask: null, ifYes: null, ifNo: null, closeReason: null, sourceKind: null, sourceId: null, isReady: false, isShelved: false, taskCommentsByTask: [], taskLinksByTask: [], changeTasksByTask: [], ...fields });
+    goal: '', why: '', doneWhen: '', description: '', ask: null, ifYes: null, ifNo: null, closeReason: null, sourceKind: null, sourceId: null, isReady: false, isShelved: false, taskLinksByTask: [], changeTasksByTask: [], ...fields });
   feed.current = { status: 'live', data: { tasks: [task('t-1', {}), task('t-2', { assignee: 'mark' }), task('t-3', { status: 'open', assigneeKind: null, assignee: null, isReady: true }), task('t-4', { assigneeKind: 'member', assignee: 'art' })] } } as typeof feed.current;
   const go = vi.fn(), titles = () => tree.root.findAllByType('Row').map((node: {props: {title: string}}) => node.props.title);
   await act(async () => { tree = create(h(Tasks, { path: '/p/tasks-preview/?folder=progress&assignee=art', go })); });
@@ -56,7 +56,7 @@ it('opens on the folder and the one agent its path asks for, and shows everyoneâ
 });
 
 it('claims, unclaims and reopens at once with no form, one at a time, and says a refusal under the actions', async () => {
-  const row = { id:'t-1', title:'Pump', type:'task', status:'open', priority:2, position:1, ownerKind:'agent', owner:'art', project:null, assigneeKind:null, assignee:null, goal:'Works', why:'Broken', doneWhen:'', description:'', ask:null, ifYes:null, ifNo:null, closeReason:null, sourceKind:null, sourceId:null, commentCount:0, isReady:true, isShelved:false, changeTasksByTask:[], taskLinksByTask:[], taskCommentsByTask:[] };
+  const row = { id:'t-1', title:'Pump', type:'task', status:'open', priority:2, position:1, ownerKind:'agent', owner:'art', project:null, assigneeKind:null, assignee:null, goal:'Works', why:'Broken', doneWhen:'', description:'', ask:null, ifYes:null, ifNo:null, closeReason:null, sourceKind:null, sourceId:null, commentCount:0, isReady:true, isShelved:false, changeTasksByTask:[], taskLinksByTask:[] };
   feed.current = { status: 'live', data: { tasks: [row] } } as typeof feed.current;
   let reject!: (error: Error) => void;
   const submit = vi.fn(() => new Promise<void>((_, no) => { reject = no; }));

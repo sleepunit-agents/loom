@@ -4,8 +4,12 @@ import { createElement as h, Suspense, type ReactNode } from 'react';
 import { act, create } from 'react-test-renderer';
 import type { ReviewRound } from '../pieces/change-view/model';
 import type { ApprovalsResult, ChangesResult } from './work-query';
+const queryCalls = vi.hoisted(() => vi.fn());
 const feed = vi.hoisted(() => ({ reviews: [] as ReviewRound[], status: 'live', ownerStatus:'live', owner:false, refresh:false, people:[] as {id:string;role:string}[], changeStatus:undefined as string|undefined, requestStatus:undefined as string|undefined, approvals: {} as ApprovalsResult, changes: {} as ChangesResult }));
-vi.mock('./graphql', () => ({ useDataQuery: (query: string) => ({ status: query.includes('WorkAnswerOwner') ? feed.ownerStatus : query.includes('ChangesView') ? feed.changeStatus ?? feed.status : query.includes('WorkMergeRequests') ? feed.requestStatus ?? feed.status : feed.status, data: query.includes('ChangeReviewHistory') ? {changeReviewHistory:feed.reviews} : query.includes('WorkAnswerOwner') ? {workAnswerOwner:feed.owner,workChangesRefresh:feed.refresh,members:feed.people} : query.includes('WorkMergeRequests') ? {approvals:feed.approvals.approvals} : query.includes('ApprovalsView') ? feed.approvals : feed.changes }) }));
+vi.mock('./graphql', () => ({ useDataQuery: (query: string, variables?: unknown, options?: unknown) => {
+ queryCalls(query, variables, options);
+ return { status: query.includes('WorkAnswerOwner') ? feed.ownerStatus : (query.includes('ChangesView') || query.includes('ApprovalChange(')) ? feed.changeStatus ?? feed.status : query.includes('WorkMergeRequests') ? feed.requestStatus ?? feed.status : feed.status, data: query.includes('ChangeReviewHistory') ? {changeReviewHistory:feed.reviews} : query.includes('WorkAnswerOwner') ? {workAnswerOwner:feed.owner,workChangesRefresh:feed.refresh,members:feed.people} : query.includes('WorkMergeRequests') ? {approvals:feed.approvals.approvals} : query.includes('ApprovalsView') ? feed.approvals : feed.changes };
+} }));
 vi.mock('../kit', async () => ({ ...Object.fromEntries(['Split', 'List', 'Row', 'NoteRow', 'Empty', 'Error', 'Loading', 'Button', 'LinkButton', 'Actions', 'Search', 'Input', 'Textarea', 'Field', 'Fields', 'Reader', 'Meta', 'Title', 'Facts', 'Fact', 'Section', 'Disclosure', 'ShortIdentifier', 'Clamp', 'Body', 'Chip', 'RefCard', 'Markdown', 'Pager'].map(name => [name, (props: { children?: ReactNode; reader?: ReactNode; list?: ReactNode; search?: ReactNode; listTop?: ReactNode; listAction?: ReactNode }) => h(name, Object.fromEntries(Object.entries(props).filter(([key]) => !['children', 'reader', 'list', 'search', 'blank', 'folders', 'listTop', 'listAction'].includes(key))), props.children, ...(name === 'Split' ? [props.search, props.listAction, props.listTop, props.list, props.reader] : []))])), Disclosure: ((Real) => (props: { label: string; children?: ReactNode }) => props.label === 'Exact request' ? h(Real, props) : h('Disclosure', { label: props.label }, props.children))((await import('../kit/reader')).Disclosure) }));
 vi.mock('./graphql/selection', () => ({ useSelection: () => ({ status: 'live', data: {
   ordinary: feed.approvals.approvals, questions: [], hasNext: false,
@@ -16,7 +20,7 @@ import { changesApp } from '../pieces/changes/registration';
 import { ApprovalsApp, ChangesApp, LiveApprovalCard, LiveChangeCard } from './work-views';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
-afterEach(async () => { await act(async () => tree?.unmount()); feed.status = 'live'; feed.owner=false; feed.reviews=[]; feed.refresh=false; feed.people=[]; feed.changeStatus=undefined;feed.requestStatus=undefined; feed.ownerStatus='live'; vi.unstubAllGlobals(); });
+afterEach(async () => { await act(async () => tree?.unmount()); feed.status = 'live'; feed.owner=false; feed.reviews=[]; feed.refresh=false; feed.people=[]; feed.changeStatus=undefined;feed.requestStatus=undefined; feed.ownerStatus='live'; queryCalls.mockClear(); vi.unstubAllGlobals(); });
 function fixture() {
   const before = { on: true, send_outside: false, outside_address: '', keep_days: 7 };
   const after = { ...before, keep_days: 1 };
@@ -306,11 +310,12 @@ it.each(tempoAnswerCases)('awaits the actual $surface Tempo answer (allow=$allow
   await draw(surface==='app'?h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id}):h(LiveApprovalCard,{id:card.id}));expect(words()).toContain('Tempo settings change');
   await act(async()=>tree.update(surface==='app'?h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+selected.id}):h(LiveApprovalCard,{id:selected.id})));
   expect(words()).toContain('Second timing change?');
+  await act(async()=>tree.root.findByType('Textarea').props.onChange({target:{value:'  Please wait for the pump.  '}}));
   const button=tree.root.findAllByType('Button').find((node:{props:{children:unknown}})=>node.props.children===(allow?'Allow':'Deny'))!;
   await act(async()=>button.props.onClick());expect(words()).toContain('Saving answer…');
   expect(tree.root.findAllByType('Button').every((node:{props:{disabled:boolean}})=>node.props.disabled)).toBe(true);expect(card.state).toBe('pending');expect(selected.state).toBe('pending');
   expect(request).toHaveBeenCalledWith('/api/approvals/answer',expect.objectContaining({method:'POST',credentials:'same-origin'}));
-  expect(JSON.parse(String(request.mock.calls[0][1].body))).toMatchObject({input:{id:selected.id,answer:allow?'allow':'deny'}});
+  expect(JSON.parse(String(request.mock.calls[0][1].body)).input).toEqual({id:selected.id,answer:allow?'allow':'deny',...(allow?{}:{reason:'Please wait for the pump.'})});
   await act(async()=>{if(success)accept();else refuse();});
   expect(words()).not.toContain('Saving answer…');expect(card.state).toBe('pending');expect(selected.state).toBe('pending');
   if(success)expect(words()).not.toContain('Could not save your answer');else expect(words()).toContain('Could not save your answer');
@@ -334,6 +339,18 @@ function standingFixture(){
  const card={...feed.approvals.approvals[0],id:'a-merge',kind:'merge' as const,target:`${change.id}@${change.headCommit}`,project:'pond',actingFor:'pat',operation:null,changeSummary:null,details:''};
  feed.changes={...feed.changes,changes:[change]};feed.approvals={...feed.approvals,approvals:[card]};return {change,card};
 }
+it('subscribes only to the selected merge commit and releases the read when leaving the card',async()=>{
+ const {change,card}=standingFixture();
+ const folder=h(ApprovalsApp,{path:'/p/approvals-preview'});
+ const latest=()=>queryCalls.mock.calls.filter(([query])=>query.includes('query ApprovalChange(')).at(-1);
+ await draw(folder);
+ expect(latest()?.[2]).toEqual({pause:true});
+ await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id})));
+ expect(latest()?.slice(1)).toEqual([{id:change.id,head:change.headCommit},{pause:false}]);
+ await act(async()=>tree.update(folder));
+ expect(latest()?.[2]).toEqual({pause:true});
+ expect(queryCalls.mock.calls.some(([query])=>query.includes('query ChangesView'))).toBe(false);
+});
 it.each(['approvals','changes'])('sends atomic Always from current %s without optimistic state or duplicate pending requests',async surface=>{
  const {card,change}=standingFixture();let finish!:(value:Response)=>void;const request=vi.fn<typeof fetch>(()=>new Promise<Response>(done=>{finish=done;}));vi.stubGlobal('fetch',request);
  const view=()=>surface==='approvals'?h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id}):h(ChangesApp,{path:'/p/changes-preview/change/'+encodeURIComponent(change.id)});
@@ -628,4 +645,19 @@ it('opens the owner explanation when Allow is refused on a collapsed Inbox kit g
  expect(request.mock.calls.map(([url])=>url)).toEqual(['/api/approvals/answer','/api/household/proposalPreview']);
  expect(words()).toContain('Art does not know this Slack contact.');
  expect(tree.root.findByType('Error').props.title).toBe('Couldn’t save your answer');
+});
+
+it.each(['app','inline'])('reveals the complete quoted command only for a literal card in the %s', async surface => {
+ fixture();feed.owner=true;
+ const card=feed.approvals.approvals[0];
+ const script='# '+'pump '.repeat(60)+'\nprintf "distinctive suffix"\r\n';
+ Object.assign(card,{kind:'command',operation:null,target:'shell:sha256:'+'a'.repeat(64),details:JSON.stringify(script)});
+ const view=()=>surface==='app'?h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id}):h(LiveApprovalCard,{id:card.id});
+ await draw(view());
+ const full=()=>tree.root.findAllByType('Disclosure').filter((n:{props:{label:string}})=>n.props.label==='Full command');
+ expect(full()).toHaveLength(0);
+ feed.approvals.approvalRecord=[{seq:1,at:card.askedAt,event:'request',approval:card.id,agent:card.agent,note:'Literal shell command'}];
+ await act(async()=>tree.update(view()));
+ expect(full()).toHaveLength(1);
+ expect(full()[0].findByType('pre').children).toEqual([JSON.stringify(script)]);
 });

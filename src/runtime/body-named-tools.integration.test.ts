@@ -27,13 +27,13 @@ const ORIGIN='https://loom.invalid',GENERIC=['loom_commands','loom_command','loo
 type Sent={path:string;bearer:string|null;input:unknown;answer:{ok?:boolean;code?:string;message?:string;errors?:{message:string}[];data?:unknown}};
 type Called={error:boolean;text:string;sent:Sent[]};
 
-async function body(options:{agent?:string;seed?:(other:{directory:string;memories:string})=>void}={agent:'art'}){
+async function body(options:{agent?:string;wakeToolProfiles?:NonNullable<Parameters<typeof bodyFixture>[1]>['wakeToolProfiles'];seed?:(other:{directory:string;memories:string})=>void}={agent:'art'}){
  const home=mkdtempSync(join(tmpdir(),'loom-body-named-fiction-'));clean.push(()=>rmSync(home,{recursive:true,force:true}));
  const commons=join(home,'commons'),directory=join(home,'agents','art');
  const other=join(home,'agents','mark');
  const memory={checkingAgent:'art',sources:{commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:[{agent:'art',directory,memories:join(directory,'memories.db')},{agent:'mark',directory:other,memories:join(other,'memories.db')}]}};
  await prepareSharedMemorySources(memory);options.seed?.(memory.sources.agents[1]);
- const fixture=await bodyFixture(clean,{memory}),sent:Sent[]=[];
+ const fixture=await bodyFixture(clean,{memory,wakeToolProfiles:options.wakeToolProfiles}),sent:Sent[]=[];
  // Every request the body's tools make, with what loom answered.
  const fetcher:typeof fetch=async(url,init)=>{
   const response=await fixture.root.http.request(new Request(url,init)),payload=JSON.parse(String(init?.body));
@@ -257,6 +257,36 @@ it('identifies the scheduled instant and job of one accepted journal delivery', 
  expect((await read('another-delivery')).text).toContain('denied');
 });
 
+it.each(['matched','no configuration','other trigger','other agent','unknown tool'] as const)('checks a clock batch against its profile (%s)', async mode => {
+ const trigger = 'tr-clock';
+ const b = await body({wakeToolProfiles:mode === 'no configuration' ? [] : [{
+   agent:mode === 'other agent' ? 'mark' : 'art', trigger:mode === 'other trigger' ? 'tr-other' : trigger, omitClaudeTools:mode === 'unknown tool' ? ['Workflow','Bash'] : ['Workflow'],
+ }]});
+ const {db,root,clock} = b.fixture;
+ db.insert(schema.household).values({timezone:'UTC'}).onConflictDoUpdate({target:schema.household.singleton,set:{timezone:'UTC'}}).run();
+ root.services.tempo.triggers.set({id:trigger,ownerKind:'agent',owner:'art',project:'pond',sourceKind:'time',times:'18:01,18:02',
+   lifespan:'until-stopped',targetKind:'inbox',toKind:'agent',to:'art',note:'Test schedule',instructions:'Check'});
+ const ids:string[] = [];
+ const profile = async (items:string[]) => JSON.parse((await b.call('loom_command',{
+   operation:'tempo.wakeToolProfile',input:{items},id:'read-profile',
+ })).text).value;
+ for (let minute = 1; minute <= 2; minute++) {
+   clock.advance(60_000);
+   const sourceId = trigger + ':time:' + new Date(clock.now()).toISOString();
+   const item = db.select().from(schema.inbox).where(eq(schema.inbox.sourceId,sourceId)).get()!;
+   db.update(schema.jobs).set({conversation:item.conversation,member:null}).where(eq(schema.jobs.id,'job')).run();
+   db.update(schema.inbox).set({state:'taken',job:'job',takenVolume:'full'}).where(eq(schema.inbox.id,item.id)).run();
+   ids.push(item.id);
+   expect(await profile(ids)).toEqual([]);
+   expect((await b.fixture.call('accept',{items:[item.id]},'accept-'+item.id)).status).toBe(200);
+   expect(await profile(ids)).toEqual(mode === 'matched' ? ['Workflow'] : []);
+ }
+ expect(await profile([...ids,'unrelated'])).toEqual([]);
+ expect(await profile([ids[0],ids[0]])).toEqual([]);
+ db.update(schema.inbox).set({sourceId:'missing-occurrence'}).where(eq(schema.inbox.id,ids[0])).run();
+ expect(await profile(ids)).toEqual([]);
+});
+
 it('recovers an interrupted verification from the journal without stamping the same page twice', async () => {
  const b=await body(), {db,root,clock}=b.fixture;
  db.insert(schema.household).values({timezone:'UTC'}).onConflictDoUpdate({target:schema.household.singleton,set:{timezone:'UTC'}}).run();
@@ -313,9 +343,9 @@ it('recovers an interrupted verification from the journal without stamping the s
  expect(JSON.parse((await command(replacement,'tempo.readJournal',{},'verify-checkpoint')).state)).toEqual(complete);
 });
 it('carries a journal between actual trigger deliveries and confines body commands to the accepted wake', async () => {
- const b = await body(), {db,root,clock} = b.fixture;
+ const b = await body({wakeToolProfiles:[{agent:'art',trigger:'tr-journal',omitClaudeTools:['Workflow']}]}), {db,root,clock} = b.fixture;
  const engine = root.services.tempo.triggers;
- const t = engine.set({ ownerKind:'agent', owner:'art', project:'pond', sourceKind:'answer', watches:'approval:example',
+ const t = engine.set({ id:'tr-journal', ownerKind:'agent', owner:'art', project:'pond', sourceKind:'answer', watches:'approval:example',
    lifespan:'until-stopped', targetKind:'inbox', toKind:'agent', to:'art', note:'Test journal', instructions:'Check both sources' });
  engine.event('answer','approval:example','first');
  const first = db.select().from(schema.inbox).where(eq(schema.inbox.sourceId,t.id+':first')).get()!;
@@ -349,6 +379,7 @@ it('carries a journal between actual trigger deliveries and confines body comman
  expect(JSON.parse((await carry()).text).value).toBeNull();
  expect((await b.fixture.call('accept',{items:[second.id]},'accept-second')).status).toBe(200);
  expect(JSON.parse((await carry()).text).value).toBe('Count each source once.');
+ expect(JSON.parse((await cmd('tempo.wakeToolProfile',{items:[second.id]},'event-profile')).text).value).toEqual([]);
  expect(JSON.parse((await cmd('tempo.readJournal',{item:second.id},'event-firing')).text).value.firing).toEqual({job:'job',item:second.id,scheduledAt:null});
  expect(db.select().from(schema.inbox).where(eq(schema.inbox.conversation,first.conversation!)).all()).toHaveLength(2);
  expect((await read()).text).toContain('page 2');
