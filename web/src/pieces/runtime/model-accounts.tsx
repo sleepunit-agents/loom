@@ -125,7 +125,7 @@ export function RuntimeAccounts({active=true}:{active?:boolean}={}){
     </details>;
    })}
    <section aria-label="Agent models" className="grid gap-3"><h3>Models in preference order</h3>
-    {!groups.size?<p>No model preferences yet.</p>:[...groups].map(([agent,models])=><article key={agent} className="rounded-xl border p-4"><h4>{agent}</h4><ol className="list-inside list-decimal">{models.map(row=><li key={row.model}>{row.model}</li>)}</ol></article>)}
+    {!groups.size?<p>No model preferences yet.</p>:[...groups].map(([agent,models])=><article key={agent} className="rounded-xl border p-4"><h4>{agent}</h4><ol className="list-inside list-decimal">{models.map((row,index)=><li key={row.model}>{row.model}{index===0 && ' · Primary'}</li>)}</ol></article>)}
    </section>
   </>}
  </section>;

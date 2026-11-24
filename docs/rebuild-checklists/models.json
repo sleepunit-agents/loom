@@ -44,7 +44,11 @@
     {
       "id": "models-006",
       "promise": "Gives each agent a primary conversational model, and the models it may use in order.",
-      "source": "docs/how-it-works/site/models.html"
+      "source": "docs/how-it-works/site/models.html",
+      "probe": {
+        "kind": "action",
+        "action": "primaryModelOrder"
+      }
     },
     {
       "id": "models-007",

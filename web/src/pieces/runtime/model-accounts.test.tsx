@@ -37,18 +37,18 @@ it('hides retained details whenever the live selection becomes unavailable and d
 it('orders each visible agents models and uses household time for account timestamps',async()=>{
  f.snapshot={status:'live',data:{modelAccounts:[detail],agents:[{id:'art',removedAt:null},{id:'mark',removedAt:'2026-11-19'}],deskTime:{timezone:'America/Chicago'},agentModels:[{agent:'art',model:'preferred',position:0},{agent:'art',model:'fallback',position:1},{agent:'mark',model:'mark-only',position:0}]}};
  await act(async()=>{tree=create(h(RuntimeAccounts));});
- expect(tree.root.findAllByType('li').map((node:{children:unknown[]})=>node.children.join(''))).toEqual(['preferred','fallback']);
+ expect(tree.root.findAllByType('li').map((node:{children:unknown[]})=>node.children.join(''))).toEqual(['preferred · Primary','fallback']);
  const text=JSON.stringify(tree.toJSON());expect(text).toContain('6:00 AM');
  f.snapshot={status:'live',data:{modelAccounts:[{__typename:'RuntimeAccountSummary',label:'Main subscription',level:'almost full'}],agents:[{id:'mark',removedAt:null}],agentModels:[{agent:'mark',model:'mark-only',position:0}]}};
  await act(async()=>tree.update(h(RuntimeAccounts)));
- expect(tree.root.findAllByType('li').map((node:{children:unknown[]})=>node.children.join(''))).toEqual(['mark-only']);
+ expect(tree.root.findAllByType('li').map((node:{children:unknown[]})=>node.children.join(''))).toEqual(['mark-only · Primary']);
  expect(JSON.stringify(tree.toJSON())).not.toContain('preferred');expect(JSON.stringify(tree.toJSON())).not.toContain('private-provider');
 });
 
 it('keeps server tie order and reports a missing household zone honestly',async()=>{
  f.snapshot={status:'live',data:{modelAccounts:[detail],agents:[{id:'art',removedAt:null}],agentModels:[{agent:'art',model:'Z-order',position:0},{agent:'art',model:'a-order',position:0}]}};
  await act(async()=>{tree=create(h(RuntimeAccounts));});
- expect(tree.root.findAllByType('li').map((node:{children:unknown[]})=>node.children.join(''))).toEqual(['Z-order','a-order']);
+ expect(tree.root.findAllByType('li').map((node:{children:unknown[]})=>node.children.join(''))).toEqual(['Z-order · Primary','a-order']);
  const text=JSON.stringify(tree.toJSON());expect(text).toContain('Nov 15, 2026');expect(text).not.toContain(' UTC');
 });
 
@@ -56,7 +56,7 @@ it('keeps visible preferences while the agent roster is unavailable',async()=>{
  const data={modelAccounts:[detail],agentModels:[{agent:'art',model:'preferred',position:0}]};
  f.snapshot={status:'live',data};
  await act(async()=>{tree=create(h(RuntimeAccounts));});
- expect(tree.root.findAllByType('li').map(node=>node.children.join(''))).toEqual(['preferred']);
+ expect(tree.root.findAllByType('li').map(node=>node.children.join(''))).toEqual(['preferred · Primary']);
  f.snapshot={status:'live',data:{...data,agents:[]}};
  await act(async()=>tree.update(h(RuntimeAccounts)));
  expect(tree.root.findAllByType('li')).toHaveLength(0);
