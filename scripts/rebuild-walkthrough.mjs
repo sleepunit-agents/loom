@@ -377,6 +377,10 @@ export async function* walkthroughSteps(output) {
   } catch(error) {
    report.actions.jobOutcomes=report.actions.jobEndTrigger={ok:false,error:String(error)};
   }
+  try {
+   const {pullRequestTriggerEvidence}=await import('./rebuild-pr-trigger.mjs');
+   report.actions.pullRequestTrigger=await pullRequestTriggerEvidence();
+  } catch(error) { report.actions.pullRequestTrigger={ok:false,error:String(error)}; }
   save();yield {phase:'worker-start-retries',actions:safeReport(report.actions)};
   phase='named agent tools';
   try {
