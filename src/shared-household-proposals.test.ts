@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bodyCredentials,bodyFixture } from '../test/fixtures/conversation-body.js';
+import {slackGrantNames} from './shared-outside-names.js';
 import { PeopleStore } from './backends/people.js';
 import type { SharedMemoryOptions } from './shared-memory.js';
 import Database from 'better-sqlite3';
@@ -1163,6 +1164,24 @@ it('tells a household owner who a card is for, and nobody else: the names loom h
   expect(await titles('sam',[disconnect,unrelated])).toEqual([{approval:disconnect,title:disconnectedTitle}]);
   expect((await f.call('approvals/answer',{id:disconnect,answer:'allow'},'sam')).body.ok).toBe(true);
   expect(await titles('sam',[disconnect])).toEqual([{approval:disconnect,title:disconnectedTitle}]);
+  // Losing the bridge lookup must not take unrelated titles off this page.
+  const failedIds=[id];
+  for(let i=0;i<12;i++){
+    const input={agent:'art',kit:'garden-'+i,to:{...gage,user:'UOTHER'+i},grant:true};
+    failedIds.push((await f.call('household/propose',{change:'kitGrant',input,why:'Fixture lookup failure'},'art')).body.value!.id);
+  }
+  const missingDirectory=vi.fn(()=>{throw Error('Fixture directory unavailable');});
+  const names=slackGrantNames(f.db,[gage,{...gage,user:'UOTHER'}],missingDirectory);
+  expect(names.get(JSON.stringify([gage.workspace,gage.user]))?.name).toBe('gage');
+  expect(names.size).toBe(1);expect(missingDirectory).toHaveBeenCalledTimes(1);
+  f.db.$client.exec('ALTER TABLE bridge_people RENAME TO fixture_unavailable_people');
+  const prepared=vi.spyOn(f.db.$client,'prepare');
+  try{
+    expect(await titles('sam',[...failedIds,disconnect])).toEqual([{approval:disconnect,title:disconnectedTitle}]);
+    expect(prepared.mock.calls.filter(([sql])=>String(sql).includes('from "bridge_people"'))).toHaveLength(1);
+  }finally{prepared.mockRestore();}
+
+
 });
 
 it('names an outside account from its exact directory record only for the owner', async () => {
@@ -1189,6 +1208,24 @@ it('names an outside account from its exact directory record only for the owner'
   expect(recipient.card!.title).toContain('Test Contact (Slack)');
   expect(recipient.blocked).toContain('does not know Test Contact as an outside contact');
   expect((await f.call('approvals/answer',{id:legacy,answer:'allow',confirm:true},'sam')).body.ok).toBe(false);
+  const unknown=await file('slack','TOTHER','UEXAMPLE01');
+  const queryTitles=async()=>{
+    const response=await f.root.http.request('http://loom/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+credentials.sam},
+      body:JSON.stringify({query:'query($ids:[String!]!){inboxProposalTitles(ids:$ids){approval title}}',variables:{ids:[id,legacy,unknown]}})});
+    const packet=await response.json();
+    expect(packet.errors).toBeUndefined();
+    return Object.fromEntries(packet.data.inboxProposalTitles.map((row:{approval:string;title:string})=>[row.approval,row.title]));
+  };
+  expect(await queryTitles()).toEqual({
+    [id]:'Let Casey Field (Slack) use Art’s field kit',
+    [legacy]:'Let Test Contact (Slack) use Art’s field kit',
+    [unknown]:'Let an unnamed Slack account use Art’s field kit',
+  });
+  const revoke=(await f.call('household/propose',{change:'kitGrant',input:{agent:'art',kit:'field-retired',to:{platform:'slack',workspace:'TFIELD',user:'UCASEY'},grant:false},why:'Fixture revoke'},'art')).body.value!.id;
+  await f.call('approvals/answer',{id:revoke,answer:'deny'},'sam');
+  const previous=await f.root.http.request('http://loom/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+credentials.sam},
+    body:JSON.stringify({query:'query($ids:[String!]!){inboxProposalTitles(ids:$ids){approval title}}',variables:{ids:[revoke]}})});
+  expect((await previous.json()).data.inboxProposalTitles).toEqual([{approval:revoke,title:'Stop letting Casey Field (Slack) use art’s field-retired kit'}]);
   const named = await preview(f, id);
   expect((await preview(f, await file('slack','TFIELD','UCASEYTWO'))).card!.title).toContain('Casey Field (Slack)');
   expect(named.card!.title).toContain('Casey Field (Slack)');
@@ -1506,4 +1543,29 @@ it('matches the upstream kit apply guard for every refusal and allowed change', 
     expect(reachedWrite, label).toBe(expectedCode === null);
     expect(outcome(() => applyKitChange(f.db, value)), label).toEqual(expected);
   }
+});
+it('reads Slack grant titles with one bridge lookup per page and no per-card kit or sharing reads',async()=>{
+ const statements:string[]=[];
+ const f=fixture(undefined,sql=>statements.push(sql));
+ for(const [n,viewer] of [[2,'sam'],[16,'sam'],[48,'sam'],[48,'lee']] as const){
+  const ids:string[]=[];
+  for(let i=0;i<n;i++){
+   const user='U'+viewer+n+'X'+i;
+   const to={platform:'slack',workspace:'TTEST',user};
+   const filed=await f.call('household/propose',{change:'kitGrant',input:{agent:'art',kit:'garden',to,grant:true},why:'Fixture garden work'},'art');
+   ids.push(filed.body.value!.id);
+  }
+  statements.length=0;
+  const res=await f.root.http.request('http://loom/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+credentials[viewer]},body:JSON.stringify({query:'query Titles($ids:[String!]!){inboxProposalTitles(ids:$ids){approval title}}',variables:{ids}})});
+  const packet=await res.json();
+  expect(packet.errors).toBeUndefined();
+  expect(packet.data.inboxProposalTitles.map((r:{approval:string})=>r.approval).sort()).toEqual(viewer==='sam'?[...ids].sort():[]);
+  for(const row of packet.data.inboxProposalTitles)expect(row.title).toBe('Let an unnamed Slack account use Art’s garden kit');
+  const reads=statements.filter(s=>/^\s*(SELECT|WITH)\b/i.test(s));
+  const from=(table:string)=>reads.filter(sql=>sql.match(/\bfrom\s+"?(\w+)/i)?.[1]===table).length;
+  expect(from('bridge_people')).toBe(viewer==='sam'?1:0);
+  expect(from('agent_kits')).toBe(0);
+  expect(from('project_members')).toBeLessThanOrEqual(2);
+
+ }
 });

@@ -56,7 +56,8 @@ function resolveSightingHolder(scoped:string[],alias:string|undefined,live:strin
 }
 
 interface SightingRow {platform:AccountPlatform;workspace:string;account:string;label:string|null;seenAt:string;alias:string|null}
-interface Candidates {row:SightingRow;scoped:string[];legacy:string[]}
+type AccountLookup=Pick<SightingRow,'platform'|'workspace'|'account'|'alias'>;
+interface Candidates<T extends AccountLookup> {row:T;scoped:string[];legacy:string[]}
 
 /** Within a card read transaction, validate every saved sighting against current cards.
  * Read the cards of each relevant workspace once; several accounts may name one card.
@@ -66,13 +67,19 @@ export function listAccountSightings(db:Database,slug:string){
     FROM person_account_sightings s LEFT JOIN person_sighting_aliases a
     ON s.platform='slack' AND a.workspace=s.workspace AND a.account=s.account
     WHERE s.slug=? ORDER BY s.seen_order DESC,s.platform,s.workspace,s.account`).all(slug) as SightingRow[];
-  const matched=new Set<SightingRow>();
+  const matches=matchAccounts(db,rows);
+  return rows.filter(row=>matches.get(row)?.holder===slug).map(({alias:_alias,...row})=>row);
+}
+
+function matchAccounts<T extends AccountLookup>(db:Database,rows:T[]){
+  const matches=new Map<T,{scoped?:string;holder?:string}>();
   for(const platform of accountPlatforms){
-    const spaces=new Map<string,Map<string,Candidates>>();
-    const aliases=new Map<string,Candidates[]>();
+    const spaces=new Map<string,Map<string,Candidates<T>>>();
+    // Keep at most two distinct slugs. A third cannot restore a unique match.
+    const unscoped=new Map<string,string[]>();
     for(const row of rows){
       if(row.platform!==platform)continue;
-      const candidate:Candidates={row,scoped:[],legacy:[]};
+      const candidate:Candidates<T>={row,scoped:[],legacy:[]};
       let accounts=spaces.get(row.workspace);
       if(!accounts){
         accounts=new Map();
@@ -80,9 +87,7 @@ export function listAccountSightings(db:Database,slug:string){
       }
       accounts.set(row.account,candidate);
       if(row.alias && slackAccount.test(row.account)){
-        const existing=aliases.get(row.account);
-        if(existing)existing.push(candidate);
-        else aliases.set(row.account,[candidate]);
+        if(!unscoped.has(row.account))unscoped.set(row.account,[]);
       }
     }
     if(!spaces.size)continue;
@@ -90,7 +95,7 @@ export function listAccountSightings(db:Database,slug:string){
     const cards=db.prepare(`SELECT slug,${space} AS workspace,${account} AS value,
       json_type(card_json,'$.where.${platform}.value') AS kind FROM people
       WHERE archived_at IS NULL AND json_valid(card_json) AND
-      (${space} IN (SELECT value FROM json_each(?)) ${aliases.size?'OR '+space+' IS NULL':''})
+      (${space} IN (SELECT value FROM json_each(?)) ${unscoped.size?'OR '+space+' IS NULL':''})
       AND ${account} IS NOT NULL`).iterate(JSON.stringify([...spaces.keys()])) as Iterable<
         {slug:string;workspace:string|null;value:string|number;kind:string}>;
     for(const card of cards){
@@ -99,24 +104,80 @@ export function listAccountSightings(db:Database,slug:string){
         const value:unknown=card.kind==='array'?JSON.parse(String(card.value)):card.value;
         const values=Array.isArray(value)?value:[value];
         for(const id of new Set(values)){
-          if(typeof id==='string')accounts.get(id)?.scoped.push(card.slug);
+          const found=typeof id==='string'?accounts.get(id):undefined;
+          if(found && found.scoped.length<2)found.scoped.push(card.slug);
         }
       }
-      if(aliases.size){
+      if(unscoped.size){
         // Same ASCII token boundary as legacySlackHolder, including repeated tokens on a card.
         for(const id of new Set(String(card.value).match(/[a-zA-Z0-9_]+/g))){
-          for(const item of aliases.get(id)??[]){
-            if(card.workspace===null||card.workspace===item.row.workspace)item.legacy.push(card.slug);
-          }
+          if(!unscoped.has(id))continue;
+          const candidates=card.workspace===null?unscoped.get(id):accounts?.get(id)?.legacy;
+          if(candidates && candidates.length<2)candidates.push(card.slug);
         }
       }
     }
     for(const accounts of spaces.values()){
       for(const {row,scoped,legacy} of accounts.values()){
-        const live=legacy.length===1?legacy[0]:undefined;
-        if(resolveSightingHolder(scoped,row.alias??undefined,live)===slug)matched.add(row);
+        const tokens=row.alias?[...legacy,...(unscoped.get(row.account)??[])]:[];
+        const live=tokens.length===1?tokens[0]:undefined;
+        matches.set(row,{scoped:scoped.length===1?scoped[0]:undefined,holder:resolveSightingHolder(scoped,row.alias??undefined,live)});
       }
     }
   }
-  return rows.filter(row=>matched.has(row)).map(({alias:_alias,...row})=>row);
+  return matches;
+}
+
+export function approvedSlackRecipient(db:Database,workspace:string,user:string):string|undefined{
+  const alias=db.prepare(`SELECT a.slug,json_extract(p.card_json,'$.name') AS name
+  FROM person_sighting_aliases a JOIN people p ON p.slug=a.slug
+  WHERE a.workspace=? AND a.account=? AND a.recipient_display_slug=a.slug AND p.archived_at IS NULL`).get(workspace,user) as {slug:string;name:string}|undefined;
+  if (alias && sightingHolder(db,'slack',workspace,user)===alias.slug) return alias.name;
+}
+
+/** Resolve a page of owner-visible Slack recipients against one directory snapshot. */
+export function slackGrantDirectory(db:Database,accounts:{workspace:string;user:string}[]){
+  const keys=new Map(accounts.map(({workspace,user})=>[JSON.stringify([workspace,user]),{platform:'slack' as const,workspace,account:user,alias:null as string|null}]));
+  const rows=[...keys.values()];
+  const names=new Map<string,{name:string;alias:boolean}>();
+  if(!rows.length)return names;
+  // One unresolved recipient can use the existing point lookup without decoding unrelated cards.
+  if(rows.length===1){
+    const {workspace,account}=rows[0]!;
+    const direct=accountHolders(db,'slack',workspace,account);
+    const name=direct.length===1?direct[0]?.name:undefined;
+    const key=JSON.stringify([workspace,account]);
+    if(name)names.set(key,{name,alias:false});
+    else{
+      try{
+        const alias=approvedSlackRecipient(db,workspace,account);
+        if(alias)names.set(key,{name:alias,alias:true});
+      }catch{ /* An unavailable alias cannot supply a recipient. */ }
+    }
+    return names;
+  }
+  // Older directories may have only the People cards. An unreadable alias source
+  // has no bearing on an exact, scoped account recorded on a healthy card.
+  try{
+    const approved=db.prepare(`SELECT a.workspace,a.account,a.slug FROM json_each(?) r JOIN person_sighting_aliases a
+      ON a.workspace=json_extract(r.value,'$.workspace') AND a.account=json_extract(r.value,'$.account') AND a.recipient_display_slug=a.slug`).all(JSON.stringify(rows)) as {workspace:string;account:string;slug:string}[];
+    for(const alias of approved)keys.get(JSON.stringify([alias.workspace,alias.account]))!.alias=alias.slug;
+  }catch{ /* Only verified aliases participate in the legacy search. */ }
+  const matches=matchAccounts(db,rows);
+  const selected=new Map<string,{slug:string;alias:boolean}>();
+  for(const [key,row] of keys){
+    const match=matches.get(row);
+    if(match?.scoped)selected.set(key,{slug:match.scoped,alias:false});
+    else if(row.alias && row.alias===match?.holder)selected.set(key,{slug:row.alias,alias:true});
+  }
+  if(!selected.size)return names;
+  const slugs=JSON.stringify([...new Set([...selected.values()].map(person=>person.slug))]);
+  const labels=db.prepare(`SELECT slug,json_extract(card_json,'$.name') AS name FROM people
+    WHERE archived_at IS NULL AND json_valid(card_json) AND slug IN (SELECT value FROM json_each(?))`).all(slugs) as {slug:string;name:string}[];
+  const bySlug=new Map(labels.map(row=>[row.slug,row.name]));
+  for(const [key,person] of selected){
+    const name=bySlug.get(person.slug);
+    if(name)names.set(key,{name,alias:person.alias});
+  }
+  return names;
 }
