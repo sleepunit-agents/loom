@@ -13,7 +13,7 @@ export async function bridgeSettingsAction({page,tile,out,app,home}){
   assert.equal(app.services.bridges.daemon,undefined,"Bridge settings walkthrough requires an offline provider fixture");
   const submit=async(form,label,input,exists)=>{
    const button=form.getByRole('button',{name:label,exact:true});
-   await button.focus();await button.press('Enter');
+   await button.click();
    const composer=tile.getByRole('region',{name:'Bridge change request'});
    if(input.action==='connection'){
     const words=await composer.getByRole('textbox',{name:/^Message\b/}).inputValue();
