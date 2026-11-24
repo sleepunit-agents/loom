@@ -1604,3 +1604,43 @@ it('names contact and roster cards together while preserving the project and wor
  expect(queried.filter(table=>table==='project_outside_people')).toHaveLength(1);
  expect(queried.filter(table=>table==='bridge_people')).toHaveLength(1);
 });
+
+it('reads bridge link titles together without using a grant-only directory alias as an account link',async()=>{
+ const directory=mkdtempSync(join(tmpdir(),'bridge-card-names-'));
+ clean.push(()=>rmSync(directory,{recursive:true,force:true}));
+ const people=join(directory,'people.db'), store=new PeopleStore({dbPath:people});
+ const user='U0123456789';
+ try{
+  store.write({slug:'legacy',name:'Alias only',where:{slack:{value:'Contact '+user}}});
+  store.database.prepare('INSERT INTO person_sighting_aliases(workspace,account,slug,recipient_display_slug) VALUES(?,?,?,?)')
+    .run('TWEST',user,'legacy','legacy');
+ }finally{store.close();}
+ const statements:string[]=[];
+ const f=fixture({checkingAgent:'art',sources:{commons:{directory,people,knowledge:join(directory,'knowledge.db')},agents:[]}},s=>statements.push(s));
+ const east={platform:'slack',workspace:'TEAST',user}, west={...east,workspace:'TWEST'};
+ f.db.insert(bridgePeople).values({...east,member:'lee'}).run();
+ const file=async(change:string,input:object)=>{
+  const result=await f.call('household/propose',{change,input,why:'Check the account link'},'art');
+  expect(result.body.ok).toBe(true);return result.body.value!.id;
+ };
+ const past=await file('bridge',{...east,action:'removePerson'});
+ expect((await f.call('approvals/answer',{id:past,answer:'deny'},'sam')).body.ok).toBe(true);
+ const remove=await file('bridge',{...east,action:'removePerson'});
+ const link=await file('bridge',{...west,action:'person',member:'sam'});
+ const grant=await file('kitGrant',{agent:'art',kit:'garden',to:west,grant:true});
+ const expected={
+  [past]:'Stop treating lee (Slack) as a household member',
+  [remove]:'Stop treating lee (Slack) as the household member Lee',
+  [link]:'Treat an unnamed Slack account as the household member Sam',
+  [grant]:'Let Alias only (Slack) use Art’s garden kit',
+ };
+ for(const actor of ['sam','lee'] as const){
+  statements.length=0;
+  const res=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+credentials[actor]},
+   body:JSON.stringify({query:'query($ids:[String!]!){inboxProposalTitles(ids:$ids){approval title}}',variables:{ids:Object.keys(expected)}})});
+  const packet=await res.json();expect(packet.errors).toBeUndefined();
+  expect(Object.fromEntries(packet.data.inboxProposalTitles.map((row:{approval:string;title:string})=>[row.approval,row.title])))
+   .toEqual(actor==='sam'?expected:{});
+  expect(statements.filter(s=>/\bfrom\s+"bridge_people"/i.test(s))).toHaveLength(actor==='sam'?1:0);
+ }
+});

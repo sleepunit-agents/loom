@@ -16,8 +16,11 @@ export interface CardFact { label: string; value: string; /** A raw id kept for 
 /** A name loom already holds, and where it came from. */
 export interface HeldName { name: string; source: string }
 export interface SlackAccount {workspace:string;user:string}
+export interface SlackInboxName extends HeldName {
+  via: 'link' | 'directory' | 'alias';
+}
 export interface InboxCardNames extends CardNames {
-  slackGrantNames(accounts:SlackAccount[]):Map<string,HeldName>;
+  slackGrantNames(accounts:SlackAccount[]):Map<string,SlackInboxName>;
 }
 export interface CardNames {
   /** The name held for an outside account, or null when loom holds none. */
@@ -74,6 +77,10 @@ export function outsideShort(who:Outside,held:HeldName|null,names?:CardNames){
       : names && who.platform === 'slack' ? 'an unnamed Slack account'
       : names ? 'a ' + platform + ' account loom has no name for (' + who.user + ' in workspace ' + who.workspace + ')'
       : 'the ' + platform + ' account ' + who.user + ' (workspace ' + who.workspace + ')';
+}
+export function bridgePersonTitle(whom:string, remove:boolean, member?:string) {
+  if (remove) return 'Stop treating ' + whom + ' as ' + (member ? 'the household member ' + member : 'a household member');
+  return 'Treat ' + whom + ' as the household member ' + member;
 }
 export function colleagueTitle(whom:string,tier:string,agent:string,project?:string,on?:boolean){
   const rosterAction=on===undefined?' and include them on ':on?' and keep them on ':' and add them to ';
@@ -611,13 +618,13 @@ function bridge(input: Rec, context: CardContext, name: (id: unknown) => string,
     }
     case 'person': {
       const who = outside(input as unknown as Outside), same = !!was && was.member === input.member;
-      return { title: 'Treat ' + who.short + ' as the household member ' + name(input.member), nothing: same,
+      return { title: bridgePersonTitle(who.short,false,name(input.member)), nothing: same,
         facts: [...who.facts, { label: 'Member', value: name(input.member) }, { label: 'What happens', value: 'Messages from that account are taken as ' + owns(name(input.member)) + ' own.' },
           ...(before ? [{ label: same ? 'What changes' : 'Now', value: same ? NOTHING : was ? 'It is treated as ' + name(was.member) + '.' : 'It is not treated as any member.' }] : []), who.id] };
     }
     case 'removePerson': {
       const who = outside(input as unknown as Outside);
-      return { title: 'Stop treating ' + who.short + ' as ' + (was ? 'the household member ' + name(was.member) : 'a household member'), nothing: isNew,
+      return { title: bridgePersonTitle(who.short,true,was ? name(was.member) : undefined), nothing: isNew,
         facts: [...who.facts, { label: 'What happens', value: 'Messages from that account are no longer taken as a member’s.' },
           ...(isNew ? [{ label: 'What changes', value: 'Nothing would change: it is not treated as any member.' }] : []), who.id] };
     }
