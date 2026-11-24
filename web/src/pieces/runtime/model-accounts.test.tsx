@@ -157,6 +157,24 @@ it('keeps all weekly readings in the household report, including updates while g
  expect(headings).toContain('Second subscription · week · 60% used');
  expect(report()).toContain('Garden talk');expect(report()).toContain('Second conversation');
 });
+it('opens a weekly usage link on the desktop and preserves browser shortcuts',async()=>{
+ const href='/p/tempo/trigger/orchard';
+ const group={key:'orchard',title:'Inspect the orchard',share:.1,href};
+ const week={window:'week',resetsAt:new Date(Date.now()+86400000).toISOString(),usage:.2,unattributed:.1,agents:[],triggers:[group],conversations:[]};
+ f.snapshot={status:'live',data:{modelAccounts:[{...detail,weeklyUsage:[week]}]}};
+ const go=vi.fn();
+ await act(async()=>{tree=create(h(RuntimeAccounts,{go}));});
+ const summary=tree.root.findAllByType('summary').find(node=>node.children.includes('Weekly usage across subscriptions'));
+ await act(async()=>summary.parent.props.onToggle({currentTarget:{open:true}}));
+ await act(async()=>tree.root.findByType('select').props.onChange({target:{value:'triggers'}}));
+ const link=tree.root.findByProps({href});
+ const preventDefault=vi.fn();
+ for(const event of [{ctrlKey:true},{metaKey:true},{shiftKey:true},{altKey:true},{button:1},{defaultPrevented:true}])
+  link.props.onClick({button:0,preventDefault,...event});
+ expect(go).not.toHaveBeenCalled();expect(preventDefault).not.toHaveBeenCalled();
+ link.props.onClick({button:0,preventDefault});
+ expect(go).toHaveBeenCalledExactlyOnceWith(href);expect(preventDefault).toHaveBeenCalledOnce();
+});
 it('opens the weekly report with the subscription and retires it at reset without another write',async()=>{
  vi.useFakeTimers();
  try {

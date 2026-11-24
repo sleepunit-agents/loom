@@ -15,7 +15,7 @@ const query = `query WeeklySubscriptions($detailId:String) {
 const percent = new Intl.NumberFormat(undefined,{style:'percent',maximumFractionDigits:2});
 type Dimension = 'agents'|'triggers'|'conversations';
 
-export function WeeklyUsage({accountId}:{accountId?:string}){
+export function WeeklyUsage({accountId,go}:{accountId?:string;go?:(path:string)=>void}){
   const feed = useDataQuery<{modelAccounts:Account[]}>(query,{detailId:accountId??null});
   const [dimension,setDimension] = useState<Dimension>('agents');
   const selected = (feed.status==='live' ? feed.data?.modelAccounts ?? [] : []).filter(account=>!accountId || account.id === accountId);
@@ -32,7 +32,11 @@ export function WeeklyUsage({accountId}:{accountId?:string}){
     {accounts.map(account=>account.weeklyUsage!.map(week=><section key={JSON.stringify([account.id,week.window])}>
       <h4>{account.label} · {week.window} · {percent.format(week.usage)} used</h4>
       <ul>{week[dimension].map(group=><li key={JSON.stringify(group.key)}>
-        <meter aria-label={group.title} min={0} max={1} value={group.share}/> {group.href?<a href={group.href}>{group.title}</a>:group.title} · {percent.format(group.share)}
+        <meter aria-label={group.title} min={0} max={1} value={group.share}/> {group.href?<a href={group.href} onClick={event=>{
+          if(!go||!group.href||event.defaultPrevented||event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
+          event.preventDefault();
+          go(group.href);
+        }}>{group.title}</a>:group.title} · {percent.format(group.share)}
       </li>)}</ul>
       <p>Unattributed · {percent.format(week.unattributed)}</p>
     </section>))}
