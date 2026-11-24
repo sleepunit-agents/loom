@@ -154,7 +154,7 @@ export class TriggerEngine {
    * shared-place-triggers.ts) and never part of what a caller sends. */
   set(value: NewTrigger, member?: string, asked?: Asker,
     coveringSchedule?: (agent: string, file: string, due: string) => Trigger | undefined,
-    pendingRun?: (id: string | undefined, agent: string) => Trigger | undefined): Trigger {
+    pendingRun?: (id: string | undefined, agent: string) => {id:string; existing?:Trigger}): Trigger {
     this.open();
     const { execution, ...v } = triggerInput.parse(value);
     if (execution === 'host') throw new Error(HOST_SCHEDULE_REFUSAL);
@@ -192,14 +192,15 @@ export class TriggerEngine {
       const schedule = coveringSchedule(v.to, v.file, due);
       if (schedule) return schedule;
     }
+    let id = v.id ?? `tr-${randomUUID()}`;
     if (pendingRun) {
       if (member || asked || v.ownerKind !== 'agent' || !v.owner || v.to !== v.owner || v.toKind !== 'agent' ||
           v.targetKind !== 'inbox' || v.sourceKind !== 'time' || v.lifespan !== 'once' || v.project || v.conversation ||
           v.program || park || !due) throw Error('Joining a pending run requires a one-off wake for the same agent');
       const waiting = pendingRun(v.id, v.owner);
-      if (waiting) return waiting;
+      if (waiting.existing) return waiting.existing;
+      id = waiting.id;
     }
-    const id = v.id ?? `tr-${randomUUID()}`;
     this.db.transaction(() => {
       this.db.insert(triggers).values({ ...v, id, member: member ?? null, conversation: v.conversation ?? null, ...(asked ? { askedByKind: asked.kind, askedBy: asked.id, askedAt: this.now() } : {}), enabled: true, state: 'standing', nextDueAt: due, createdAt: this.now(), changedAt: this.now() }).run();
       if (this.paused(this.get(id))) this.db.update(triggers).set({ state: 'held' }).where(eq(triggers.id, id)).run();

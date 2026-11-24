@@ -10,11 +10,11 @@ import { agents, approvals, inbox, members, operationResults, triggerEdits, trig
 import { Operations } from '../operations/index.js';
 import { approvalService } from '../../apps/approvals.js';
 import { createTempo } from './tempo.js';
-import { registerTempoOperations, type TempoAccess } from './operations.js';
+import { registerTempoOperations, type TempoAccess, type TempoOperationOptions } from './operations.js';
 
 const closes: Array<() => void> = [];
 afterEach(() => closes.splice(0).reverse().forEach(close => close()));
-function fixture() {
+function fixture(policy: Partial<Pick<TempoOperationOptions, 'heldRefusal' | 'wordRefusal' | 'ownersFirst'>> = {}) {
   const client = new Database(':memory:'), clock = new FakeClock(), now = () => new Date(clock.now()).toISOString();
   const db = createDataSchema(client, now);
   db.insert(members).values({ id: 'jonathan', role: 'owner', joinedAt: now() }).run();
@@ -31,6 +31,7 @@ function fixture() {
   const operations = new Operations(client, clock, () => {}, { receipts: new OperationResults(db), writes, reportError(error) { throw error; } });
   let allowed = true;
   registerTempoOperations(operations, db, tempo, {
+    ...policy,
     authorize(viewer, access) { accesses.push(access); return allowed && viewer.kind === 'agent' && viewer.id === 'art'; },
   });
   tempo.start();
@@ -189,21 +190,49 @@ it('sets and edits machine facts, keeping each previous list in the trigger hist
   ]);
 });
 
-it('joins only a pending one-off for the exact run name and starts a new one after it fires', () => {
+it('joins an older unguarded wake even while held, preserving exact name and receipt semantics', () => {
   const f = fixture();
   const times = new Date(f.clock.now() + 60000).toISOString();
-  const set = (name: string, nonce: string) => f.call('tempo.set', {
-    ...f.trigger, times, reusePendingRun: true, id: 'run-' + name + '-20261124t010203-' + nonce,
-  }, nonce);
-  const first = 'run-alert-dns-20261124t010203-bbbb';
-  expect(set('alert-dns-check', 'aaaa').ok).toBe(true);
-  expect(set('alert-dns', 'bbbb')).toMatchObject({ok:true,value:{id:first}});
-  expect(set('alert-dns', 'cccc')).toMatchObject({ok:true,value:{id:first,joined:true}});
+  const first = 'run-alert-dns-20261123t010203-bbbb';
+  const next = { ...f.trigger, times, reusePendingRun: true, id:'run-alert-dns-20261124t010203-aaaa' };
+  expect(f.call('tempo.set', {...f.trigger, times, id:first}, 'old').ok).toBe(true);
+  expect(f.call('tempo.set', {...next, id:'run-alert-dns-check-20261124t010203-aaaa'}, 'different')).toMatchObject({ok:true,value:{id:expect.stringMatching(/^run-alert-dns-check-/)}});
+  const joined = {ok:true,value:{id:first,joined:true}};
+  expect(f.call('tempo.set', next, 'join')).toMatchObject(joined);
   f.tempo.triggers.pause('art');
-  expect(set('alert-dns', 'dddd')).toMatchObject({ok:true,value:{id:first,joined:true}});
+  expect(f.call('tempo.set', next, 'held')).toMatchObject(joined);
   f.tempo.triggers.resume('art');
   f.clock.advance(60000);
   expect(f.tempo.triggers.get(first).state).toBe('fired');
-  expect(set('alert-dns', 'eeee')).toMatchObject({ok:true,value:{id:'run-alert-dns-20261124t010203-eeee'}});
+  expect(f.call('tempo.set', next, 'join')).toMatchObject(joined);
+  expect(f.call('tempo.set', {...next, id:first}, 'fresh')).toMatchObject({ok:true,value:{id:expect.not.stringMatching(first)}});
   expect(f.db.select().from(triggers).all()).toHaveLength(3);
+});
+
+it('allocates a fresh id when the proposed one names another agent’s pending wake', () => {
+  const f = fixture();
+  const id='run-alert-garden-20261124t010203-aaaa', times = new Date(f.clock.now()+60000).toISOString();
+  f.db.insert(agents).values({id:'fern', about:'', markBg:'#fff', markFg:'#000', faceShape:'pebble',faceEyes:'dot'}).run();
+  expect(f.call('tempo.set', {...f.trigger, owner:'fern',to:'fern',id,times}, 'seed').ok).toBe(true);
+  const input={...f.trigger,id,times,reusePendingRun:true};
+  expect(f.call('tempo.set',input,'ours')).toMatchObject({ok:true,value:{id:expect.not.stringMatching(id)}});
+  expect(f.tempo.triggers.get(id).owner).toBe('fern');
+  const rows=f.db.select().from(triggers).all();
+  expect(rows).toHaveLength(2);
+  expect(f.call('tempo.set',input,'again')).toMatchObject({ok:true,value:{id:rows.find(t=>t.owner==='art')!.id,joined:true}});
+});
+
+it('checks holds, scheduling authority and owner proposals before returning a pending id', () => {
+  let decision: 'set'|'held'|'refused'|'ask'='set';
+  const f=fixture({
+    heldRefusal:()=>decision==='held'?'On hold':undefined,
+    wordRefusal:()=>decision==='refused'?'Out of scope':undefined,
+    ownersFirst:()=>decision==='ask'?{id:'proposed',card:'approval',waits:'owner'}:undefined,
+  });
+  const input={...f.trigger,id:'run-test-20261124t010203-aaaa',times:new Date(f.clock.now()+60000).toISOString(),reusePendingRun:true};
+  expect(f.call('tempo.set',input,'seed').ok).toBe(true);
+  decision='held'; expect(f.call('tempo.set',input,'held')).toMatchObject({ok:false,code:'denied'});
+  decision='refused'; expect(f.call('tempo.set',input,'refused')).toMatchObject({ok:false,code:'denied'});
+  decision='ask'; expect(f.call('tempo.set',input,'ask')).toMatchObject({ok:true,value:{id:'proposed',waits:'owner'}});
+  expect(f.db.select().from(triggers).all()).toHaveLength(1);
 });

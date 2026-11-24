@@ -80,7 +80,7 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
         reuseFileSchedule ? (agent, file, due) => coveringFileSchedule(db, ctx.viewer, agent, file, due) : undefined,
         reusePendingRun ? (id, agent) => {
           const existing = pendingNamedRun(db, ctx.viewer, id, agent);
-          joined = !!existing;
+          joined = !!existing.existing;
           return existing;
         } : undefined);
       if (joined) return { id: row.id, joined: true as const };

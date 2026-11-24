@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomInt } from 'node:crypto';
 import { and, asc, between, eq, getTableColumns, gt, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import { rules, type Viewer } from '../../policy.js';
 import { sqlHolds, sqlVisibility } from '../../policy-sql.js';
@@ -52,7 +52,7 @@ export function pendingNamedRun(db: DataDatabase, viewer: Viewer, id: string | u
   const match = /^run-([a-z][a-z0-9-]{0,60})-[0-9]{8}t[0-9]{6}-[0-9a-f]{4}$/.exec(id ?? '');
   if (!match) throw Error('Joining a pending run requires a dated run id');
   const glob = 'run-' + match[1] + '-' + '[0-9]'.repeat(8) + 't' + '[0-9]'.repeat(6) + '-' + '[0-9a-f]'.repeat(4);
-  return db.select().from(triggers).where(and(
+  const existing = db.select().from(triggers).where(and(
     sqlVisibility(viewer, ['triggers']).triggers(getTableColumns(triggers)),
     sql`${triggers.id} GLOB ${glob}`, eq(triggers.ownerKind, 'agent'), eq(triggers.owner, agent),
     eq(triggers.sourceKind, 'time'), eq(triggers.lifespan, 'once'), eq(triggers.targetKind, 'inbox'),
@@ -60,6 +60,16 @@ export function pendingNamedRun(db: DataDatabase, viewer: Viewer, id: string | u
     inArray(triggers.state, ['standing','due','firing','held']),
     isNull(triggers.member), isNull(triggers.project), isNull(triggers.conversation), isNull(triggers.program),
   )).orderBy(asc(triggers.createdAt), asc(triggers.id)).limit(1).get();
+  if (existing) return {id:existing.id, existing};
+  // Guarded starts allocate their nonce here. A guessed id can coincide with a private,
+  // historical or different agent's run. Never return that row or reveal whether it exists.
+  const prefix = match[0].slice(0,-4);
+  const start = randomInt(0x10000);
+  for (let offset = 0; offset < 0x10000; offset++) {
+    const candidate = prefix + ((start + offset) % 0x10000).toString(16).padStart(4,'0');
+    if (!db.select({id:triggers.id}).from(triggers).where(eq(triggers.id,candidate)).get()) return {id:candidate};
+  }
+  throw Error('No run names remain for this second');
 }
 
 /** Bind a household schedule replacement to the settings its owner just read. */
