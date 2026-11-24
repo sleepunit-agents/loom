@@ -1644,3 +1644,31 @@ it('reads bridge link titles together without using a grant-only directory alias
   expect(statements.filter(s=>/\bfrom\s+"bridge_people"/i.test(s))).toHaveLength(actor==='sam'?1:0);
  }
 });
+
+it('reads Slack disconnect titles in one connection lookup without reading the channel filters',async()=>{
+ const statements:string[]=[];
+ const f=fixture(undefined,sql=>statements.push(sql));
+ const at=new Date(f.clock.now()).toISOString();
+ f.db.insert(secrets).values({name:'BOT',description:'Fixture',changedAt:at,changedBy:'sam'}).run();
+ const ids:string[]=[], expected:{approval:string;title:string}[]=[];
+ for(const id of ['current','past','discord','missing']){
+  if(id!=='missing')f.db.insert(bridgeConnections).values({id,platform:id==='discord'?'discord':'slack',agent:'art',workspace:id,botUser:'bot',tokenSecret:'BOT',enabled:true,state:'connected',stateAt:at}).run();
+  const filed=await f.call('household/propose',{change:'bridge',input:{action:'disconnect',id},why:'Fixture'},'art');
+  expect(filed.body.ok).toBe(true);
+  const approval=filed.body.value!.id;
+  ids.push(approval);
+  if(id==='past')expect((await f.call('approvals/answer',{id:approval,answer:'deny'},'sam')).body.ok).toBe(true);
+  if(id==='current'||id==='past')expected.push({approval,title:'Disconnect Art’s Slack connection ('+id+')'});
+ }
+ for(const actor of ['sam','lee'] as const){
+  statements.length=0;
+  const response=await f.root.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+credentials[actor],'content-type':'application/json'},
+   body:JSON.stringify({query:'query Titles($ids:[String!]!){inboxProposalTitles(ids:$ids){approval title}}',variables:{ids}})});
+  const packet=await response.json();
+  expect(packet.errors).toBeUndefined();
+  expect(packet.data.inboxProposalTitles).toHaveLength(actor==='sam'?2:0);
+  if(actor==='sam')expect(packet.data.inboxProposalTitles).toEqual(expect.arrayContaining(expected));
+  expect(statements.filter(sql=>/\bfrom\s+"bridge_connections"/i.test(sql))).toHaveLength(actor==='sam'?1:0);
+  expect(statements.filter(sql=>/\bfrom\s+"bridge_channel_filters"/i.test(sql))).toHaveLength(0);
+ }
+});

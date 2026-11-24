@@ -75,7 +75,7 @@ import {agentBodyPolicyInput,readAgentBodyPolicy,saveAgentBodyPolicy} from './sh
 import {placeScheduleAsk,placeScheduleCard,placeScheduleRefusal,placeScheduleWords,type PlaceScheduleAsk} from './shared-place-triggers.js';
 import {triggers as triggerRows} from './core/data/schema.js';
 import {applyKitChange,kitBefore,kitCardName,kitReview,kitQuestion,kitRefusal,kitChange,kitChanges,projectKitDefinitions,type KitRefusal} from './shared-kit-cards.js';
-import {outsideShort,bridgePersonTitle,colleagueTitle,outsideProjectTitle,outsideKitGrantTitle,type InboxCardNames,outsideCardName,proposalCard,factLines,storedProposal,clipProposalText,clipWithCount,type CardContext,type CardNames} from './proposal-words.js';
+import {outsideShort,bridgeDisconnectTitle,bridgePersonTitle,colleagueTitle,outsideProjectTitle,outsideKitGrantTitle,type InboxCardNames,outsideCardName,proposalCard,factLines,storedProposal,clipProposalText,clipWithCount,type CardContext,type CardNames} from './proposal-words.js';
 import {validateBoxSettings,validateMachineReader} from './shared-box-settings.js';
 import {validateAgentRunSettings} from './shared-agent-run-settings.js';
 import {validateAgentAccounts} from './shared-household-access.js';
@@ -507,21 +507,14 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  };
  function otherInboxTitle(card:Approval,value:Proposal,names:CardNames){
    let platform: unknown;
-   let was: unknown;
    switch(value.change) {
     case 'placeSchedule': platform=value.input.asker.kind==='outside' ? parseOutsidePersonKey(value.input.asker.id)?.platform : undefined; break;
-    case 'bridge':
-     if(value.input.action==='disconnect') {
-      // Disconnect keeps the connection row. Its platform and agent are immutable.
-      was=before(value);
-      platform=was && typeof was==='object' && 'platform' in was ? was.platform : undefined;
-     } else platform=value.input.platform;
-     break;
+    case 'bridge': platform='platform' in value.input ? value.input.platform : undefined; break;
     default: return undefined;
    }
    if(platform!=='slack') return undefined;
    // A historical title describes the original request, independent of later configuration.
-   return ownerCard(value,was ?? (card.state==='pending' ? before(value) : undefined),names)?.title;
+   return ownerCard(value,card.state==='pending' ? before(value) : undefined,names)?.title;
  }
  return{
   operation:[operation,apply] as const,
@@ -530,6 +523,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
     const grants=[];
     const contacts=[];
     const bridgePeopleCards=[];
+    const disconnects=[];
     const projectsNeeded=new Set<string>();
     const rosterRequests=[];
     for(const card of cards){
@@ -537,6 +531,8 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
       try{value=read(card).value;}catch{continue;}
       if(value.change==='kitGrant' && 'platform' in value.input.to && value.input.to.platform==='slack'){
         grants.push({card,input:value.input,to:value.input.to});
+      }else if(value.change==='bridge'&&value.input.action==='disconnect'){
+        disconnects.push({approval:card.id,id:value.input.id});
       }else if(value.change==='bridge'&&(value.input.action==='person'||value.input.action==='removePerson')&&value.input.platform==='slack'){
         bridgePeopleCards.push({card,input:value.input});
       }else if((value.change==='colleague'||value.change==='projectOutsidePerson')&&value.input.platform==='slack'){
@@ -548,6 +544,17 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
       }else{
         const title=otherInboxTitle(card,value,names);
         if(title)titles.set(card.id,title);
+      }
+    }
+    if(disconnects.length){
+      // Disconnect retains the connection. Its agent and platform identify the title
+      // for both pending and historical cards; channel filters belong to the full preview.
+      const connections=db.select({id:bridgeConnections.id,agent:bridgeConnections.agent}).from(bridgeConnections)
+        .where(and(eq(bridgeConnections.platform,'slack'),inArray(bridgeConnections.id,disconnects.map(row=>row.id)))).all();
+      const agentsById=new Map(connections.map(row=>[row.id,row.agent]));
+      for(const {approval,id} of disconnects){
+        const agent=agentsById.get(id);
+        if(agent!==undefined)titles.set(approval,bridgeDisconnectTitle(id,agent.charAt(0).toUpperCase()+agent.slice(1),'Slack'));
       }
     }
     if(!grants.length&&!contacts.length&&!bridgePeopleCards.length)return titles;
