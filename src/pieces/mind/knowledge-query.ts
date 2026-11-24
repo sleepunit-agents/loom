@@ -8,7 +8,7 @@ import {
  GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap,
 } from 'graphql/index.js';
 import { maySee, type Sharing, type Viewer } from '../../core/index.js';
-import { knowledgeCheckRevision, knowledgeView, knowledgeAccess, retiredKnowledgePages, knowledgeSchedule, RECENT_DAYS } from './knowledge.js';
+import { knowledgeCheckRevision, knowledgeTotal, knowledgeView, knowledgeAccess, retiredKnowledgePages, knowledgeSchedule, CHECK_DAYS, RECENT_DAYS } from './knowledge.js';
 import {knowledgeSweep} from './knowledge-sweep.js';
 import type {SweepPart} from '../../core/tempo/sweep.js';
 import {MAX_REVISIONS} from '../../backends/cards.js';
@@ -133,7 +133,22 @@ export function knowledgeQueryFields(options: { path?:string; timezone?():string
   sweep(checkingAgent,alternate){if(failed)throw new GraphQLError('Knowledge is unavailable');return knowledgeSweep(db,{now:options.now},checkingAgent,alternate);},
   fields:{
    memoryKnowledgeAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?knowledgeAccess(context.viewer,options.sharing()):null},
-   memoryKnowledge:{type:overview,resolve:(_source,_args,context)=>allowed(context)?{...read(),timezone:options.timezone,citationCounts}:null},
+   memoryKnowledge:{type:overview,resolve:(_source,_args,context)=>{
+    if(!allowed(context))return null;
+    if(failed)throw new GraphQLError('Knowledge is unavailable');
+    let pages:ReturnType<typeof read>['pages']|undefined;
+    let total:number|undefined;
+    return {
+     timezone:options.timezone,checkDays:CHECK_DAYS,recentDays:RECENT_DAYS,citationCounts,
+     pages:()=>pages??=read().pages,
+     total:()=>{
+      if(pages)return pages.length;
+      if(!db)return 0;
+      try{return total??=knowledgeTotal(db);}
+      catch{throw new GraphQLError('Knowledge is unavailable');}
+     },
+    };
+   }},
    memoryKnowledgeFilingReview:{
     type:new GraphQLList(new GraphQLNonNull(filingCandidate)),
     description:'Review provisional and conversation-only pages for the shared household audience. Private thoughts belong in agent memory.',
