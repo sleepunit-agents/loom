@@ -92,11 +92,12 @@ function CalendarHours({start,week,selectDay,...schedule}: ScheduleProps & {star
   </div>;
 }
 
-export function TempoCalendar({week,showDay,zone,triggers,pauses,open}: {week:boolean; showDay:()=>void; zone:string; triggers: readonly Trigger[]; pauses: readonly AgentPause[]; open:(id:string)=>void}) {
+export function TempoCalendar({week,showDay,clearReader,zone,triggers,pauses,open}: {week:boolean; showDay:()=>void; clearReader:()=>void; zone:string; triggers: readonly Trigger[]; pauses: readonly AgentPause[]; open:(id:string)=>void}) {
   const feed = useDataQuery<Header>(headerQuery);
   const data = feed.status === 'live' ? feed.data : undefined;
   const now = data?.deskTime?.at;
-  const [chosen,select] = useState<string>();
+  const [chosen,setChosen] = useState<string>();
+  function select(date: string | undefined) { setChosen(date); clearReader(); }
   const today = now == null ? undefined : localDate(now,zone);
   const date = chosen ?? today;
   // Weeks start on Monday. Work in civil dates so DST never shifts a column.

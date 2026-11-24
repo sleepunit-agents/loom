@@ -132,7 +132,7 @@ export default function Tempo({ snapshot, actions, inUse }: { snapshot: TempoSna
     listTitle={calendar ? (folder === 'day' ? 'Day' : 'Week') : folders.find(item => item.id === folder)?.label} listMeta={live && !calendar ? shown.length : undefined}
     listTop={live ? <div className="grid gap-2 p-3">{actions?.create && <Button onClick={() => setCreating(true)}>Create trigger</Button>}{snapshot.pauses.length > 0 && <p>Paused: {snapshot.pauses.map(pause => pause.agent).join(', ')}</p>}</div> : undefined}
     list={!live ? snapshot.status === 'loading' ? <Loading label="Opening Tempo…" /> : <Error text={snapshot.status === 'denied' ? 'Sign in with access to see Tempo.' : 'Waiting for connection.'} />
-      : calendar ? <TempoCalendar week={folder==='week'} showDay={()=>setFolder('day')} zone={snapshot.timezone} triggers={shown} pauses={snapshot.pauses} open={setSelected}/>
+      : calendar ? <TempoCalendar week={folder==='week'} showDay={()=>setFolder('day')} clearReader={()=>{setSelected(undefined);setCreating(false);}} zone={snapshot.timezone} triggers={shown} pauses={snapshot.pauses} open={setSelected}/>
       : shown.length ? <List label="Triggers">{shown.map(item => <Row key={item.id} title={title(item)} meta={`${item.nextDueAt ? time(item.nextDueAt) : source(item)} · ${item.to ?? 'operation'}`} status={status(item, snapshot.pauses)} selected={item.id === selected} onClick={() => setSelected(item.id)} />)}</List>
         : <Empty title={query ? `Nothing matches “${query}”` : 'No triggers here'} text="Ask an agent in chat to set a trigger." />}
     reader={reader} open={!!reader} onBack={() => { setCreating(false); setSelected(undefined); }} backLabel="Tempo"
