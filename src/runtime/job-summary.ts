@@ -3,7 +3,7 @@
 import { and, asc, desc, eq, getTableColumns, inArray, is, ne, or, isNotNull, sql, SQL } from 'drizzle-orm';
 import { taskShelved } from '../core/data/project-in-use.js';
 import { readCurrentJobs } from '../core/data/current-jobs-read.js';
-import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
+import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
 import type { DataDatabase } from '../core/data/database.js';
 import type { QueryVisibility } from '../core/data/queries.js';
 import { alias } from 'drizzle-orm/sqlite-core';
@@ -225,7 +225,7 @@ export class JobSummaries {
   }
   history(agent: string, first = 20, id?: string) {
     return this.db.select({ id: jobs.id, agent: jobs.agent, title: jobs.title, state: jobs.state, box: jobs.box,
-      prefers: jobs.prefers, placementDecision: jobs.placementDecision,
+      signInBlocked: sql<boolean>`(${jobs.state} = 'failed' and ${jobs.signInBlocked})`.mapWith(jobs.signInBlocked), prefers: jobs.prefers, placementDecision: jobs.placementDecision,
       conversation: jobs.conversation, project: jobs.project, brief: jobs.brief, model: jobs.model,
       startedByKind: jobs.startedByKind, startedBy: jobs.startedBy, retryOf: jobs.retryOf, exitCode: jobs.exitCode, exitBy: jobs.exitBy, logTail: jobs.logTail,
       endedBy: jobs.endedBy, endedReason: jobs.endedReason, endedNote: jobs.endedNote, queuedAt: jobs.queuedAt, claimedAt: jobs.claimedAt, heardAt: jobs.heardAt, endedAt: jobs.endedAt }).from(jobs)
@@ -243,6 +243,7 @@ const job = new GraphQLObjectType({ name: 'JobRecord', fields: {
   id: { type: new GraphQLNonNull(GraphQLString) }, agent: { type: new GraphQLNonNull(GraphQLString) },
   title: { type: new GraphQLNonNull(GraphQLString) }, state: { type: new GraphQLNonNull(GraphQLString) },
   prefers: { type: new GraphQLList(new GraphQLNonNull(GraphQLString)) },
+  signInBlocked: { type: GraphQLBoolean },
   placementDecision: { type: new GraphQLList(new GraphQLNonNull(placementCandidate)) },
   box: text, conversation: text, project: text, brief: text, model: text, startedByKind: text, startedBy: text, retryOf: text,
   exitCode: { type: GraphQLInt }, exitBy: text, exitStage: text, logTail: text, endedBy: text, endedReason: text, endedNote: text,

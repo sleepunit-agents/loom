@@ -36,7 +36,10 @@ export const QUOTA_WAIT_REASON='An eligible worker reported a signed-in account.
 
 export const QUOTA_REFRESH_REASON = 'An eligible worker reported a signed-in account. Loom needs a current quota reading before it can start this job.';
 
-type Candidate = { box: string; reason: string } | { box: string; placement: Placement; missingPreferred: string[] };
+const expiredLoginReason = 'A sign-in for an allowed model has expired on this machine.';
+const signedOutReason = 'An account for an allowed model is signed out on this machine.';
+
+type Candidate = { box: string; reason: string; signInBlocked?: boolean } | { box: string; placement: Placement; missingPreferred: string[] };
 type Decision = { box: string; outcome: 'taken' | 'passed'; reason: string };
 
 /** Keep a claim explanation bounded even if every configured machine lacks a long list of facts. */
@@ -45,7 +48,7 @@ function describeFacts(facts: readonly string[]): string {
 }
 
 /** Decide once from the household as it stands. Agent order breaks ties in both preference groups. */
-export function decidePlacement(db: DataDatabase, input: PlacementInput): { placement?: Placement; decision: Decision[]; quotaLimited: boolean; quotaWaitReason?: string } {
+export function decidePlacement(db: DataDatabase, input: PlacementInput): { placement?: Placement; decision: Decision[]; signInBlocked: boolean; quotaLimited: boolean; quotaWaitReason?: string } {
   const now = Date.parse(input.now);
   if (!Number.isFinite(now)) throw new Error('Invalid placement time');
   // Whether a machine may be handed this agent's work is policy.ts's (machineMayHost), on the household as it is now.
@@ -119,15 +122,14 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
           continue;
         }
         if (login?.state === 'signed-out' || expired) {
-          signInReason ??= expired ? 'A sign-in for an allowed model has expired on this machine.' : 'An account for an allowed model is signed out on this machine.';
+          signInReason ??= expired ? expiredLoginReason : signedOutReason;
           continue;
         }
         return { box: id, placement: { box: id, model: role.model, account: account.id, harness: role.harness },
           missingPreferred: (input.prefers ?? []).filter(fact => !meetsNeed(facts, fact)) };
       }
     }
-    if (quotaReason) return { box: id, reason: quotaReason };
-    return { box: id, reason: signInReason ?? 'No signed-in account with room for an allowed model.' };
+    return { box: id, signInBlocked: !!signInReason, reason: quotaReason ?? signInReason ?? 'No signed-in account with room for an allowed model.' };
   });
   const eligible = candidates.filter(candidate => 'placement' in candidate);
   const winner = eligible.find(candidate => !candidate.missingPreferred.length) ?? eligible[0];
@@ -142,9 +144,10 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
       ? 'Another eligible machine meets every preference.' : "Another eligible machine comes first in the agent's order.";
     return { box, outcome: 'passed', reason: facts + order };
   });
-  if (winner) return { placement: winner.placement, decision, quotaLimited: false };
+  if (winner) return { placement: winner.placement, decision, signInBlocked:false, quotaLimited: false };
   const quotaWaitReason = [QUOTA_WAIT_REASON, QUOTA_REFRESH_REASON].find(reason => decision.some(row => row.reason === reason));
-  return { decision, quotaLimited: quotaWaitReason === QUOTA_WAIT_REASON, quotaWaitReason };
+  const signInBlocked = candidates.some(candidate => 'reason' in candidate && candidate.signInBlocked);
+  return { decision, signInBlocked, quotaLimited: quotaWaitReason === QUOTA_WAIT_REASON, quotaWaitReason };
 }
 
 export function selectPlacement(db: DataDatabase, input: PlacementInput): Placement | undefined {

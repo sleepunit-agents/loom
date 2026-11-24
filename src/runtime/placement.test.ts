@@ -253,7 +253,7 @@ it('explains quota only for an eligible container sign-in and a usable window re
   db.insert(modelAccountBoxes).values({account:'second',box:'local'}).run();
   db.insert(modelAccountWindows).values({account:'second',window:'week',usage:0.1,usageReadAt:input.now,resetsAt:'2026-11-14T21:00:00.000Z',durationMs:7*86400_000}).run();
   for(const harness of ['runner','other'])db.insert(modelAccountLogins).values({...login,account:'second',harness,place:'containers',state:'signed-out'}).run();
-  expect(decidePlacement(db,input)).toMatchObject({quotaLimited:true,decision:[{reason:QUOTA_WAIT_REASON},{box:'remote'}]});
+  expect(decidePlacement(db,input)).toMatchObject({signInBlocked:true,quotaLimited:true,decision:[{reason:QUOTA_WAIT_REASON},{box:'remote'}]});
   expect(decidePlacement(db,{...input,eligibleBoxes:new Set(['remote'])}).quotaLimited).toBe(false);
   db.update(modelAccountLogins).set({expiresAt:input.now}).run();
   expect(quotaLimited()).toBe(false);

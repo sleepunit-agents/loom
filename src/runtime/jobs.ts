@@ -405,7 +405,7 @@ export class Jobs {
     const backoff = (before.state === 'starting' ? START_RETRY_MS : RUN_RETRY_MS)[depth];
     const retryAt = new Date(Math.max(earliest, Date.parse(at) + backoff)).toISOString();
     const retry = this.db.insert(jobs).values({ ...snapshot, brief: this.keepText(before) ? before.brief : '', id: `job-${randomUUID()}`, state: 'queued', box: null, account: null, harness: null,
-      placementDecision: null, retryOf: before.id, retryAt, queuedAt: at,
+      placementDecision: null, signInBlocked: false, retryOf: before.id, retryAt, queuedAt: at,
       claimedAt: null, heardAt: null, endedAt: null, build: null, exitCode: null, exitBy: null, logTail: null, endedNote: null,
     }).returning().get();
     for (const need of this.db.select().from(jobNeeds).where(eq(jobNeeds.job, before.id)).all()) this.db.insert(jobNeeds).values({ job: retry.id, need: need.need }).run();
@@ -475,7 +475,7 @@ export class Jobs {
       const unplaced = this.db.select().from(jobs).where(eq(jobs.state, 'queued')).all()
         .filter(job => now - Math.max(Date.parse(job.queuedAt), job.retryAt ? Date.parse(job.retryAt) : 0) > queueMs)
         .map(job => this.end(job, 'failed', { endedAt: at, exitCode: LOOM_EXIT.unplaced, exitBy: 'loom',
-          endedNote: `Never started: no machine took it within ${Math.round(queueMs / 3_600_000)} hours` }));
+          signInBlocked: job.signInBlocked, endedNote: `Never started: no machine took it within ${Math.round(queueMs / 3_600_000)} hours` }));
       return [...lost, ...unplaced];
     }, { behavior: 'immediate' });
   }
@@ -502,7 +502,7 @@ export class Jobs {
     const program = job.startedByKind === 'program';
     const firing = program && this.db.select().from(programFirings).where(eq(programFirings.job, job.id)).get();
     const line = firing && (state === 'done' ? firing.line : 'Program did not complete.');
-    const ended = this.db.update(jobs).set({ ...values, ...(line && {endedNote: line}), state }).where(eq(jobs.id, job.id)).returning().get()!;
+    const ended = this.db.update(jobs).set({ signInBlocked: false, ...values, ...(line && {endedNote: line}), state }).where(eq(jobs.id, job.id)).returning().get()!;
     closePendingReview(this.db, job.id, ended.endedAt ?? this.now());
     const started = program && this.db.select({ at: turns.at }).from(turns).where(and(eq(turns.run, job.id), eq(turns.kind, 'action'))).get();
     const began = program ? started && started.at : job.claimedAt;

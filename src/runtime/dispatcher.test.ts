@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
-import { agents, members, triggers, programFirings, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools, secrets, bridgeConnections, bridgeChannels, bridgePeople, conversations, inbox, threads } from '../core/data/schema.js';
+import { agents, members, triggers, programFirings, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, modelAccountLogins, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools, secrets, bridgeConnections, bridgeChannels, bridgePeople, conversations, inbox, threads } from '../core/data/schema.js';
 import { BridgeIncoming } from '../pieces/bridges/incoming.js';
 import { Dispatcher, UNHELD_NOTE } from './dispatcher.js';
 import { LOOM_EXIT } from './job-exit.js';
@@ -43,6 +43,26 @@ it('claims only on the selected worker and delivers an execution-ready snapshot 
   expect(f.runtime.next('first')).toBeUndefined();
   expect(f.runtime.next('second')).toBeUndefined();
   expect(f.runtime.jobs.get(f.job.id).state).toBe('starting');
+});
+it.each(['timeout','fallback','other failure'] as const)('keeps the last sign-in obstruction only for a missed placement deadline: %s', outcome => {
+  const f = fixture();
+  for (const box of ['first', 'second']) f.db.insert(modelAccountLogins).values({
+    account:'account', box, harness:'codex', place:'containers', state:'signed-out',
+    since:f.now(), checkedAt:f.now(), learnedFrom:'check',
+  }).run();
+  expect(f.runtime.next('first')).toBeUndefined();
+  expect(f.runtime.jobs.get(f.job.id).signInBlocked).toBe(true);
+  if (outcome === 'fallback') {
+    f.db.update(modelAccountLogins).set({state:'signed-in'}).where(eq(modelAccountLogins.box,'second')).run();
+    expect(f.runtime.next('first')).toBeUndefined();
+    expect(f.runtime.jobs.get(f.job.id).signInBlocked).toBe(false);
+    expect(f.runtime.next('second')?.id).toBe(f.job.id);
+  } else if (outcome === 'other failure') {
+    expect(f.runtime.jobs.unplaceable(f.job.id, 'The originating thread closed.')).toMatchObject({state:'failed',signInBlocked:false});
+  } else {
+    f.tick(1001);
+    expect(f.runtime.jobs.sweep(undefined,1000)).toMatchObject([{id:f.job.id,state:'failed',signInBlocked:true}]);
+  }
 });
 it('connects worker acknowledgements and reports to receipts and terminal lifecycle', () => {
   const f = fixture(); f.runtime.next('first');
