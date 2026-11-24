@@ -75,7 +75,7 @@ import {agentBodyPolicyInput,readAgentBodyPolicy,saveAgentBodyPolicy} from './sh
 import {placeScheduleAsk,placeScheduleCard,placeScheduleRefusal,placeScheduleWords,type PlaceScheduleAsk} from './shared-place-triggers.js';
 import {triggers as triggerRows} from './core/data/schema.js';
 import {applyKitChange,kitBefore,kitCardName,kitReview,kitQuestion,kitRefusal,kitChange,kitChanges,projectKitDefinitions,type KitRefusal} from './shared-kit-cards.js';
-import {proposalCard,factLines,storedProposal,clipProposalText,clipWithCount,type CardContext,type CardNames} from './proposal-words.js';
+import {outsideCardName,proposalCard,factLines,storedProposal,clipProposalText,clipWithCount,type CardContext,type CardNames} from './proposal-words.js';
 import {validateBoxSettings,validateMachineReader} from './shared-box-settings.js';
 import {validateAgentRunSettings} from './shared-agent-run-settings.js';
 import {validateAgentAccounts} from './shared-household-access.js';
@@ -222,7 +222,7 @@ type KitProposal=Extract<Proposal,{change:'kit'|'kitGrant'|'projectOutsidePerson
 const kitBlocked=(value:KitProposal,refused:KitRefusal,names?:CardNames):string=>{
  const cap=(id:string)=>id?id[0]!.toUpperCase()+id.slice(1):id;
  const account=value.change==='colleague'||value.change==='projectOutsidePerson'?value.input:value.change==='kitGrant'&&'user' in value.input.to?value.input.to:undefined;
- const who=account?names?.person(account.platform,account.workspace,account.user)?.name??'this account':'';
+ const who=account?outsideCardName(value.change,account,names)?.name??'this account':'';
  const agent='agent' in value.input?cap(value.input.agent):'';
  // Restoring a target or changing a link changes who or what the card affects, so it needs a fresh card.
  switch(refused.cause){

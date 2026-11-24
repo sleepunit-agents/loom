@@ -57,6 +57,13 @@ const yes = (value: unknown) => value ? 'Yes' : 'No';
 
 interface Told { title: string; facts: CardFact[]; ifYes?: string; ifNo?: string; nothing?: boolean }
 type Outside = { platform: string; workspace: string; user: string };
+export function outsideCardName(change:string, who:Outside, names?:CardNames):HeldName|null {
+  const linked = names?.person(who.platform, who.workspace, who.user);
+  if (linked) return linked;
+  if (who.platform !== 'slack' || !['kitGrant', 'colleague', 'projectOutsidePerson'].includes(change)) return null;
+  const recipient = names?.slackRecipient?.(who.workspace, who.user);
+  return recipient ? { name: recipient, source: 'People directory match used for Last seen' } : null;
+}
 type ChangeRow = [label: string, was: string | undefined, asked: string, equal?: boolean];
 const sameValue = (before: unknown, after: unknown) => JSON.stringify(before) === JSON.stringify(after);
 
@@ -133,11 +140,7 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
   /** An outside account: the name loom holds, or, for an owner, that it holds none; otherwise just the id. */
   const outside = (who: Outside) => {
     const platform = platformWord(who.platform);
-    let held = names?.person(who.platform, who.workspace, who.user) ?? null;
-    if (!held && who.platform === 'slack' && ['kitGrant', 'colleague', 'projectOutsidePerson'].includes(change)) {
-      const recipient = names?.slackRecipient?.(who.workspace, who.user);
-      if (recipient) held = { name: recipient, source: 'People directory match used for Last seen' };
-    }
+    const held = outsideCardName(change, who, names);
     const short = held ? held.name + ' (' + platform + ')'
       : names && who.platform === 'slack' ? 'an unnamed Slack account'
       : names ? 'a ' + platform + ' account loom has no name for (' + who.user + ' in workspace ' + who.workspace + ')'
