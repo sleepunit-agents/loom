@@ -23,11 +23,14 @@ export const shellCommandRequest = shellInput.extend({
 }).strict().transform(({ commandText, ...request }) => {
   const details = display(commandText);
   const preview = details.length <= 180 ? details : details.slice(0, 180) + '… (shortened, open Full command)';
-  const separators = /[;&|\n]/.test(commandText.replace(/[\r\n]+$/, ''));
+  // Shell dialects, comments and quoting determine how punctuation is interpreted.
+  // Say exactly which characters are present, including when they occur in a quoted argument.
+  const marks = [...new Set(commandText.replace(/[\r\n]+$/, '').match(/[;&|\n]/g))];
+  const syntax = marks.map(mark => mark === '\n' ? 'a line break' : '`' + mark + '`').join(', ');
   return {
     ...request, literalShell: true as const, details, target: targetOf(commandText),
     what: 'Run shell command ' + preview,
-    ask: 'Allow this shell command? ' + preview + (separators ? ' Contains separators or line breaks. Review the whole command.' : ''),
+    ask: 'Allow this shell command? ' + preview + (syntax ? ' Check for command chaining. The text contains ' + syntax + '.' : ''),
     ifYes: 'Allow one use of this exact command.', ifNo: 'Decline this command.',
   };
 });

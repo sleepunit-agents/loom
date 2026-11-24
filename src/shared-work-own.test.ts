@@ -236,10 +236,11 @@ it('makes the card and its Inbox question from the full literal command and spen
  expect(card.target).toBe(target);
  expect(JSON.parse(card.details)).toBe(script);
  expect(card.what).toContain('shortened');
- expect(card.ask).toContain('separators');
+ expect(card.what).toContain(script.slice(0,50));
+ expect(card.ask).toContain('Check for command chaining.');
  const questions = f.db.select().from(s.inbox).where(eq(s.inbox.waitsOnId,id)).all();
  expect(questions.length).toBeGreaterThan(0);
- expect(questions.every(row=>row.words===card.ask)).toBe(true);
+ expect(questions.every(row=>row.words===card.ask && row.words.includes(script.slice(0,50)))).toBe(true);
  f.root.writes.run(()=>f.root.services.approvals.allow(id,'pat'));
  const asNamed = (cardId: string) => f.call('use',{id:cardId,kind:'command',target});
  expect((await asNamed(id)).body.value?.used).toBe(false);
@@ -270,4 +271,13 @@ it('keeps literal commands pending under standing allowances for named commands'
    expect(named.body.value?.state).toBe('allowed');
    f.rules.set({kind:'command',scope,tier:null},'pat');
  }
+});
+
+
+it('describes literal punctuation without treating a quoted semicolon as a second command', async () => {
+ const f=await fixture();
+ const commandText="printf '%s' 'a;b'";
+ const result=await f.call('request',{kind:'command',commandText,why:'Fixture'});
+ expect(f.root.services.approvals.get(result.body.value!.id as string).ask)
+   .toBe('Allow this shell command? '+JSON.stringify(commandText)+' Check for command chaining. The text contains `;`.');
 });
