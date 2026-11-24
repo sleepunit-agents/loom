@@ -348,6 +348,10 @@ export async function* walkthroughSteps(output) {
    const {workerRetryEvidence}=await import('./rebuild-worker-retries.mjs');
    report.actions.workerRetries=await workerRetryEvidence();
   } catch(error) { report.actions.workerRetries={ok:false,error:String(error)}; }
+  try {
+   const {jobOutcomeEvidence}=await import('./rebuild-job-outcomes.mjs');
+   report.actions.jobOutcomes=await jobOutcomeEvidence();
+  } catch(error) { report.actions.jobOutcomes={ok:false,error:String(error)}; }
   save();yield {phase:'worker-start-retries',actions:safeReport(report.actions)};
   phase='named agent tools';
   try {

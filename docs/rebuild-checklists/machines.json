@@ -93,7 +93,11 @@
     {
       "id": "machines-011",
       "promise": "A job is one run of an agent's body on a box. It is queued, picked up by a worker, runs, and ends done or failed. It can also be stopped or lost.",
-      "source": "docs/how-it-works/site/machines.html#how-h"
+      "source": "docs/how-it-works/site/machines.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "jobOutcomes"
+      }
     },
     {
       "id": "machines-012",
