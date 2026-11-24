@@ -65,7 +65,12 @@ it('executes the registered Tasks selection and real command envelope over share
     const read = await fetch(`${app.url}/graphql`, { method: 'POST', headers, body: JSON.stringify({ query: tasksQuery }) });
     const result = await read.json(); expect(result.errors).toBeUndefined();
     expect(result.data.tasks.map((task: { id: string }) => task.id)).toEqual(['t-1','t-2']);
-    expect(JSON.stringify(result)).toContain('github:acme/app#3'); expect(JSON.stringify(result)).not.toContain('github:secret/app#9');
+    expect(JSON.stringify(result)).not.toContain('changeTasksByTask');
+    const opened = await (await fetch(app.url+'/graphql', {method:'POST', headers,
+      body:JSON.stringify({query:tasksQuery,variables:{selected:'t-1',withComments:true}})})).json();
+    expect(opened.errors).toBeUndefined();
+    expect(opened.data.selectedTask.changeTasksByTask).toEqual([{changeRow:expect.objectContaining({id:'github:acme/app#3'})}]);
+    expect(JSON.stringify(opened)).not.toContain('github:secret/app#9');
     const choices=()=>fetch(`${app.url}/graphql`,{method:'POST',headers,body:JSON.stringify({query:taskChoicesQuery})}).then(response=>response.json());
     const firstChoices=await choices();expect(firstChoices.errors).toBeUndefined();expect(firstChoices.data.members).toEqual([{id:'sam'}]);
     expect(firstChoices.data.projects.sort((a:{id:string},b:{id:string})=>a.id.localeCompare(b.id))).toEqual(['bank','pond'].map(id=>({id,name:id,projectMembersByProject:[{member:'lee'},{member:'sam'}]})));

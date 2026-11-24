@@ -84,10 +84,11 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
   const commentFeed = combined ? snapshot : comments;
   const detail = status === 'live' && commentFeed.status === 'live' && !commentFeed.settling
     ? commentFeed.data?.selectedTask : undefined;
+  const visibleDetail = selectedTask && detail?.id === selectedTask.id ? detail : undefined;
   const links = tasks.flatMap(task => task.taskLinksByTask);
   return <SharedTasks status={status} tasks={tasks} selected={selected} select={navigate} questionFor={questionFor} startFolder={startFolder} startAssignee={startAssignee} liveAgentIds={liveAgentIds}
-    changes={tasks.flatMap(task => task.changeTasksByTask.flatMap(link => link.changeRow ? [{ ...link.changeRow, task: task.id }] : []))}
-    links={links} comments={detail && detail.id === selected ? detail.taskCommentsByTask : []}
+    changes={visibleDetail?.changeTasksByTask.flatMap(link => link.changeRow ? [{ ...link.changeRow, task: visibleDetail.id }] : [])}
+    links={links} comments={visibleDetail?.taskCommentsByTask ?? []}
     loadingComments={(combined || readComments) && (commentFeed.status === 'loading' || commentFeed.settling)}
     commentsUnavailable={readComments && (comments.status === 'offline' || comments.status === 'denied')}
     ready={tasks.filter(task => task.isReady).map(task => task.id)} conversation={openSource}

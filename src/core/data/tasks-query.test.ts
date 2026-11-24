@@ -32,11 +32,12 @@ it('runs the mounted Tasks selection in one SQL statement and respects hidden bl
     expect(result.errors).toBeUndefined();
     expect(statements).toHaveLength(1);
     expect(result.data?.tasks).toMatchObject([
-      {id:'a',isReady:false,commentCount:1,changeTasksByTask:[{changeRow:{id:'public-change',checks:'passing',review:'approved'}}],taskLinksByTask:[]},
+      {id:'a',isReady:false,commentCount:1,taskLinksByTask:[]},
       {id:'b',isReady:true,taskLinksByTask:[{task:'b',dependsOn:'epic',type:'parent-child'}]},
       {id:'epic',isReady:false},
     ]);
     expect(JSON.stringify(result.data)).not.toContain('Visible comment');
+    expect(statements[0]).not.toMatch(/change_tasks/i);
     const detail = (selected:string) => graphql({schema,source:tasksQuery,variableValues:{selected,withComments:true}});
     statements.length = 0;
     const opened = await detail('a');
@@ -46,8 +47,8 @@ it('runs the mounted Tasks selection in one SQL statement and respects hidden bl
     expect(JSON.stringify(opened.data)).not.toContain('Other thread');
     expect((await detail('secret')).data?.selectedTask).toBeNull();
     expect(JSON.stringify(result.data)).not.toContain('Secret');
-    expect((result.data?.tasks as {changeTasksByTask:unknown[]}[])[0].changeTasksByTask).toHaveLength(1);
-    expect(JSON.stringify(result.data)).not.toContain('secret-change');
+    expect(opened.data?.selectedTask).toMatchObject({changeTasksByTask:[{changeRow:{id:'public-change',checks:'passing',review:'approved'}}]});
+    expect(JSON.stringify(opened.data)).not.toContain('secret-change');
     db.exec("UPDATE tasks SET status = 'closed', closed_at = '2026-11-14T00:00:00Z' WHERE id = 'secret'");
     expect((await graphql({schema,source:tasksQuery})).data?.tasks).toMatchObject([{id:'a',isReady:true},{id:'b',isReady:true},{id:'epic',isReady:false}]);
     statements.length = 0;
