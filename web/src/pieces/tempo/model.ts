@@ -10,6 +10,27 @@ export interface Trigger {
   nextDueAt: string | null; lastFiredAt: string | null; createdAt: string; changedAt: string;
 }
 export interface TriggerEvent { seq: number; trigger: string; at: string; event: string; note: string }
+/** A missed log row can summarize the rest of a long gap. Its timestamp is
+ * when Tempo recorded the gap, which can cover more than one household day. */
+export function recordedOutcomes(entries: readonly {state:string; note?:string; scheduled:boolean}[]): string[] {
+  const totals = new Map<string, number>();
+  let missedLowerBound = false;
+  for (const entry of entries) {
+    if (entry.scheduled) continue;
+    let count = 1;
+    if (entry.state === 'missed') {
+      const summary = /^(more than )?(\d+) more(?:$|, the last at time:)/.exec(entry.note ?? '');
+      if (summary) {
+        count = Number(summary[2]);
+        if (summary[1]) missedLowerBound = true;
+      }
+    }
+    totals.set(entry.state,(totals.get(entry.state) ?? 0)+count);
+  }
+  return [...totals].map(([state,count])=> state === 'missed'
+    ? (missedLowerBound ? 'More than ' : '')+count+(count === 1 && !missedLowerBound ? ' missed run reported' : ' missed runs reported')
+    : count+' '+state);
+}
 export interface AgentPause { agent: string; since: string }
 export type Folder = 'all' | 'due' | 'standing' | 'lanes' | 'history';
 export const folders: { id: Folder; label: string }[] = [

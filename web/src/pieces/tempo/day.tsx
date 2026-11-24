@@ -3,7 +3,7 @@ import { localDate, timesOnDate } from '../../../../src/core/tempo/calendar';
 import { DAY_MS } from '../../../../src/core/day';
 import { useDataQuery } from '../../data/graphql';
 import { Button, Row } from '../../kit';
-import { eventLabels, status, title, type AgentPause, type Trigger } from './model';
+import { eventLabels, recordedOutcomes, status, title, type AgentPause, type Trigger } from './model';
 
 const headerQuery = `query TempoDayHeader {
   deskTime { at }
@@ -12,11 +12,11 @@ const headerQuery = `query TempoDayHeader {
 type Header = { deskTime: {at: number} | null; modelAccounts: {label: string; level: string}[] };
 const historyQuery = `query TempoDayHistory($from: String!, $until: String!) {
   triggerLog(where: {at: {gte: $from, lt: $until}, event: {inArray: ["fired","failed","missed","cancelled","skipped"]}},
-    orderBy: {at: {direction: asc, priority: 0}, seq: {direction: asc, priority: 1}}) { trigger seq at event }
+    orderBy: {at: {direction: asc, priority: 0}, seq: {direction: asc, priority: 1}}) { trigger seq at event note }
 }`;
-type Event = { trigger: string; seq: number; at: string; event: string };
+type Event = { trigger: string; seq: number; at: string; event: string; note: string };
 const shift = (date: string, days: number) => new Date(Date.parse(date + 'T00:00:00Z') + days * DAY_MS).toISOString().slice(0, 10);
-type Entry = {trigger: Trigger; at: number; key: string; state: string; scheduled: boolean};
+type Entry = {trigger: Trigger; at: number; key: string; state: string; scheduled: boolean; note?: string};
 
 type ScheduleProps = {zone: string; now: number; triggers: readonly Trigger[]; pauses: readonly AgentPause[]; open: (id: string) => void};
 const dateLabel = new Intl.DateTimeFormat(undefined,{timeZone:'UTC',weekday:'short',month:'short',day:'numeric',year:'numeric'});
@@ -32,7 +32,7 @@ function DayHours({date, zone, now, triggers, pauses, open, log}: ScheduleProps 
     for (const event of log ?? []) {
       const t = byId.get(event.trigger), at = Date.parse(event.at);
       if (!t) continue;
-      items.push({trigger:t, at, key:'event-'+event.seq, state:event.event, scheduled:false});
+      items.push({trigger:t, at, key:'event-'+event.seq, state:event.event, note:event.note, scheduled:false});
     }
     for (const t of triggers) {
       if (t.sourceKind !== 'time' || !t.times || !t.enabled || !t.nextDueAt) continue;
@@ -88,12 +88,8 @@ function DayHours({date, zone, now, triggers, pauses, open, log}: ScheduleProps 
 
 function FrequentTriggerRow({entries,format,open}: {entries: Entry[]; format: Intl.DateTimeFormat; open: (id:string)=>void}) {
   const trigger = entries[0].trigger;
-  const outcomes = new Map<string,number>();
   const upcoming = entries.filter(entry=>entry.scheduled);
-  for (const entry of entries) {
-    if (!entry.scheduled) outcomes.set(entry.state,(outcomes.get(entry.state) ?? 0)+1);
-  }
-  const summary = [...outcomes].map(([state,count])=>count+' '+state);
+  const summary = recordedOutcomes(entries);
   const next = upcoming[0];
   if (next) summary.push(upcoming.length+' scheduled', 'Next '+format.format(next.at));
   return <Row title={title(trigger)} status={next?.state} meta={summary.join(' · ')} onClick={()=>open(trigger.id)}/>;
