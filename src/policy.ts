@@ -280,6 +280,9 @@ const accountSummary: Rule = currentViewer;
 export const rules = { labelled, conversation, inTalk, waitsOnReadable, reviewsReply, task, moveTask, asksToJoin, trigger, recipient, addressesRecipient, inboxVolume, answers, stopJob, agentItself, asksSignIn, currentMember, currentViewer, ownNotice, accountSummary,
   agentRoster, agentSetup, ownedByMember, householdOwner, project: any(householdOwner, inProject('id')) } as const;
 
+/** A household owner may read a private job’s machine facts and digest on a machine they own. */
+export const machineJobSummaryOwner = all(householdOwner, self('owner'));
+
 /** The read rule of every table served by the shared query door, by schema key. */
 export const tableRules: Readonly<Record<TableWithRule, Rule>> = {
   tasks: task,

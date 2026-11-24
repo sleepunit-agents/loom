@@ -27,6 +27,7 @@ import { DataWrites } from './core/data/writes.js';
 import { modelAccountQueries } from './runtime/account-query.js';
 import { measuringVisibility } from './core/measuring/visibility.js';
 import { sqlVisibility } from './policy-sql.js';
+import { machineJobSummaryField } from './runtime/machine-job-summaries.js';
 import { JobSummaries, jobSummaryFields, nextTerminalDeadline } from './runtime/job-summary.js';
 
 // One explicit public read projection, shared by the outside doors and programme catalogue.
@@ -94,6 +95,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
         ...fields, ...ownFields, ...tempoQueryFields(db, viewer, () => canReadProgram(viewer), () => canReadUsage(viewer)), ...accounts.fields,
         // A job's title, brief and log tail are words of its conversation.
         ...jobSummaryFields(summaries(viewer), () => canReadUsage(viewer)),
+        privateMachineJobs: machineJobSummaryField(db, viewer),
       },
     }) : emptyProgram;
     if (reusable) memberSchemas.set(viewer, result);
