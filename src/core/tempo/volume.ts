@@ -1,5 +1,5 @@
 import { DAY_MS } from '../day.js';
-import { and, eq, ne, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, ne, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { inbox, tempoSettings } from '../data/schema.js';
 import type { Clock } from '../clock.js';
@@ -65,10 +65,11 @@ export class InboxVolume {
     const expired = this.db.update(inbox).set({ volume: 'full', quietUntil: null }).where(and(ne(inbox.volume, 'full'),
       sql`julianday(${inbox.quietUntil}) <= julianday(${new Date(this.clock.now()).toISOString()})`,
     )).run().changes;
-    const next = this.db.select({ until: inbox.quietUntil }).from(inbox).where(ne(inbox.volume, 'full')).all()
-      .reduce<number | undefined>((next, row) => row.until === null ? next : Math.min(next ?? Infinity, Date.parse(row.until)), undefined);
+    const next = this.db.select({ until: inbox.quietUntil }).from(inbox)
+      .where(and(ne(inbox.volume, 'full'), isNotNull(inbox.quietUntil)))
+      .orderBy(sql`julianday(${inbox.quietUntil})`).limit(1).get();
     if (expired) changed?.();
-    return next;
+    return next?.until ? Date.parse(next.until) : undefined;
   }
 }
 

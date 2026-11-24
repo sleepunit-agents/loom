@@ -50,6 +50,20 @@ it('expires dim after a day and mute after a week, including across service rest
   expect(restarted.expire()).toBeUndefined();
   expect(item('two')).toMatchObject({ volume: 'full', quietUntil: null });
 });
+it('arms the whole-second deadline before a deadline one millisecond later', () => {
+  const { db, clock, volume, item } = fixture();
+  const second = Math.ceil((clock.now() + 1000) / 1000) * 1000;
+  db.update(inbox).set({ volume: 'dim', quietUntil: new Date(second + 1).toISOString() }).where(eq(inbox.id, 'one')).run();
+  db.update(inbox).set({ volume: 'mute', quietUntil: new Date(second).toISOString().replace('.000Z', 'Z') }).where(eq(inbox.id, 'two')).run();
+  expect(volume.expire()).toBe(second);
+  clock.advance(second - clock.now());
+  expect(volume.expire()).toBe(second + 1);
+  expect(item('two').volume).toBe('full');
+  expect(item('one').volume).toBe('dim');
+  clock.advance(1);
+  expect(volume.expire()).toBeUndefined();
+  expect(item('one').volume).toBe('full');
+});
 it('keeps overrides per recipient and removes a row restored to defaults', () => {
   const { db, clock, volume, who, item } = fixture();
   expect(volume.timings(who)).toEqual(defaultTimings);
