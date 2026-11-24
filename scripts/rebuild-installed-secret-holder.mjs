@@ -132,7 +132,7 @@ async function verifyGrant(app, clock, owner, name, value) {
       });
       try {
         await control.started(jobId, 'fixture');
-        await work(client);
+        await work(client, other.token.toString('ascii'));
       } finally {
         client.close();
         other.erase();
@@ -168,7 +168,22 @@ async function verifyGrant(app, clock, owner, name, value) {
       assert.equal(agentGrant?.grantedBy, 'rule');
       assert.equal(agentGrant.agent, agent);
       assert.equal(agentGrant.job, null);
-      await withJobReader('sowing', refused(agentRequestId));
+      assert.equal(app.writes.run(() => db.$client.prepare("UPDATE household SET secrets_default='never'").run()).value.changes, 1);
+      const fallback = name + '_SECOND';
+      await app.services.secrets.values.set({ member: owner, id: randomUUID(), name: fallback,
+        description: 'Second garden fixture', value: randomBytes(32).toString('hex'), mode: 'add' });
+      async function expectRequest(secret, caller, state) {
+        const requestId = randomUUID();
+        assert.deepEqual(await command('secrets/request', { ...request, id: requestId, secret }, caller),
+          { id: requestId, state });
+      }
+      await expectRequest(name, token, 'allowed');
+      await expectRequest(fallback, token, 'denied');
+      await withJobReader('sowing', async (client, fernToken) => {
+        await refused(agentRequestId)(client);
+        await expectRequest(name, fernToken, 'pending');
+        await expectRequest(fallback, fernToken, 'denied');
+      });
       await checkDelivery(reader, job, id);
       await checkDelivery(watering, 'watering', agentRequestId);
     });
@@ -292,6 +307,10 @@ export async function installedSecretHolder() {
     }
     return {
       ok: true,
+      standingAnswer: {
+        ok: true,
+        reason: 'After Always, the listed agent was allowed, the other agent waited, and the Never default denied both agents on a second secret with no rule.',
+      },
       reason:
         'A separate holder process stored an age-encrypted fixture value in its own database. The household database contained no fixture value. A new holder served the original bytes to two jobs of the approved agent. Both releases recorded the agent, job and time. The grant expired at one minute and the owner removed the stored value.',
     };
