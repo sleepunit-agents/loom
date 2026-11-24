@@ -61,7 +61,7 @@ function AccountCard({account,zone,active}:{account:Detail;zone?:string;active:b
   </section>
   <section aria-label="Sign-ins"><h4>Sign-ins</h4>
    {account.pendingSignIns?.map(box=><p key={box.id}>{box.name} · Sign-in requested</p>)}
-   {account.logins?.length?account.logins.map(login=><div key={JSON.stringify([login.box.id,login.place,login.harness])}>
+   {account.logins?.length?account.logins.map(login=><div key={JSON.stringify([login.box.id,login.place,login.harness])} className={login.reporting?undefined:'[color:var(--muted-foreground)]'}>
     <strong>{login.box.name}</strong> · {login.harness} · {login.place==='host'?'On the machine':'In houses'}
     <p>{!login.reporting&&'Last known: '}{login.state==='signed-in'?'Signed in':'Signed out'} · Checked {time(login.checkedAt,zone)}</p>
     {login.expiresAt&&<p>Ends {time(login.expiresAt,zone)}</p>}

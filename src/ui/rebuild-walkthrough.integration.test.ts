@@ -162,6 +162,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  });
  it('retains the project and private member on admitted jobs',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('job-labels');
+  expect(step.value.actions.subscriptionLoginRows,JSON.stringify(step.value.actions.subscriptionLoginRows)).toMatchObject({ok:true});
   expect(step.value.actions.subscriptionGroups,JSON.stringify(step.value.actions.subscriptionGroups)).toMatchObject({ok:true});
   expect(step.value.actions.machinePlacement,JSON.stringify(step.value.actions.machinePlacement)).toMatchObject({ok:true});
   expect(step.value.actions.jobLabels,JSON.stringify(step.value.actions.jobLabels)).toMatchObject({ok:true});

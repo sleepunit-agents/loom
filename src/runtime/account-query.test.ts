@@ -8,6 +8,8 @@ import { WebSocket } from 'ws';
 import { afterEach, expect, it } from 'vitest';
 import { GraphQLString } from 'graphql/index.js';
 import { eq } from 'drizzle-orm';
+import { SILENCE_MS } from './silence.js';
+import { LOGIN_ENDING_MS } from './account-logins.js';
 import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
 import { accountWeekReadings, conversations, inbox, inboxRefs, triggers, jobs, jobUsage, agents, boxes, members, memberAgents, modelAccounts, modelAccountBoxes, modelAccountLogins, modelAccountWindows, tokens } from '../core/data/schema.js';
@@ -381,6 +383,26 @@ it('offers sign-in only for a reporting machine the viewer may manage',async()=>
   expect(await login('alice')).toEqual({reporting:true,needsSignIn:true,canRequest:false});
   f.clock.advance(121_000);
   expect(await login('house')).toEqual({reporting:false,needsSignIn:false,canRequest:false});
+});
+
+it('wakes an open sign-in observation at the warning and silence boundaries without another write',async()=>{
+  const f=fixture(), start=f.clock.now();
+  f.db.update(boxes).set({lastSeenAt:f.now()}).run();
+  f.db.insert(modelAccountLogins).values({account:'private-a',box:'private-box-id',harness:'claude',place:'host',
+    state:'signed-in',since:f.now(),checkedAt:f.now(),learnedFrom:'check',expiresAt:new Date(start+LOGIN_ENDING_MS+SILENCE_MS).toISOString()}).run();
+  const ws=await openSocket(f,'house');
+  const query='{modelAccounts(detailId:"private-a"){... on RuntimeAccountDetail{logins{reporting needsSignIn canRequest}}}}';
+  const first=nextPayload(ws,'login');
+  ws.send(JSON.stringify({type:'subscribe',id:'login',payload:{query:
+    `subscription { observe(query:${JSON.stringify(query)}) { revision patches { path value } } }`}}));
+  expect(JSON.stringify(await first)).toContain('"reporting":true');
+  const warning=nextPayload(ws,'login');
+  f.clock.advance(SILENCE_MS);
+  const patch=(field:string,value:boolean)=>({path:['modelAccounts',0,'logins',0,field],value});
+  expect((await warning).data.observe).toMatchObject({patches:expect.arrayContaining([patch('canRequest',true),patch('needsSignIn',true)])});
+  const offline=nextPayload(ws,'login');
+  f.clock.advance(1);
+  expect((await offline).data.observe).toMatchObject({patches:expect.arrayContaining(['reporting','needsSignIn','canRequest'].map(field=>patch(field,false)))});
 });
 
 it.each([
