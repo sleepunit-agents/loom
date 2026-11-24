@@ -185,6 +185,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='data':add('The real GraphQL websocket carries data after sign-in without protocol errors.','',{'kind':'live'})
  if f.stem=='models':
   for row in rows:
+   if row['promise']=='Adds a subscription: choose the service, label it, choose its machines, sign in.':row['probe']={'kind':'action','action':'subscriptionSignIn'}
    if row['promise'].startswith('An account is signed in on particular worker machines.'):row['probe']={'kind':'action','action':'modelsMachines'}
  if f.stem=='desk':add('Every app discovered in the launcher opens a tile.','',{'kind':'launcher'})
  if f.stem=='inbox':

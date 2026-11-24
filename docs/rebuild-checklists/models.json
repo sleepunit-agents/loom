@@ -17,7 +17,11 @@
     {
       "id": "models-003",
       "promise": "Adds a subscription: choose the service, label it, choose its machines, sign in.",
-      "source": "docs/how-it-works/site/models.html"
+      "source": "docs/how-it-works/site/models.html",
+      "probe": {
+        "kind": "action",
+        "action": "subscriptionSignIn"
+      }
     },
     {
       "id": "models-004",

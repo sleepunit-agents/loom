@@ -386,6 +386,12 @@ export async function* walkthroughSteps(output) {
    report.actions.memoryRevisions=await memoryRevisionEvidence();
   } catch(error) { report.actions.memoryRevisions={ok:false,error:String(error)}; }
   save();yield {phase:'memory-revisions',actions:safeReport(report.actions)};
+  phase='subscription sign-in';
+  try {
+   const {subscriptionSignIn}=await import('./rebuild-subscription-signin.mjs');
+   report.actions.subscriptionSignIn=await subscriptionSignIn({browser,home:join(parent,'subscription-sign-in')});
+  } catch(error){report.actions.subscriptionSignIn={ok:false,error:String(error)};}
+  save();yield {phase:'subscription-sign-in',actions:safeReport(report.actions)};
   phase='sign-in door';
   report.actions.signinDoor=await signinDoorEvidence();
   save();yield {phase:'signin-door',actions:safeReport(report.actions)};
