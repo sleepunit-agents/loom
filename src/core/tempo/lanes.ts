@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, asc, between, eq, getTableColumns, gt, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, asc, between, eq, getTableColumns, gt, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import { rules, type Viewer } from '../../policy.js';
 import { sqlHolds, sqlVisibility } from '../../policy-sql.js';
 import type { DataDatabase } from '../data/database.js';
@@ -44,6 +44,22 @@ export function coveringFileSchedule(db: DataDatabase, viewer: Viewer, agent: st
     isNull(triggers.scheduleRemovedAt), between(triggers.nextDueAt,
       new Date(at - window).toISOString(), new Date(at + window).toISOString()),
   )).orderBy(asc(triggers.nextDueAt), asc(triggers.id)).limit(1).get();
+}
+
+/** The starter names each run with a lane, UTC second and nonce. Restrict reuse to its own visible,
+ * unassigned one-off wake. This lookup runs inside the same coordinator write as the insertion. */
+export function pendingNamedRun(db: DataDatabase, viewer: Viewer, id: string | undefined, agent: string) {
+  const match = /^run-([a-z][a-z0-9-]{0,60})-[0-9]{8}t[0-9]{6}-[0-9a-f]{4}$/.exec(id ?? '');
+  if (!match) throw Error('Joining a pending run requires a dated run id');
+  const glob = 'run-' + match[1] + '-' + '[0-9]'.repeat(8) + 't' + '[0-9]'.repeat(6) + '-' + '[0-9a-f]'.repeat(4);
+  return db.select().from(triggers).where(and(
+    sqlVisibility(viewer, ['triggers']).triggers(getTableColumns(triggers)),
+    sql`${triggers.id} GLOB ${glob}`, eq(triggers.ownerKind, 'agent'), eq(triggers.owner, agent),
+    eq(triggers.sourceKind, 'time'), eq(triggers.lifespan, 'once'), eq(triggers.targetKind, 'inbox'),
+    eq(triggers.toKind, 'agent'), eq(triggers.to, agent), eq(triggers.enabled, true),
+    inArray(triggers.state, ['standing','due','firing','held']),
+    isNull(triggers.member), isNull(triggers.project), isNull(triggers.conversation), isNull(triggers.program),
+  )).orderBy(asc(triggers.createdAt), asc(triggers.id)).limit(1).get();
 }
 
 /** Bind a household schedule replacement to the settings its owner just read. */

@@ -188,3 +188,22 @@ it('sets and edits machine facts, keeping each previous list in the trigger hist
     { prefers: ['local'] }, { needs: ['gpu'], prefers: [] }, { prefers: null },
   ]);
 });
+
+it('joins only a pending one-off for the exact run name and starts a new one after it fires', () => {
+  const f = fixture();
+  const times = new Date(f.clock.now() + 60000).toISOString();
+  const set = (name: string, nonce: string) => f.call('tempo.set', {
+    ...f.trigger, times, reusePendingRun: true, id: 'run-' + name + '-20261124t010203-' + nonce,
+  }, nonce);
+  const first = 'run-alert-dns-20261124t010203-bbbb';
+  expect(set('alert-dns-check', 'aaaa').ok).toBe(true);
+  expect(set('alert-dns', 'bbbb')).toMatchObject({ok:true,value:{id:first}});
+  expect(set('alert-dns', 'cccc')).toMatchObject({ok:true,value:{id:first,joined:true}});
+  f.tempo.triggers.pause('art');
+  expect(set('alert-dns', 'dddd')).toMatchObject({ok:true,value:{id:first,joined:true}});
+  f.tempo.triggers.resume('art');
+  f.clock.advance(60000);
+  expect(f.tempo.triggers.get(first).state).toBe('fired');
+  expect(set('alert-dns', 'eeee')).toMatchObject({ok:true,value:{id:'run-alert-dns-20261124t010203-eeee'}});
+  expect(f.db.select().from(triggers).all()).toHaveLength(3);
+});

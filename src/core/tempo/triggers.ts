@@ -153,7 +153,8 @@ export class TriggerEngine {
    * who asked for a trigger that names a conversation. Both are the door's to say (shared-tempo-access.ts,
    * shared-place-triggers.ts) and never part of what a caller sends. */
   set(value: NewTrigger, member?: string, asked?: Asker,
-    coveringSchedule?: (agent: string, file: string, due: string) => Trigger | undefined): Trigger {
+    coveringSchedule?: (agent: string, file: string, due: string) => Trigger | undefined,
+    pendingRun?: (id: string | undefined, agent: string) => Trigger | undefined): Trigger {
     this.open();
     const { execution, ...v } = triggerInput.parse(value);
     if (execution === 'host') throw new Error(HOST_SCHEDULE_REFUSAL);
@@ -190,6 +191,13 @@ export class TriggerEngine {
         !member && !v.conversation && !v.project && !v.program && !v.needs && !v.prefers && !v.id) {
       const schedule = coveringSchedule(v.to, v.file, due);
       if (schedule) return schedule;
+    }
+    if (pendingRun) {
+      if (member || asked || v.ownerKind !== 'agent' || !v.owner || v.to !== v.owner || v.toKind !== 'agent' ||
+          v.targetKind !== 'inbox' || v.sourceKind !== 'time' || v.lifespan !== 'once' || v.project || v.conversation ||
+          v.program || park || !due) throw Error('Joining a pending run requires a one-off wake for the same agent');
+      const waiting = pendingRun(v.id, v.owner);
+      if (waiting) return waiting;
     }
     const id = v.id ?? `tr-${randomUUID()}`;
     this.db.transaction(() => {
