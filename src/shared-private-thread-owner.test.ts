@@ -57,3 +57,21 @@ it('still lets a household owner end that thread\'s job, without being shown it'
   expect(f.db.select().from(s.jobs).get()).toMatchObject({ state: 'stopped', endedBy: 'olive', endedReason: 'write-off' });
   expect((await f.query('{jobHistory(agent:"art"){id title}}', ownerToken)).data).toEqual({ jobHistory: [] });
 });
+
+it('shows only the private job’s machine facts and its own digest to a household owner of that box', async () => {
+  const f = await fixture();
+  const selection = '{privateMachineJobs(agent:"art"){id agent state box queuedAt claimedAt endedAt summary}}';
+  const none = {data:{privateMachineJobs:[]}};
+  expect(await f.query(selection, ownerToken)).toEqual(none);
+  f.root.writes.run(() => f.db.update(s.boxes).set({owner:'olive'}).where(eq(s.boxes.id,'box')).run());
+  const row = {id:'job',agent:'art',state:'running',box:'box',queuedAt:new Date(f.clock.now()).toISOString(),claimedAt:null,endedAt:null,summary:null};
+  expect(await f.query(selection, ownerToken)).toEqual({data:{privateMachineJobs:[row]}});
+  f.root.writes.run(() => f.root.services.conversations.digest({conversation:f.thread.conversation,run:'job',summary:'Garden inspection finished.',items:[{kind:'decision',text:'Private decision details'}]}));
+  expect(await f.query(selection, ownerToken)).toEqual({data:{privateMachineJobs:[{...row,summary:'Garden inspection finished.'}]}});
+  for (const credential of [bodyCredentials.agent, bodyCredentials.member]) expect(await f.query(selection, credential)).toEqual(none);
+  expect(await f.query('{jobHistory(agent:"art"){title brief logTail} digests{summary} digestItems{text}}',ownerToken)).toEqual({data:{jobHistory:[],digests:[],digestItems:[]}});
+  const forbidden=await f.query('{privateMachineJobs(agent:"art"){title brief logTail conversation}}',ownerToken);
+  expect(forbidden.data).toBeUndefined();expect(forbidden.errors).toHaveLength(4);
+  f.root.writes.run(() => f.db.update(s.members).set({role:'member',fullOwner:false}).where(eq(s.members.id,'olive')).run());
+  expect(await f.query(selection, ownerToken)).toEqual(none);
+});

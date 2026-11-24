@@ -138,7 +138,11 @@
     {
       "id": "machines-016",
       "promise": "b Who sees it. Members see jobs in their projects and jobs of agents they own. For another member’s private job on their machine, a household owner sees the agent, machine, state, times and digest summary. The conversation, title, brief and log stay private.",
-      "source": "docs/how-it-works/site/machines.html#see-h"
+      "source": "docs/how-it-works/site/machines.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "jobLabels"
+      }
     },
     {
       "id": "machines-017",

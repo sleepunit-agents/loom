@@ -136,3 +136,17 @@ it('opens an earlier activity and carries its feed page into the thread link',as
  expect(text()).toContain('No earlier activities.');
  await click('Latest activities');expect(go).toHaveBeenLastCalledWith(base);
 });
+
+it('opens the digest of a private job on the member’s machine and removes it when access changes', async()=>{
+ const data={jobHistory:[],boxes:[{id:'box-one',name:'Workshop'}],privateMachineJobs:[
+  {id:'job',agent:'art',state:'done',box:'box-one',queuedAt:'2026-11-14T18:00:00Z',claimedAt:'2026-11-14T18:01:00Z',endedAt:'2026-11-14T19:00:00Z',summary:'Garden inspection finished.'},
+ ]};
+ f.extra.DeskAgentJobs={status:'live',data};
+ await draw();
+ expect(text()).toContain('on Workshop');
+ await click('Private conversation');
+ expect(text()).toContain('Garden inspection finished.');
+ expect(text()).not.toContain('Subscription now');
+ await answer('DeskAgentJobs',{status:'live',data:{...data,privateMachineJobs:[]}});
+ expect(text()).not.toContain('Garden inspection finished.');
+});

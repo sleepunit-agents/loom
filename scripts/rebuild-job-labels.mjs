@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exampleHome } from '../dist/example-home.js';
 import { startSharedHome } from '../dist/shared-startup.js';
+import { httpWorkerControl } from '../dist/runtime/worker-http.js';
 import { FakeClock } from '../dist/core/clock.js';
 
 export async function jobLabelsEvidence() {
@@ -33,9 +34,35 @@ export async function jobLabelsEvidence() {
    assert.equal(response.status,200);
    const {data,errors}=await response.json(); assert.equal(errors,undefined);
    assert(data.fern.some(row=>row.id===rows[0].id));
+   assert(data.moss.some(row=>row.id===example.runtime.publicJob.id));
    assert.equal(data.moss.some(row=>row.id===rows[1].id),member==='robin');
    write(()=>s.signin.revoke(credential.fingerprint));
   }
-  return {ok:true,reason:'Queued private Comms and shared project jobs retained their agent, project and member labels. Both signed-in members saw the project job. Only the private message sender saw its job.'};
+  const ownBox=example.runtime.box, privateId=rows[1].id;
+  const worker=write(()=>s.signin.issue({kind:'runner',box:ownBox,label:'Fictional private job worker'}));
+  const control=httpWorkerControl({url:app.url,token:worker.token,facts:['cpu:example'],slots:16,signal:AbortSignal.timeout(10000)});
+  let claimed;
+  for(let i=0;i<16;i++){
+   const next=await control.next();
+   if(!next)break;
+   if(next.id===privateId){claimed=next;break;}
+  }
+  assert.equal(claimed?.box,ownBox,'Worker did not claim the private job');
+  const summary='The garden gate inspection is underway.';
+  write(()=>s.conversations.digest({conversation:thread.conversation,run:privateId,summary,items:[]}));
+  write(()=>s.household.setMember({id:'casey',role:'owner',fullOwner:false,agents:[]}));
+  const metadata=db.prepare('select id,agent,box,state,queued_at as queuedAt,claimed_at as claimedAt,ended_at as endedAt from jobs where id=?').get(privateId);
+  for(const member of ['alex','robin','casey']){
+   const credential=write(()=>s.signin.issue({kind:'owner',member,label:'Private job on machine '+member}));
+   const query='{privateMachineJobs(agent:"moss"){id agent box state queuedAt claimedAt endedAt summary} jobHistory(agent:"moss"){id title brief logTail} commsThread(id:'+JSON.stringify(thread.id)+'){id}}';
+   const response=await fetch(app.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+credential.token,'content-type':'application/json'},body:JSON.stringify({query})});
+   const {data,errors}=await response.json();assert.equal(response.status,200);assert.equal(errors,undefined);
+   const selected=data.privateMachineJobs.filter(row=>row.id===privateId);
+   assert.deepEqual(selected,member==='alex'?[{...metadata,summary}]:[]);
+   assert.equal(data.jobHistory.some(row=>row.id===privateId),member==='robin');
+   assert.equal(data.commsThread?.id??null,member==='robin'?thread.id:null);
+   write(()=>s.signin.revoke(credential.fingerprint));
+  }
+  return {ok:true,reason:'Members saw shared project work and only the sender opened the private thread and full job history. After a real worker claimed that job, the household owner of its machine could read its state, times and exact digest. A second household owner saw none of it.'};
  } finally {try{await app?.close();}finally{await rm(dir,{recursive:true,force:true});}}
 }

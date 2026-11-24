@@ -9,10 +9,12 @@ import { Body, List, Row, Section } from '../../kit';
  * names come only from the machines this viewer may read, in the same request. */
 export const agentJobsQuery = `query DeskAgentJobs($agent: String!) {
   jobHistory(agent: $agent, first: 30) { id agent title state signInBlocked box model queuedAt claimedAt endedAt }
+  privateMachineJobs(agent: $agent) { id agent box state queuedAt claimedAt endedAt summary }
   boxes { id name }
 }`;
 interface Job { id: string; agent: string; title: string; state: string; signInBlocked?: boolean; model: string | null; box: string | null; queuedAt: string; claimedAt: string | null; endedAt: string | null }
-type Data = { jobHistory: Job[]; boxes?: { id: string; name: string }[] };
+type MachineJob = Pick<Job, 'id' | 'agent' | 'box' | 'state' | 'queuedAt' | 'claimedAt' | 'endedAt'> & {summary: string | null};
+type Data = { jobHistory: Job[]; privateMachineJobs?: MachineJob[]; boxes?: { id: string; name: string }[] };
 const current = ['queued', 'starting', 'running'];
 const stateWords: Record<string, string> = { queued: 'Queued', starting: 'Starting', running: 'Running', done: 'Done', failed: 'Failed', stopped: 'Stopped', lost: 'Lost' };
 const capacityQuery = `query JobSubscription($agent: String!, $job: String!) {
@@ -34,13 +36,14 @@ export function AgentJobs({ agent, name }: { agent: string; name: string }) {
   const zone = useHouseholdZone();
   const query = useDataQuery<Data>(agentJobsQuery, { agent });
   const live = query.status === 'live' && !!query.data && Array.isArray(query.data.jobHistory);
-  const jobs = live ? query.data!.jobHistory.filter(job => job.agent === agent) : [];
+  const jobs = live ? [...query.data!.jobHistory, ...(query.data!.privateMachineJobs ?? [])]
+    .filter(job => job.agent === agent).sort((a,b) => b.queuedAt.localeCompare(a.queuedAt) || b.id.localeCompare(a.id)).slice(0,30) : [];
   const machines = new Map((live ? query.data!.boxes ?? [] : []).map(box => [box.id, box.name]));
-  const row = (job: Job) => <Fragment key={job.id}><Row aria-expanded={expanded === job.id} onClick={() => setExpanded(current => current === job.id ? null : job.id)} title={job.title || 'Untitled job'}
-    trailing={job.state === 'failed' && job.signInBlocked ? <SignInWarning label="A machine needed sign-in on the last placement check"/> : undefined}
+  const row = (job: Job | MachineJob) => <Fragment key={job.id}><Row aria-expanded={expanded === job.id} onClick={() => setExpanded(current => current === job.id ? null : job.id)} title={'summary' in job ? 'Private conversation' : job.title || 'Untitled job'}
+    trailing={'signInBlocked' in job && job.state === 'failed' && job.signInBlocked ? <SignInWarning label="A machine needed sign-in on the last placement check"/> : undefined}
     meta={[stateWords[job.state] ?? job.state, job.box && machines.has(job.box) ? `on ${machines.get(job.box)}` : '', `queued ${briefTime(job.queuedAt, zone)}`,
       job.claimedAt ? `started ${briefTime(job.claimedAt, zone)}` : '', job.endedAt ? `ended ${briefTime(job.endedAt, zone)}` : ''].filter(Boolean).join(' · ')} />
-    {expanded === job.id && <JobDetails job={job}/>}</Fragment>;
+    {expanded === job.id && ('summary' in job ? <Body quiet>{job.summary || 'No digest yet.'}</Body> : <JobDetails job={job}/>)}</Fragment>;
   const now = jobs.filter(job => current.includes(job.state) && job.state !== 'queued'), queued = jobs.filter(job => job.state === 'queued'), earlier = jobs.filter(job => !current.includes(job.state));
   return <Section label="Jobs">
     {query.status === 'loading' || query.status === 'live' && !live ? <Body quiet>Checking…</Body> : !live ? <Body quiet>Can’t read jobs right now.</Body>
