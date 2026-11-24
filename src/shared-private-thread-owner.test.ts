@@ -75,3 +75,25 @@ it('shows only the private job’s machine facts and its own digest to a househo
   f.root.writes.run(() => f.db.update(s.members).set({role:'member',fullOwner:false}).where(eq(s.members.id,'olive')).run());
   expect(await f.query(selection, ownerToken)).toEqual(none);
 });
+
+it('pages private jobs before choosing the newest digest for each matching conversation and run', async () => {
+  const f = await fixture(), at = new Date(f.clock.now()).toISOString();
+  const page = Array.from({length:32}, (_, i) => 'run-' + String(i).padStart(2,'0'));
+  f.root.writes.run(() => {
+    f.db.update(s.boxes).set({owner:'olive'}).where(eq(s.boxes.id,'box')).run();
+    const template = f.db.select().from(s.jobs).where(eq(s.jobs.id,'job')).get()!;
+    const other = f.root.services.conversations.open({agent:'art',venue:'wake',place:'different',label:'Other conversation'});
+    for (const id of page) {
+      f.db.insert(s.jobs).values({...template,id,state:'done'}).run();
+      const same = {conversation:f.thread.conversation,run:id,at};
+      f.db.insert(s.digests).values([
+        {...same,id:id+'-old',revision:1,summary:'old'},
+        {...same,id:id+'-new',revision:2,summary:id},
+        {...same,id:id+'-elsewhere',revision:3,summary:'from a different conversation',conversation:other.id},
+      ]).run();
+    }
+  });
+  expect(await f.query('{privateMachineJobs(agent:"art"){id summary}}',ownerToken)).toEqual({
+    data:{privateMachineJobs:page.reverse().slice(0,30).map(id=>({id,summary:id}))},
+  });
+});
