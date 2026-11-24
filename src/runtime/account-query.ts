@@ -7,7 +7,7 @@ import type { DataDatabase } from '../core/data/database.js';
 import { reportedAccountCapacity } from './account-windows.js';
 import { allowedModelAccounts, modelAccountAuthority, readAccountCapacityRows, readModelAccounts } from '../core/data/model-account-read.js';
 
-import {accountWeeklyUsage} from './account-weekly-usage.js';
+import {weeklyWindowEstimates} from './account-weekly-usage.js';
 import {visibleWeeklyGroups, WeeklyVisibility} from './job-usage-queries.js';
 import type {JobSummaries} from './job-summary.js';
 
@@ -57,6 +57,39 @@ function subscriptionCapacity(row: ReturnType<typeof readAccountCapacityRows>[nu
   return { label: row.label, level: capacity.hasRoom ? capacity.level : 'almost full', hasRoom: capacity.hasRoom };
 }
 
+type AccountWindows = ReturnType<typeof readAccountCapacityRows>[number]['modelAccountWindowsByAccount'];
+
+function weeklyReportReader(db:DataDatabase, at:string, scope:()=>JobSummaries|undefined, witness:()=>WeeklyVisibility) {
+  type Report = ReturnType<typeof visibleWeeklyGroups>[number] & {window:string;usage:number|null;readAt:string|null;resetsAt:string|null};
+  type Read = {account:string;windows:AccountWindows;resolve:(value:Report[]|null)=>void;reject:(error:unknown)=>void};
+  let reads:Read[] = [];
+  function flush() {
+    const batch = reads;
+    reads = [];
+    try {
+      const current = scope();
+      if (!current) { for (const read of batch) read.resolve(null); return; }
+      const accounts = new Map(batch.map(read=>[read.account,read.windows]));
+      const windows = [...accounts].flatMap(([account,windows])=>windows.map(row=>({account,
+        window:{name:row.window,usage:row.usage,readAt:row.usageReadAt,resetsAt:row.resetsAt,durationMs:row.durationMs}})));
+      const estimates = [...weeklyWindowEstimates(db,windows,at)];
+      const projected = visibleWeeklyGroups(current,estimates.map(([,value])=>value),witness());
+      const reports = new Map<string,Report[]>();
+      estimates.forEach(([index],i)=>{
+        const {account,window} = windows[index];
+        const list = reports.get(account) ?? [];
+        list.push({window:window.name,usage:window.usage,readAt:window.readAt,resetsAt:window.resetsAt,...projected[i]});
+        reports.set(account,list);
+      });
+      for (const read of batch) read.resolve(reports.get(read.account) ?? []);
+    } catch (error) { for (const read of batch) read.reject(error); }
+  }
+  return (account:string,windows:AccountWindows)=>new Promise<Report[]|null>((resolve,reject)=>{
+    if (!reads.length) queueMicrotask(flush);
+    reads.push({account,windows,resolve,reject});
+  });
+}
+
 export function modelAccountQueries(db: DataDatabase, now: () => string, usageScope?: (viewer:Viewer)=>JobSummaries | undefined, jobScope?: (viewer:Viewer)=>JobSummaries) {
   // The same admitted Viewer object reaches GraphQL context and auth.valid().
   // Retain only the resource identifiers needed to recheck selected private fields.
@@ -80,6 +113,11 @@ export function modelAccountQueries(db: DataDatabase, now: () => string, usageSc
         witness(viewer, detailId);
       }
       const current = modelAccountAuthority(db, viewer);
+      const weekly = weeklyReportReader(db,at,()=>usageScope?.(viewer),()=>{
+        let watched = usageChecks.get(viewer);
+        if (!watched) { watched = new WeeklyVisibility(); usageChecks.set(viewer,watched); }
+        return watched;
+      });
       let sharing: ReturnType<typeof sharedSharing> | undefined;
       return selected.rows.map(row => {
         const {label, level, hasRoom} = subscriptionCapacity(row, at);
@@ -99,21 +137,9 @@ export function modelAccountQueries(db: DataDatabase, now: () => string, usageSc
           // Unscoped public-only selections never acquire a private witness. Record an
           // actual private column access before checking its current authority.
           witness(viewer, row.id);
-          return current(row.id).then(() => {
+          return current(row.id).then<unknown>(() => {
             if (name !== 'weeklyUsage') return values[name];
-            const scope = usageScope?.(viewer);
-            if (!scope) return null;
-            let watched = usageChecks.get(viewer);
-            if (!watched) { watched = new WeeklyVisibility(); usageChecks.set(viewer,watched); }
-            const reports = [];
-            for (const window of values.windows) {
-              const estimate = accountWeeklyUsage(db,row.id,{name:window.window,usage:window.usage,readAt:window.usageReadAt,
-                resetsAt:window.resetsAt,durationMs:window.durationMs,reserve:window.reserve},at);
-              if (!estimate) continue;
-              const projected = visibleWeeklyGroups(scope,estimate,watched);
-              reports.push({window:window.window,usage:window.usage,readAt:window.usageReadAt,resetsAt:window.resetsAt,...projected});
-            }
-            return reports;
+            return weekly(row.id,values.windows);
           });
         },
         };

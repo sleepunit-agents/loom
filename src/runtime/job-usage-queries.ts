@@ -164,20 +164,43 @@ export class WeeklyVisibility {
 }
 /** Group an account's internal usage weights under the viewer's current job, conversation,
  * parent-run and trigger rules. Only these grouped values may leave the projection. */
-export function visibleWeeklyGroups(s:JobSummaries, estimate:{shares:Map<string,number>;unattributed:number}, witness:WeeklyVisibility) {
-  if (!estimate.shares.size) return {agents:[],conversations:[],triggers:[],unattributed:estimate.unattributed};
-  const selected = rows(s,among(sql`${jobs.id}`,estimate.shares.keys()));
+type WeeklyEstimate = {shares:Map<string,number>;unattributed:number};
+
+export function visibleWeeklyGroups(s:JobSummaries, estimates:WeeklyEstimate[], witness:WeeklyVisibility) {
+  const ids = new Set(estimates.flatMap(estimate=>[...estimate.shares.keys()]));
+  if (!ids.size) return estimates.map(estimate=>({agents:[],conversations:[],triggers:[],unattributed:estimate.unattributed}));
+  const selected = rows(s,among(sql`${jobs.id}`,ids));
   const seenConversations = s.db.select({id:conversations.id}).from(conversations)
     .where(and(among(sql`${conversations.id}`,selected.flatMap(row=>row.conversation ?? [])),
       s.rule('conversations')!(getTableColumns(conversations)))).all();
   const readable = new Set(seenConversations.map(row=>row.id));
   const visible = selected.filter(row=>row.conversation === null || readable.has(row.conversation));
-  const evidence = new Map<Run,Set<string>>();
-  const runs = assignRuns([...new Map([...conversationHistory(s,visible),...visible].map(row=>[row.id,row])).values()]
-    .sort((a,b)=>Date.parse(b.queuedAt)-Date.parse(a.queuedAt) || b.id.localeCompare(a.id)),evidence);
+  const byId = new Map(visible.map((row,index)=>[row.id,{row,index}]));
+  const history = new Map<string,Row[]>();
+  for (const row of conversationHistory(s,visible)) {
+    if (!row.conversation) continue;
+    const group = history.get(row.conversation) ?? [];
+    group.push(row);
+    history.set(row.conversation,group);
+  }
+  const reports = estimates.map(estimate=>{
+    const matches = [...estimate.shares.keys()].flatMap(id=>byId.get(id) ?? []).sort((a,b)=>a.index-b.index).map(hit=>hit.row);
+    const conversations = new Set(matches.flatMap(row=>row.conversation ?? []));
+    const local = [...conversations].flatMap(id=>history.get(id) ?? []);
+    const evidence = new Map<Run,Set<string>>();
+    const runs = assignRuns([...new Map([...local,...matches].map(row=>[row.id,row])).values()]
+      .sort((a,b)=>Date.parse(b.queuedAt)-Date.parse(a.queuedAt) || b.id.localeCompare(a.id)),evidence);
+    return {estimate,matches,runs,evidence};
+  });
+  const triggerIds = new Set(reports.flatMap(report=>[...report.runs.values()].map(run=>run.trigger)));
   const notes = new Map(s.db.select({id:triggers.id,note:triggers.note}).from(triggers)
-    .where(and(among(sql`${triggers.id}`,[...runs.values()].map(run=>run.trigger)),
+    .where(and(among(sql`${triggers.id}`,triggerIds),
       s.rule('triggers')!(getTableColumns(triggers)))).all().map(row=>[row.id,row.note]));
+  return reports.map(({estimate,matches,runs,evidence})=>groupWeeklyEstimate(estimate,matches,runs,evidence,notes,witness));
+}
+
+function groupWeeklyEstimate(estimate:WeeklyEstimate, visible:Row[], runs:Map<string,Run>, evidence:Map<Run,Set<string>>,
+  notes:Map<string,string>, witness:WeeklyVisibility) {
   type Group = {key:string|null;title:string;share:number;href:string|null};
   const agents = new Map<string|null,Group>(), conversationsById = new Map<string|null,Group>(), triggersById = new Map<string|null,Group>();
   function add(groups:Map<string|null,Group>,key:string|null,title:string,share:number,href:string|null=null) {
