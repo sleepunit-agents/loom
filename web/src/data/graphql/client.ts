@@ -16,28 +16,36 @@ const envelope = 'subscription LoomData($query: String!, $variables: DataValue, 
 
 /** Apply ordered result patches without mutating values retained by Graphcache
  * or React. A protocol gap clears the stream instead of guessing its base. */
-export function applyDataPatch(current: unknown, patch: Patch): unknown {
-  function apply(value: unknown, offset: number): unknown {
+export function applyDataPatches(current: unknown, patches: readonly Patch[]): unknown {
+  // Only copies made in this revision are safe to edit again. A value supplied
+  // by a patch may still be retained by the transport or an earlier reader.
+  const copies = patches.length > 1 ? new WeakSet<object>() : undefined;
+  function apply(value: unknown, patch: Patch, offset: number): unknown {
     if (offset === patch.path.length) return patch.value;
     const key = patch.path[offset];
     if (!value || typeof value !== 'object' || (typeof key !== 'string' && typeof key !== 'number')) throw new Error('Invalid data patch path');
     const last = offset === patch.path.length - 1;
     if (Array.isArray(value)) {
       if (typeof key !== 'number' || !Number.isInteger(key) || key < 0 || key > value.length || (patch.removed && key >= value.length)) throw new Error('Invalid array patch');
-      const copy = [...value];
+      const copy = copies?.has(value) ? value : [...value];
+      copies?.add(copy);
       if (last && patch.removed) copy.splice(key, 1);
-      else copy[key] = apply(value[key], offset + 1);
+      else copy[key] = apply(value[key], patch, offset + 1);
       return copy;
     }
     const record = value as Record<string, unknown>;
     if (!last && !Object.hasOwn(record, key)) throw new Error('Invalid object patch');
-    const copy = { ...record };
+    const copy = copies?.has(record) ? record : { ...record };
+    copies?.add(copy);
     if (last && patch.removed) delete copy[key];
-    else Object.defineProperty(copy, key, { value: apply(record[key], offset + 1), enumerable: true, configurable: true, writable: true });
+    else Object.defineProperty(copy, key, { value: apply(record[key], patch, offset + 1), enumerable: true, configurable: true, writable: true });
     return copy;
   }
-  if (!patch.path.length && patch.removed) throw new Error('Cannot remove result root');
-  return apply(current, 0);
+  for (const patch of patches) {
+    if (!patch.path.length && patch.removed) throw new Error('Cannot remove result root');
+    current = apply(current, patch, 0);
+  }
+  return current;
 }
 
 /** Every urql query is a live generated selection over the one socket. Only
@@ -76,7 +84,7 @@ export function liveQueryExchange(transport: QueryTransport): Exchange {
                 current = undefined; revision = 0;
               }
               if (delta.revision !== revision + 1) throw new Error('Data revision gap');
-              for (const patch of delta.patches) current = applyDataPatch(current, patch);
+              current = applyDataPatches(current, delta.patches);
               revision = delta.revision;
               observer.next({ operation, data: current, hasNext: true, stale: false });
             } catch { unavailable('Data subscription could not complete'); }

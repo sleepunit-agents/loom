@@ -4,7 +4,7 @@ import type { FormattedExecutionResult } from 'graphql';
 import type { Sink, SubscribePayload } from 'graphql-ws';
 import { cacheExchange } from '@urql/exchange-graphcache';
 import { filter, map, pipe } from 'wonka';
-import { browserQueryTransport, dataCacheKeys, applyDataPatch, generatedDataClient, type QueryTransport } from './client';
+import { browserQueryTransport, dataCacheKeys, applyDataPatches, generatedDataClient, type QueryTransport } from './client';
 
 class Transport implements QueryTransport {
   feeds: { request: SubscribePayload; sink: Sink<FormattedExecutionResult> }[] = [];
@@ -61,9 +61,28 @@ it.each(['complete', 'error'] as const)('keeps a terminal %s unavailable when an
 
 it('removes rows without changing previously retained snapshots', () => {
   const initial = { tasks: [{ id: 'a' }, { id: 'b' }] };
-  expect(applyDataPatch(initial, { path: ['tasks',0], removed: true })).toEqual({ tasks: [{ id:'b' }] });
+  expect(applyDataPatches(initial, [{ path: ['tasks',0], removed: true }])).toEqual({ tasks: [{ id:'b' }] });
   expect(initial.tasks).toHaveLength(2);
-  expect(applyDataPatch(initial, { path: ['tasks',0,'id'], removed: false, value: null })).toEqual({ tasks: [{id:null},{id:'b'}] });
+  expect(applyDataPatches(initial, [{ path: ['tasks',0,'id'], removed: false, value: null }])).toEqual({ tasks: [{id:null},{id:'b'}] });
+});
+
+it('edits shared paths in order while retaining prior snapshots and incoming values', () => {
+  const kept = {id:'kept'};
+  const initial = {tasks:[{id:'removed'}, kept]};
+  const incoming = {id:'new', comments:['first']};
+  const patches = [
+    {path:['tasks',0], removed:true},
+    {path:['tasks',1], removed:false, value:incoming},
+    {path:['tasks',1,'id'], removed:false, value:'edited'},
+    {path:['tasks',1,'comments',1], removed:false, value:'second'},
+  ];
+  const updated = applyDataPatches(initial, patches) as typeof initial;
+  expect(updated.tasks).toEqual([kept, {id:'edited', comments:['first','second']}]);
+  expect(updated.tasks[0]).toBe(kept);
+  expect(initial.tasks).toEqual([{id:'removed'}, kept]);
+  expect(incoming).toEqual({id:'new', comments:['first']});
+  expect(() => applyDataPatches(initial, [...patches, {path:['missing',0], removed:true}])).toThrow();
+  expect(initial.tasks).toEqual([{id:'removed'}, kept]);
 });
 
 it('refuses a revision gap and hides data until a fresh initial result', () => {

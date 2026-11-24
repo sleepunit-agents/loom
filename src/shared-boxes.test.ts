@@ -10,7 +10,7 @@ import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
 import { agents, agentBoxes, agentDeniedTools, agentHousePorts, agentPeople, agentRunSettings, boxes, boxAgents, boxFacts, members, memberAgents, tokens } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
-import { applyDataPatch } from '../web/src/data/graphql/client.js';
+import { applyDataPatches } from '../web/src/data/graphql/client.js';
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const keys = { alice: 'a'.repeat(64), bob: 'b'.repeat(64), house: 'h'.repeat(64), art: 'x'.repeat(64), worker: 'w'.repeat(64) };
@@ -70,8 +70,8 @@ async function socket(f:ReturnType<typeof fixture>,who:keyof typeof keys){
 for(const withdrawal of ['ownership','household-role'] as const) it(`updates the exact retained ticker and clears rows on ${withdrawal} withdrawal`,async()=>{
   const f=fixture(),who=withdrawal==='ownership'?'alice':'house',ws=await socket(f,who);let next=once(ws,'message');
   const apply=(raw:unknown,current:unknown)=>{
-    const patches=JSON.parse(String(raw)).payload.data.observe.patches as Parameters<typeof applyDataPatch>[1][];
-    return patches.reduce(applyDataPatch,current);
+    const patches=JSON.parse(String(raw)).payload.data.observe.patches as Parameters<typeof applyDataPatches>[1];
+    return applyDataPatches(current,patches);
   };
   ws.send(JSON.stringify({type:'subscribe',id:'boxes',payload:{query:`subscription { observe(query:${JSON.stringify(query)}) { revision patches { path value removed } } }`}}));
   let retained=apply((await next)[0],undefined);
