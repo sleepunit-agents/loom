@@ -6,6 +6,7 @@ import {nativeProtocolAction,scheduledWorker} from './rebuild-native-protocol.mj
 import {conversationLinks} from './rebuild-conversation-links.mjs';
 import {conversationMailSteps} from './rebuild-conversation-mail.mjs';
 import {machineRoster} from './rebuild-machine-roster.mjs';
+import {machineHistory} from './rebuild-machine-history.mjs';
 import {modelAccountActions} from './rebuild-model-actions.mjs';
 /** Real built startup and first-run sign-in. No seeded session or mock transport. */
 import {approvalCaution} from './rebuild-approval-caution.mjs';
@@ -480,6 +481,8 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'bridge-mail',actions:safeReport(report.actions)};
   try {report.actions.conversationCallers=await conversationCallers({app,example:report.example});}
   catch(error){report.actions.conversationCallers={ok:false,error:String(error)};}
+  try {report.actions.machineHistory=await machineHistory({app,example:report.example});}
+  catch(error){report.actions.machineHistory={ok:false,error:String(error)};}
   report.actions.inboxCallers=await inboxCallers({app,example:report.example});
   save();yield {phase:'inbox-callers',actions:safeReport(report.actions)};
 
