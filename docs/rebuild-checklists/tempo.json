@@ -159,7 +159,11 @@
     {
       "id": "tempo-025",
       "promise": "The timings are settings a person can change, each with a default. Loom keeps a row only for a person or agent that has changed them.",
-      "source": "docs/how-it-works/site/tempo.html#how-h"
+      "source": "docs/how-it-works/site/tempo.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "customTempoTimings"
+      }
     },
     {
       "id": "tempo-026",

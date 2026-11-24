@@ -113,6 +113,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('Each block is one of four kinds,'):row['probe']={'kind':'action','action':'tempoCalendar'}
    if row['promise']=="Holds an agent's triggers while the agent is paused.":row['probe']={'kind':'action','action':'pausedWake'}
    if row['promise'].startswith('Each recipient sets a volume on an inbox item.'):row['probe']={'kind':'action','action':'inboxVolume'}
+   if row['promise'].startswith('The timings are settings a person can change,'):row['probe']={'kind':'action','action':'customTempoTimings'}
    if row['promise']=='A pull request changing can fire a trigger.':row['probe']={'kind':'action','action':'pullRequestTrigger'}
    if row['promise']=='A job stopping can fire a trigger.':row['probe']={'kind':'action','action':'jobEndTrigger'}
    if row['promise'].startswith('Waiting on an approval is a once-only trigger on that answer.'):row['probe']={'kind':'action','action':'tempoResumed'}
