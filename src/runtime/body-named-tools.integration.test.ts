@@ -257,6 +257,36 @@ it('identifies the scheduled instant and job of one accepted journal delivery', 
  expect((await read('another-delivery')).text).toContain('denied');
 });
 
+it.each(['matched','no configuration','other trigger','other agent'] as const)('checks a clock batch against its profile (%s)', async mode => {
+ const trigger = 'tr-clock';
+ const b = await body({wakeToolProfiles:mode === 'no configuration' ? [] : [{
+   agent:mode === 'other agent' ? 'mark' : 'art', trigger:mode === 'other trigger' ? 'tr-other' : trigger, omitClaudeTools:['Workflow'],
+ }]});
+ const {db,root,clock} = b.fixture;
+ db.insert(schema.household).values({timezone:'UTC'}).onConflictDoUpdate({target:schema.household.singleton,set:{timezone:'UTC'}}).run();
+ root.services.tempo.triggers.set({id:trigger,ownerKind:'agent',owner:'art',project:'pond',sourceKind:'time',times:'18:01,18:02',
+   lifespan:'until-stopped',targetKind:'inbox',toKind:'agent',to:'art',note:'Test schedule',instructions:'Check'});
+ const ids:string[] = [];
+ const profile = async (items:string[]) => JSON.parse((await b.call('loom_command',{
+   operation:'tempo.wakeToolProfile',input:{items},id:'read-profile',
+ })).text).value;
+ for (let minute = 1; minute <= 2; minute++) {
+   clock.advance(60_000);
+   const sourceId = trigger + ':time:' + new Date(clock.now()).toISOString();
+   const item = db.select().from(schema.inbox).where(eq(schema.inbox.sourceId,sourceId)).get()!;
+   db.update(schema.jobs).set({conversation:item.conversation,member:null}).where(eq(schema.jobs.id,'job')).run();
+   db.update(schema.inbox).set({state:'taken',job:'job',takenVolume:'full'}).where(eq(schema.inbox.id,item.id)).run();
+   ids.push(item.id);
+   expect(await profile(ids)).toEqual([]);
+   expect((await b.fixture.call('accept',{items:[item.id]},'accept-'+item.id)).status).toBe(200);
+   expect(await profile(ids)).toEqual(mode === 'matched' ? ['Workflow'] : []);
+ }
+ expect(await profile([...ids,'unrelated'])).toEqual([]);
+ expect(await profile([ids[0],ids[0]])).toEqual([]);
+ db.update(schema.inbox).set({sourceId:'missing-occurrence'}).where(eq(schema.inbox.id,ids[0])).run();
+ expect(await profile(ids)).toEqual([]);
+});
+
 it('recovers an interrupted verification from the journal without stamping the same page twice', async () => {
  const b=await body(), {db,root,clock}=b.fixture;
  db.insert(schema.household).values({timezone:'UTC'}).onConflictDoUpdate({target:schema.household.singleton,set:{timezone:'UTC'}}).run();
@@ -349,14 +379,7 @@ it('carries a journal between actual trigger deliveries and confines body comman
  expect(JSON.parse((await carry()).text).value).toBeNull();
  expect((await b.fixture.call('accept',{items:[second.id]},'accept-second')).status).toBe(200);
  expect(JSON.parse((await carry()).text).value).toBe('Count each source once.');
- const profile = async (items:string[]) => JSON.parse((await cmd('tempo.wakeToolProfile',{items},'profile')).text).value;
- expect(await profile([second.id])).toEqual(['Workflow']);
- expect(await profile([second.id, 'unrelated'])).toEqual([]);
- expect(await profile([second.id, second.id])).toEqual([]);
- db.update(schema.inbox).set({takenVolume:'full'}).where(eq(schema.inbox.id,first.id)).run();
- expect(await profile([first.id, second.id])).toEqual(['Workflow']);
- db.update(schema.inbox).set({sourceId:'missing-occurrence'}).where(eq(schema.inbox.id,first.id)).run();
- expect(await profile([first.id, second.id])).toEqual([]);
+ expect(JSON.parse((await cmd('tempo.wakeToolProfile',{items:[second.id]},'event-profile')).text).value).toEqual([]);
  expect(JSON.parse((await cmd('tempo.readJournal',{item:second.id},'event-firing')).text).value.firing).toEqual({job:'job',item:second.id,scheduledAt:null});
  expect(db.select().from(schema.inbox).where(eq(schema.inbox.conversation,first.conversation!)).all()).toHaveLength(2);
  expect((await read()).text).toContain('page 2');
