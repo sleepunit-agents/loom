@@ -106,6 +106,42 @@ it('keeps one open subscription’s weekly SQL count fixed as other subscription
  expect(counts[0]).toBeGreaterThan(0);expect(counts[1]).toBe(counts[0]);
 });
 
+it('batches both windows across subscriptions and attributes each job only to its own account',async()=>{
+  const f = fixture(), counts:number[] = [];
+  const end = f.now(), start = new Date(f.clock.now()-60000).toISOString();
+  const resetsAt = new Date(f.clock.now()+86400000).toISOString();
+  for (const size of [1,8]) {
+    for (let n = size === 1 ? 0 : 1; n < size; n++) {
+      const id = 'batch-'+n;
+      f.db.insert(modelAccounts).values({id,owner:'alice',label:id,provider:'example',hasRoom:true}).run();
+      for (const [window,usage] of [['normal',.25],['premium',.5]] as const) {
+        f.db.insert(modelAccountWindows).values({account:id,window,usage,usageReadAt:end,resetsAt,durationMs:604800000}).run();
+        f.db.insert(accountWeekReadings).values({account:id,window,readAt:start,resetsAt,usage:0}).run();
+      }
+      f.db.insert(conversations).values({id,agent:'agent',member:'alice',venue:'loom',place:id,label:id,
+        direct:true,startedAt:start,lastAt:end,turnCount:1}).run();
+      f.db.insert(jobs).values({id,agent:'agent',member:'alice',account:id,conversation:id,title:id,state:'done',
+        model:'m',brief:'',startedByKind:'member',startedBy:'alice',houseRepository:'r',houseFile:'f',
+        houseBranch:'b',queuedAt:start,claimedAt:start,endedAt:end}).run();
+      f.db.insert(jobUsage).values({job:id,source:'report',tokensIn:10,tokensOut:10}).run();
+    }
+    f.statements.length = 0;
+    const response = await (await f.post('alice','{modelAccounts{... on RuntimeAccountDetail{id weeklyUsage{window conversations{title share} unattributed}}}}')).json();
+    expect(response.errors).toBeUndefined();
+    const accounts = response.data.modelAccounts.filter((row:{id?:string})=>row.id?.startsWith('batch-'));
+    expect(accounts).toHaveLength(size);
+    for (const row of accounts) {
+      expect(row.weeklyUsage).toHaveLength(2);
+      for (const [window,share] of [['normal',.25],['premium',.5]]) {
+        expect(row.weeklyUsage).toContainEqual({window,conversations:[{title:row.id,share}],unattributed:0});
+      }
+    }
+    counts.push(f.statements.filter(s=>/^select\b/i.test(s)).length);
+  }
+  expect(counts[0]).toBeGreaterThan(0);
+  expect(counts[1]).toBe(counts[0]);
+});
+
 it('rechecks ownership for an identifier lookup even if only its public label is requested',async()=>{
  const began=Promise.withResolvers<void>(), gate=Promise.withResolvers<void>();
  const f=fixture({hold:{type:GraphQLString,resolve:async()=>{began.resolve();await gate.promise;return 'ready';}}});
