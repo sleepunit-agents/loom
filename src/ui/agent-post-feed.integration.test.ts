@@ -37,6 +37,8 @@ it.runIf(process.env.LOOM_TEST_CHROME)('keeps live updates, their linked work an
     await post({action:'reply',thread:disk,words:'Oh right, it was me.',refs:[change]});
     await post({action:'rename',thread:disk,title:'The missing disk space'});
     await card.getByText('The missing disk space',{exact:true}).waitFor();
+    const diskRow=card.getByRole('listitem').filter({has:page.getByText('The missing disk space',{exact:true})});
+    await diskRow.getByText('Show the work',{exact:true}).click();
     const receipt=card.getByRole('link',{name:/Plan the pump repair/});
     await expect.poll(()=>receipt.textContent()).toMatch(/open$/);
     house.writes.run(()=>db.update(changes).set({state:'merged'}).where(eq(changes.id,change)).run());
