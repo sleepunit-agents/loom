@@ -202,3 +202,19 @@ it('orders PR events between filing and verified closure without inferring a rev
   expect(story.findAllByType('li').map((row: Parameters<typeof visibleText>[0]) => visibleText(row)))
     .toEqual(['Ticket filed','Pull request opened','Pull request merged','Verified both installations.','Ticket closed'].map(label => expect.stringContaining(label)));
 });
+
+it('keeps the blocking report and later clearance on their own revisions in the ticket story', async () => {
+  const ticket = task('t-1'), at = (minute: number) => new Date(Date.UTC(2026,10,24,17,minute)).toISOString();
+  const change = {task:ticket.id,id:'pr-1',repository:'acme/app',number:1,title:'Color',state:'open',draft:false,checks:'passing',review:'approved',waitingOn:'you'} as const;
+  const first = {change:change.id,job:'first',headCommit:'a'.repeat(40),tier:'high',round:1,requestedAt:at(1),completedAt:at(2),verdict:'BLOCKING',findings:'The label is green.'} as const;
+  const second = {...first,job:'second',headCommit:'b'.repeat(40),round:2,requestedAt:at(4),completedAt:at(5),verdict:'CLEAR',findings:'Red verified.'} as const;
+  await draw(props({tasks:[ticket],selected:ticket.id,changes:[change],reviews:[second,first],comments:[
+    {task:ticket.id,seq:1,actorKind:'agent',actor:'art',at:at(3),text:'Corrected the color.'},
+  ]}));
+  const rows = tree.root.findByProps({label:'Ticket story'}).findAllByType('li');
+  expect(rows.map((r: Parameters<typeof visibleText>[0]) => visibleText(r))).toEqual([
+    'Review requested','The label is green.','Corrected the color.','Review requested','Red verified.',
+  ].map(label => expect.stringContaining(label)));
+  expect(rows[1].findByType('strong').props.title).toBe(first.headCommit);
+  expect(rows[4].findByType('strong').props.title).toBe(second.headCommit);
+});

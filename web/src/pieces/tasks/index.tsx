@@ -1,7 +1,7 @@
 import { talkPath } from '../comms/shared-query';
 import { useEffect, useRef, useState } from 'react';
 import { useDataQuery } from '../../data/graphql';
-import { SharedTasks, type SharedTask, type TaskAction } from './shared-view';
+import { SharedTasks, type SharedTask, type TaskAction, type TicketReview } from './shared-view';
 import { SharedTaskForm, type TaskFormProps } from './shared-form';
 import { taskId, taskSegment } from '../../../../src/task-route';
 import { taskCommentsQuery, taskSourceQuery, tasksQuery, type TasksSelection } from './query';
@@ -48,6 +48,9 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
     ? readerFeed.data?.selectedTask : undefined;
   const visibleDetail = selectedTask && detail?.id === selectedTask.id ? detail : undefined;
   const reader = selectedTask && visibleDetail ? { ...selectedTask, ...visibleDetail } : undefined;
+  const reviewFeed = useDataQuery<{taskReviewHistory: TicketReview[]}>(
+    'query TaskReviewHistory($task: String!) { taskReviewHistory(task: $task) { change job headCommit tier round requestedAt completedAt verdict findings } }',
+    {task:selected ?? ''}, {pause: !visibleDetail?.changeTasksByTask?.some(link => link.changeRow)});
   const sourceId = reader?.sourceKind === 'conversation' ? reader.sourceId : null;
   const sourceFeed = useDataQuery<{source: Parameters<typeof talkPath>[0] | null}>(
     taskSourceQuery, {id:sourceId}, {pause:!sourceId || !go || !!openConversation});
@@ -89,6 +92,8 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
   const open = !!submit && !!action && status === 'live' && (action.action === 'create' || !!target);
   const links = tasks.flatMap(task => task.taskLinksByTask);
   return <SharedTasks status={status} tasks={tasks} selected={selected} reader={reader} select={navigate} questionFor={questionFor} startFolder={startFolder} startAssignee={startAssignee} liveAgentIds={liveAgentIds}
+    reviewsUnavailable={!!visibleDetail?.changeTasksByTask?.some(link => link.changeRow) && (reviewFeed.status === 'offline' || reviewFeed.status === 'denied')}
+    reviews={visibleDetail && reviewFeed.status === 'live' && !reviewFeed.settling ? reviewFeed.data?.taskReviewHistory : undefined}
     changes={visibleDetail?.changeTasksByTask.flatMap(link => link.changeRow ? [{ ...link.changeRow, task: visibleDetail.id }] : [])}
     links={links} comments={visibleDetail?.taskCommentsByTask ?? []}
     loadingReader={(combined || readDetail) && (readerFeed.status === 'loading' || readerFeed.settling)}

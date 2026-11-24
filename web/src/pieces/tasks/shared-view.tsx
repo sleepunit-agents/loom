@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Split, List, Row, Empty, Error, Loading, Button, Actions, LinkButton, Search, Menu, Reader, Meta, Title, Facts, Fact, Section, Body, Chip, RefCard, type SplitFolder } from '../../kit';
 import { briefTime, fullTime } from '../../kit/time';
 import { displayName } from '../../kit/words';
+import type { ReviewRound } from '../change-view/model';
 import { ChangeCard } from '../change-view';
 import { taskFormTitles } from './shared-form';
 
@@ -22,6 +23,7 @@ export interface SharedTask {
 export interface SharedTaskLink { task: string; dependsOn: string; type: 'blocks' | 'parent-child' }
 export interface SharedTaskComment { task: string; seq: number; actorKind: 'member' | 'agent'; actor: string; at: string; text: string }
 export type SharedTaskChange = Pick<typeof changes.$inferSelect, 'id' | 'repository' | 'number' | 'title' | 'state' | 'draft' | 'checks' | 'review' | 'waitingOn'> & { task: string; openedAt?: string; closedAt?: string | null };
+export type TicketReview = ReviewRound & {requestedAt: string; completedAt: string | null};
 export type TaskReaderFields = Pick<SharedTask, 'createdAt' | 'createdBy' | 'closedAt' | 'doneWhen' | 'ifYes' | 'ifNo' | 'sourceKind' | 'sourceId'>;
 export type TaskListRow = Omit<SharedTask, keyof TaskReaderFields>;
 type Task = SharedTask;
@@ -37,6 +39,8 @@ export interface SharedTasksProps {
   loadingReader?: boolean;
   readerUnavailable?: boolean;
   changes?: readonly SharedTaskChange[];
+  reviews?: readonly TicketReview[];
+  reviewsUnavailable?: boolean;
   /** IDs returned by the authorized ready query, never inferred from partial visible links. */
   ready: readonly string[];
   selected?: string;
@@ -144,12 +148,22 @@ export function SharedTasks(props: SharedTasksProps) {
   })}</div></Fact>;
   const comments = selected ? props.comments.filter(c => c.task === selected.id).toSorted((a,b) => a.seq-b.seq) : [];
   const changes = selected ? props.changes?.filter(change => change.task === selected.id) ?? [] : [];
-  const story: {key: string; at: string; label: string; detail?: string; change?: string}[] = [];
+  const story: {key: string; at: string; label: string; detail?: string; change?: string; revision?: string}[] = [];
   if (selected?.createdAt) story.push({key:'filed', at:selected.createdAt, label:'Ticket filed', detail:name(selected.createdBy ?? null)});
   for (const comment of comments) story.push({key:'comment-'+comment.seq, at:comment.at, label:name(comment.actor), detail:comment.text});
   for (const change of changes) {
     if (change.openedAt) story.push({key:'opened-'+change.id, at:change.openedAt, label:'Pull request opened', detail:change.title, change:change.id});
     if (change.closedAt && change.state !== 'open') story.push({key:'closed-'+change.id, at:change.closedAt, label:change.state === 'merged' ? 'Pull request merged' : 'Pull request closed', detail:change.title, change:change.id});
+  }
+  for (const review of props.reviews ?? []) {
+    const change = changes.find(link => link.id === review.change);
+    if (!change) continue;
+    const round = `Review ${review.round} · #${change.number} · ${review.headCommit.slice(0, 8)}`;
+    story.push({key:'request-'+review.job, at:review.requestedAt, label:round, detail:'Review requested', change:review.change, revision:review.headCommit});
+    if (review.completedAt) {
+      const verdict = {CLEAR:'Clear', BLOCKING:'Changes requested', NONE:'No reviewer report'}[review.verdict ?? 'NONE'];
+      story.push({key:'report-'+review.job, at:review.completedAt, label:round+' · '+verdict, detail:review.findings ?? undefined, change:review.change, revision:review.headCommit});
+    }
   }
   if (selected?.status === 'closed' && selected.closedAt) story.push({key:'closed', at:selected.closedAt, label:'Ticket closed', detail:selected.closeReason ?? undefined});
   story.sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
@@ -180,9 +194,9 @@ export function SharedTasks(props: SharedTasksProps) {
       {props.form && props.form.action !== 'create' && <Section data-form="" label={taskFormTitles[props.form.action] ?? labels[props.form.action]}>{props.form.node}</Section>}
       {selected.goal && <Body>{selected.goal}</Body>}
       {story.length > 0 && <Section label="Ticket story"><ol className="grid gap-2.5">{story.map(event => <li key={event.key} className="grid gap-0.5">
-        <Body><strong>{event.label}</strong> <time className="loom-reader__meta" dateTime={event.at} title={fullTime(event.at,props.zone)}>{briefTime(event.at,props.zone)}</time></Body>
+        <Body><strong title={event.revision}>{event.label}</strong> <time className="loom-reader__meta" dateTime={event.at} title={fullTime(event.at,props.zone)}>{briefTime(event.at,props.zone)}</time></Body>
         {event.change && props.openChange ? <LinkButton onClick={() => props.openChange!(event.change!)}>{event.detail}</LinkButton> : event.detail && <Body>{event.detail}</Body>}
-      </li>)}</ol></Section>}
+      </li>)}</ol>{props.reviewsUnavailable && <Body quiet>Review history is unavailable.</Body>}</Section>}
       <Facts>
         <Fact label="Why">{selected.why}</Fact>
         <Fact label="Done when">{selected.doneWhen}</Fact>
