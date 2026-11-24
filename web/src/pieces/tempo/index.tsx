@@ -67,6 +67,7 @@ function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapsho
   const journal = journalDetail.status === 'live' ? journalDetail.data?.tempoJournal : null;
   const log = useDataQuery<{ triggerLog: TriggerEvent[] }>(triggerHistoryQuery, {id: trigger.id});
   const entries = log.status === 'live' && log.data?.triggerLog ? history(log.data.triggerLog, trigger.id) : undefined;
+  const next = nextScheduledAt(trigger);
   const lastDecision = program?.lastResult ?? entries?.find(event => event.event === 'program')?.note;
   const time = (at: string) => new Intl.DateTimeFormat(undefined, {
     timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short',
@@ -74,7 +75,7 @@ function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapsho
   return trigger ? <article className="grid gap-4 p-5">
     <header><h1 className="text-2xl font-semibold">{title(trigger)}</h1><p>{trigger.sourceKind} · {trigger.lifespan} · {status(trigger, snapshot.pauses)}</p></header>
     <p>{source(trigger)}</p>
-    {trigger.nextDueAt && <p>Due: {time(trigger.nextDueAt)} · {snapshot.timezone}</p>}
+    {next && <p>Due: {time(next)} · {snapshot.timezone}</p>}
     <dl className="grid gap-2">
       <div><dt>Set by</dt><dd>{trigger.ownerKind === 'household' ? 'Household' : trigger.owner}</dd></div>
       {trigger.project && <div><dt>Project</dt><dd>{trigger.project}</dd></div>}
