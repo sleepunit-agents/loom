@@ -84,7 +84,28 @@
     {
       "id": "memory-010",
       "promise": "Memories, notes, people cards, project cards and identity live in each agent's own folder. Knowledge pages and the people directory are shared by the household. Identity also holds a page for each harness, model, role and project the agent works in, loaded when asked for, and a summary of what its other bodies did in the last 24 hours.",
-      "source": "docs/how-it-works/site/memory.html#how-h"
+      "source": "docs/how-it-works/site/memory.html#how-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "agentFolderContents"
+          },
+          {
+            "kind": "action",
+            "action": "sharedHouseholdFiles"
+          },
+          {
+            "kind": "action",
+            "action": "identityPages"
+          },
+          {
+            "kind": "action",
+            "action": "sessionEpisode"
+          }
+        ]
+      }
     },
     {
       "id": "memory-011",
