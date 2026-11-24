@@ -1,6 +1,6 @@
 import { expect, expectTypeOf, it } from 'vitest';
 import type { triggers, triggerLog, agentPauses } from '../../../../src/core/data/schema';
-import { rows, history, source, status, type Trigger, type TriggerEvent, type AgentPause } from './model';
+import { rows, recordedOutcomes, history, source, status, type Trigger, type TriggerEvent, type AgentPause } from './model';
 
 it('uses the shared schema field shapes without pulling server modules into the browser', () => {
   expectTypeOf<Trigger>().toEqualTypeOf<typeof triggers.$inferSelect>();
@@ -69,4 +69,12 @@ it('lists distant wakes before unscheduled and spent triggers, including old row
     trigger('tomorrow', {nextDueAt:'2026-11-25T12:00:00Z'}),
   ];
   expect(rows(items,'all').map(item=>item.id)).toEqual(['tomorrow','next-month','spent','wait']);
+});
+
+it('counts reported missed runs across a downtime summary and preserves a lower bound',()=>{
+  const missed = (note:string)=>({state:'missed',note,scheduled:false});
+  const individual = Array.from({length:20},()=>missed('time:2026-11-01T12:00:00Z'));
+  expect(recordedOutcomes([...individual,missed('780 more, the last at time:2027-12-19T12:00:00Z')])).toEqual(['800 missed runs reported']);
+  expect(recordedOutcomes([...individual,missed('more than 4980 more')])).toEqual(['More than 5000 missed runs reported']);
+  expect(recordedOutcomes([missed('time:2026-11-01T12:00:00Z'),{state:'fired',scheduled:false},{state:'standing',scheduled:true}])).toEqual(['1 missed run reported','1 fired']);
 });
