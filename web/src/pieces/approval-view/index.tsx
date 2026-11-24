@@ -88,6 +88,8 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false,
   const card = a.card;
   const title = card?.title ?? displayTitle ?? approvalTitle(a);
   const exact = card?.exact ?? a.exactRequest;
+  const shell = a.kind === 'command' && /^shell:sha256:[0-9a-f]{64}$/.test(a.target);
+  const fullCommand = shell && <Disclosure label="Full command"><pre className="whitespace-pre-wrap break-words">{a.details}</pre></Disclosure>;
   const exactRequest = exact && <Disclosure label="Exact request"><pre className="whitespace-pre-wrap break-words">{exact}</pre></Disclosure>;
   const storedSummary = !household && !change && a.changeSummary;
   const ifYes = card?.ifYes ?? a.ifYes, ifNo = card?.ifNo ?? a.ifNo;
@@ -107,6 +109,7 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false,
     {storedSummary && <Body>{storedSummary}</Body>}
     {change}
     {!household && <Meta>Allows {kindWord[a.kind] ?? a.kind}: {a.target}</Meta>}
+    {fullCommand}
     <Answer key={a.review ?? a.id} approval={a} actions={actions} caution={caution} />
     {exactRequest}
     {showStored && <>{answered}{ends}</>}
@@ -125,10 +128,11 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false,
       {!household && <Fact label="Exactly what this allows">{`${kindWord[a.kind] ?? a.kind}: ${a.target}`}</Fact>}
     </Facts>
     {change}
+    {fullCommand}
     <Answer key={a.review ?? a.id} approval={a} actions={actions} caution={caution} />
     {showStored && <>{!decision && answered}{ends}</>}
     {exactRequest}
-    {!household && !change && a.details && <Section label="Details"><Body>{a.details}</Body></Section>}
+    {!household && !shell && !change && a.details && <Section label="Details"><Body>{a.details}</Body></Section>}
     {showStored && record.length > 0 && <Section label="History"><ol className="grid gap-1.5">{record.map(r => <li key={r.seq}><Body>{recordWord(r, name)} <span className="loom-reader__meta">{time(r.at)}</span></Body></li>)}</ol></Section>}
   </Reader>;
 }

@@ -129,6 +129,11 @@ notices, through `loom_command` or the command door (`POST /api/<piece>/<operati
   `approvals.report {id, what}` answers `{id, reported: true}` for a card a tell rule allowed;
   `approvals.withdraw {id}` answers `{id, state: "withdrawn"}`. A card's state is read with the `approvals`
   tool or query.
+- For shell text, file `approvals.request {kind: "command", commandText, why, minutes?}`. Loom builds the
+  question from the complete text and keeps it under **Full command** in the card. Shortened previews are
+  labelled. The full view uses JSON string quoting to make line breaks and invisible characters visible.
+  Spend it with `approvals.use {id, kind: "command", commandText}`. Supply exactly the same text, including
+  trailing newlines. An allowance records one use. The caller handles execution.
 - `notices.raise {key, title, detail?, quiet?}` answers `{item, raised, pushed}`: the key, whether the
   notice was news to the people who have the agent, and whether any push was queued. Nothing is pushed for
   `quiet`, for a key settled within the last ten minutes, or to a person who already has the notice

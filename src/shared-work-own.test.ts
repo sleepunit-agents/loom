@@ -219,3 +219,31 @@ it('leaves a household change proposed from a terminal with nobody behind it: it
  expect((await filed.json() as {value:{state:string}}).value.state).toBe('pending');
  expect(f.cards()).toMatchObject([{kind:'setting',actingFor:'unknown',state:'pending'}]);
 });
+
+it('makes the card and its Inbox question from the full literal command and spends only that command', async () => {
+ const f = await fixture();
+ f.ownsArt('pat');
+ const script = '# ' + 'garden '.repeat(32) + '\r\nprintf one && printf two\r\n';
+ const target = 'shell:sha256:' + hash(script);
+ const input = {kind:'command',commandText:script,why:'Check the example pump'};
+ for (const bad of [{...input,what:'Just look'}, {...input,target}, {kind:'command',target,...words},
+   {...input,commandText:'\n'.repeat(60_000)+'x'}])
+   expect((await f.call('request',bad)).status).toBe(400);
+ const result = await f.call('request',input);
+ expect(result.status).toBe(200);
+ const id = result.body.value!.id as string;
+ const card = f.root.services.approvals.get(id);
+ expect(card.target).toBe(target);
+ expect(JSON.parse(card.details)).toBe(script);
+ expect(card.what).toContain('shortened');
+ expect(card.ask).toContain('separators');
+ const questions = f.db.select().from(s.inbox).where(eq(s.inbox.waitsOnId,id)).all();
+ expect(questions.length).toBeGreaterThan(0);
+ expect(questions.every(row=>row.words===card.ask)).toBe(true);
+ f.root.writes.run(()=>f.root.services.approvals.allow(id,'pat'));
+ expect((await f.call('use',{id,kind:'command',target})).status).toBe(400);
+ const use = (commandText:string)=>f.call('use',{id,kind:'command',commandText});
+ expect((await use(script.trimEnd())).body.value?.used).toBe(false);
+ expect((await use(script)).body.value?.used).toBe(true);
+ expect((await use(script)).body.value?.used).toBe(false);
+});
