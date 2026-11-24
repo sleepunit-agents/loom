@@ -48,6 +48,14 @@ it('shows ordered comments, provenance and task actions without offering claim o
   expect(tree.root.findAllByType('strong').map((node:{props:{children:string}})=>node.props.children)).toEqual(['Art','Jonathan']);
   expect(json).not.toContain('agent'); expect(json).not.toContain('member');
 });
+it('labels an archived conversation without offering a link to a missing thread', async () => {
+  const archived = task('t-1', {sourceKind:'old-conversation', sourceId:'cv-old'});
+  await draw(props({tasks:[archived], selected:archived.id, conversation:vi.fn()}));
+  const text = visibleText(tree.toJSON());
+  expect(text).toContain('From an archived conversation');
+  expect(text).not.toContain('cv-old');
+  expect(tree.root.findAllByType('LinkButton').some((link:{props:{children:string}}) => link.props.children.includes('conversation'))).toBe(false);
+});
 it('clears task detail, comments, folders and actions as soon as the authorized snapshot is lost',async () => {
   const p=props({tasks:[task('t-1',{title:'Private pump',project:'private'})],ready:['t-1'],selected:'t-1',comments:[{task:'t-1',seq:1,actorKind:'agent',actor:'art',at:'2026-11-14T19:00:00Z',text:'Private comment'}]});
   await draw(p);
