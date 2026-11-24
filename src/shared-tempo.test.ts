@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import { eq, inArray } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { members, agents, memberAgents, tokens, inbox, changes, projects, projectMembers, agentModels, agentRunSettings, jobs, measuringSettings, timingDays, triggers, triggerLog, programFirings, conversations, boxes } from './core/data/schema.js';
+import { members, agents, memberAgents, tokens, inbox, changes, projects, projectMembers, agentModels, agentRunSettings, jobs, jobUsage, measuringSettings, timingDays, triggers, triggerLog, programFirings, conversations, boxes } from './core/data/schema.js';
 import { mayReadProgramWork, type SharedTempoOptions } from './shared-tempo.js';
 import { sharedRoot } from './shared-root.js';
 const cleanup: (()=>void|Promise<void>)[]=[];
@@ -62,6 +62,24 @@ it('resolves the exact visible firing into its delivered conversation and checks
  expect(tempoQueryFields(f.db,{kind:'member',id:'sam'}).tempoDeliveries.resolve(null,args)).toEqual([]);
  f.db.update(conversations).set({member:'sam'}).where(eq(conversations.id,item.conversation!)).run();
  expect(field.resolve(null,args)).toEqual([]);
+});
+it('shows recent worker outcomes from the original delivery after reassignment, respecting current readers and usage access',async()=>{
+ const f=fixture(),id=f.trigger.id;
+ await f.call('tempo.set',f.trigger,'file');
+ const viewer={kind:'member' as const,id:'owner'};
+ const read=(who=viewer,usage=true)=>tempoQueryFields(f.db,who,()=>true,()=>usage).tempoRecentRuns.resolve(null,{id});
+ const mail=f.db.select().from(inbox).get()!;
+ expect(read()).toMatchObject([{kind:'mail',job:null,usage:null,conversation:{id:mail.conversation}}]);
+ f.clock.advance(5000);
+ const job=f.db.select().from(jobs).get()!;
+ f.db.update(jobs).set({state:'failed',claimedAt:f.now(),endedAt:f.now()}).where(eq(jobs.id,job.id)).run();
+ f.db.insert(jobUsage).values({job:job.id,source:'report',wallMs:61250,tokensOut:0,largestContext:8192}).run();
+ f.db.update(triggers).set({toKind:'person',to:'owner'}).where(eq(triggers.id,id)).run();
+ expect(read()).toMatchObject([{job:{id:job.id,state:'failed'},usage:{wallMs:61250,tokensOut:0,largestContext:8192}}]);
+ expect(read(viewer,false)).toMatchObject([{job:{state:'failed'},usage:null}]);
+ expect(read({kind:'member',id:'sam'})).toEqual([]);
+ f.db.update(conversations).set({member:'sam'}).where(eq(conversations.id,mail.conversation!)).run();
+ expect(read()).toEqual([]);
 });
 it('holds paused triggers, resumes through shared commands, then stops timers before root closes',async()=>{
  const f=fixture();
@@ -326,6 +344,12 @@ it('prepares a draft, supplies it to a later program and spends each local day o
    {event:latest.seq,kind:'program',job:postJob.id,conversation:postJob.conversation},
    {event:latest.seq,kind:'mail',job:null,conversation:postJob.conversation},
  ]);
+ const recent=tempoQueryFields(f.db,viewer).tempoRecentRuns.resolve(null,{id:post.id});
+ expect(recent.filter(run=>run.event===latest.seq)).toMatchObject([
+   {kind:'program',job:{id:postJob.id}}, {kind:'mail',job:null},
+ ]);
+ const mailOnly=tempoQueryFields(f.db,viewer,()=>false).tempoRecentRuns.resolve(null,{id:post.id});
+ expect(mailOnly.every(run=>run.kind==='mail' && run.usage===null)).toBe(true);
 });
 
 it('runs the five-minute watch at its offset and skips overlap while the original job is pending', async () => {
