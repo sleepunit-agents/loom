@@ -10,7 +10,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { workerAssignment } from './worker-http.js';
 import { bodyInput, eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { bodyConversationClient,bodyMailContext } from './conversation-client.js';
-import { omittedWakeTools } from './wake-tool-profiles.js';
+import { omittedWakeTools, type OmittedWakeTools } from './wake-tool-profiles.js';
 import { bodyHarness, harnessCannotRun, harnesses } from './body-harnesses.js';
 import { BODY_OWN_HARNESS, BODY_SCRATCH, HarnessResumeUnavailable, type HarnessRun } from './body-harness.js';
 import {kitReasons,kitUnavailableList,type KitUnavailable} from './kit-availability.js';
@@ -214,7 +214,7 @@ export async function bodyProgram(input: {
     const policy=lateStranger&&job.run?.policy?withUnknownSender(job.run.policy):job.run?.policy;
     // What this body may use, decided once here for everything below: loom's tools only on anybody else's word.
     const guest=hasGuest(policy),reach=bodyReach(plan.reach,policy);
-    let omitClaudeTools: string[] = [];
+    let omitClaudeTools: OmittedWakeTools = [];
     if (reach === 'all' && job.harness === 'claude' && journalDeliveries.length && journalDeliveries.length === deliveredItems) {
       const profile = await memoryClient.command('tempo.wakeToolProfile', {items: journalDeliveries}, randomUUID());
       if (profile.ok) omitClaudeTools = omittedWakeTools.safeParse(profile.value).data ?? [];
