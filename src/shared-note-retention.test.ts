@@ -87,6 +87,8 @@ it('sweeps a prepared notes-only store, preserving citations and stopping on an 
     const sweep = (dryRun=false) => sweepAgentNotes(db,agent,knowledgeFile,()=>due,dryRun);
     expect(sweep(true)).toEqual({gone:['scratch'],keptCited:['garden']});
     memory = new Database(agent.memories);
+    memory.exec('ANALYZE');
+    expect(sweep(true)).toEqual({gone:['scratch'],keptCited:['garden']});
     memory.exec('CREATE TABLE unavailable(title, content, metadata, provenance, archived)');
     expect(()=>sweep()).toThrow();
     expect(notes.read('scratch')).not.toBeNull();

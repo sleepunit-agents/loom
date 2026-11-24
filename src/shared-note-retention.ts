@@ -36,7 +36,8 @@ function collectMemoryCitations(cited: Set<string>, source: Database.Database) {
     collect(cited, source.prepare('SELECT title, content, metadata, provenance FROM memories WHERE archived=0').raw().iterate() as Iterable<unknown[]>);
     return;
   }
-  const objects = source.prepare('SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name').raw().all();
+  const objects = source.prepare(`SELECT type,name,tbl_name,sql FROM sqlite_schema
+    WHERE name NOT IN ('sqlite_stat1','sqlite_stat4') ORDER BY type,name`).raw().all();
   if (source.pragma('user_version', { simple: true }) !== 28 ||
       createHash('sha256').update(JSON.stringify(objects)).digest('hex') !== notesOnlySchema ||
       !semanticMemoryReady(source) || !semanticCardsReady(source) ||
