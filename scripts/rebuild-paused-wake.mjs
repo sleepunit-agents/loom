@@ -57,6 +57,8 @@ export async function pausedWake({ browser, home }) {
     const tile = page.getByRole('region', { name: 'Tempo tile', exact: true });
     async function openTrigger() {
       await page.goto(origin + '/p/tempo');
+      // A one-minute wake can fall on tomorrow’s calendar date. Due spans both dates.
+      await tile.getByRole('button', { name: /^Due(?:\s*\d+)?$/ }).click();
       await tile.getByText(label, { exact: true }).first().click();
     }
     async function restart() {
