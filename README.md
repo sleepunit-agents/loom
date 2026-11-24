@@ -20,12 +20,22 @@
 
 ## Running it
 
-```
+Build the checkout, then start the coordinator with a new or empty private data directory. The coordinator serves the desktop and API on `127.0.0.1:8787` by default. Use `--host` and `--port` to change the listener. Workers can join later.
+
+```sh
 npm ci && npm run build
-loom serve --home <dir> [--host 127.0.0.1] [--port 8787] [--program <file>]
+node dist/index.js serve --home ~/loom-household
 ```
 
-`--home` is the household's data folder (or `LOOM_HOME`). A household is prepared before its first start; `serve` refuses a folder that has not been.
+On first start, Loom creates the household database, its keys and a default agent named `assistant`. The first owner is named after the local OS user, or `owner` if that name is invalid. In a second terminal on the same machine, run the following command as that OS user and open the one-time link it prints.
+
+```sh
+node dist/index.js signin --home ~/loom-household
+```
+
+For a server reached over SSH, forward its loopback port to your computer with `ssh -L 8787:127.0.0.1:8787 user@server` and open the link in your local browser. Once Loom is installed as a command, `loom serve` and `loom signin` accept the same arguments.
+
+Use the same home on subsequent starts to reopen the household. You can also set the data directory with `LOOM_HOME` or select an existing configuration file with `--program`. If a nonempty directory contains an older installation, follow the [migration plan](docs/migration-plan.md).
 
 A stdio MCP client connects through the running program. It never opens the household's stores itself:
 
