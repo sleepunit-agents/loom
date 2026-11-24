@@ -1,4 +1,5 @@
-import { and, desc, eq, getTableColumns, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, gte, inArray, isNotNull, lt, or, sql, type SQL } from 'drizzle-orm';
+import { DAY_MS } from '../day.js';
 import { sqlVisibility } from '../../policy-sql.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
@@ -9,25 +10,43 @@ import { conversations, inbox, inboxRefs, jobs, jobUsage, programFirings, trigge
 export function wakeDeliveries(db: DataDatabase, viewer: Viewer, agent: string | null, events: number[], includePrograms: boolean) {
   if (events.length > 100) throw Error('At most 100 firings per page');
   if (!events.length) return [];
+  return deliveryRows(db,viewer,agent,inArray(triggerLog.seq,events),includePrograms)
+    .map(({event,kind,conversation,job})=>({event,kind,conversation,job}));
+}
+
+function deliveryRows(db:DataDatabase,viewer:Viewer,agent:string|null,selection:SQL,includePrograms:boolean,includeNotices=false) {
   const seen = sqlVisibility(viewer, ['triggerLog', 'inbox', 'conversations', 'jobs']);
-  const fired = and(inArray(triggerLog.seq, events), eq(triggerLog.event, 'fired'), seen.triggerLog(getTableColumns(triggerLog)));
-  const occurrence = sql<string>`${triggerLog.trigger} || ':' || ${triggerLog.note}`;
-  const mail = db.select({ event: triggerLog.seq, kind: sql<string>`'mail'`, conversation: conversations.id, job: jobs.id })
-    .from(triggerLog)
-    .innerJoin(inbox, and(eq(inbox.toKind, 'agent'), agent === null ? undefined : eq(inbox.to, agent), eq(inbox.source, 'trigger'),
-      eq(inbox.sourceId, occurrence), seen.inbox(getTableColumns(inbox))))
-    .innerJoin(inboxRefs, and(eq(inboxRefs.item, inbox.id), eq(inboxRefs.ref, triggerLog.trigger)))
-    .innerJoin(conversations, and(eq(conversations.id, inbox.conversation), seen.conversations(getTableColumns(conversations))))
-    .leftJoin(jobs, and(eq(jobs.id, inbox.job), eq(jobs.agent, inbox.to), eq(jobs.conversation, conversations.id), seen.jobs(getTableColumns(jobs))))
-    .where(fired).all();
-  if (!includePrograms) return mail;
-  const programs = db.select({ event: triggerLog.seq, kind: sql<string>`'program'`, conversation: conversations.id, job: jobs.id })
-    .from(triggerLog)
-    .innerJoin(programFirings, and(eq(programFirings.id, occurrence), eq(programFirings.trigger, triggerLog.trigger)))
-    .innerJoin(jobs, and(eq(jobs.id, programFirings.job), agent === null ? undefined : eq(jobs.agent, agent), seen.jobs(getTableColumns(jobs))))
-    .leftJoin(conversations, and(eq(conversations.id, jobs.conversation), seen.conversations(getTableColumns(conversations))))
-    .where(fired).all();
-  return [...programs, ...mail];
+  const fired = db.select({event:triggerLog.seq, trigger:triggerLog.trigger, note:triggerLog.note}).from(triggerLog)
+    .where(and(selection,eq(triggerLog.event,'fired'),seen.triggerLog(getTableColumns(triggerLog)))).all();
+  if (!fired.length) return [];
+  // Use one SQLite membership lookup per delivery table. Joining a computed key
+  // directly to the log scans all the mail again for each firing of a busy lane.
+  const keys = [...new Set(fired.map(row=>row.trigger+':'+row.note))];
+  const occurrences = sql`(select value from json_each(${JSON.stringify(keys)}))`;
+  const outcome = {state:jobs.state, endedNote:jobs.endedNote, exitCode:jobs.exitCode};
+  const mail = db.select({occurrence:inbox.sourceId, trigger:inboxRefs.ref,
+    kind:sql<string>`case when ${inbox.toKind}='person' then 'notice' else 'mail' end`,
+    conversation:conversations.id,job:jobs.id,...outcome}).from(inbox)
+    .innerJoin(inboxRefs,eq(inboxRefs.item,inbox.id))
+    .leftJoin(conversations,and(eq(conversations.id,inbox.conversation),seen.conversations(getTableColumns(conversations))))
+    .leftJoin(jobs,and(eq(inbox.toKind,'agent'),eq(jobs.id,inbox.job),eq(jobs.agent,inbox.to),
+      eq(jobs.conversation,conversations.id),seen.jobs(getTableColumns(jobs))))
+    .where(and(eq(inbox.source,'trigger'),sql`${inbox.sourceId} in ${occurrences}`,seen.inbox(getTableColumns(inbox)),
+      agent===null ? undefined : eq(inbox.to,agent),
+      or(and(eq(inbox.toKind,'agent'),isNotNull(conversations.id)),includeNotices ? eq(inbox.toKind,'person') : undefined))).all();
+  const programs = includePrograms ? db.select({occurrence:programFirings.id,trigger:programFirings.trigger,kind:sql<string>`'program'`,
+    conversation:conversations.id,job:jobs.id,...outcome}).from(programFirings)
+    .innerJoin(jobs,and(eq(jobs.id,programFirings.job),agent===null ? undefined : eq(jobs.agent,agent),seen.jobs(getTableColumns(jobs))))
+    .leftJoin(conversations,and(eq(conversations.id,jobs.conversation),seen.conversations(getTableColumns(conversations))))
+    .where(sql`${programFirings.id} in ${occurrences}`).all() : [];
+  const byOccurrence = new Map<string,typeof mail>();
+  for (const row of [...programs,...mail]) {
+    if(row.occurrence===null)continue;
+    const group=byOccurrence.get(row.occurrence);
+    if(group)group.push(row);else byOccurrence.set(row.occurrence,[row]);
+  }
+  return fired.flatMap(({event,trigger,note})=>(byOccurrence.get(trigger+':'+note)??[])
+    .filter(row=>row.trigger===trigger).map(row=>({...row,event})));
 }
 
 /** Enrich the most recent actual firings, including those before a reassignment.
@@ -52,4 +71,15 @@ export function recentTriggerRuns(db: DataDatabase, viewer: Viewer, id: string, 
     usage:usage.find(report=>report.job===row.job) ?? null,
     conversation:talks.find(talk=>talk.id===row.conversation) ?? null,
   })));
+}
+
+/** Calendar navigation requests one civil day or week, padded for household time zones. */
+export function calendarOutcomes(db:DataDatabase,viewer:Viewer,from:string,until:string,includePrograms:boolean) {
+  const start=Date.parse(from), end=Date.parse(until);
+  if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||end-start>9*DAY_MS
+    ||new Date(start).toISOString()!==from||new Date(end).toISOString()!==until) throw Error('Expected a range of at most nine days');
+  const window=and(gte(triggerLog.at,new Date(start).toISOString()),lt(triggerLog.at,new Date(end).toISOString()))!;
+  return deliveryRows(db,viewer,null,window,includePrograms,true).map(({event,kind,state,endedNote,exitCode})=>({
+    event,kind,state,reason:state==='failed'||state==='lost' ? endedNote || (exitCode==null ? null : 'Exit code '+exitCode) : null,
+  }));
 }

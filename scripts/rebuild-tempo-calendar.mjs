@@ -46,7 +46,8 @@ export async function tempoCalendar({ browser, home }) {
     await row.click();
     await page.getByRole('heading',{name:note,exact:true}).waitFor();
     await checkFrequentRows(page,app);
-    return {ok:true,reason:'The scheduled wake appeared at its household time. Navigating away and back preserved its day. Firing it early moved it to the actual firing time with a fired result, and its reader opened after reload. Four recurring times shared one row in Day and Week, with live outcomes and the next time; three times kept their hourly rows.'};
+    await checkDayHistory(page,app,clock);
+    return {ok:true,reason:'The scheduled wake appeared at its household time. Navigating away and back preserved its day. Firing it early moved it to the actual firing time with a fired result, and its reader opened after reload. Four recurring times shared one row in Day and Week, with live outcomes and the next time; three times kept their hourly rows. The selected day’s history showed recurring work, a lost worker’s reason, a delivered notice and a stopped trigger in order.'};
   } finally {
     await context?.close();
     await app.close();
@@ -76,4 +77,42 @@ async function checkFrequentRows(page, app) {
   const week = page.getByRole('region',{name:'Week schedule'});
   await week.getByRole('region',{name:'Frequent triggers'}).getByRole('button',{name:new RegExp(title)}).waitFor();
   assert.equal(await week.getByRole('button',{name:new RegExp(title)}).count(),1);
+}
+
+async function checkDayHistory(page,app,clock) {
+ const add=(note,toKind,to)=>app.writes.run(()=>app.services.tempo.triggers.set({
+   ownerKind:'member',owner:'alex',sourceKind:'time',times:'23:55',lifespan:'until-stopped',
+   targetKind:'inbox',toKind,to,instructions:note,note,
+ })).value;
+ const note='Check the citrus trees', trigger=add(note,'agent','fern');
+ const marker='Check rainfall', paused=add(marker,'person','alex');
+ app.writes.run(()=>app.services.tempo.triggers.runNow(trigger.id));
+ clock.advance(60000);
+ const db=app.services.comms.db.$client;
+ const job=db.prepare("select job from inbox where source='trigger' and source_id like ? and job is not null").get(trigger.id+':%');
+ assert.ok(job?.job);
+ await page.goto(app.url+'/p/tempo');
+ const day=page.getByRole('region',{name:'Day schedule',exact:true});
+   const active=state=>day.getByRole('button',{name:new RegExp(note)}).filter({hasText:'Agent wake '+state});
+   await active('queued').waitFor();
+   app.writes.run(()=>db.prepare("update jobs set state='lost',ended_at=?,ended_note='Worker stopped reporting' where id=?").run(new Date(clock.now()).toISOString(),job.job));
+   await active('lost').waitFor();
+   clock.advance(1000);app.writes.run(()=>app.services.tempo.triggers.runNow(paused.id));
+   clock.advance(1000);app.writes.run(()=>app.services.tempo.triggers.stop(paused.id));
+   await page.getByRole('button',{name:/Recent history/}).click();
+   const history=page.getByRole('region',{name:'Day history'});
+   const lost=history.getByRole('button',{name:new RegExp(note)}).filter({hasText:'Worker stopped reporting'});
+   await lost.waitFor();assert.match(await lost.innerText(),/Agent wake lost/);
+   await history.getByRole('button',{name:new RegExp(marker)}).filter({hasText:'Inbox notice delivered'}).waitFor();
+   const list=await history.getByRole('button').allTextContents();
+   assert.ok(list.findIndex(x=>x.includes(marker)&&x.includes('stopped'))>=0);
+   assert.ok(list.findIndex(x=>x.includes(marker)&&x.includes('stopped'))<list.findIndex(x=>x.includes(note)));
+   await page.getByRole('button',{name:'Previous day'}).click();await lost.waitFor({state:'hidden'});
+   const previous=await page.locator('nav[aria-label="Calendar date"] time').getAttribute('datetime');
+   await page.getByRole('button',{name:'Day',exact:true}).click();
+   assert.equal(await page.locator('nav[aria-label="Calendar date"] time').getAttribute('datetime'),previous);
+   await page.getByRole('button',{name:'Today',exact:true}).click();await active('lost').waitFor();
+   await page.getByRole('button',{name:/Recent history/}).click();await lost.click();
+   await page.getByRole('heading',{name:note,exact:true}).waitFor();
+   await page.getByRole('region',{name:'Recent runs'}).getByText(/Agent wake · lost/).waitFor();
 }

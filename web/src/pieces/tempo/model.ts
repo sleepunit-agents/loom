@@ -32,8 +32,8 @@ export function recordedOutcomes(entries: readonly {state:string; note?:string; 
     : count+' '+state);
 }
 export interface AgentPause { agent: string; since: string }
-export type Folder = 'all' | 'due' | 'standing' | 'lanes' | 'history';
-export const folders: { id: Folder; label: string }[] = [
+export type Folder = 'all' | 'due' | 'standing' | 'lanes';
+export const folders: { id: Folder | 'history'; label: string }[] = [
   { id: 'all', label: 'All triggers' }, { id: 'due', label: 'Due' }, { id: 'standing', label: 'Standing' },
   { id: 'lanes', label: 'Household lanes' }, { id: 'history', label: 'Recent history' },
 ];
@@ -51,7 +51,6 @@ export const lane = (trigger: Trigger) => trigger.ownerKind === 'household' && t
 /** A held once-only wait stays in Due, including waits with no time deadline. */
 export function inFolder(trigger: Trigger, folder: Folder): boolean {
   if (folder === 'all') return true;
-  if (folder === 'history') return terminal(trigger);
   if (terminal(trigger)) return false;
   if (folder === 'lanes') return lane(trigger);
   if (folder === 'standing') return !lane(trigger) && trigger.lifespan !== 'once';
@@ -64,9 +63,7 @@ export function rows(triggers: readonly Trigger[], folder: Folder, search = '', 
     && (!agent || triggerAgent(trigger) === agent)
     && [title(trigger), trigger.id, trigger.to, trigger.owner, trigger.project, trigger.watches,
       trigger.instructions, trigger.file].join(' ').toLocaleLowerCase().includes(query))
-    .sort((a, b) => folder === 'history'
-      ? Date.parse(b.changedAt) - Date.parse(a.changedAt) || a.id.localeCompare(b.id)
-      : nextOrder(a) - nextOrder(b) || a.id.localeCompare(b.id));
+    .sort((a, b) => nextOrder(a) - nextOrder(b) || a.id.localeCompare(b.id));
 }
 
 export const eventLabels = {

@@ -1,5 +1,5 @@
 import { clockLanes, clockLaneText, clockScheduleRevision } from './lanes.js';
-import { recentTriggerRuns, wakeDeliveries } from './deliveries.js';
+import { calendarOutcomes, recentTriggerRuns, wakeDeliveries } from './deliveries.js';
 /** Safe household display projection for Tempo; never expose settings wholesale. */
 import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
 import { and, desc, eq } from 'drizzle-orm';
@@ -39,6 +39,10 @@ export function tempoQueryFields(db: DataDatabase, viewer: Viewer, canReadProgra
  }, tempoRecentRuns: { type: dataValue, args: { id: { type: new GraphQLNonNull(GraphQLString) } },
    resolve: (_source: unknown, { id }: { id: string }) =>
      current() ? recentTriggerRuns(db, viewer, id, canReadProgram(), canReadUsage()) : [],
+ }, tempoCalendarOutcomes: { type: dataValue, args: {
+   from: {type:new GraphQLNonNull(GraphQLString)}, until: {type:new GraphQLNonNull(GraphQLString)},
+ }, resolve: (_source:unknown,{from,until}:{from:string;until:string}) =>
+   current() ? calendarOutcomes(db,viewer,from,until,canReadProgram()) : [],
  }, tempoLanes: { type: dataValue, args: { after: { type: new GraphQLNonNull(GraphQLString) } },
    resolve: (_source: unknown, { after }: { after: string }) => current() ? clockLanes(db, viewer, after) : [],
  }, tempoLaneText: { type: dataValue, args: { agent: {type:GraphQLString}, id: { type: new GraphQLNonNull(GraphQLString) } },

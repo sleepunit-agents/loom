@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { localDate, timesOnDate } from '../../../../src/core/tempo/calendar';
 import { DAY_MS } from '../../../../src/core/day';
 import { useDataQuery } from '../../data/graphql';
@@ -11,10 +11,12 @@ const headerQuery = `query TempoDayHeader {
 }`;
 type Header = { deskTime: {at: number} | null; modelAccounts: {label: string; level: string}[] };
 const historyQuery = `query TempoDayHistory($from: String!, $until: String!) {
-  triggerLog(where: {at: {gte: $from, lt: $until}, event: {inArray: ["fired","failed","missed","cancelled","skipped"]}},
+  tempoCalendarOutcomes(from:$from,until:$until)
+  triggerLog(where: {at: {gte: $from, lt: $until}, event: {inArray: ["fired","failed","missed","cancelled","skipped","held","stopped","failure"]}},
     orderBy: {at: {direction: asc, priority: 0}, seq: {direction: asc, priority: 1}}) { trigger seq at event note }
 }`;
-type Event = { trigger: string; seq: number; at: string; event: string; note: string };
+type Outcome = { event:number; kind:"program"|"mail"|"notice"; state:string|null; reason:string|null };
+type Event = { trigger: string; seq: number; at: string; event: string; note: string; outcomes?: Outcome[]; failure?:string };
 const shift = (date: string, days: number) => new Date(Date.parse(date + 'T00:00:00Z') + days * DAY_MS).toISOString().slice(0, 10);
 type Entry = {trigger: Trigger; at: number; key: string; state: string; scheduled: boolean; note?: string};
 
@@ -24,6 +26,27 @@ const formatDate = (date: string) => dateLabel.format(Date.parse(date+'T12:00:00
 const noEvents: Event[] = [];
 const frequentRunsPerDay = 4;
 
+function outcomeWords(event:Event) {
+  return event.outcomes?.map(run=>(run.kind==='notice'?'Inbox notice':run.kind==='program'?'Program':'Agent wake')+' '+(run.state??'delivered')).join(' → ') || event.event;
+}
+
+function DayHistory({events,triggers,zone,open}:{events:Event[];triggers:readonly Trigger[];zone:string;open:(id:string)=>void}) {
+  const byId=new Map(triggers.map(trigger=>[trigger.id,trigger]));
+  const visible=events.filter(event=>byId.has(event.trigger))
+    .sort((a,b)=>Date.parse(b.at)-Date.parse(a.at)||b.seq-a.seq);
+  const time=new Intl.DateTimeFormat(undefined,{timeZone:zone,hour:'2-digit',minute:'2-digit'});
+  return <section aria-label="Day history" className="grid gap-1">
+    {visible.length ? visible.map(event=>{
+      const trigger=byId.get(event.trigger)!;
+      const details=event.outcomes?.flatMap(run=>run.reason ? [run.reason] : []) ?? [];
+      if(event.failure) details.push(event.failure);
+      if(event.event==='missed') details.push(...recordedOutcomes([{state:'missed',note:event.note,scheduled:false}]));
+      return <Row key={event.seq} title={title(trigger)} status={outcomeWords(event)}
+        meta={[time.format(Date.parse(event.at)),...details].join(' · ')} onClick={()=>open(trigger.id)}/>;
+    }) : <p>No recorded activity for this day.</p>}
+  </section>;
+}
+
 function DayHours({date, zone, now, triggers, pauses, open, log}: ScheduleProps & {date: string; log: Event[] | undefined}) {
   const {entries, frequent} = useMemo(() => {
     const items: Entry[] = [];
@@ -31,8 +54,8 @@ function DayHours({date, zone, now, triggers, pauses, open, log}: ScheduleProps 
     const byId = new Map(triggers.map(t => [t.id,t]));
     for (const event of log ?? []) {
       const t = byId.get(event.trigger), at = Date.parse(event.at);
-      if (!t) continue;
-      items.push({trigger:t, at, key:'event-'+event.seq, state:event.event, note:event.note, scheduled:false});
+      if (!t || ['failure','stopped','held'].includes(event.event)) continue;
+      items.push({trigger:t, at, key:'event-'+event.seq, state:event.outcomes?.every(run=>run.kind==='notice') ? event.event : outcomeWords(event), note:event.note, scheduled:false});
     }
     for (const t of triggers) {
       if (t.sourceKind !== 'time' || !t.times || !t.enabled || !t.nextDueAt) continue;
@@ -95,37 +118,49 @@ function FrequentTriggerRow({entries,format,open}: {entries: Entry[]; format: In
   return <Row title={title(trigger)} status={next?.state} meta={summary.join(' · ')} onClick={()=>open(trigger.id)}/>;
 }
 
-function CalendarHours({start,week,selectDay,...schedule}: ScheduleProps & {start:string; week:boolean; selectDay:(date:string)=>void}) {
+function CalendarHours({start,week,history,selectDay,...schedule}: ScheduleProps & {start:string; week:boolean; history:boolean; selectDay:(date:string)=>void}) {
   const length = week ? 7 : 1;
   // Read the visible range once. The offsets on either side include local dates across DST changes.
-  const feed = useDataQuery<{triggerLog: Event[]}>(historyQuery,{from:shift(start,-1)+'T00:00:00.000Z',until:shift(start,length+1)+'T00:00:00.000Z'});
+  const feed = useDataQuery<{triggerLog: Event[];tempoCalendarOutcomes:Outcome[]}>(historyQuery,{from:shift(start,-1)+'T00:00:00.000Z',until:shift(start,length+1)+'T00:00:00.000Z'});
   const log = feed.status === 'live' ? feed.data?.triggerLog : undefined;
+  const outcomes=feed.status==='live' ? feed.data?.tempoCalendarOutcomes : undefined;
   const events = useMemo(()=>{
+    const byEvent=new Map<number,Outcome[]>();
+    for(const outcome of outcomes ?? []){
+      const group=byEvent.get(outcome.event);
+      if(group)group.push(outcome);else byEvent.set(outcome.event,[outcome]);
+    }
     const days = new Map<string, Event[]>();
+    const bySeq=new Map(log?.map(event=>[event.seq,event]));
     for (const event of log ?? []) {
+      const adjacent=bySeq.get(event.seq+(event.event==='failure' ? -1 : 1));
+      if(event.event==='failure' && adjacent?.trigger===event.trigger && adjacent.event==='failed')continue;
+      const failure=event.event==='failed' && adjacent?.trigger===event.trigger && adjacent.event==='failure'
+        ? adjacent.note : event.event==='failure' ? event.note : undefined;
       const date = localDate(Date.parse(event.at),schedule.zone);
       const group = days.get(date);
-      if (group) group.push(event); else days.set(date,[event]);
+      const row={...event,failure,outcomes:byEvent.get(event.seq)};
+      if (group) group.push(row); else days.set(date,[row]);
     }
     return days;
-  },[log,schedule.zone]);
+  },[log,outcomes,schedule.zone]);
+  if(history && log) return <DayHistory events={events.get(start)??noEvents} triggers={schedule.triggers} zone={schedule.zone} open={schedule.open}/>;
   return <div aria-label={week ? 'Week schedule' : undefined} role={week ? 'region' : undefined} className={week ? 'tempo-week-days' : 'grid gap-3'}>
     {!log && <p>{feed.status === 'loading' ? 'Loading firing history…' : 'Firing history unavailable.'}</p>}
     {Array.from({length},(_,offset)=>{
       const date = shift(start,offset);
       return <div key={date} role={week ? 'group' : undefined} aria-label={week ? formatDate(date) : undefined}>
         {week && <h3><Button onClick={()=>selectDay(date)} aria-label={'Open '+formatDate(date)}><time dateTime={date}>{formatDate(date)}</time></Button></h3>}
-        <DayHours {...schedule} date={date} log={log ? events.get(date) ?? noEvents : undefined}/>
+        {!history && <DayHours {...schedule} date={date} log={log ? events.get(date) ?? noEvents : undefined}/>}
       </div>;
     })}
   </div>;
 }
 
-export function TempoCalendar({week,showDay,clearReader,zone,triggers,pauses,open}: {week:boolean; showDay:()=>void; clearReader:()=>void; zone:string; triggers: readonly Trigger[]; pauses: readonly AgentPause[]; open:(id:string)=>void}) {
+export function TempoCalendar({week,history,chosen,setChosen,showDay,clearReader,zone,triggers,pauses,open}: {week:boolean; history:boolean; chosen?:string; setChosen:(value:string|undefined)=>void; showDay:()=>void; clearReader:()=>void; zone:string; triggers: readonly Trigger[]; pauses: readonly AgentPause[]; open:(id:string)=>void}) {
   const feed = useDataQuery<Header>(headerQuery);
   const data = feed.status === 'live' ? feed.data : undefined;
   const now = data?.deskTime?.at;
-  const [chosen,setChosen] = useState<string>();
   function select(date: string | undefined) { setChosen(date); clearReader(); }
   const today = now == null ? undefined : localDate(now,zone);
   const date = chosen ?? today;
@@ -146,16 +181,16 @@ export function TempoCalendar({week,showDay,clearReader,zone,triggers,pauses,ope
       <Button aria-label={week?'Next week':'Next day'} onClick={()=>select(shift(date,week?7:1))}>›</Button>
       <Button disabled={date===today} onClick={()=>select(undefined)}>Today</Button>
     </nav>}
-    {!week && date === today && !!data?.modelAccounts?.length && <section aria-label="Current subscriptions" className="flex flex-wrap gap-3">
+    {!history && !week && date === today && !!data?.modelAccounts?.length && <section aria-label="Current subscriptions" className="flex flex-wrap gap-3">
       {data.modelAccounts.map((account,i)=><span key={i} className="loom-job-capacity" data-capacity={account.level}>{account.label} · {account.level}</span>)}
     </section>}
-    {waiting.size > 0 && <section aria-label="Event triggers"><h3>Waiting for an event now</h3>
+    {!history && waiting.size > 0 && <section aria-label="Event triggers"><h3>Waiting for an event now</h3>
       {[...waiting].map(([label, group])=><div key={label} role="group" aria-label={label}>
         <h4 className="text-sm">{label}</h4>
         {group.map(t=><Row key={t.id} title={title(t)} onClick={()=>open(t.id)}/>)}
       </div>)}
     </section>}
-    {start && now != null ? <CalendarHours start={start} week={week} selectDay={day=>{select(day);showDay();}} now={now} zone={zone} triggers={triggers} pauses={pauses} open={open}/>
+    {start && now != null ? <CalendarHours start={start} week={week} history={history} selectDay={day=>{select(day);showDay();}} now={now} zone={zone} triggers={triggers} pauses={pauses} open={open}/>
       : <p>{feed.status === 'loading' ? 'Opening calendar…' : 'Household clock unavailable.'}</p>}
   </div>;
 }

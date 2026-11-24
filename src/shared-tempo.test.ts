@@ -81,6 +81,22 @@ it('shows recent worker outcomes from the original delivery after reassignment, 
  f.db.update(conversations).set({member:'sam'}).where(eq(conversations.id,mail.conversation!)).run();
  expect(read()).toEqual([]);
 });
+it('reads exact calendar job outcomes across the selected dates and hides reasons when the job is private',async()=>{
+ const f=fixture(),viewer={kind:'member' as const,id:'owner'};
+ const bounds={from:f.now(),until:new Date(f.clock.now()+86400000).toISOString()};
+ const calendar=tempoQueryFields(f.db,viewer).tempoCalendarOutcomes;
+ await f.call('tempo.set',f.trigger,'set');
+ expect(calendar.resolve(null,bounds)).toMatchObject([{kind:'mail',state:null,reason:null}]);
+ f.clock.advance(5000);
+ const job=f.db.select().from(jobs).get()!;
+ f.db.update(jobs).set({state:'lost',endedNote:'Worker stopped reporting',endedAt:f.now()}).where(eq(jobs.id,job.id)).run();
+ expect(calendar.resolve(null,bounds)).toMatchObject([{kind:'mail',state:'lost',reason:'Worker stopped reporting'}]);
+ expect(calendar.resolve(null,{from:f.now(),until:bounds.until})).toEqual([]);
+ expect(()=>calendar.resolve(null,{from:bounds.from,until:new Date(f.clock.now()+10*86400000).toISOString()})).toThrow('nine days');
+ expect(tempoQueryFields(f.db,{kind:'member',id:'sam'}).tempoCalendarOutcomes.resolve(null,bounds)).toEqual([]);
+ f.db.update(conversations).set({member:'sam'}).where(eq(conversations.id,job.conversation!)).run();
+ expect(calendar.resolve(null,bounds)).toEqual([]);
+});
 it('holds paused triggers, resumes through shared commands, then stops timers before root closes',async()=>{
  const f=fixture();
  expect((await f.call('tempo.pause',{agent:'art'},'pause')).status).toBe(200);
