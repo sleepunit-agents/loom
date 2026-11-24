@@ -20,9 +20,9 @@ export function readAccountCapacityRows(db: DataDatabase, viewer: Viewer, accoun
     with: { modelAccountWindowsByAccount: { columns: { window: true, usage: true, usageReadAt: true, resetsAt: true, durationMs: true, reserve: true } } },
   }).sync();
 }
-export function readModelAccounts(db: DataDatabase, viewer: Viewer) {
-  const rows = readAccountCapacityRows(db, viewer);
-  const privateRows = db.query.modelAccounts.findMany({ where: f => privateAccount(viewer, f),
+export function readModelAccounts(db: DataDatabase, viewer: Viewer, detailId?: string) {
+  const rows = readAccountCapacityRows(db, viewer, detailId);
+  const privateRows = db.query.modelAccounts.findMany({ where: f => and(privateAccount(viewer, f), detailId === undefined ? undefined : eq(f.id, detailId)),
     columns: { id: true, owner: true, provider: true, usage: true, usageReadAt: true, resetsAt: true },
     with: { modelAccountBoxesByAccount: { columns: {}, with: { boxRow: { columns: { id: true, name: true } } } },
       accountSigninsByAccount: {columns:{state:true},where:f=>inArray(f.state,['asked','started','waiting']),with:{boxRow:{columns:{id:true,name:true}}}},

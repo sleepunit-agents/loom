@@ -6,7 +6,7 @@ import type {DataQuerySnapshot} from '../../data/graphql';
 import type {RuntimeAccount,AgentModel} from './model-accounts';
 const f=vi.hoisted(()=>({snapshot:{} as DataQuerySnapshot<{modelAccounts:RuntimeAccount[];agentModels?:AgentModel[];agents?:{id:string;removedAt:string|null}[];deskTime?:{timezone:string}}>,query:vi.fn()}));
 vi.mock('../../kit',async importOriginal=>({...await importOriginal<typeof import('../../kit')>(),Button:'button'}));
-vi.mock('../../data/graphql',()=>({useDataQuery:(query:string)=>{f.query(query);return f.snapshot;}}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(query:string,variables?:unknown)=>{if(variables)f.query(query,variables);else f.query(query);return f.snapshot;}}));
 import {RuntimeAccounts,runtimeAccountsQuery} from './model-accounts';
 (globalThis as typeof globalThis&{IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;
@@ -136,6 +136,27 @@ it('filters by visible owner and machines together with sign-in or capacity warn
  await search('main');expect(JSON.stringify(tree.toJSON())).toContain('Main subscription');
 });
 
+it('keeps all weekly readings in the household report, including updates while grouped by conversation',async()=>{
+ const reset=new Date(Date.now()+86400000).toISOString();
+ const group=(title:string)=>({key:title,title,share:.1,href:null});
+ const week={window:'week',resetsAt:reset,usage:.3,unattributed:.2,agents:[group('Garden agent')],triggers:[],conversations:[group('Garden talk')]};
+ const rows=[{...detail,weeklyUsage:[week]},{...detail,id:'other',label:'Second subscription',weeklyUsage:[week]}];
+ f.snapshot={status:'live',data:{modelAccounts:rows}};
+ await act(async()=>{tree=create(h(RuntimeAccounts));});
+ const summary=tree.root.findAllByType('summary').find(node=>node.children.includes('Weekly usage across subscriptions'));
+ await act(async()=>summary.parent.props.onToggle({currentTarget:{open:true}}));
+ expect(f.query).toHaveBeenCalledWith(expect.stringContaining('WeeklySubscriptions'),{detailId:null});
+ const report=()=>JSON.stringify(tree.toJSON());
+ expect(report()).toContain('Garden agent');expect(report()).not.toContain('Garden talk');
+ await act(async()=>tree.root.findByType('select').props.onChange({target:{value:'conversations'}}));
+ expect(report()).toContain('Garden talk');expect(report()).not.toContain('Garden agent');
+ const updated=[rows[0],{...rows[1],weeklyUsage:[{...week,usage:.6,conversations:[group('Second conversation')]}]}];
+ f.snapshot={status:'live',data:{modelAccounts:updated}};await act(async()=>tree.update(h(RuntimeAccounts)));
+ const headings=tree.root.findAllByType('h4').map(node=>node.children.join(''));
+ expect(headings).toContain('Main subscription · week · 30% used');
+ expect(headings).toContain('Second subscription · week · 60% used');
+ expect(report()).toContain('Garden talk');expect(report()).toContain('Second conversation');
+});
 it('opens the weekly report with the subscription and retires it at reset without another write',async()=>{
  vi.useFakeTimers();
  try {
@@ -151,6 +172,7 @@ it('opens the weekly report with the subscription and retires it at reset withou
   const summary=tree.root.findAllByType('summary').find((node:{children:unknown[]})=>node.children.includes('Main subscription'));
   await act(async()=>summary.parent.props.onToggle({currentTarget:{open:true}}));
   expect(reportVisible()).toBe(true);
+  expect(f.query).toHaveBeenCalledWith(expect.stringContaining('modelAccounts(detailId:$detailId)'),{detailId:detail.id});
   await act(async()=>{vi.advanceTimersByTime(60000);});
   expect(reportVisible()).toBe(false);
   expect(JSON.stringify(tree.toJSON())).toContain('No current weekly reading');

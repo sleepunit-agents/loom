@@ -7,8 +7,8 @@ import {Loading,Error as ErrorView} from '../../kit';
 type Group = {key:string|null;title:string;share:number;href:string|null};
 type Week = {window:string;resetsAt:string;usage:number;unattributed:number;agents:Group[];triggers:Group[];conversations:Group[]};
 type Account = {id?:string;label?:string;weeklyUsage?:Week[]|null};
-const query = `query WeeklySubscriptions {
-  modelAccounts { ... on RuntimeAccountDetail { id label weeklyUsage {
+const query = `query WeeklySubscriptions($detailId:String) {
+  modelAccounts(detailId:$detailId) { ... on RuntimeAccountDetail { id label weeklyUsage {
     window resetsAt usage unattributed agents {key title share href} triggers {key title share href} conversations {key title share href}
   } } }
 }`;
@@ -16,7 +16,7 @@ const percent = new Intl.NumberFormat(undefined,{style:'percent',maximumFraction
 type Dimension = 'agents'|'triggers'|'conversations';
 
 export function WeeklyUsage({accountId}:{accountId?:string}){
-  const feed = useDataQuery<{modelAccounts:Account[]}>(query);
+  const feed = useDataQuery<{modelAccounts:Account[]}>(query,{detailId:accountId??null});
   const [dimension,setDimension] = useState<Dimension>('agents');
   const selected = (feed.status==='live' ? feed.data?.modelAccounts ?? [] : []).filter(account=>!accountId || account.id === accountId);
   const now = useDeadline(selected.flatMap(account=>account.weeklyUsage?.map(week=>week.resetsAt) ?? []));
