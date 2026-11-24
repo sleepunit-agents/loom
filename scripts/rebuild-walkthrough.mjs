@@ -371,8 +371,12 @@ export async function* walkthroughSteps(output) {
   } catch(error) { report.actions.workerRetries={ok:false,error:String(error)}; }
   try {
    const {jobOutcomeEvidence}=await import('./rebuild-job-outcomes.mjs');
-   report.actions.jobOutcomes=await jobOutcomeEvidence();
-  } catch(error) { report.actions.jobOutcomes={ok:false,error:String(error)}; }
+   const {jobEndTrigger,...history}=await jobOutcomeEvidence();
+   report.actions.jobOutcomes=history;
+   report.actions.jobEndTrigger=jobEndTrigger;
+  } catch(error) {
+   report.actions.jobOutcomes=report.actions.jobEndTrigger={ok:false,error:String(error)};
+  }
   save();yield {phase:'worker-start-retries',actions:safeReport(report.actions)};
   phase='named agent tools';
   try {
