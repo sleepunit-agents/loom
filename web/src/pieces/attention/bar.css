@@ -18,7 +18,7 @@ html.loom-ios-app:root[data-look] .next-status-line :is(.next-system-clock,.next
 .next-system-separator{color:var(--v-text-3);flex:none}
 :root[data-look] [data-shell=phone] .next-system-separator,html.loom-ios-app:root[data-look] .next-system-separator{display:none}
 
-.loom-tick__part[data-capacity]::after {
+:is(.loom-tick__part,.loom-job-capacity)[data-capacity]::after {
   content: '';
   display: inline-block;
   width: 1.4em;
@@ -28,5 +28,6 @@ html.loom-ios-app:root[data-look] .next-status-line :is(.next-system-clock,.next
   vertical-align: middle;
   background: linear-gradient(to right, currentColor var(--capacity-fill), transparent var(--capacity-fill));
 }
-.loom-tick__part[data-capacity="getting full"] { --capacity-fill: 60%; }
-.loom-tick__part[data-capacity="almost full"] { --capacity-fill: 90%; }
+:is(.loom-tick__part,.loom-job-capacity)[data-capacity="getting full"] { --capacity-fill: 60%; }
+:is(.loom-tick__part,.loom-job-capacity)[data-capacity="almost full"] { --capacity-fill: 90%; }
+.loom-job-capacity[data-capacity="plenty"] { --capacity-fill: 20%; }

@@ -5,7 +5,7 @@ import { LOGIN_ENDING_MS, loginMachineReporting } from './account-logins.js';
 import { holds, rules, type Viewer } from '../policy.js';
 import type { DataDatabase } from '../core/data/database.js';
 import { reportedAccountCapacity } from './account-windows.js';
-import { allowedModelAccounts, modelAccountAuthority, readModelAccounts } from '../core/data/model-account-read.js';
+import { allowedModelAccounts, modelAccountAuthority, readAccountCapacityRows, readModelAccounts } from '../core/data/model-account-read.js';
 
 import {accountWeeklyUsage} from './account-weekly-usage.js';
 import {visibleWeeklyGroups, WeeklyVisibility} from './job-usage-queries.js';
@@ -52,7 +52,12 @@ const detail = new GraphQLObjectType({ name: 'RuntimeAccountDetail', interfaces:
 // shared interface lets clients select label/level with one common fragment.
 const view = new GraphQLUnionType({ name: 'RuntimeAccountView', types: [summary, detail] });
 
-export function modelAccountQueries(db: DataDatabase, now: () => string, usageScope?: (viewer:Viewer)=>JobSummaries | undefined) {
+function subscriptionCapacity(row: ReturnType<typeof readAccountCapacityRows>[number], at: string) {
+  const capacity = reportedAccountCapacity(row.hasRoom, row.modelAccountWindowsByAccount, at);
+  return { label: row.label, level: capacity.hasRoom ? capacity.level : 'almost full', hasRoom: capacity.hasRoom };
+}
+
+export function modelAccountQueries(db: DataDatabase, now: () => string, usageScope?: (viewer:Viewer)=>JobSummaries | undefined, jobScope?: (viewer:Viewer)=>JobSummaries) {
   // The same admitted Viewer object reaches GraphQL context and auth.valid().
   // Retain only the resource identifiers needed to recheck selected private fields.
   const witnesses = new WeakMap<Viewer, Set<string>>();
@@ -66,8 +71,8 @@ export function modelAccountQueries(db: DataDatabase, now: () => string, usageSc
       const current = modelAccountAuthority(db, viewer);
       let sharing: ReturnType<typeof sharedSharing> | undefined;
       return selected.rows.map(row => {
-        const capacity = reportedAccountCapacity(row.hasRoom, row.modelAccountWindowsByAccount, at);
-        const publicFields = { label: row.label, level: capacity.hasRoom ? capacity.level : 'almost full' };
+        const {label, level, hasRoom} = subscriptionCapacity(row, at);
+        const publicFields = { label, level };
         const privateRow = selected.privateRows.get(row.id);
         if (!privateRow) return { __typename: summary.name, ...publicFields };
         const nowMs=Date.parse(at);
@@ -77,7 +82,7 @@ export function modelAccountQueries(db: DataDatabase, now: () => string, usageSc
           const canRequest=needsSignIn&&viewer.kind==='member'&&holds(rules.asksSignIn,viewer,{accountOwner:privateRow.owner,boxOwner:login.box.owner},sharing??=sharedSharing(db));
           return {...login,reporting,needsSignIn,canRequest};
         });
-        const values = { ...privateRow, logins, hasRoom: capacity.hasRoom, windows: row.modelAccountWindowsByAccount };
+        const values = { ...privateRow, logins, hasRoom, windows: row.modelAccountWindowsByAccount };
         return { __typename: detail.name, ...publicFields, read(name: PrivateColumn, actor: Viewer) {
           if (actor !== viewer) throw new Error('Account access ended');
           // Public-only selections never acquire a private witness. Record an
@@ -104,6 +109,16 @@ export function modelAccountQueries(db: DataDatabase, now: () => string, usageSc
         },
         };
       });
+    },
+  }, jobSubscription: {
+    type: summary, args: { agent: {type:text}, job: {type:text} },
+    resolve(_source, {agent, job}, {viewer}) {
+      const account = jobScope?.(viewer).subscriptionAccount(agent, job);
+      if (!account) return null;
+      const [row] = readAccountCapacityRows(db, viewer, account);
+      if (!row) return null;
+      const {label, level} = subscriptionCapacity(row, now());
+      return {label, level};
     },
   } };
   return {
