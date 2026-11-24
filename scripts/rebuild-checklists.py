@@ -257,6 +257,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='tools':
   for row in rows:
    if row['promise']=='Write a note, read one by path, list notes under a prefix.':row['probe']={'kind':'action','action':'namedNotes'}
+   if row['promise']=='Change a knowledge page, mark it still true or due a check, and restore an earlier version of it.':row['probe']={'kind':'action','action':'namedKnowledgeHistory'}
    if row['promise']=='Search knowledge pages, read one, and add one.':row['probe']={'kind':'action','action':'namedKnowledge'}
  if f.stem=='approvals':
   for row in rows:
