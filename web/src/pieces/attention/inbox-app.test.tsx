@@ -34,7 +34,7 @@ vi.mock('../../data/graphql', () => ({ useDataQuery(query: string, variables: Re
   return { status: f.status, data: f.status === 'live' ? f.last = { ...f.data, inboxItems: variables.onlyErrors ? undefined : f.data.inboxItems, inboxItem: null } : undefined };
 } }));
 vi.mock('../../data', () => ({ callOnce: (name: string, input: unknown) => f.call(name, input), call: (name: string, input: unknown) => f.read(name, input), useRecords: f.records }));
-vi.mock('../../kit', () => Object.fromEntries(['Split','Row','NoteRow','Empty','Error','Loading','Button','LinkButton','Input','Textarea','Actions','Search','Pager','Reader','Meta','Title','Facts','Fact','Section','Body','Foot','Chips','Chip'].map(name => [name,
+vi.mock('../../kit', () => Object.fromEntries(['Split','Row','NoteRow','Empty','Error','Loading','Button','LinkButton','Input','Textarea','Actions','Search','Pager','Reader','Meta','Title','Facts','Fact','Section','Disclosure','Body','Foot','Chips','Chip'].map(name => [name,
   (props: { children?: ReactNode; title?: ReactNode; status?: ReactNode; actions?: ReactNode; folder?: string; folders?: unknown; onFolder?: (id: string) => void; listTop?: ReactNode; list?: ReactNode; reader?: ReactNode; search?: ReactNode; listBusy?: boolean; listCount?: number; listKey?: string }) => name === 'Split'
     ? h(name, { folder: props.folder, folders: props.folders, onFolder: props.onFolder, listBusy: props.listBusy, listCount: props.listCount, listKey: props.listKey }, props.listTop, props.list, props.reader, props.search)
     : name === 'NoteRow' ? h(name, { status: props.status }, props.title, props.actions, props.children) : h(name, props, props.children)])));
