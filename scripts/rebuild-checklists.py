@@ -236,9 +236,6 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   for row in rows:
    if row['promise'].startswith(('terminal_credentials ', 'terminal_sessions ', 'terminal_runs ')):row['probe']={'kind':'action','action':'deskJobs'}
    if row['promise'].startswith('A query names a table from the model'):row['probe']={'kind':'legacy-data-socket'}
- if f.stem in ('approvals','changes'):
-  for row in rows:
-   if 'Who sees it. Household owners can read these records.' in row['promise']:row['probe']={'kind':'action','action':'workVisibility'}
  if f.stem=='desk':
   for row in rows:
    if row['promise'].startswith('Each tile asks for its rows over the one live connection'):row['probe']={'kind':'legacy-data-socket'}
@@ -314,6 +311,9 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise']=='The connection knows the caller from its session or token.':row['probe']={'kind':'action','action':'dataCaller'}
    if row['promise'].startswith(('After the first rows, loom sends only', 'After the first rows, changes arrive')):row['probe']={'kind':'action','action':'dataTaskPatches'}
    if row['promise'].startswith('A new inbox item reaches an open Inbox'):row['probe']={'kind':'action','action':'dataInboxChange'}
+ if f.stem=='bridges':
+  for row in rows:
+   if row['promise'].startswith('c Messages. An incoming message follows its conversation.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':name} for name in ['bridgeMail','bridgeMessageVisibility']]}
  if f.stem in ('approvals','changes'):
   for row in rows:
    if 'Who sees it. Household owners can read these records.' in row['promise']:row['probe']={'kind':'action','action':'workVisibility'}

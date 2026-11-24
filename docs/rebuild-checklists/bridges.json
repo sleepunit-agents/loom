@@ -191,7 +191,20 @@
     {
       "id": "bridges-017",
       "promise": "c Messages. An incoming message follows its conversation. A linked member’s private direct message belongs to that member. Only the receiving agent’s owners can read direct messages from nonmembers and groups.",
-      "source": "docs/how-it-works/site/bridges.html#see-h"
+      "source": "docs/how-it-works/site/bridges.html#see-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "bridgeMail"
+          },
+          {
+            "kind": "action",
+            "action": "bridgeMessageVisibility"
+          }
+        ]
+      }
     },
     {
       "id": "bridges-018",
