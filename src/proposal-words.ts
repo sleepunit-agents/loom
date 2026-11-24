@@ -78,6 +78,9 @@ export function outsideShort(who:Outside,held:HeldName|null,names?:CardNames){
       : names ? 'a ' + platform + ' account loom has no name for (' + who.user + ' in workspace ' + who.workspace + ')'
       : 'the ' + platform + ' account ' + who.user + ' (workspace ' + who.workspace + ')';
 }
+export function bridgeDisconnectTitle(id:string, agent:string, platform:string) {
+  return clipProposalText('Disconnect '+owns(agent)+' '+platform+' connection ('+id+')',240);
+}
 export function bridgePersonTitle(whom:string, remove:boolean, member?:string) {
   if (remove) return 'Stop treating ' + whom + ' as ' + (member ? 'the household member ' + member : 'a household member');
   return 'Treat ' + whom + ' as the household member ' + member;
@@ -585,7 +588,7 @@ function bridge(input: Rec, context: CardContext, name: (id: unknown) => string,
     }
     case 'disconnect': {
       const same = !!was && was.enabled === false;
-      return { title: was ? 'Disconnect ' + owns(name(was.agent)) + ' ' + platformWord(str(was.platform)) + ' connection (' + str(input.id) + ')' : 'Disconnect the Discord or Slack connection ' + str(input.id), nothing: same,
+      return { title: was ? bridgeDisconnectTitle(str(input.id),name(was.agent),platformWord(str(was.platform))) : 'Disconnect the Discord or Slack connection ' + str(input.id), nothing: same,
         ifYes: 'The connection stops delivering messages. Its settings stay, and it can be switched on again.', ifNo: 'The connection keeps its current settings.',
         facts: [{ label: 'Connection', value: str(input.id) }, ...(was ? [{ label: 'Agent', value: name(was.agent) }, { label: 'Workspace', value: workspaceWords(names, str(was.platform), str(was.workspace)) }] : []),
           ...(before ? [{ label: same ? 'What changes' : 'Now', value: same ? NOTHING : isNew ? 'loom has no connection by that name.' : 'It is switched on.' }] : [])] };
