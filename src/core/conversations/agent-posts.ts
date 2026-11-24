@@ -80,7 +80,7 @@ export async function prepareAgentPost(db: DataDatabase, key: WordsKey, source: 
 
 /** Feed queries supply a source predicate computed for the authenticated viewer.
  * Choose the limited page before decrypting words. Sequence orders equal clock times. */
-export async function agentPostPreviews(db: DataDatabase, key: WordsKey, visibleSource: SQL, limit: number) {
+export async function agentPostPreviews(db: DataDatabase, key: WordsKey, visibleSource: SQL, limit: number, before = 0) {
   const latest = sql<number>`(select max(p.seq) from agent_posts p where p.thread = ${agentPostThreads.id})`;
   const parent = alias(agentPosts, 'parent_post');
   const previous = sql<number>`(select max(p.seq) from agent_posts p
@@ -93,7 +93,7 @@ export async function agentPostPreviews(db: DataDatabase, key: WordsKey, visible
     .leftJoin(agentPostNames, eq(agentPostNames.thread,agentPostThreads.id))
     .innerJoin(agentPosts, eq(agentPosts.seq, latest))
     .leftJoin(parent, eq(parent.seq, previous))
-    .where(visibleSource).orderBy(desc(agentPosts.seq)).limit(limit).all();
+    .where(and(visibleSource, before ? lt(agentPosts.seq, before) : undefined)).orderBy(desc(agentPosts.seq)).limit(limit).all();
   return Promise.all(rows.map(async row => ({
     thread: row.thread, sources: [row.source,row.latest.source,...(row.parent?[row.parent.source]:[]),...(row.rename?[row.rename.source]:[])],
     title: await key.open(row.rename?.title ?? row.title),

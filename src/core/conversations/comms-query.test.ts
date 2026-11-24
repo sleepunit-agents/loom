@@ -430,6 +430,27 @@ it('opens long activity threads at the latest update and pages back without over
   expect((await read(first[24].id)).map(row=>row.words)).toEqual(['Update 1','Opening']);
 });
 
+it('pages visible activities by their newest reply across equal timestamps', async () => {
+  const f=await fixture(), at='2026-11-14T18:00:00.000Z';
+  const {prepareAgentPost}=await import('./agent-posts.js');
+  const other=f.comms.threads.open({agent:'art',member:'bob',title:'Other'});
+  const write=async(source:string,edit:Parameters<typeof prepareAgentPost>[3])=>
+    (await prepareAgentPost(f.db,f.key,source,edit))(at);
+  const oldest=await write(f.thread.id,{action:'open',words:'Oldest'});
+  await write(other.id,{action:'open',words:'Private'});
+  await write(f.thread.id,{action:'open',words:'Middle'});
+  await write(f.thread.id,{action:'open',words:'Newest'});
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:commsQueryFields(f.service)})});
+  const read=(before:string)=>graphql({schema,contextValue:{viewer:alice},variableValues:{before},
+    source:'query($before:String!){agentActivityFeed(agent:"art",limit:2,before:$before){title latest{id}}}'});
+  expect((await read('0')).data?.agentActivityFeed).toEqual([{title:'Newest',latest:{id:'4'}},{title:'Middle',latest:{id:'3'}}]);
+  expect((await read('3')).data?.agentActivityFeed).toEqual([{title:'Oldest',latest:{id:'1'}}]);
+  await write(f.thread.id,{action:'reply',thread:oldest,words:'Back on it'});
+  expect((await read('3')).data?.agentActivityFeed).toEqual([]);
+  expect((await read('0')).data?.agentActivityFeed).toEqual([{title:'Oldest',latest:{id:'5'}},{title:'Newest',latest:{id:'4'}}]);
+  expect((await read('-1')).errors).toBeDefined();
+});
+
 it('serves the activity card and history under the current source conversation visibility', async () => {
   const f = await fixture();
   const { prepareAgentPost } = await import('./agent-posts.js');
