@@ -155,7 +155,11 @@
     {
       "id": "data-022",
       "promise": "bridge_resume Where each Discord connection left off, so it can pick up after a restart, and the credential it was made under.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "action",
+        "action": "discordResume"
+      }
     },
     {
       "id": "data-023",
