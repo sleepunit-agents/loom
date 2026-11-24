@@ -1,4 +1,5 @@
 import './calendar.css';
+import { RecentRuns, type TriggerRun } from './recent-runs';
 import { TempoCalendar } from './day';
 import { triggerHistoryQuery } from './query';
 import { tempoFailureMessage } from './actions';
@@ -48,16 +49,16 @@ function TriggerActions({ trigger, pauses, actions }: { trigger: Trigger; pauses
 }
 
 /** Inline conversation view. Resolve IDs only against the current visible snapshot. */
-export function TempoCard({ snapshot, triggerId, actions }: { snapshot: TempoSnapshot; triggerId: string; actions?: TempoActions }) {
+export function TempoCard({ snapshot, triggerId, actions, go }: { snapshot: TempoSnapshot; triggerId: string; actions?: TempoActions; go?:(path:string)=>void }) {
   if (snapshot.status !== 'live') return snapshot.status === 'loading'
     ? <Loading label="Opening Tempo…" />
     : <Error text={snapshot.status === 'denied' ? 'Sign in with access to see Tempo.' : 'Waiting for connection.'} />;
   const trigger = snapshot.triggers.find(item => item.id === triggerId);
   if (!trigger) return <Empty title="Trigger unavailable" text="This trigger is no longer in your Tempo view." />;
-  return <TriggerDetails key={trigger.id} snapshot={snapshot} trigger={trigger} actions={actions} />;
+  return <TriggerDetails key={trigger.id} snapshot={snapshot} trigger={trigger} actions={actions} go={go} />;
 }
 
-function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapshot; trigger: Trigger; actions?: TempoActions }) {
+function TriggerDetails({ snapshot, trigger, actions, go }: { snapshot: TempoSnapshot; trigger: Trigger; actions?: TempoActions; go?:(path:string)=>void }) {
   const detail = useDataQuery<{
     tempoProgram: { program: { name: string }; programState: unknown; lastResult: string | null } | null;
   }>('query ProgramDetails($id:String!){tempoProgram(id:$id)}', {id: trigger.id});
@@ -66,13 +67,14 @@ function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapsho
   }>('query JournalDetails($id:String!){tempoJournal(id:$id)}', {id: trigger.id});
   const program = detail.status === 'live' ? detail.data?.tempoProgram : null;
   const journal = journalDetail.status === 'live' ? journalDetail.data?.tempoJournal : null;
-  const log = useDataQuery<{ triggerLog: TriggerEvent[] }>(triggerHistoryQuery, {id: trigger.id});
+  const log = useDataQuery<{ triggerLog: TriggerEvent[]; tempoRecentRuns: TriggerRun[] }>(triggerHistoryQuery, {id: trigger.id});
   const entries = log.status === 'live' && log.data?.triggerLog ? history(log.data.triggerLog, trigger.id) : undefined;
   const next = nextScheduledAt(trigger);
   const lastDecision = program?.lastResult ?? entries?.find(event => event.event === 'program')?.note;
-  const time = (at: string) => new Intl.DateTimeFormat(undefined, {
+  const format = new Intl.DateTimeFormat(undefined, {
     timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short',
-  }).format(new Date(at));
+  });
+  const time = (at:string) => format.format(new Date(at));
   return trigger ? <article className="grid gap-4 p-5">
     <header><h1 className="text-2xl font-semibold">{title(trigger)}</h1><p>{trigger.sourceKind} · {trigger.lifespan} · {status(trigger, snapshot.pauses)}</p></header>
     <p>{source(trigger)}</p>
@@ -102,6 +104,7 @@ function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapsho
     {trigger.instructions && <section><h2>Words</h2><p className="whitespace-pre-wrap break-words">{trigger.instructions}</p></section>}
     {trigger.file && <section><h2>Repository file</h2><p>{trigger.file}</p></section>}
     {actions && <TriggerActions trigger={trigger} pauses={snapshot.pauses} actions={actions} />}
+    {log.status === 'live' && log.data?.tempoRecentRuns && <RecentRuns runs={log.data.tempoRecentRuns} format={format} go={go}/>}
     <section><h2>Recent history</h2>{entries?.length ? <ol>
       {entries.map(event => <li key={event.seq}>{time(event.at)} · {event.event}{event.note && ` · ${event.note}`}</li>)}
     </ol> : entries ? <p>No events yet.</p> : log.status === 'loading' || log.status === 'live'
@@ -111,7 +114,7 @@ function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapsho
 
 /** The composition supplies one visible, live query snapshot; this view owns no transport. */
 /** `inUse`: the agents in use, where the composition knows them; the agent filter then offers no removed agent. */
-export default function Tempo({ snapshot, actions, inUse }: { snapshot: TempoSnapshot; actions?: TempoActions; inUse?: ReadonlySet<string> }) {
+export default function Tempo({ snapshot, actions, inUse, go }: { snapshot: TempoSnapshot; actions?: TempoActions; inUse?: ReadonlySet<string>; go?:(path:string)=>void }) {
   const [creating, setCreating] = useState(false);
   useEffect(() => { if (snapshot.status !== 'live') setCreating(false); }, [snapshot.status]);
   const [folder, setFolder] = useState<Folder | 'day' | 'week'>('day');
@@ -126,7 +129,7 @@ export default function Tempo({ snapshot, actions, inUse }: { snapshot: TempoSna
   const shown = rows(triggers, calendar ? 'all' : folder, query, selectedAgent);
   const trigger = triggers.find(item => item.id === selected);
   const agents = [...new Set(triggers.map(triggerAgent).filter((agent): agent is string => !!agent && (!inUse || inUse.has(agent))))].sort();
-  const reader = live && creating && actions?.create ? <CreateTrigger timezone={snapshot.timezone} submit={actions.create} done={() => setCreating(false)} /> : trigger ? <TriggerDetails key={trigger.id} snapshot={snapshot} trigger={trigger} actions={actions} /> : null;
+  const reader = live && creating && actions?.create ? <CreateTrigger timezone={snapshot.timezone} submit={actions.create} done={() => setCreating(false)} /> : trigger ? <TriggerDetails key={trigger.id} snapshot={snapshot} trigger={trigger} actions={actions} go={go} /> : null;
   const time = (at: string) => new Intl.DateTimeFormat(undefined, { timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(at));
   return <Split label="Tempo" className={folder === 'week' ? 'h-full tempo-week' : 'h-full'} folders={[{id:'day',label:'Day'}, {id:'week',label:'Week'}, ...folders.map(item => ({ ...item, count: live ? rows(triggers, item.id, '', selectedAgent).length : undefined }))]}
     folder={folder} onFolder={id => { setFolder(id as Folder | 'day' | 'week'); setCreating(false); setSelected(undefined); }}

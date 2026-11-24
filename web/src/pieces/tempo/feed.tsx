@@ -16,11 +16,11 @@ export function useTempoSnapshot(timezone: string, triggerId?: string): TempoSna
     pauses: data?.agentPauses ?? [], timezone: data?.tempoTimezone ?? timezone,
   };
 }
-export function TempoApp({ timezone, actions }: { timezone: string; actions?: TempoActions }) {
+export function TempoApp({ timezone, actions, go }: { timezone: string; actions?: TempoActions; go?:(path:string)=>void }) {
   const snapshot = useTempoSnapshot(timezone), inUse = useLiveAgentIds();
-  return <Tempo snapshot={snapshot} actions={actions} inUse={inUse ?? new Set()} />;
+  return <Tempo snapshot={snapshot} actions={actions} go={go} inUse={inUse ?? new Set()} />;
 }
-export function LiveTempoCard({ triggerId, timezone, actions }: { triggerId: string; timezone: string; actions?: TempoActions }) {
+export function LiveTempoCard({ triggerId, timezone, actions, go }: { triggerId: string; timezone: string; actions?: TempoActions; go?:(path:string)=>void }) {
   const snapshot = useTempoSnapshot(timezone, triggerId);
-  return <TempoCard snapshot={snapshot} triggerId={triggerId} actions={actions} />;
+  return <TempoCard snapshot={snapshot} triggerId={triggerId} actions={actions} go={go} />;
 }

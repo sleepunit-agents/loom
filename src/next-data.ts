@@ -89,7 +89,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
       ...measuringVisibility(viewer), ...tempoVisibility(viewer),
       ...sqlVisibility(viewer, ['agentStatus', 'agentModels', 'agentRunSettings', 'agentBoxes', 'agentHousePorts', 'agentHouseSecrets', 'agentPeople', 'agentDeniedTools', 'members', 'memberAgents', 'memberPreferences']),
     },
-  }):emptyProgram, records!==undefined?{}:{ ...fields, ...ownFields, ...tempoQueryFields(db, viewer, () => canReadProgram(viewer)), ...accounts.fields,
+  }):emptyProgram, records!==undefined?{}:{ ...fields, ...ownFields, ...tempoQueryFields(db, viewer, () => canReadProgram(viewer), () => canReadUsage(viewer)), ...accounts.fields,
     // A job's title, brief and log tail are words of its conversation; it is read by the jobs rule in policy.ts.
     ...jobSummaryFields(summaries(viewer), () => canReadUsage(viewer)),
   });

@@ -1,5 +1,5 @@
 import { clockLanes, clockLaneText, clockScheduleRevision } from './lanes.js';
-import { wakeDeliveries } from './deliveries.js';
+import { recentTriggerRuns, wakeDeliveries } from './deliveries.js';
 /** Safe household display projection for Tempo; never expose settings wholesale. */
 import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
 import { and, desc, eq } from 'drizzle-orm';
@@ -13,7 +13,7 @@ import { householdTimezone } from '../data/household-settings.js';
 import { readTimings } from './volume.js';
 import { hasAgentJournal, readJournal } from './journal.js';
 const timings = new GraphQLObjectType({ name: 'TempoTimings', fields: Object.fromEntries(['settleSeconds', 'dimDays', 'muteDays'].map(name => [name, { type: new GraphQLNonNull(GraphQLInt) }])) });
-export function tempoQueryFields(db: DataDatabase, viewer: Viewer, canReadProgram: () => boolean = () => true) {
+export function tempoQueryFields(db: DataDatabase, viewer: Viewer, canReadProgram: () => boolean = () => true, canReadUsage: () => boolean = canReadProgram) {
  // Someone in the household now (rules.currentViewer): a removed member's token, or a body whose member has left, reads neither.
  const current = () => sqlHolds(db, rules.currentViewer, viewer);
  return { tempoProgram: { type: dataValue, args: { id: { type: new GraphQLNonNull(GraphQLString) } },
@@ -36,6 +36,9 @@ export function tempoQueryFields(db: DataDatabase, viewer: Viewer, canReadProgra
    events: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLInt))) } },
    resolve: (_source: unknown, { agent, events }: { agent: string; events: number[] }) =>
      current() ? wakeDeliveries(db, viewer, agent, events, canReadProgram()) : [],
+ }, tempoRecentRuns: { type: dataValue, args: { id: { type: new GraphQLNonNull(GraphQLString) } },
+   resolve: (_source: unknown, { id }: { id: string }) =>
+     current() ? recentTriggerRuns(db, viewer, id, canReadProgram(), canReadUsage()) : [],
  }, tempoLanes: { type: dataValue, args: { after: { type: new GraphQLNonNull(GraphQLString) } },
    resolve: (_source: unknown, { after }: { after: string }) => current() ? clockLanes(db, viewer, after) : [],
  }, tempoLaneText: { type: dataValue, args: { agent: {type:GraphQLString}, id: { type: new GraphQLNonNull(GraphQLString) } },

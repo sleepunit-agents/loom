@@ -16,6 +16,7 @@ export const tempoCardQuery = `query TempoCard($id: String!) {
   ${householdFields}
 }`;
 export const triggerHistoryQuery = `query TriggerHistory($id: String!) {
+  tempoRecentRuns(id: $id)
   triggerLog(where: {trigger: {eq: $id}, event: {ne: "source-snapshot"}},
     orderBy: {seq: {direction: desc, priority: 0}}, limit: 200) {
     seq trigger at event note

@@ -181,3 +181,22 @@ it('shows the saved lessons, state and local change time while the journal is vi
     expect(JSON.stringify(tree.toJSON())).not.toContain('page 4');
   } finally { journalQuery.mockReturnValue({status:'loading'}); }
 });
+
+it('links a measured run to its conversation, preserves zero usage and clears it on loss of the live result', async () => {
+  const go=vi.fn();
+  const run={event:3,at:'2026-11-14T00:00:00.000Z',kind:'program',job:{state:'done',startedAt:null,endedAt:null},
+    usage:{tokensOut:0,largestContext:null,wallMs:0},conversation:{id:'original',venue:'wake',place:'example'}};
+  journalQuery.mockReturnValue({status:'live',data:{triggerLog:[],tempoRecentRuns:[run]}});
+  await act(async()=>{tree=create(h(TempoCard,{snapshot,triggerId:'tr-1',go}));});
+  const text=JSON.stringify(tree.toJSON());
+  expect(text).toContain('0 output tokens');
+  expect(text).toContain('0 ms');
+  expect(text).not.toContain('peak context tokens');
+  const link=tree.root.findByType('a');
+  expect(link.props.href).toBe('/p/comms-preview/conversation/original');
+  link.props.onClick({button:0,preventDefault:vi.fn()});
+  expect(go).toHaveBeenCalledExactlyOnceWith(link.props.href);
+  journalQuery.mockReturnValue({status:'offline',data:{tempoRecentRuns:[run]}});
+  await act(async()=>tree.update(h(TempoCard,{snapshot,triggerId:'tr-1',go})));
+  expect(tree.root.findAllByType('a')).toHaveLength(0);
+});
