@@ -45,9 +45,35 @@ export async function tempoCalendar({ browser, home }) {
     await page.reload();
     await row.click();
     await page.getByRole('heading',{name:note,exact:true}).waitFor();
-    return {ok:true,reason:'The scheduled wake appeared at its household time. Navigating away and back preserved its day. Firing it early moved it to the actual firing time with a fired result, and its reader opened after reload.'};
+    await checkFrequentRows(page,app);
+    return {ok:true,reason:'The scheduled wake appeared at its household time. Navigating away and back preserved its day. Firing it early moved it to the actual firing time with a fired result, and its reader opened after reload. Four recurring times shared one row in Day and Week, with live outcomes and the next time; three times kept their hourly rows.'};
   } finally {
     await context?.close();
     await app.close();
   }
+}
+
+async function checkFrequentRows(page, app) {
+  const add = (note,times) => app.writes.run(()=>app.services.tempo.triggers.set({
+    ownerKind:'member', owner:'alex', sourceKind:'time', times, days:'wed',
+    lifespan:'until-stopped', targetKind:'inbox', toKind:'person', to:'alex', instructions:note, note,
+  })).value;
+  const title = 'Water the seedlings';
+  const trigger = add(title,'12:00,13:00,14:00,15:00');
+  add('Check the greenhouse','12:15,13:15,14:15');
+  await page.goto(app.url+'/p/tempo');
+  const day = page.getByRole('region',{name:'Day schedule',exact:true});
+  const row = day.getByRole('region',{name:'Frequent triggers'}).getByRole('button',{name:new RegExp(title)});
+  await row.getByText(/4 scheduled.*Next 12:00 PM/i).waitFor();
+  assert.equal(await day.getByRole('button',{name:new RegExp(title)}).count(),1);
+  assert.equal(await day.getByRole('button',{name:/Check the greenhouse/}).count(),3);
+  app.writes.run(()=>app.services.tempo.triggers.runNow(trigger.id));
+  await row.getByText(/1 fired.*4 scheduled/i).waitFor();
+  await row.click();
+  await page.getByRole('heading',{name:title,exact:true}).waitFor();
+  await page.goto(app.url+'/p/tempo');
+  await page.getByRole('button',{name:'Week',exact:true}).click();
+  const week = page.getByRole('region',{name:'Week schedule'});
+  await week.getByRole('region',{name:'Frequent triggers'}).getByRole('button',{name:new RegExp(title)}).waitFor();
+  assert.equal(await week.getByRole('button',{name:new RegExp(title)}).count(),1);
 }
