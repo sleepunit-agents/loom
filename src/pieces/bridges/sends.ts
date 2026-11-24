@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, max } from 'drizzle-orm';
+import { and, asc, eq, exists, inArray, isNull, max } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeIncoming, bridgeSendFiles, bridgeSendJobs, bridgeSendParts, bridgeSends, type DirectSendTarget } from '../../core/data/schema.js';
 import { BridgeReplyNotSent, postReply, replyParts, type ReplyAttempt } from './outbound.js';
@@ -47,7 +47,9 @@ export function reviewReply(db: DataDatabase, id: string, decision: 'release' | 
  * dismissal, or the start-up that finds a post a crash left mid-send. Called in the same transaction as
  * every such change, so no file outlives its post's last chance. */
 export function dropSettledFiles(db: Pick<DataDatabase, 'delete' | 'select'>): void {
-  db.delete(bridgeSendFiles).where(inArray(bridgeSendFiles.send, db.select({ id: bridgeSends.id }).from(bridgeSends).where(inArray(bridgeSends.state, ['sent', 'uncertain', 'dismissed'])))).run();
+  // Start with files still in the queue. Completed send history can keep growing after the last file goes.
+  db.delete(bridgeSendFiles).where(exists(db.select({ id: bridgeSends.id }).from(bridgeSends)
+    .where(and(eq(bridgeSends.id, bridgeSendFiles.send), inArray(bridgeSends.state, ['sent', 'uncertain', 'dismissed']))))).run();
 }
 
 /** Trusted in-process send queue on the approved shared schema. External callers
