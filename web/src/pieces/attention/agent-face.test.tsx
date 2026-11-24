@@ -4,7 +4,7 @@ import { createElement as h } from 'react';
 import { act, create } from 'react-test-renderer';
 vi.mock('../../face',()=>({default:(p:object)=>h('drawn-face',p)}));
 vi.mock('../../pixel-face',()=>({default:(p:object)=>h('pixel-face',p)}));
-import AgentFace from './agent-face';
+import AgentFace, { type AgentDisplay } from './agent-face';
 import { PixelContext } from '../../look';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 it('uses supplied sprite metadata, follows Pixel faces, and drops unavailable display data',async()=>{
@@ -30,4 +30,23 @@ it('forwards the comm screen player contract without changing drawn faces',async
  p.onShown('complete');p.onFrom('done');p.onReady(true);
  expect(onShown).toHaveBeenCalledWith('complete');expect(onFrom).toHaveBeenCalledWith('done');expect(onReady).toHaveBeenCalledWith(true);
  await act(async()=>tree.unmount());
+});
+
+it('reserves the portrait space until pixel artwork is ready, and draws agents without artwork', async () => {
+ const display: AgentDisplay = {id:'art',agent:'art',mark:{bg:'#333',fg:'#fff'},face:{shape:'pebble',eyes:'dot'}};
+ const view = (metadata?: AgentDisplay) => h(AgentFace,{display:metadata,name:'Art',state:'idle',size:40});
+ let tree!: ReturnType<typeof create>;
+ await act(async()=>{tree=create(view());});
+ try {
+  const space = () => tree.root.findByProps({role:'img','aria-label':'Art'});
+  expect(space().children).toHaveLength(0);
+  await act(async()=>tree.update(view({...display,sprite:{agent:'art',v:'saved'}})));
+  // PixelFace returns this element while its versioned sheet is being read.
+  const pending = tree.root.findByType('pixel-face').props.fallback;
+  expect(pending.type).toBe('span');
+  expect(pending.props.style).toMatchObject({width:40,height:40});
+  expect(pending.props.children).toBeUndefined();
+  await act(async()=>tree.update(view(display)));
+  expect(tree.root.findByType('drawn-face').props.label).toBe('Art');
+ } finally { await act(async()=>tree.unmount()); }
 });

@@ -14,10 +14,10 @@ import { agentPath, latestStatus, namedAgents, shownState } from './home-model';
 import { useDoing } from './doing';
 import './comms-companion.css';
 
-type PortraitProps = {agent:string; working:boolean; needs:boolean; messages:readonly CommsMessage[]; go(path:string):void};
+type PortraitProps = {threadId?:string; inlineSlot?:HTMLElement|null; agent:string; working:boolean; needs:boolean; messages:readonly CommsMessage[]; go(path:string):void};
 type ReplyBeat = {key:number; count:number; sources:number[]};
 
-function Portrait({agent,working,needs,messages,go}:PortraitProps) {
+function Portrait({threadId,inlineSlot,agent,working,needs,messages,go}:PortraitProps) {
   const rail=useContext(RailContext),displays=useDeskAgentDisplays(),directory=useDeskAgentDirectory();
   const roster=useDeskRoster(),statuses=useDeskAgentStatuses();
   const name=namedAgents([{id:agent,name:agent.slice(0,1).toUpperCase()+agent.slice(1)}],directory.status==='live'?directory.records:[])[0].name;
@@ -33,6 +33,13 @@ function Portrait({agent,working,needs,messages,go}:PortraitProps) {
   const [playing,setPlaying]=useState<ReplyBeat>();
   const [shown,setShown]=useState<FaceState>();
   const [ready,setReady]=useState(false);
+  // The canvas belongs to the agent. Reply sequence numbers and pending beats belong to a thread.
+  const [previousThread,setPreviousThread]=useState(threadId);
+  if(previousThread!==threadId){
+    setPreviousThread(threadId);
+    lastSeen.current=Math.max(0,...messages.map(row=>row.seq));
+    setPending(undefined);setPlaying(undefined);setShown(undefined);
+  }
   const interrupted=state==='error'||state==='needs-input';
   const clear=()=>{setPending(undefined);setPlaying(undefined);setShown(undefined);};
   useEffect(()=>{
@@ -79,10 +86,12 @@ function Portrait({agent,working,needs,messages,go}:PortraitProps) {
   // Beside the rail the comm screen is the agent's rail card, large, with its name and how it is. Without the rail it
   // is a small face beside the thread's title: the head says who the thread is with and whether it is working, so
   // the face adds nothing but itself, and opens the agent's own page where this person owns the agent.
-  if(!target)return <span className="desk-comms-mini" data-location="inline" data-face={face} data-signal={signal&&"on"}>
+  if(!target){const mini=<span className="desk-comms-mini" data-location="inline" data-face={face} data-signal={signal&&"on"}>
     {owned?<button type="button" className="desk-comms-mini__face" aria-label={`Open ${name}`} title={word} onClick={()=>go(agentPath(agent))}><AgentFace {...props} size={30}/></button>
       :<span className="desk-comms-mini__face" title={word}><AgentFace {...props} size={30}/></span>}
   </span>;
+    return inlineSlot===undefined?mini:inlineSlot?createPortal(mini,inlineSlot):null;
+  }
   return createPortal(<section className="desk-comms-screen" aria-label={`${name}'s comm screen`} data-location="rail" data-face={face} data-signal={signal&&"on"}>
     <div className="desk-comms-glass"><AgentFace {...props} size={192} scale={2}/></div>
     {owned?<Button variant="ghost" className="desk-comms-name" onClick={()=>go(agentPath(agent))}>{name}</Button>:<strong className="desk-comms-name">{name}</strong>}
@@ -91,12 +100,12 @@ function Portrait({agent,working,needs,messages,go}:PortraitProps) {
 }
 /** Selection belongs to the visible authorized reader; late cleanup cannot
  * clear another reader's selection. Portrait data uses the desk's same client. */
-export default function CommsCompanion({agent,working,needs,visible,messages,go}:PortraitProps & {visible:boolean}) {
+export default function CommsCompanion({agent,working,needs,visible,messages,go,threadId,inlineSlot}:PortraitProps & {visible:boolean}) {
   const rail=useContext(RailContext),source=useRef({});
   useEffect(()=>{
     if(!visible||!rail?.onAir)return;
     rail.onAir({agent},source.current);
     return()=>rail.onAir(null,source.current);
   },[agent,visible,rail?.onAir]);
-  return visible?<Portrait agent={agent} needs={needs} messages={messages} working={working} go={go}/>:null;
+  return visible?<Portrait threadId={threadId} inlineSlot={inlineSlot} agent={agent} needs={needs} messages={messages} working={working} go={go}/>:null;
 }

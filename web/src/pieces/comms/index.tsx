@@ -4,7 +4,7 @@ import {ConversationActivity} from './conversation';
 import CommsCompanion from '../attention/comms-companion';
 import { useReadingVisible } from '../../data/visibility';
 import { useDeadline } from './use-deadline';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { conversationOperation as mutate } from './operations';
 import { useAnswered, useSelection } from '../../data/graphql/selection';
 import { InlineQuestion } from './inline-question';
@@ -26,6 +26,16 @@ function EarlierMessages({ thread, before, draw }: { thread: string; before: num
   const now = useDeadline(read ? read.messages.map(row => row.wordsKeepUntil) : []);
   return <>{draw({ status: read ? 'live' : reading.status === 'live' ? reading.settling ? 'loading' : 'denied' : reading.status,
     messages: read ? read.messages.slice(-50).map(row => retainedCommsMessage(row, now)) : [], refs: read ? read.refs : [], hasEarlier: (read?.messages.length ?? 0) > 50 })}</>;
+}
+type CompanionHead = {slot:HTMLElement; needs:boolean};
+function CompanionDestination({needs,publish}:{needs:boolean;publish(value:CompanionHead|null):void}) {
+  const slot=useRef<HTMLSpanElement>(null);
+  useLayoutEffect(()=>{
+    if(!slot.current)return;
+    publish({slot:slot.current,needs});
+    return ()=>publish(null);
+  },[needs,publish]);
+  return <span ref={slot}/>;
 }
 function SharedCommsApp({ path: shellPath, go, visible = true }: { path?: string; go?(path: string): void; visible?: boolean } = {}) {
   const readingVisible = useReadingVisible(visible);
@@ -66,7 +76,13 @@ function SharedCommsApp({ path: shellPath, go, visible = true }: { path?: string
   // An agent's display name is the shared directory's, as the desk's cards say it; its id with a capital until that is read.
   const named = (id: string) => (directory.status === 'live' ? directory.records.find(person => person.id === `commons:${id}` && person.slug === id)?.name : undefined) ?? id.slice(0, 1).toUpperCase() + id.slice(1);
   const shownThreads = live ? data.threads.slice(0,50) : [];
-  return <CommsView snapshot={{ status, settling: reading.settling, archived: drawnArchived, member: data?.home?.member ?? '', threads: shownThreads,
+  const [companionHead,setCompanionHead]=useState<CompanionHead|null>(null);
+  // The list already identifies the newly selected agent while its separate thread reading loads.
+  const companionAgent=thread?.agent ?? (detailStatus==='loading'?shownThreads.find(row=>row.id===selected)?.agent:undefined);
+  return <>{companionAgent&&<CommsCompanion key={JSON.stringify([data?.home?.member,companionAgent])} agent={companionAgent}
+    threadId={thread?.id} messages={messages} working={thread?.working??false} needs={!!thread&&!!companionHead?.needs}
+    visible={readingVisible} inlineSlot={companionHead?.slot??null} go={navigate}/>}
+    <CommsView snapshot={{ status, settling: reading.settling, archived: drawnArchived, member: data?.home?.member ?? '', threads: shownThreads,
     agents: live ? data.home!.agents.map(id => ({ id, name: named(id) })) : [], folders: live ? data.folders : undefined,
     names: Object.fromEntries([...shownThreads, ...(thread ? [thread] : [])].map(row => [row.agent, named(row.agent)])) }}
     detail={{ status: detailStatus, thread, messages, refs: open ? open.refs : [] }} selected={selected} select={select} actions={actions}
@@ -74,13 +90,13 @@ function SharedCommsApp({ path: shellPath, go, visible = true }: { path?: string
     navigation={{ archived, search, offset, hasNext: (data?.threads.length ?? 0) > 50,
       folder(value) { setArchived(value); setOffset(0); }, query(value) { setSearch(value); setOffset(0); },
       previous() { setOffset(value => Math.max(0,value-50)); }, next() { setOffset(value => value+50); } }}
-    cards={{ history: open?.archivedQuestions.length && thread ? <ArchivedQuestions key={thread.id} thread={thread.id} first={open.archivedQuestions} name={named} zone={zone}/> : undefined, screen: waiting=>thread?<CommsCompanion needs={waiting} key={thread.id} messages={messages} agent={thread.agent} working={thread.working} visible={readingVisible} go={navigate}/>:undefined,
+    cards={{ history: open?.archivedQuestions.length && thread ? <ArchivedQuestions key={thread.id} thread={thread.id} first={open.archivedQuestions} name={named} zone={zone}/> : undefined, screen: waiting=><CompanionDestination needs={waiting} publish={setCompanionHead}/>,
       question: (id, note) => <InlineQuestion key={id} id={id} go={navigate} readVisible={readingVisible} writable={own} onWaiting={note} />,
       waiting: own ? (conversation, placed, note) => <ConversationQuestions key={conversation} conversation={conversation} go={navigate} readVisible={readingVisible} placed={placed} onWaiting={note} /> : undefined,
       work: (refs, conversation) => <SharedWork key={conversation} refs={refs} conversation={conversation} go={navigate} />,
       openRef: ref => { const to = inboxRefPath(ref); return to ? () => navigate(to) : undefined; } }}
     messageNavigation={{ hasEarlier: (open?.messages.length ?? 0) > 50,
-      page: (before, draw) => selected ? <EarlierMessages thread={selected} before={before} draw={draw} /> : null }} />;
+      page: (before, draw) => selected ? <EarlierMessages thread={selected} before={before} draw={draw} /> : null }} /></>;
 }
 export { CommsView } from '../comms-view';
 
