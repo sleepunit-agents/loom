@@ -14,7 +14,7 @@ import { sendWorkAnswer } from './work-answer';
 import { readProposal, type ProposalNow } from './work-proposal';
 import type { ReviewRound } from '../pieces/change-view/model';
 import type { ApprovalSnapshot } from '../pieces/approval-view/model';
-import { approvalsQuery, changesQuery, approvalSnapshot, changeSnapshot, type ApprovalsResult, type ChangesResult } from './work-query';
+import { approvalsQuery, inboxApprovalsQuery, inlineApprovalQuery, changesQuery, approvalSnapshot, changeSnapshot, type ApprovalsResult, type ChangesResult } from './work-query';
 
 const ownerQuery = 'query WorkAnswerOwner { workAnswerOwner workChangesRefresh members { id role } }';
 const mergeRequestsQuery = 'query WorkMergeRequests { approvals { id kind target state agent project actingFor operation } }';
@@ -67,8 +67,9 @@ export function useApprovalSnapshot(timezone?: string) {
   const zone = useHouseholdZone();
   return approvalSnapshot(useDataQuery<ApprovalsResult>(approvalsQuery), timezone ?? zone ?? localTimezone());
 }
-export function useApprovalList() {
-  return useApprovalSnapshot();
+export function useInboxApprovalLabels(ids: string[]) {
+  const reading=useDataQuery<{approvals: Pick<ApprovalsResult['approvals'][number],'id'|'operation'|'what'|'details'>[]}>(inboxApprovalsQuery,{ids},{pause:!ids.length});
+  return reading.status==='live' ? reading.data?.approvals ?? [] : [];
 }
 export function useChangeSnapshot(timezone?: string) {
   const zone = useHouseholdZone();
@@ -176,11 +177,22 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
     openTask={go ? id => go(taskPath(id)) : undefined} />;
 }
 /** Cards read current entities. Inline approvals answer one request; standing grants live in the tiles. */
-export function LiveApprovalCard({ id, timezone, actions, displayTitle, showBlocker = false }: { id: string; showBlocker?: boolean; displayTitle?: string; timezone?: string; actions?: ApprovalActions }) {
+type LiveApprovalProps = { id: string; showBlocker?: boolean; displayTitle?: string; timezone?: string; actions?: ApprovalActions };
+
+export function LiveApprovalCard(props: LiveApprovalProps) {
+  const base=useApprovalSnapshot(props.timezone);
+  return <CurrentApprovalCard {...props} base={base}/>;
+}
+
+export function useInboxApproval(id: string | undefined, zone: string | undefined) {
+  const read=useDataQuery<Pick<ApprovalsResult,'approvals'|'approvalRecord'>>(inlineApprovalQuery,{id:id ?? ''},{pause:!id});
+  return approvalSnapshot({...read,data:read.data && {...read.data,approvalRules:[],approvalNotices:[]}},zone ?? localTimezone());
+}
+
+export function CurrentApprovalCard({ id, actions, displayTitle, showBlocker = false, base }: Omit<LiveApprovalProps,'timezone'> & {base:ApprovalSnapshot}) {
   const owner=useWorkAccess().owner, names=useAgentNames(), viewer=useViewer();
   const [details, setDetails] = useState<string>();
   const open = details === id;
-  const base=useApprovalSnapshot(timezone);
   const waiting=showBlocker && base.approvals.some(row=>row.id===id && row.state==='pending');
   const { snapshot, refresh }=useProposalNow(base,open || waiting ? id : undefined,owner,!open);
   const defaultActions=ownerApprovalActions(owner);

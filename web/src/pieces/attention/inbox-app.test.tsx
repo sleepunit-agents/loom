@@ -6,15 +6,22 @@ import type { InboxItem } from '../inbox-view/model';
 type Asked = { query: string; variables: Record<string, unknown>; options?: { keep?: boolean; pause?: boolean } };
 // `item` is the state of the open item's own reading; `hold` makes the list answer as the data hook does while
 // the next folder, search or page loads (the last answer again, marked settling); `stray` answers with another item.
-const f = vi.hoisted(() => ({ titles: [] as { approval: string; title: string }[], approvals: [] as unknown[], owner: false, status: 'live', item: 'live', hold: false, stray: undefined as unknown, last: undefined as unknown, data: {} as Record<string, unknown>, requests: [] as Asked[], call: vi.fn(), read: vi.fn(), records: vi.fn() }));
+const f = vi.hoisted(() => ({ labelLoading:false, cardLoading:false, cardDenied:false, cardHistory:[] as {seq:number;at:string;event:string;approval:string;agent:string;note:string}[], cardReads: [] as Asked[], titles: [] as { approval: string; title: string }[], approvals: [] as unknown[], owner: false, status: 'live', item: 'live', hold: false, stray: undefined as unknown, last: undefined as unknown, data: {} as Record<string, unknown>, requests: [] as Asked[], call: vi.fn(), read: vi.fn(), records: vi.fn() }));
 vi.mock('../../data/graphql', () => ({ useDataQuery(query: string, variables: Record<string, unknown>, options?: Asked['options']) {
   // The household's zone, for the times the Inbox says (data/zone.ts): not one of the Inbox's own requests.
   if (query.includes('query DeskAgentDirectory')) return { status: 'live', data: { memoryPeopleAccess: { directory: true },
     memoryPeople: [{ id: 'commons:art', slug: 'art', name: 'Art E Fish', agent: null, kind: 'agent' }] } };
   if (query.includes('query DeskTime')) return { status: 'live', data: { deskTime: { at: 0, timezone: 'America/Chicago' } } };
   // The approvals an approval item's card is read from (data/work-views.ts): not one of the Inbox's own requests either.
+  if (query.includes('query ApprovalsView')) throw Error('Inbox requested the full Approvals selection');
   if (query.includes('query InboxProposalTitles')) return {status:'live', data:{inboxProposalTitles:f.owner?f.titles:[]}};
-  if (query.includes('query ApprovalsView')) return { status: 'live', data: { approvals: f.approvals, approvalRules: [], approvalNotices: [], approvalRecord: [] } };
+  if (query.includes('query InboxApprovals') || query.includes('query InlineApproval')) {
+    f.cardReads.push({query,variables,options});
+    if (options?.pause || (f.labelLoading && query.includes('query InboxApprovals')) || (f.cardLoading && query.includes('query InlineApproval'))) return {status:'loading'};
+    if (f.cardDenied && query.includes('query InlineApproval')) return {status:'denied'};
+    const ids=Array.isArray(variables.ids) ? variables.ids : [variables.id];
+    return {status:'live',data:{approvals:f.approvals.filter(row=>ids.includes((row as {id:string}).id)),approvalRecord:f.cardHistory.filter(event=>event.approval===variables.id)}};
+  }
   if (/query (WorkAnswerOwner|WorkViewer)/.test(query)) return { status: 'live', data: { workAnswerOwner: f.owner, workChangesRefresh: false, members: [], homeComms: null } };
   if (!variables) return { status: 'loading' };
   f.requests.push({ query, variables, options });
@@ -34,7 +41,7 @@ vi.mock('../../kit', () => Object.fromEntries(['Split','Row','NoteRow','Empty','
 import InboxApp from './index';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
-afterEach(async () => { f.approvals = []; f.titles = []; f.owner = false; await act(async () => tree?.unmount()); vi.useRealTimers(); f.requests = []; f.call.mockReset(); f.read.mockReset(); f.records.mockReset(); vi.unstubAllGlobals(); });
+afterEach(async () => { f.labelLoading=false; f.cardLoading=false; f.cardDenied=false; f.cardHistory=[]; f.cardReads=[]; f.approvals = []; f.titles = []; f.owner = false; await act(async () => tree?.unmount()); vi.useRealTimers(); f.requests = []; f.call.mockReset(); f.read.mockReset(); f.records.mockReset(); vi.unstubAllGlobals(); });
 function row(extra: Partial<InboxItem> = {}): InboxItem {
   return { id: 'in-1', canAnswer: true, source: 'thread', agent: 'art', at: '2026-11-14T18:00:00.000Z', state: 'waiting', volume: 'full', answers: 'yes-no', refs: [], read: false, body: { words: 'Buy the pump?', ifYes: 'Order it', ifNo: 'Skip it' }, ...extra };
 }
@@ -259,10 +266,57 @@ it.each([
   expect(text()).not.toContain('UROBIN');
   expect(text()).not.toContain('When Art works on that account’s word in an eligible conversation.');
   expect(text()).not.toContain(raw);
+  expect(f.cardReads.filter(read=>!read.options?.pause).map(read=>read.variables)).toContainEqual({ids:[id]});
+  expect(f.cardReads.filter(read=>!read.options?.pause).map(read=>read.variables)).toContainEqual({id});
+  f.cardLoading=true;
+  await act(async()=>{tree.update(h(InboxApp,{path:'/p/inbox-preview/ask/in-1'}));});
+  expect(tree.root.findByType('Row' as never).props.title).toBe(title);
+  expect(tree.root.findAllByType('Title' as never)[0].props.children).toBe(title);
+  f.cardLoading=false;
+  f.cardDenied=true;
+  await act(async()=>{tree.update(h(InboxApp,{path:'/p/inbox-preview/ask/in-1'}));});
+  expect(tree.root.findByType('Row' as never).props.title).toBe(raw);
+  expect(tree.root.findAllByType('Title' as never)[0].props.children).toBe(raw);
+  expect(tree.root.findAllByType('Button' as never).filter(button=>['Allow','Deny'].includes(button.props.children))).toHaveLength(0);
+  f.cardDenied=false;
   // An approval the reader may not see leaves the item in the words stored with it.
   f.approvals = [];
   await act(async () => { tree.update(h(InboxApp, { path:'/p/inbox-preview/ask/in-1' })); });
   expect(tree.root.findByType('Row' as never).props.title).toBe(raw);
+});
+
+it('keeps an off-page approval confirmation while visible list labels are loading',async()=>{
+  const current=row({source:'approval',waitsOnKind:'approval',waitsOnId:'off-page',canAnswer:false});
+  const other=row({id:'in-2',source:'approval',waitsOnKind:'approval',waitsOnId:'on-page'});
+  setup(current,[other]);
+  f.owner=true;
+  f.approvals=[{id:'off-page',kind:'dangerous',operation:'example.discardDraft',target:'example:discard-draft:t-1',
+    what:'Close the draft',ask:'Close the draft?',ifYes:'Close it.',ifNo:'Keep it.',why:'It is finished.',
+    agent:'art',state:'pending',details:'',askedAt:current.at,expiresAt:null}];
+  const props={path:'/p/inbox-preview/ask/in-1'};
+  await act(async()=>{tree=create(h(InboxApp,props));});
+  await act(async()=>tree.root.findAllByType('Button' as never).find(button=>button.props.children==='Allow')!.props.onClick());
+  f.labelLoading=true;
+  await act(async()=>{tree.update(h(InboxApp,props));});
+  expect(text()).toContain('Yes, allow it');
+  for(const read of f.cardReads.filter(r=>!r.options?.pause)){
+    const query=read.query.replace(/\s/g,'');
+    expect(query).not.toMatch(/approvalRules|approvalNotices/);
+    if(query.includes('queryInboxApprovals(')){
+      expect(read.variables).toEqual({ids:['on-page']});
+      expect(query).toContain('approvals(where:{id:{inArray:$ids}}){idoperationwhatdetails}');
+      expect(query).not.toContain('approvalRecord');
+    }else{
+      expect(read.variables).toEqual({id:'off-page'});
+      expect(query).toContain('approvals(where:{id:{eq:$id}},limit:1)');
+      expect(query).toContain('approvalRecord(where:{approval:{eq:$id}})');
+    }
+  }
+  f.approvals=[{...f.approvals[0] as object,state:'denied',decidedBy:'alex'}];
+  const decision='Denied by Alex after inspection.';
+  f.cardHistory=[{seq:3,at:current.at,event:'deny',approval:'off-page',agent:'art',note:decision}];
+  await act(async()=>{tree.update(h(InboxApp,props));});
+  expect(text()).toContain(decision);
 });
 
 it('keeps a linked private question and its explanation above the approval controls, and keeps the words of a decision notice',async()=>{
