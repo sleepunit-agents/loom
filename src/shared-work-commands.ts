@@ -82,7 +82,9 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
   const decisionBasis = (answer: 'allow' | 'deny', basis: string | undefined) =>
     basis && (answer === 'allow' ? 'Allowed by ' : 'Denied by ') + basis;
   operations.register({ name: 'approvals.answer', write: true, recheckPolicy: true,
-    input: z.object({ id, answer: z.enum(['allow', 'deny']), reason: z.string().trim().min(1).max(2000).optional(), confirm: z.literal(true).optional(), review: z.string().regex(SHA256_HEX).optional(), onWord: ownerWord.optional() }).strict(), output: z.object({ id }).strict(),
+    input: z.object({ id, answer: z.enum(['allow', 'deny']), reason: z.string().refine(value => value.trim().length > 0 && value.trim().length <= 2000).optional(), confirm: z.literal(true).optional(), review: z.string().regex(SHA256_HEX).optional(), onWord: ownerWord.optional() }).strict()
+      .transform(input => input.reason && !(input.onWord && 'item' in input.onWord)
+        ? { ...input, reason: input.reason.trim() } : input), output: z.object({ id }).strict(),
     may(viewer, input) {
       const row = approval(input.id);
       if (!workAnswersAllowed(db, viewer) && !sources.bodyJob(viewer) && !(viewer.kind === 'agent' && viewer.atTerminalOf !== undefined && sources.terminal?.(viewer))) return false;
@@ -94,13 +96,12 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
         if (!word) {
           if (viewer.kind !== 'member' || sources.isProgram(viewer)) return false;
         } else {
-          if (word.quote !== input.reason) return false;
           if ('venue' in word) {
-            if (viewer.kind !== 'agent') return false;
+            if (viewer.kind !== 'agent' || word.quote !== input.reason) return false;
           } else {
             // Only return the owner's quoted reason to the private Comms thread that supplied it.
             const job = sources.bodyJob(viewer)?.job, proof = proofs[0];
-            if (!word.item || !proof?.sealed || !job?.conversation || row.conversation !== job.conversation ||
+            if (word.quote !== input.reason || !word.item || !proof?.sealed || !job?.conversation || row.conversation !== job.conversation ||
                 row.agent !== job.agent || row.member !== proof.member) return false;
             const cv = db.select().from(conversations).where(eq(conversations.id, job.conversation)).get();
             if (cv?.venue !== 'loom' || cv.place !== proof.thread || cv.agent !== job.agent || cv.member !== proof.member) return false;
