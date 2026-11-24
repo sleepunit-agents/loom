@@ -16,29 +16,44 @@ const historyQuery = `query TempoDayHistory($from: String!, $until: String!) {
 }`;
 type Event = { trigger: string; seq: number; at: string; event: string };
 const shift = (date: string, days: number) => new Date(Date.parse(date + 'T00:00:00Z') + days * DAY_MS).toISOString().slice(0, 10);
-type Entry = {trigger: Trigger; at: number; key: string; state: string};
+type Entry = {trigger: Trigger; at: number; key: string; state: string; scheduled: boolean};
 
 type ScheduleProps = {zone: string; now: number; triggers: readonly Trigger[]; pauses: readonly AgentPause[]; open: (id: string) => void};
 const dateLabel = new Intl.DateTimeFormat(undefined,{timeZone:'UTC',weekday:'short',month:'short',day:'numeric',year:'numeric'});
 const formatDate = (date: string) => dateLabel.format(Date.parse(date+'T12:00:00Z'));
 const noEvents: Event[] = [];
+const frequentRunsPerDay = 4;
 
 function DayHours({date, zone, now, triggers, pauses, open, log}: ScheduleProps & {date: string; log: Event[] | undefined}) {
-  const entries = useMemo(() => {
+  const {entries, frequent} = useMemo(() => {
     const items: Entry[] = [];
+    const frequentIds = new Set<string>();
     const byId = new Map(triggers.map(t => [t.id,t]));
     for (const event of log ?? []) {
       const t = byId.get(event.trigger), at = Date.parse(event.at);
-      if (t) items.push({trigger:t, at, key:'event-'+event.seq, state:event.event});
+      if (!t) continue;
+      items.push({trigger:t, at, key:'event-'+event.seq, state:event.event, scheduled:false});
     }
     for (const t of triggers) {
       if (t.sourceKind !== 'time' || !t.times || !t.enabled || !t.nextDueAt) continue;
       const next = Date.parse(t.nextDueAt);
       if (t.lifespan === 'today' && localDate(next,zone) !== date) continue;
       const times = t.lifespan === 'once' ? (localDate(next,zone) === date ? [next] : []) : timesOnDate(t.times,t.days,date,zone);
-      for (const at of times) if (at >= next) items.push({trigger:t, at, key:t.id+'/'+at, state:status(t,pauses)});
+      if (times.length >= frequentRunsPerDay && times.some(at=>at >= next)) frequentIds.add(t.id);
+      for (const at of times) if (at >= next) items.push({trigger:t, at, key:t.id+'/'+at, state:status(t,pauses), scheduled:true});
     }
-    return items.sort((a,b)=>a.at-b.at || a.key.localeCompare(b.key));
+    items.sort((a,b)=>a.at-b.at || a.key.localeCompare(b.key));
+    const frequent = new Map<string, Entry[]>();
+    for (const entry of items) {
+      const {id,sourceKind,lifespan} = entry.trigger;
+      if (sourceKind !== 'time' || lifespan === 'once') continue;
+      const group = frequent.get(id);
+      if (group) group.push(entry); else frequent.set(id,[entry]);
+    }
+    for (const [id,group] of frequent) {
+      if (!frequentIds.has(id) && group.length < frequentRunsPerDay) frequent.delete(id);
+    }
+    return {entries:items.filter(entry=>!frequent.has(entry.trigger.id)),frequent};
   }, [triggers, pauses, date, zone, log]);
   const format = new Intl.DateTimeFormat(undefined,{timeZone:zone,hour:'2-digit',minute:'2-digit'});
   const hourFormat = new Intl.DateTimeFormat(undefined,{timeZone:zone,hour:'numeric',timeZoneName:'short'});
@@ -56,6 +71,10 @@ function DayHours({date, zone, now, triggers, pauses, open, log}: ScheduleProps 
   }
   if (today && !marked) add(now,'now');
   return <section aria-label="Day schedule" className="grid gap-1">
+    {frequent.size > 0 && <section aria-label="Frequent triggers" className="grid gap-1">
+      <h3 className="text-sm">Frequent triggers</h3>
+      {[...frequent].map(([id,group])=><FrequentTriggerRow key={id} entries={group} format={format} open={open}/>)}
+    </section>}
     {[...hours].map(([hour,items])=><div key={hour} className="tempo-hour grid grid-cols-[5em_minmax(0,1fr)] gap-2 border-t py-2">
       <h3 className="pt-1 text-sm">{hour}</h3>
       <div className="grid gap-1 border-l pl-2">{items.map(entry=>entry === 'now'
@@ -63,8 +82,21 @@ function DayHours({date, zone, now, triggers, pauses, open, log}: ScheduleProps 
         : <Row key={entry.key} title={title(entry.trigger)} className={entry.trigger.sourceKind === 'time' ? undefined : 'tempo-event-firing'}
           meta={entry.trigger.sourceKind === 'time' ? format.format(entry.at) : format.format(entry.at)+' · '+eventLabels[entry.trigger.sourceKind]} status={entry.state} onClick={()=>open(entry.trigger.id)}/>)}</div>
     </div>)}
-    {log && !entries.length && <p>No timed activity for this day.</p>}
+    {log && !entries.length && !frequent.size && <p>No timed activity for this day.</p>}
   </section>;
+}
+
+function FrequentTriggerRow({entries,format,open}: {entries: Entry[]; format: Intl.DateTimeFormat; open: (id:string)=>void}) {
+  const trigger = entries[0].trigger;
+  const outcomes = new Map<string,number>();
+  const upcoming = entries.filter(entry=>entry.scheduled);
+  for (const entry of entries) {
+    if (!entry.scheduled) outcomes.set(entry.state,(outcomes.get(entry.state) ?? 0)+1);
+  }
+  const summary = [...outcomes].map(([state,count])=>count+' '+state);
+  const next = upcoming[0];
+  if (next) summary.push(upcoming.length+' scheduled', 'Next '+format.format(next.at));
+  return <Row title={title(trigger)} status={next?.state} meta={summary.join(' · ')} onClick={()=>open(trigger.id)}/>;
 }
 
 function CalendarHours({start,week,selectDay,...schedule}: ScheduleProps & {start:string; week:boolean; selectDay:(date:string)=>void}) {
