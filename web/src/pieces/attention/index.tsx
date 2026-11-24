@@ -1,7 +1,7 @@
 import { InboxDiscussion } from './inbox-discussion';
 import {WorkerJoinCard} from './worker-join';
 import { TaskQuestionAnswer } from '../tasks/question-answer';
-import { LiveApprovalCard, useApprovalList } from '../../data/work-views';
+import { InboxApprovalCard, useApprovalList } from '../../data/work-views';
 import { approvalTitle } from '../approval-view/model';
 import { useReadingVisible } from '../../data/visibility';
 import { memberOperation } from '../../data/operation';
@@ -58,11 +58,13 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
   const mutate = memberOperation;
   // An approval's item is said as its card says it: the same plain sentence, made when it is read, and the same
   // card with its Allow and Deny in the reader. The words stored with the item stay where the card is not readable.
-  const cards = useApprovalList();
+  const visibleRequests=data?.items.slice(0,inboxPageSize).filter(approvalRequestId) ?? [];
+  const cardItems=current ? [...visibleRequests,current] : visibleRequests;
+  const cardIds=[...new Set(cardItems.flatMap(row=>row.waitsOnKind==='approval' && row.waitsOnId ? [row.waitsOnId] : []))].sort();
+  const cards = useApprovalList(cardIds);
   const cardOf = (row: { waitsOnKind?: string | null; waitsOnId?: string | null }) => row.waitsOnKind === 'approval' && cards.status === 'live' ? cards.approvals.find(card => card.id === row.waitsOnId) : undefined;
 
-  const ids = [...new Set([...(data?.items.slice(0,inboxPageSize).filter(approvalRequestId) ?? []), ...(current ? [current] : [])]
-    .map(cardOf).filter(card => card?.operation === 'household.change').map(card => card!.id))];
+  const ids = [...new Set(cardItems.map(cardOf).filter(card => card?.operation === 'household.change').map(card => card!.id))];
   const {named} = useInboxProposalTitles(ids);
 
   const actions: InboxActions | undefined = live ? {
@@ -78,7 +80,7 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
     sourceCard={item => {
       const card = item.source === 'notice' && item.sourceId?.startsWith('worker-join:') ? <WorkerJoinCard key={item.id} item={item}/>
       : item.source === 'task' && item.waitsOnKind === 'task' ? <TaskQuestionAnswer key={item.id} item={item}/>
-      : cardOf(item) ? <LiveApprovalCard showBlocker key={item.id} id={item.waitsOnId!} displayTitle={named.get(item.waitsOnId!)} /> : undefined;
+      : cardOf(item) ? <InboxApprovalCard showBlocker key={item.id} id={item.waitsOnId!} displayTitle={named.get(item.waitsOnId!)} /> : undefined;
       return item.discussionAgent ? <>{card}<InboxDiscussion key={JSON.stringify([item.id, item.discussionAgent])} item={item.id} agent={item.discussionAgent} go={go} /></> : card;
     }}
     results={{ status, results: data?.results ?? [] }} dismissResult={live ? id => mutate('inbox.dismissResult', { id }) : undefined}
