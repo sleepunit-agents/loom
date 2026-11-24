@@ -17,6 +17,9 @@ import type { ApprovalSnapshot } from '../pieces/approval-view/model';
 import { approvalsQuery, inboxApprovalsQuery, inlineApprovalQuery, changesQuery, approvalSnapshot, changeSnapshot, type ApprovalsResult, type ChangesResult } from './work-query';
 
 const ownerQuery = 'query WorkAnswerOwner { workAnswerOwner workChangesRefresh members { id role } }';
+const approvalChangeQuery = `query ApprovalChange($id: String!, $head: String!) {
+  changes(where: {id: {eq: $id}, headCommit: {eq: $head}}, limit: 1) { id state agent project headCommit }
+}`;
 const mergeRequestsQuery = 'query WorkMergeRequests { approvals { id kind target state agent project actingFor operation } }';
 function useWorkAccess() {
   const snapshot = useDataQuery<{workAnswerOwner:boolean;workChangesRefresh:boolean;members:RulePerson[]}>(ownerQuery);
@@ -85,7 +88,7 @@ function useViewer(): string | undefined {
 /** Commands are injected by the authenticated composition. Never substitute
  * the replaced record feed's operation protocol or optimistically change rows. */
 export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; timezone?: string; actions?: ApprovalActions; go?(path: string): void } = {}) {
-  const access=useWorkAccess(), read=useApprovalSnapshot(timezone), changes=useChangeSnapshot(timezone), names=useAgentNames(), viewer=useViewer();
+  const access=useWorkAccess(), read=useApprovalSnapshot(timezone), names=useAgentNames(), viewer=useViewer();
   const base = '/p/approvals-preview';
   const [localPath, setLocalPath] = useState(() => typeof location === 'undefined' ? base : location.pathname);
   useEffect(() => {
@@ -109,7 +112,12 @@ export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; t
       setLocalPath(next);
     }
   };
-  const standing=alwaysInput(snapshot.approvals.find(card=>card.id===selected),changes.status==='live'?changes.changes:[],access.members);
+  const card=snapshot.approvals.find(row=>row.id===selected);
+  const target=access.owner && card?.kind==='merge' && card.state==='pending' && card.operation===null
+    ? /^(.+)@([a-f0-9]{40})$/u.exec(card.target) : null;
+  const change=useDataQuery<{changes:Pick<ChangesResult['changes'][number],'id'|'state'|'agent'|'project'|'headCommit'>[]}>(
+    approvalChangeQuery,{id:target?.[1] ?? '',head:target?.[2] ?? ''},{pause:!target});
+  const standing=alwaysInput(card,target && change.status==='live' ? change.data?.changes ?? [] : [],access.members);
   const defaultActions=ownerApprovalActions(access.owner,standing);
   const answerActions = actions ?? (defaultActions && { ...defaultActions, openRuleConversation: go ?? ((next:string)=>window.location.assign(next)) });
   return <Approvals snapshot={snapshot} actions={answerActions && { ...answerActions, refreshProposal: refresh }} names={names} viewer={viewer} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)}
