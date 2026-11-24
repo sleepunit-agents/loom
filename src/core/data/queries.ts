@@ -141,14 +141,12 @@ export function dataQueries(client: Database.Database, options: {
   // A trigger's ordinary read rule is wider than its program's. Hide private values from predicates
   // and ordering as well as from every relation projection. tempoProgram checks their narrower rule.
   const programColumns = ['program', 'readStateFrom', 'programState', 'programPeriod'];
-  if (selected.has('triggers')) for (const name of ['TriggersOrderBy', 'TriggersFilters', 'TriggersFiltersOr']) {
-    const type = generated.getType(name);
-    if (isInputObjectType(type)) for (const key of programColumns) delete type.getFields()[key];
-  }
   // A pending placement diagnosis belongs to dispatch. Only jobHistory projects its terminal outcome.
-  for (const name of ['JobsOrderBy', 'JobsFilters', 'JobsFiltersOr']) {
-    const type = generated.getType(name);
-    if (isInputObjectType(type)) delete type.getFields().signInBlocked;
+  for (const [prefix, columns] of [['Triggers', programColumns], ['Jobs', ['signInBlocked']]] as const) {
+    for (const suffix of ['OrderBy', 'Filters', 'FiltersOr']) {
+      const type = generated.getType(prefix + suffix);
+      if (isInputObjectType(type)) for (const column of columns) delete type.getFields()[column];
+    }
   }
   const visited = new Set<object>();
   function addCounts(name: TableName, output: ReturnType<typeof getNamedType>) {

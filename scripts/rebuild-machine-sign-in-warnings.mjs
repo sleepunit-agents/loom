@@ -3,7 +3,7 @@ import {browserRead} from './rebuild-conversation-visibility.mjs';
 import {exampleHome} from '../dist/example-home.js';
 import {startSharedHome} from '../dist/shared-startup.js';
 import {FakeClock} from '../dist/core/clock.js';
-import {QUEUE_DEADLINE_MS} from '../dist/runtime/jobs.js';
+import {Jobs,QUEUE_DEADLINE_MS} from '../dist/runtime/jobs.js';
 import {SILENCE_MS} from '../dist/runtime/silence.js';
 import {httpWorkerControl,reportWorkerHealth,reportWorkerAccountLogins} from '../dist/runtime/worker-http.js';
 
@@ -31,15 +31,17 @@ export async function machineSignInWarnings({browser,home}){
   await page.getByRole('button',{name:'Sign in',exact:true}).click();
   await page.locator('.next-shell').waitFor();
   await page.goto(app.url+'/p/machines');
-  const {box,account,job}=example.runtime;
+  const {box,account,job,publicJob}=example.runtime;
   const machine=page.getByRole('heading').filter({has:page.getByRole('button',{name:'Example workshop',exact:true})});
   await machine.waitFor();
   const warning=machine.getByRole('img',{name:'A sign-in needs attention'});
   const worker={url:app.url,token:app.writes.run(()=>app.services.signin.issue({kind:'runner',box,label:'Example workshop'})).value.token,facts:['cpu:example'],signal:AbortSignal.timeout(60000)};
   const login={account,harness:'claude',place:'containers',state:'signed-in'};
   await reportWorkerHealth(worker);
+  await reportWorkerAccountLogins(worker,[{...login,state:'signed-out'}]);
+  await warning.waitFor();
   await reportWorkerAccountLogins(worker,[{...login,expiresAt:new Date(clock.now()+3*86400000+1000).toISOString()}]);
-  assert.equal(await warning.count(),0);
+  await warning.waitFor({state:'hidden'});
   clock.advance(1000);
   await warning.waitFor();
   clock.advance(SILENCE_MS);
@@ -57,8 +59,9 @@ export async function machineSignInWarnings({browser,home}){
   assert.equal(await httpWorkerControl(worker).next(),undefined);
   const readDiagnosis=async()=> (await browserRead(page,'{jobHistory(agent:"moss",id:'+JSON.stringify(job.id)+'){ signInBlocked }}')).jobHistory;
   assert.deepEqual(await readDiagnosis(),[{signInBlocked:false}]);
-  const rawTypes=await browserRead(page,'{filters:__type(name:"JobsFilters"){inputFields{name}} order:__type(name:"JobsOrderBy"){inputFields{name}}}');
-  for(const type of Object.values(rawTypes))assert(!type?.inputFields.some(field=>field.name==='signInBlocked'));
+  const otherEnd=app.writes.run(()=>new Jobs(app.services.comms.db,()=>new Date(clock.now()).toISOString())
+   .unplaceable(publicJob.id,'The example assignment ended.')).value;
+  assert.equal(otherEnd.state,'failed');
   await page.getByLabel('Jobs for').selectOption('moss');
   const jobRow=page.getByRole('button').filter({has:page.getByText(job.title,{exact:true})});
   await jobRow.waitFor();
@@ -70,6 +73,10 @@ export async function machineSignInWarnings({browser,home}){
   clock.advance(30_000);
   await jobWarning.waitFor();
   assert.match(await jobRow.innerText(),/Failed/);
+  const unrelated=page.getByRole('button').filter({has:page.getByText(publicJob.title,{exact:true})});
+  await unrelated.waitFor();
+  assert.match(await unrelated.innerText(),/Failed/);
+  assert.equal(await unrelated.getByRole('img',{name:'A machine needed sign-in on the last placement check'}).count(),0);
   assert.deepEqual(await readDiagnosis(),[{signInBlocked:true}]);
   await reportWorkerAccountLogins(worker,[login]);
   await warning.waitFor({state:'hidden'});

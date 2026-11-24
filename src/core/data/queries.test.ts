@@ -28,6 +28,21 @@ function fixture() {
 afterEach(() => { for (const client of opened.splice(0)) client.close(); });
 
 describe('generated SQL reads', () => {
+  it('keeps the pending placement sign-in diagnosis out of raw job projections, ordering and filters', async () => {
+    const {client}=fixture();
+    const schema=dataQueries(client,{tables:['jobs'],visibility:{jobs:()=>sql`true`}});
+    for(const source of [
+      '{jobs {signInBlocked}}',
+      '{jobs(where:{signInBlocked:{eq:true}}){id}}',
+      '{jobs(where:{OR:[{signInBlocked:{eq:true}}]}){id}}',
+      '{jobs(orderBy:{signInBlocked:{direction:asc,priority:0}}){id}}',
+    ]) {
+      const result=await graphql({schema,source});
+      expect(result.errors?.map(error=>error.message).join(' ')).toMatch(/signInBlocked/);
+      expect(result.data).toBeUndefined();
+    }
+  });
+
   it('counts visible comments with selected root and connected task rows in one statement', async () => {
     const { client, statements } = fixture();
     const schema = dataQueries(client, {
