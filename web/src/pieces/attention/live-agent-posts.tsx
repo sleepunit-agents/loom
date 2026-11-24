@@ -8,6 +8,7 @@ export const agentFeedQuery = `query AgentActivityFeed($agent:String!,$limit:Int
   agentActivityFeed(agent:$agent,limit:$limit){thread title latest{id at words work @skip(if:$compact){id title state href}} parent{id words}}
 }`;
 export const agentHistoryQuery = `query AgentActivityHistory($agent:String!,$thread:String!,$after:String!,$limit:Int!){
+  selected:agentActivityFeed(agent:$agent,thread:$thread,limit:1){title}
   agentActivityHistory(agent:$agent,thread:$thread,after:$after,limit:$limit,newestFirst:true){id at words source work{id title state href}}
 }`;
 const pageSize = 25;
@@ -47,11 +48,10 @@ export function LiveAgentFeed({ agent, compact = false, go, onChange, showEmpty 
 export function LiveAgentHistory({ agent, thread, go }: {
   agent: string; thread: string; go(path: string): void;
 }) {
-  const previews = useDataQuery<{agentActivityFeed: AgentPostPreview[]}>(agentFeedQuery, {agent,limit:5,compact:false});
-  const title = previews.status === 'live' ? previews.data?.agentActivityFeed?.find(row=>row.thread===thread)?.title : undefined;
   const [cursors,setCursors] = useState(['0']);
   const after = cursors[cursors.length - 1];
-  const query = useDataQuery<{agentActivityHistory: (AgentPost & {source: string})[]}>(agentHistoryQuery, {agent,thread,after,limit:pageSize+1});
+  const query = useDataQuery<{selected: {title:string}[]; agentActivityHistory: (AgentPost & {source: string})[]}>(agentHistoryQuery, {agent,thread,after,limit:pageSize+1});
+  const title = query.status === 'live' ? query.data?.selected?.[0]?.title : undefined;
   const posts = query.status === 'live' ? query.data?.agentActivityHistory : undefined;
   const now = usePostClock(!!posts?.length);
   return <Section label={title || "Activity thread"}>

@@ -444,16 +444,19 @@ it('serves the activity card and history under the current source conversation v
   const read = (who: typeof alice, id: string) => graphql({schema,contextValue:{viewer:who},variableValues:{id},
     source:`query($id:String!){
       agentActivityFeed(agent:"art"){thread title latest{words} parent{words}}
+      selected:agentActivityFeed(agent:"art",thread:$id,limit:1){title}
       agentActivityHistory(agent:"art",thread:$id){id words}
     }`});
   const own = await read(alice,thread);
   expect(own.errors).toBeUndefined();
-  expect(own.data).toEqual({agentActivityFeed:[{thread,title:'Boot console',latest:{words:'It scrolls!'},parent:{words:'Boot console'}}],
+  expect(own.data).toEqual({selected:[{title:'Boot console'}],agentActivityFeed:[{thread,title:'Boot console',latest:{words:'It scrolls!'},parent:{words:'Boot console'}}],
     agentActivityHistory:[{id:'1',words:'Boot console'},{id:'2',words:'It scrolls!'}]});
   expect((await read(alice,otherActivity)).data?.agentActivityHistory).toEqual([]);
   expect((await read(owner,otherActivity)).data?.agentActivityHistory).toEqual([{id:'3',words:'Other work'}]);
+  expect((await read(alice,otherActivity)).data?.selected).toEqual([]);
+  expect((await read(owner,thread)).data?.selected).toEqual([{title:'Boot console'}]);
   f.onOpen(f.revoke);
-  expect((await read(alice,thread)).data).toEqual({agentActivityFeed:[],agentActivityHistory:[]});
+  expect((await read(alice,thread)).data).toEqual({selected:[],agentActivityFeed:[],agentActivityHistory:[]});
 });
 
 it('attaches current work states to a post without requiring the IDs in its words', async () => {

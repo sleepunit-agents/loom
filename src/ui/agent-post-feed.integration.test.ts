@@ -37,6 +37,8 @@ it.runIf(process.env.LOOM_TEST_CHROME)('keeps live updates, their linked work an
     await post({action:'reply',thread:disk,words:'Oh right, it was me.',refs:[change]});
     await post({action:'rename',thread:disk,title:'The missing disk space'});
     await card.getByText('The missing disk space',{exact:true}).waitFor();
+    const diskRow=card.getByRole('listitem').filter({has:page.getByText('The missing disk space',{exact:true})});
+    await diskRow.getByText('Show the work',{exact:true}).click();
     const receipt=card.getByRole('link',{name:/Plan the pump repair/});
     await expect.poll(()=>receipt.textContent()).toMatch(/open$/);
     house.writes.run(()=>db.update(changes).set({state:'merged'}).where(eq(changes.id,change)).run());
@@ -53,7 +55,13 @@ it.runIf(process.env.LOOM_TEST_CHROME)('keeps live updates, their linked work an
     expect(await heading.evaluate(el=>el.scrollWidth<=el.clientWidth+1 && getComputedStyle(el).whiteSpace!=='nowrap')).toBe(true);
     await rail.click();
     const history=page.getByRole('list',{name:'Activity posts'});
-    await expect.poll(()=>history.locator('p').allTextContents()).toEqual(['Giving boot a console.','It scrolls now.']);
+    await expect.poll(()=>history.locator('p').allTextContents()).toEqual(['It scrolls now.','Giving boot a console.']);
+    for(let i=1;i<=5;i++)await post({action:'open',words:'Other activity '+i});
+    await page.reload();
+    const selected=page.locator('.desk-agent-page');
+    await selected.getByRole('region',{name:title,exact:true}).waitFor();
+    await post({action:'rename',thread:boot,title:'Boot console restored'});
+    await selected.getByRole('region',{name:'Boot console restored',exact:true}).waitFor();
     await page.getByRole('button',{name:'Source conversation'}).click();
     await page.getByText('Start the boot console walkthrough here.',{exact:true}).filter({visible:true}).first().waitFor();
   } finally {
