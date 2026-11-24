@@ -148,19 +148,38 @@ export async function dataActions({page,app,example,apps,subscriptions,out,shari
  });
  evidence.dataSharingSQL=sharingSQL??{inconclusive:true,reason:'The early fresh-household growth measurement is unavailable.'};
  await attempt('dataTaskPatches',async()=>{
-  await open(page,'Tasks');
-  await page.waitForFunction(()=>{const s=globalThis.__loomDataProbe,e=s.entries.get(s.sockets.find(x=>x.readyState===WebSocket.OPEN&&new URL(x.url).pathname==='/graphql'));return e&&[...e.active.values()].some(r=>/query\s+Tasks\b/.test(r.query)&&e.frames.some(f=>f.id===r.id));},undefined,{timeout:4000});
-  await page.evaluate(()=>{const s=globalThis.__loomDataProbe,e=s.entries.get(s.sockets.find(x=>x.readyState===WebSocket.OPEN&&new URL(x.url).pathname==='/graphql'));s.beforeTasks={ids:[...e.active.values()].filter(r=>/query\s+Tasks\b/.test(r.query)).map(r=>r.id),requests:e.requests.filter(r=>/query\s+Tasks\b/.test(r.query)).length,frames:e.frames.length};});
+  const task=example.tasks[0],words='A fictitious live-delta comment.';
+  await page.goto(new URL('/p/tasks-preview/task/'+encodeURIComponent(task),page.url()).href);
+  const tile=page.getByRole('region',{name:'Tasks tile',exact:true});
+  await page.waitForFunction(task=>{
+   const state=globalThis.__loomDataProbe;
+   const entry=state.entries.get(state.sockets.find(socket=>socket.readyState===WebSocket.OPEN&&new URL(socket.url).pathname==='/graphql'));
+   if(!entry)return false;
+   const reader=[...entry.active.values()].find(request=>entry.frames.some(frame=>frame.id===request.id&&frame.patches.some(
+    patch=>patch.path.length===0&&patch.value?.selectedTask?.id===task&&Array.isArray(patch.value.selectedTask.taskCommentsByTask))));
+   if(!reader)return false;
+   state.beforeTasks={id:reader.id,query:reader.query,requests:entry.requests.filter(request=>request.query===reader.query).length,frames:entry.frames.length};
+   return true;
+  },task,{timeout:4000});
   const initial=await watch(page,'{ tasks(where:{id:{eq:'+JSON.stringify(example.tasks[0])+'}}) { id title commentCount } }');
   check(initial.revision===1&&initial.patches.length===1&&initial.patches[0].path.length===0,'Missing one initial result');const before=initial.patches[0].value.tasks[0].commentCount;
-  app.writes.run(()=>app.services.tasks.comment(example.tasks[0],'A fictitious live-delta comment.',{kind:'member',id:'alex'}));
+  app.writes.run(()=>app.services.tasks.comment(task,words,{kind:'member',id:'alex'}));
+  await tile.getByText(words,{exact:true}).waitFor({timeout:4000});
   await page.waitForFunction(()=>globalThis.__loomDataProbe.probe.events.length>1||globalThis.__loomDataProbe.probe.error,undefined,{timeout:4000});
-  await page.waitForFunction(()=>{const s=globalThis.__loomDataProbe,p=s.probe,e=s.entries.get(p.socket);return e.frames.slice(s.beforeTasks.frames).some(f=>s.beforeTasks.ids.includes(f.id)&&f.revision>1);},undefined,{timeout:4000});
-  const proof=await page.evaluate(()=>{const s=globalThis.__loomDataProbe,p=s.probe,e=s.entries.get(p.socket);return{error:p.error,events:p.events,requests:e.requests.filter(r=>r.id===p.id).length,taskRequests:e.requests.filter(r=>/query\s+Tasks\b/.test(r.query)).length,before:s.beforeTasks,history:e.frames.filter(f=>s.beforeTasks.ids.includes(f.id)),after:e.frames.slice(0,s.beforeTasks.frames).filter(f=>s.beforeTasks.ids.includes(f.id)).length,taskFrames:e.frames.slice(s.beforeTasks.frames).filter(f=>s.beforeTasks.ids.includes(f.id)).map(({patches,...frame})=>frame)};});
-  check(!proof.error&&proof.requests===1&&proof.taskRequests===proof.before.requests,'A selection was resubscribed for a normal change');
+  const proof=await page.evaluate(()=>{
+   const state=globalThis.__loomDataProbe,probe=state.probe,entry=state.entries.get(probe.socket),before=state.beforeTasks;
+   const history=entry.frames.filter(frame=>frame.id===before.id);
+   return {error:probe.error,events:probe.events,requests:entry.requests.filter(request=>request.id===probe.id).length,
+    sameReader:entry.active.has(before.id)&&entry.requests.filter(request=>request.query===before.query).length===before.requests,
+    history,after:entry.frames.slice(0,before.frames).filter(frame=>frame.id===before.id).length};
+  });
+  check(!proof.error&&proof.requests===1&&proof.sameReader,'A selection was resubscribed for a normal change');
   const delta=proof.events[1];check(delta.revision>1&&delta.patches.length===1&&JSON.stringify(delta.patches[0].path)===JSON.stringify(['tasks',0,'commentCount'])&&delta.patches[0].value===before+1,'Changed fields were not delivered as one narrow patch');
-  check(proof.taskFrames.some(f=>f.revision>1)&&changedFields(proof.history,proof.after,'tasks',3),'The actual Tasks tile did not receive changes without another root snapshot');
-  return{inconclusive:true,reason:'The actual Tasks comment delta was narrow and required no resubscription; complete change behavior across all selections and edits is not measured.',initialRevision:initial.revision,changedRevision:delta.revision,patches:delta.patches,taskFrames:proof.taskFrames,requests:proof.requests};
+  const taskFrames=proof.history.slice(proof.after);
+  check(changedFields(proof.history,proof.after,'selectedTask',3)&&taskFrames.some(frame=>frame.revision>1&&frame.patches.some(
+   patch=>patch.path[0]==='selectedTask'&&patch.path[1]==='taskCommentsByTask'&&patch.value?.text===words)),
+   'The open Tasks reader did not receive the new comment as a narrow patch');
+  return{inconclusive:true,reason:'The open Tasks reader received and displayed the new comment without resubscribing. Other selections and edits remain unmeasured.',initialRevision:initial.revision,changedRevision:delta.revision,patches:delta.patches,taskFrames:taskFrames.map(({patches,...frame})=>frame),requests:proof.requests};
  });
  await attempt('dataInboxChange',async()=>{
   const tile=await open(page,'Inbox'),back=tile.locator('.loom-split__back:visible');if(await back.count())await back.click();await tile.getByRole('button',{name:/^Needs you(?:\s|$)/}).first().click();await tile.getByLabel('Search asks',{exact:true}).fill('');
