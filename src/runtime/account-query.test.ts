@@ -392,10 +392,10 @@ it('shows only the assigned subscription summary for a visible job', async () =>
   f.db.insert(jobs).values(job).run();
   const read = async (who: keyof typeof keys, agent='agent') => (await (await f.post(who,
     'query($agent:String!){jobSubscription(agent:$agent,job:"private-run"){label level}}',{agent})).json()).data;
-  expect(await read('house')).toEqual({jobSubscription:{label:'Other subscription',level:'getting full'}});
-  expect(await read('alice')).toEqual(await read('house'));
-  expect(await read('bob')).toEqual({jobSubscription:null});
-  expect(await read('house','another-agent')).toEqual({jobSubscription:null});
-  f.db.update(jobs).set({account:null}).where(eq(jobs.id,job.id)).run();
+  expect(await read('alice')).toEqual({jobSubscription:{label:'Other subscription',level:'getting full'}});
   expect(await read('house')).toEqual({jobSubscription:null});
+  expect(await read('bob')).toEqual({jobSubscription:null});
+  expect(await read('alice','another-agent')).toEqual({jobSubscription:null});
+  f.db.update(jobs).set({account:null}).where(eq(jobs.id,job.id)).run();
+  expect(await read('alice')).toEqual({jobSubscription:null});
 });
