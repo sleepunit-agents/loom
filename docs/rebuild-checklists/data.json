@@ -150,7 +150,11 @@
     {
       "id": "data-021",
       "promise": "bridge_raw_events Events exactly as Discord and Slack sent them, kept until they are turned into incoming messages: up to a day for one that cannot be read yet, and an hour from arrival once it has been. The one place loom stores something it does not look inside.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeRetention"
+      }
     },
     {
       "id": "data-022",
