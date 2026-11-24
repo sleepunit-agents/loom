@@ -87,7 +87,11 @@
     {
       "id": "tools-013",
       "promise": "Read and write its cards on people and on projects, by slug, or list them.",
-      "source": "docs/how-it-works/site/tools.html"
+      "source": "docs/how-it-works/site/tools.html",
+      "probe": {
+        "kind": "action",
+        "action": "namedCards"
+      }
     },
     {
       "id": "tools-014",

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {namedCards} from './rebuild-named-cards.mjs';
 import {namedMemoryLifecycle} from './rebuild-named-memory.mjs';
 import {withNamedTools} from './rebuild-named-tool-client.mjs';
 import {withFictionalMemoryHome} from './rebuild-memory-home.mjs';
@@ -7,6 +8,10 @@ export async function agentToolsEvidence(){
  return withFictionalMemoryHome(async ({connectAgent,issue,post,command})=>{
   return withNamedTools(connectAgent(),async call=>{
    const actions={};
+   try{
+    const token=issue({kind:'agent',agent:'moss',label:'Fictional card reader'});
+    actions.namedCards=await namedCards(call,{url:connectAgent().url,token});
+   }catch(error){actions.namedCards={ok:false,error:String(error)};}
    try{actions.namedMemoryLifecycle=await namedMemoryLifecycle({call,post});}
    catch(error){actions.namedMemoryLifecycle={ok:false,error:String(error)};}
    try{
