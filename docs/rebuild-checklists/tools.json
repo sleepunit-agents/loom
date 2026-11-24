@@ -37,7 +37,11 @@
     {
       "id": "tools-007",
       "promise": "Save a memory, find memories by meaning, edit one, delete one.",
-      "source": "docs/how-it-works/site/tools.html"
+      "source": "docs/how-it-works/site/tools.html",
+      "probe": {
+        "kind": "action",
+        "action": "namedMemoryChanges"
+      }
     },
     {
       "id": "tools-008",
@@ -74,7 +78,11 @@
     {
       "id": "tools-012",
       "promise": "Draft a memory and ratify it. Archive a memory, restore it, or bring back an earlier version.",
-      "source": "docs/how-it-works/site/tools.html"
+      "source": "docs/how-it-works/site/tools.html",
+      "probe": {
+        "kind": "action",
+        "action": "namedMemoryLifecycle"
+      }
     },
     {
       "id": "tools-013",

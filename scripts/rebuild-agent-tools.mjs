@@ -1,20 +1,14 @@
 import assert from 'node:assert/strict';
-import {Client} from '@modelcontextprotocol/sdk/client/index.js';
-import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import {namedMemoryLifecycle} from './rebuild-named-memory.mjs';
+import {withNamedTools} from './rebuild-named-tool-client.mjs';
 import {withFictionalMemoryHome} from './rebuild-memory-home.mjs';
 
 export async function agentToolsEvidence(){
  return withFictionalMemoryHome(async ({connectAgent,issue,post,command})=>{
-  const client=new Client({name:'fictional-agent',version:'1'});
-  const {url,token}=connectAgent();
-  try{
-   await client.connect(new StreamableHTTPClientTransport(new URL('/mcp',url),{requestInit:{headers:{authorization:'Bearer '+token}}}));
-   const call=async(name,args)=>{
-    const result=await client.callTool({name,arguments:args});
-    assert.ok(!result.isError,name+' failed');
-    return result.content.map(part=>part.text).join('\n');
-   };
+  return withNamedTools(connectAgent(),async call=>{
    const actions={};
+   try{actions.namedMemoryLifecycle=await namedMemoryLifecycle({call,post});}
+   catch(error){actions.namedMemoryLifecycle={ok:false,error:String(error)};}
    try{
     const path='orchard/shift',body='Water the fictional orchard after sunset.';
     await call('note_write',{path,body,lifespan:'short'});
@@ -72,6 +66,6 @@ export async function agentToolsEvidence(){
     actions.sharedKnowledgeAudience={ok:true,reason:'A household owner created the page, an agent terminal read it and appended a finding, and a second terminal and the owner read the revision. A non-owner member could neither read nor edit it.'};
    }catch(error){actions.sharedKnowledgeAudience={ok:false,error:String(error)};}
    return actions;
-  }finally{await client.close();}
+  });
  });
 }
