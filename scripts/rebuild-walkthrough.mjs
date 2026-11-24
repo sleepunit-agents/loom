@@ -407,6 +407,10 @@ export async function* walkthroughSteps(output) {
    const {subscriptionCapacity}=await import('./rebuild-subscription-capacity.mjs');
    report.actions.subscriptionCapacity=await subscriptionCapacity({browser,home:join(parent,'subscription-capacity')});
   } catch(error){report.actions.subscriptionCapacity={ok:false,error:String(error)};}
+  try {
+   const {subscriptionGroups}=await import('./rebuild-subscription-groups.mjs');
+   report.actions.subscriptionGroups=await subscriptionGroups({browser,home:join(parent,'subscription-groups')});
+  } catch(error){report.actions.subscriptionGroups={ok:false,error:String(error)};}
   save();yield {phase:'subscription-capacity',actions:safeReport(report.actions)};
   phase='sign-in door';
   report.actions.signinDoor=await signinDoorEvidence();

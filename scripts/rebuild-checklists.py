@@ -187,6 +187,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='models':
   for row in rows:
    if row['promise']=='Adds a subscription: choose the service, label it, choose its machines, sign in.':row['probe']={'kind':'action','action':'subscriptionSignIn'}
+   if row['promise']=='Lists every subscription to a model service, grouped by service, with how full it is.':row['probe']={'kind':'action','action':'subscriptionGroups'}
    if row['promise'].startswith("One subscription's fullest window, as a tiny bar and a word,"):row['probe']={'kind':'action','action':'subscriptionCapacity'}
    if row['promise'].startswith('An account is signed in on particular worker machines.'):row['probe']={'kind':'action','action':'modelsMachines'}
  if f.stem=='desk':add('Every app discovered in the launcher opens a tile.','',{'kind':'launcher'})
