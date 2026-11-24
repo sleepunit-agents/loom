@@ -51,6 +51,21 @@ it('does not offer Always for another approval, serializes taps and displays sav
   expect(JSON.stringify(tree.toJSON())).not.toContain('private server detail');
 });
 
+it('counts every folder without sorting hidden cards when standing rules are open', async () => {
+  let dateReads = 0;
+  const approvals = Array.from({ length: 24 }, (_, i) => ({
+    ...approval, id: 'card-' + i, state: i % 3 === 0 ? 'pending' as const : 'used' as const,
+    get askedAt() { dateReads++; return approval.askedAt; },
+  }));
+  const navigation = { folder: 'rules', openFolder: vi.fn(), select: vi.fn() };
+  await act(async () => { tree = create(h(Approvals, { snapshot: { ...snapshot, approvals }, navigation })); });
+  const folders = tree.root.findByType('Split').props.folders as { id: string; count: number }[];
+  expect(Object.fromEntries(folders.map(folder => [folder.id, folder.count]))).toEqual({
+    pending: 8, history: 16, rules: 0, notices: 0,
+  });
+  expect(dateReads).toBe(0);
+});
+
 it('keeps current pending/history folders and filters them without returning stale records', () => {
   const s: ApprovalSnapshot = { ...snapshot, approvals: [approval, { ...approval, id: 'a-used', state: 'used' }] };
   expect(rows(s, 'pending', 'inbox art').map(a => a.id)).toEqual(['a-pump']);

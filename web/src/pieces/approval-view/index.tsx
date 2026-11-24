@@ -177,15 +177,16 @@ export default function Approvals({ snapshot, actions, renderChange, navigation,
   const setSelected = navigation ? navigation.select : setLocalSelected;
   const live = snapshot.status === 'live';
   const name: Name = id => displayName(id, names);
-  const shown = rows(snapshot, folder, query);
-  const approval = live ? snapshot.approvals.find(a => a.id === selected) : undefined;
-  const rules = live ? snapshot.rules.filter(r => matches([r.kind, r.scope, r.person, r.tier], query)) : [];
-  const notices = live ? snapshot.notices.filter(n => matches([n.what, n.agent, n.target, n.kind], query)).sort((a,b) => b.at.localeCompare(a.at)) : [];
   const rulesView = folder === 'rules', noticesView = folder === 'notices';
+  const shown = rulesView || noticesView ? [] : rows(snapshot, folder, query);
+  const approval = live && selected !== undefined ? snapshot.approvals.find(a => a.id === selected) : undefined;
+  const rules = live && rulesView ? snapshot.rules.filter(r => matches([r.kind, r.scope, r.person, r.tier], query)) : [];
+  const notices = live && noticesView ? snapshot.notices.filter(n => matches([n.what, n.agent, n.target, n.kind], query)).sort((a,b) => b.at.localeCompare(a.at)) : [];
   useEffect(() => { if (!rulesView || !live) setRuleOpen(undefined); }, [rulesView, live]);
   const openRule = live && rulesView && !approval ? ruleOpen : undefined;
-  const counts: Record<string, number> = { rules: snapshot.rules.length, notices: snapshot.notices.length };
-  return <Split label="Approvals" folders={folders.map(f => ({ ...f, count: live ? counts[f.id] ?? rows(snapshot, f.id, '').length : undefined }))}
+  const pending = live ? snapshot.approvals.reduce((count, card) => count + Number(card.state === 'pending'), 0) : 0;
+  const counts: Record<string, number> = { pending, history: snapshot.approvals.length - pending, rules: snapshot.rules.length, notices: snapshot.notices.length };
+  return <Split label="Approvals" folders={folders.map(f => ({ ...f, count: live ? counts[f.id] : undefined }))}
     folder={folder} onFolder={id => { setRuleOpen(undefined); if (navigation) navigation.openFolder(id); else { setLocalFolder(id); setLocalSelected(undefined); } }}
     search={<Search label="Search approvals" value={query} onChange={setQuery} />}
     listTitle={folders.find(f => f.id === folder)?.label ?? 'Approvals'} listKey={JSON.stringify([folder, query])}
