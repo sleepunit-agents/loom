@@ -20,6 +20,7 @@ import {secretValueAction} from './rebuild-secret-value-actions.mjs';
 import {secretDefaultAction,verifySecretDefaultAfterReload} from './rebuild-secret-actions.mjs';
 import {workVisibility} from './rebuild-work-visibility.mjs';
 import {changeActions,changeInline} from './rebuild-change-actions.mjs';
+import {bridgeSendParts} from './rebuild-bridge-send-parts.mjs';
 import {outgoingFileRetention} from './rebuild-outgoing-files.mjs';
 import {bridgeReceipts} from './rebuild-bridge-receipts.mjs';
 import {bridgeContactTiers} from './rebuild-bridge-contact-tiers.mjs';
@@ -475,6 +476,9 @@ export async function* walkthroughSteps(output) {
   catch(error){report.actions.bridgeContactTiers={ok:false,error:String(error)};}
   for(const platform of ['slack','discord']) {
     const action=platform+'FileRetention';
+    const parts=platform+'SendParts';
+    try {report.actions[parts]=await bridgeSendParts(platform);}
+    catch(error){report.actions[parts]={ok:false,error:String(error)};}
     try {report.actions[action]=await bridgeAttachments(platform);}
     catch(error){report.actions[action]={ok:false,error:String(error)};}
   }

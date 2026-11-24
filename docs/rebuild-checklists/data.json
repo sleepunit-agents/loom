@@ -160,7 +160,20 @@
     {
       "id": "data-023",
       "promise": "bridge_send_parts The id the app gave each posted part of a reply, in order. A long reply goes out in parts; these say how far it got and which outside messages are the bot's own.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "slackSendParts"
+          },
+          {
+            "kind": "action",
+            "action": "discordSendParts"
+          }
+        ]
+      }
     },
     {
       "id": "data-024",
