@@ -5,7 +5,7 @@ export interface Trigger {
   times: string | null; days: string | null; lifespan: 'until-stopped' | 'today' | 'once';
   targetKind: 'operation' | 'inbox'; target: string | null; toKind: 'person' | 'agent' | null; to: string | null;
   project: string | null; instructions: string | null; file: string | null; note: string; enabled: boolean;
-  needs?: string[] | null; prefers?: string[] | null;
+  wantsModel?: string | null; needs?: string[] | null; prefers?: string[] | null;
   state: 'standing' | 'due' | 'firing' | 'held' | 'fired' | 'stopped' | 'failed';
   nextDueAt: string | null; lastFiredAt: string | null; createdAt: string; changedAt: string;
 }

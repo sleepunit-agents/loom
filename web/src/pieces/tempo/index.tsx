@@ -82,6 +82,8 @@ function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapsho
       {trigger.project && <div><dt>Project</dt><dd>{trigger.project}</dd></div>}
       {!!trigger.needs?.length && <div><dt>Machine needs</dt><dd>{trigger.needs.join(', ')}</dd></div>}
       {trigger.prefers != null && <div><dt>Machine preferences</dt><dd>{trigger.prefers.join(', ') || 'None'}</dd></div>}
+      {(trigger.wantsModel || (trigger.targetKind === 'inbox' && trigger.toKind === 'agent')) &&
+        <div><dt>Requested model</dt><dd className="break-words">{trigger.wantsModel || 'Agent default'}</dd></div>}
       <div><dt>Target</dt><dd>{program ? program.program.name : target(trigger)}</dd></div>
       {program && <div>
         <dt>House program definition</dt>

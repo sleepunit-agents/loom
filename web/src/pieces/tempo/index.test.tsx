@@ -40,13 +40,20 @@ it('drops a selected trigger when it disappears from the live query', async () =
 it('renders current trigger details inline and reflects changed words and pause state', async () => {
   await act(async () => { tree = create(h(TempoCard, { snapshot, triggerId: 'tr-1' })); });
   expect(JSON.stringify(tree.toJSON())).toContain('Review private delivery');
+  expect(JSON.stringify(tree.toJSON())).toContain('Agent default');
   const changed = { ...snapshot, pauses: [{ agent: 'art', since: '2026-11-14T00:00:00.000Z' }],
-    triggers: snapshot.triggers.map(t => ({ ...t, needs: ['gpu'], prefers: [], instructions: 'New instructions' })) };
+    triggers: snapshot.triggers.map(t => ({ ...t, needs: ['gpu'], prefers: [], wantsModel: 'careful', instructions: 'New instructions' })) };
   await act(async () => tree.update(h(TempoCard, { snapshot: changed, triggerId: 'tr-1' })));
   expect(JSON.stringify(tree.toJSON())).toContain('New instructions');
-  expect(tree.root.findAllByType('dd').map((node: { children: string[] }) => node.children.join(''))).toEqual(expect.arrayContaining(['gpu', 'None']));
+  expect(tree.root.findAllByType('dd').map((node: { children: string[] }) => node.children.join(''))).toEqual(expect.arrayContaining(['gpu', 'None', 'careful']));
   expect(JSON.stringify(tree.toJSON())).not.toContain('Review private delivery');
   expect(JSON.stringify(tree.toJSON())).toContain('Held · agent paused');
+});
+
+it('omits the default agent model for a notice addressed to a person', async () => {
+  const triggers = snapshot.triggers.map(trigger => ({ ...trigger, toKind: 'person' as const, to: 'alex' }));
+  await act(async () => { tree = create(h(TempoCard, { snapshot: { ...snapshot, triggers }, triggerId: 'tr-1' })); });
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Requested model');
 });
 
 it.each(['loading', 'offline', 'denied', 'removed'] as const)('hides inline words and history when %s', async state => {
