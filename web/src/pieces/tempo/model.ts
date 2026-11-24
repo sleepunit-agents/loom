@@ -48,9 +48,15 @@ export function rows(triggers: readonly Trigger[], folder: Folder, search = '', 
       : nextOrder(a) - nextOrder(b) || a.id.localeCompare(b.id));
 }
 
+export const eventLabels = {
+  'pull-request': 'A pull request changes',
+  answer: 'An answer arrives',
+  job: 'A job stops',
+} satisfies Record<Exclude<Trigger['sourceKind'], 'time'>, string>;
+
 export function source(trigger: Trigger): string {
   if (trigger.sourceKind === 'time') return [trigger.times, trigger.days || (trigger.lifespan === 'once' ? '' : 'Every day')].filter(Boolean).join(' · ');
-  return `${({ 'pull-request': 'A pull request changes', answer: 'An answer arrives', job: 'A job stops' })[trigger.sourceKind]}${trigger.watches ? ` · ${trigger.watches}` : ''}`;
+  return `${eventLabels[trigger.sourceKind]}${trigger.watches ? ` · ${trigger.watches}` : ''}`;
 }
 export const target = (trigger: Trigger) => trigger.targetKind === 'operation'
   ? `Operation: ${trigger.target}` : `An item in ${trigger.to}'s inbox`;
