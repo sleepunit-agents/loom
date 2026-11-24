@@ -40,13 +40,28 @@ function DayHours({date, zone, now, triggers, pauses, open}: {date: string; zone
     return items.sort((a,b)=>a.at-b.at || a.key.localeCompare(b.key));
   }, [triggers, pauses, date, zone, log]);
   const format = new Intl.DateTimeFormat(undefined,{timeZone:zone,hour:'2-digit',minute:'2-digit'});
+  const hourFormat = new Intl.DateTimeFormat(undefined,{timeZone:zone,hour:'numeric',timeZoneName:'short'});
+  const hours = new Map<string, (Entry | 'now')[]>();
+  const add = (at:number, entry: Entry | 'now') => {
+    const hour = hourFormat.format(at);
+    const group = hours.get(hour);
+    if (group) group.push(entry); else hours.set(hour,[entry]);
+  };
   const today = localDate(now,zone) === date;
-  const row = (e: Entry) => <Row key={e.key} title={title(e.trigger)} meta={format.format(e.at)} status={e.state} onClick={()=>open(e.trigger.id)}/>;
+  let marked = false;
+  for (const entry of entries) {
+    if (today && !marked && entry.at > now) { add(now,'now'); marked = true; }
+    add(entry.at,entry);
+  }
+  if (today && !marked) add(now,'now');
   return <section aria-label="Day schedule" className="grid gap-1">
     {!log && <p>{feed.status === 'loading' ? 'Loading firing history…' : 'Firing history unavailable.'}</p>}
-    {entries.filter(e=>e.at<now).map(row)}
-    {today && <div className="border-b px-2" role="separator" aria-label="Now">Now · {format.format(now)}</div>}
-    {entries.filter(e=>e.at>=now).map(row)}
+    {[...hours].map(([hour,items])=><div key={hour} className="grid grid-cols-[5em_minmax(0,1fr)] gap-2 border-t py-2">
+      <h3 className="pt-1 text-sm">{hour}</h3>
+      <div className="grid gap-1 border-l pl-2">{items.map(entry=>entry === 'now'
+        ? <div key="now" className="border-b text-sm" role="separator" aria-label="Now">Now · {format.format(now)}</div>
+        : <Row key={entry.key} title={title(entry.trigger)} meta={format.format(entry.at)} status={entry.state} onClick={()=>open(entry.trigger.id)}/>)}</div>
+    </div>)}
     {log && !entries.length && <p>No timed activity for this day.</p>}
   </section>;
 }
@@ -69,7 +84,7 @@ export function TempoDay({zone,triggers,pauses,open}: {zone:string; triggers: re
     {date === today && !!data?.modelAccounts?.length && <section aria-label="Current subscriptions" className="flex flex-wrap gap-3">
       {data.modelAccounts.map((account,i)=><span key={i} className="loom-job-capacity" data-capacity={account.level}>{account.label} · {account.level}</span>)}
     </section>}
-    {!!waiting.length && <section aria-label="Event triggers"><h3>Waiting for an event</h3>{waiting.map(t=><Row key={t.id} title={title(t)} meta={t.sourceKind} onClick={()=>open(t.id)}/>)}</section>}
+    {!!waiting.length && <section aria-label="Event triggers"><h3>Waiting for an event now</h3>{waiting.map(t=><Row key={t.id} title={title(t)} meta={t.sourceKind} onClick={()=>open(t.id)}/>)}</section>}
     {date && now != null ? <DayHours date={date} now={now} zone={zone} triggers={triggers} pauses={pauses} open={open}/>
       : <p>{feed.status === 'loading' ? 'Opening calendar…' : 'Household clock unavailable.'}</p>}
   </div>;
