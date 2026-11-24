@@ -56,6 +56,10 @@ const result=await withFictionalMemoryHome(async({start,open,command,post,connec
     assert(changed.includes(ids[0]) && changed.includes(edited) && !changed.includes(samples[0][1]));
     await call('forget',{id:ids[0]});
     assert.equal(await content(ids[0]),null);
+    const archive=await post('/graphql',{query:'{memoryArchive(agent:"fern"){entries{id}}}'});
+    assert(!archive.data.memoryArchive.entries.some(row=>row.id===ids[0]));
+    await assert.rejects(call('memory_restore',{id:ids[0]}),/memory_restore failed/);
+    assert.equal(await content(ids[0]),null);
     assert(!(await call('recall',{query:'cycle repair',limit:50})).includes(ids[0]));
     for(const i of [1,2])await recall(call,i);
    });

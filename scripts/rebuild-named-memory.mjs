@@ -14,7 +14,9 @@ export async function namedMemoryLifecycle({call,post}){
  const drafts=await call('memory_drafts',{});
  assert(drafts.includes(untouched) && !drafts.includes(draft));
  const recalled=await search();
- const id=recalled.split('---').find(row=>row.includes(title)&&row.includes(original))?.match(/reference · (\S+) · updated/)?.[1];
+ const matches=recalled.split('---').filter(row=>row.includes(title)&&row.includes(original));
+ assert.equal(matches.length,1);
+ const id=matches[0].match(/reference · (\S+) · updated/)?.[1];
  assert.ok(id,'Ratified words must appear in recall');
  const read=async()=>(await post('/graphql',{query:'query($id:String!){memoryProjectMemory(id:$id){content} memoryArchive(agent:"fern"){entries{id content note}} memoryHistory(id:$id){id content}}',variables:{id}})).data;
  await call('update',{id,content:edited});
