@@ -6,7 +6,7 @@ import { createDataSchema } from '../data/database';
 import { dataQueries } from '../data/queries';
 import { withQueryFields } from '../data/http';
 import { tempoQueryFields } from './queries';
-import { tempoQuery } from '../../../web/src/pieces/tempo/query';
+import { tempoQuery, triggerHistoryQuery } from '../../../web/src/pieces/tempo/query';
 
 it('executes the actual browser selection against generated shared tables and bounds recent logs', async () => {
   const db = new Database(':memory:');
@@ -24,8 +24,18 @@ it('executes the actual browser selection against generated shared tables and bo
     const result = await graphql({ schema, source: tempoQuery });
     expect(result.errors).toBeUndefined();
     expect(result.data?.triggers).toMatchObject([{ id: 'tr-1', enabled: true, note: 'Example', needs: ['gpu'], prefers: ['local'] }]);
-    expect(result.data?.triggerLog).toHaveLength(200);
-    expect((result.data?.triggerLog as {seq: number}[])[0].seq).toBe(201);
+    expect(result.data).not.toHaveProperty('triggerLog');
+    db.exec(`INSERT INTO triggers (id,owner_kind,source_kind,lifespan,target_kind,target,note,enabled,state,created_at,changed_at)
+      SELECT 'busy',owner_kind,source_kind,lifespan,target_kind,target,note,enabled,state,created_at,changed_at FROM triggers WHERE id='tr-1';
+      INSERT INTO trigger_log (trigger,at,event,note) SELECT 'busy',at,event,note FROM trigger_log;
+      INSERT INTO trigger_log (trigger,at,event,note) SELECT 'tr-1',at,'source-snapshot',note FROM trigger_log WHERE trigger='busy'`);
+    const history = await graphql({schema, source: triggerHistoryQuery, variableValues: {id:'tr-1'}});
+    expect(history.errors).toBeUndefined();
+    const rows = history.data?.triggerLog as {seq:number; trigger:string; event:string}[];
+    expect(rows).toHaveLength(200);
+    expect(rows.every(row => row.trigger === 'tr-1' && row.event === 'set')).toBe(true);
+    expect(rows[0].seq).toBe(201);
+    expect(rows[199].seq).toBe(2);
     expect(result.data?.agentPauses).toEqual([]);
   } finally { db.close(); }
 });

@@ -11,9 +11,9 @@ vi.mock('../../kit', () => ({
 import Tempo, { TempoCard, type TempoSnapshot } from './index';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
-afterEach(async () => { await act(async () => tree?.unmount()); });
+afterEach(async () => { await act(async () => tree?.unmount()); journalQuery.mockReturnValue({status:'loading'}); });
 const snapshot: TempoSnapshot = {
-  status: 'live', timezone: 'America/Chicago', pauses: [], events: [],
+  status: 'live', timezone: 'America/Chicago', pauses: [],
   triggers: [{ id: 'tr-1', ownerKind: 'household', owner: null, sourceKind: 'answer', watches: 'approval:a-1',
     times: null, days: null, lifespan: 'once', targetKind: 'inbox', target: null, toKind: 'agent', to: 'art',
     project: null, instructions: 'Review private delivery', file: null, note: 'Delivery', enabled: true,
@@ -50,13 +50,26 @@ it('renders current trigger details inline and reflects changed words and pause 
 });
 
 it.each(['loading', 'offline', 'denied', 'removed'] as const)('hides inline words and history when %s', async state => {
-  const visible = { ...snapshot, events: [{ seq: 1, trigger: 'tr-1', at: '2026-11-14T00:00:00.000Z', event: 'set', note: 'Private history' }] };
+  const visible = snapshot;
+  journalQuery.mockReturnValue({status:'live', data:{triggerLog:[{ seq: 1, trigger: 'tr-1', at: '2026-11-14T00:00:00.000Z', event: 'set', note: 'Private history' }]}});
   await act(async () => { tree = create(h(TempoCard, { snapshot: visible, triggerId: 'tr-1' })); });
   expect(JSON.stringify(tree.toJSON())).toContain('Private history');
   const unavailable = state === 'removed' ? { ...visible, triggers: [] } : { ...visible, status: state };
   await act(async () => tree.update(h(TempoCard, { snapshot: unavailable, triggerId: 'tr-1' })));
   expect(JSON.stringify(tree.toJSON())).not.toContain('Private history');
   expect(JSON.stringify(tree.toJSON())).not.toContain('Review private delivery');
+});
+
+it('distinguishes an empty history from one that is loading or unavailable', async () => {
+  await act(async () => { tree = create(h(TempoCard, { snapshot, triggerId: 'tr-1' })); });
+  expect(JSON.stringify(tree.toJSON())).toContain('Reading trigger history');
+  journalQuery.mockReturnValue({status:'live', data:{triggerLog:[]}});
+  await act(async () => tree.update(h(TempoCard, {snapshot, triggerId:'tr-1'})));
+  expect(JSON.stringify(tree.toJSON())).toContain('No events yet.');
+  journalQuery.mockReturnValue({status:'denied', data:{triggerLog:[{note:'Stale result'}]}});
+  await act(async () => tree.update(h(TempoCard, {snapshot, triggerId:'tr-1'})));
+  expect(JSON.stringify(tree.toJSON())).toContain('Trigger history unavailable.');
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Stale result');
 });
 
 const actions = () => ({ runNow: vi.fn(async (_id: string) => {}), stop: vi.fn(async (_id: string) => {}), pause: vi.fn(async (_agent: string) => {}), resume: vi.fn(async (_agent: string) => {}) });
@@ -142,7 +155,8 @@ it('offers resume for a paused operation belonging to its agent without an inbox
 it('shows the latest program decision in the trigger details', async () => {
   const events = ['Did not wake', 'Woke art · 2000 ms · Found gaps'].map((note, seq) =>
     ({seq, trigger:'tr-1', at:'2026-11-14T00:00:00Z', event:'program', note}));
-  await act(async () => { tree=create(h(TempoCard,{snapshot:{...snapshot,events}, triggerId:'tr-1'})); });
+  journalQuery.mockReturnValue({status:'live', data:{triggerLog:events}});
+  await act(async () => { tree=create(h(TempoCard,{snapshot, triggerId:'tr-1'})); });
   const values=tree.root.findAllByType('dd').map((node:{children:string[]})=>node.children.join(''));
   expect(values).toContain('Woke art · 2000 ms · Found gaps');
 });

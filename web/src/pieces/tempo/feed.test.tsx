@@ -11,29 +11,29 @@ import { TempoApp, LiveTempoCard, tempoQuery } from './feed';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
 afterEach(async () => { await act(async () => tree?.unmount()); });
-const data: TempoData = { triggers: [], triggerLog: [{ seq: 1, trigger: 'tr-1', at: '2026-11-14T00:00:00Z', event: 'set', note: 'Private' }], agentPauses: [{ agent: 'art', since: '2026-11-14T00:00:00Z' }] };
+const data: TempoData = { triggers: [], agentPauses: [{ agent: 'art', since: '2026-11-14T00:00:00Z' }] };
 it('binds the tile and inline card to the same generated selection and root actions', async () => {
   state.feed = { status: 'live', data };
   const actions = { runNow: vi.fn(), stop: vi.fn(), pause: vi.fn(), resume: vi.fn() };
   await act(async () => { tree = create(h(TempoApp, { timezone: 'America/Chicago', actions })); });
   expect(state.query).toHaveBeenCalledWith(tempoQuery);
-  expect(tree.root.findByType('tempo').props).toMatchObject({ snapshot: { status: 'live', events: data.triggerLog, pauses: data.agentPauses, timezone: 'America/Chicago' }, actions });
+  expect(tree.root.findByType('tempo').props).toMatchObject({ snapshot: { status: 'live', pauses: data.agentPauses, timezone: 'America/Chicago' }, actions });
   await act(async () => tree.update(h(LiveTempoCard, { triggerId: 'tr-1', timezone: 'America/Chicago', actions })));
-  expect(tree.root.findByType('card').props).toMatchObject({ triggerId: 'tr-1', actions, snapshot: { events: data.triggerLog } });
+  expect(tree.root.findByType('card').props).toMatchObject({ triggerId: 'tr-1', actions, snapshot: { pauses: data.agentPauses } });
 });
 it.each(['loading', 'offline', 'denied'] as const)('drops retained data immediately on %s', async status => {
   state.feed = { status: 'live', data };
   await act(async () => { tree = create(h(TempoApp, { timezone: 'UTC' })); });
   state.feed = { status, data };
   await act(async () => tree.update(h(TempoApp, { timezone: 'UTC' })));
-  expect(tree.root.findByType('tempo').props.snapshot).toEqual({ status, triggers: [], events: [], pauses: [], timezone: 'UTC' });
+  expect(tree.root.findByType('tempo').props.snapshot).toEqual({ status, triggers: [], pauses: [], timezone: 'UTC' });
 });
 it('clears rows on a new live selection and treats a missing payload as loading', async () => {
   state.feed = { status: 'live', data };
   await act(async () => { tree = create(h(TempoApp, { timezone: 'UTC' })); });
-  state.feed = { status: 'live', data: { triggers: [], triggerLog: [], agentPauses: [] } };
+  state.feed = { status: 'live', data: { triggers: [], agentPauses: [] } };
   await act(async () => tree.update(h(TempoApp, { timezone: 'UTC' })));
-  expect(tree.root.findByType('tempo').props.snapshot.events).toEqual([]);
+  expect(tree.root.findByType('tempo').props.snapshot.pauses).toEqual([]);
   state.feed = { status: 'live' };
   await act(async () => tree.update(h(TempoApp, { timezone: 'UTC' })));
   expect(tree.root.findByType('tempo').props.snapshot.status).toBe('loading');
