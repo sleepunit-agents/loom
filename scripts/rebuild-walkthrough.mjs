@@ -208,6 +208,10 @@ export async function* walkthroughSteps(output) {
      }catch(error){row.selectionError=String(error);}
      row.detailText=await tile.innerText();
     }
+    if(title==='Household setup'){
+     const {householdAgentOwners}=await import('./rebuild-household-agent-owners.mjs');
+     report.actions.householdAgentOwners=await householdAgentOwners({app,page,tile});
+    }
     if(title==='Machines and jobs'){
      await tile.getByRole('combobox',{name:'Jobs for'}).selectOption('moss');
      const jobs=tile.getByRole('group',{name:'moss queued jobs',exact:true}).locator('.loom-kit-note');
