@@ -167,3 +167,26 @@ it('counts open epic children once across a household-sized sidebar',async()=>{
  expect(counts).toEqual(Array.from({length:14},(_,i)=>i<9?30:29));
  expect(childReads).toBeLessThanOrEqual(links.length);
 });
+it('counts project folders in one pass and reads searchable prose only for a search',async () => {
+  let projectReads = 0, descriptionReads = 0;
+  const tasks = Array.from({length:1200}, (_, index) => ({
+    ...task(String(index), {title:'Household task', status:index >= 1000 ? 'closed' : 'open'}),
+    get project() { projectReads++; return 'Project '+index%80; },
+    get description() { descriptionReads++; return 'garden '+index; },
+  }));
+  let readyReads = 0;
+  const ready = ['0','80','160','1000'];
+  for (const [index,id] of ready.entries()) {
+    Object.defineProperty(ready,index,{get() { readyReads++; return id; }});
+  }
+  await draw(props({tasks, ready}));
+  const folders = tree.root.findByType('Split').props.folders as {id?:string;count?:number}[];
+  expect(folders.find(f => f.id === 'project:Project 0')?.count).toBe(13);
+  expect(rows()).toHaveLength(3);
+  expect(readyReads).toBeLessThanOrEqual(ready.length);
+  expect(projectReads).toBe(1000);
+  expect(descriptionReads).toBe(0);
+  await act(async () => tree.root.findByType('Search').props.onChange('HOUSEHOLD garden 160'));
+  expect(rows()).toHaveLength(1);
+  expect(descriptionReads).toBe(3);
+});

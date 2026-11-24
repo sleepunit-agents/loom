@@ -79,7 +79,15 @@ export function SharedTasks(props: SharedTasksProps) {
   const links = live ? props.links : [];
   const selected = tasks.find(t => t.id === props.selected);
   const name = (id: string | null) => displayName(id, props.names);
-  const openTaskIds = new Set(tasks.filter(task => task.status !== 'closed').map(task => task.id));
+  const readyIds = new Set(live ? props.ready : []);
+  const openTaskIds = new Set<string>();
+  const projectCounts = new Map<string, number>();
+  for (const task of tasks) {
+    if (task.status === 'closed') continue;
+    openTaskIds.add(task.id);
+    const project = task.project;
+    if (project) projectCounts.set(project, (projectCounts.get(project) ?? 0) + 1);
+  }
   const epicChildren = new Map<string, Set<string>>();
   for (const link of links) {
     if (link.type !== 'parent-child') continue;
@@ -98,7 +106,7 @@ export function SharedTasks(props: SharedTasksProps) {
     // Shelved with its retired project: under Shelved, its project and its epic, and in no list of open work.
     if (id === 'shelved') return !!task.isShelved;
     if (task.isShelved && ['ready','progress','questions','open'].includes(id)) return false;
-    if (id === 'ready') return props.ready.includes(task.id);
+    if (id === 'ready') return readyIds.has(task.id);
     if (id === 'progress') return task.status === 'in_progress';
     if (id === 'questions') return task.assigneeKind === 'member' && task.assignee === props.questionFor && !!task.ask;
     if (id.startsWith('project:')) return task.project === id.slice(8);
@@ -107,7 +115,9 @@ export function SharedTasks(props: SharedTasksProps) {
   };
   const count = (id: string) => tasks.filter(t => inFolder(t,id)).length;
   // A project whose work is all closed has nothing to list, so it is not offered; a heading shows only over something.
-  const projects = [...new Set(tasks.flatMap(t => t.project ? [t.project] : []))].sort().map(project => ({id:`project:${project}`,label:project,count:count(`project:${project}`)})).filter(f => f.count > 0);
+  const projects = [...projectCounts.keys()].sort().map(project => ({
+    id:`project:${project}`, label:project, count:projectCounts.get(project)!,
+  }));
   const epics = tasks.filter(t => t.type === 'epic' && t.status !== 'closed').map(t => ({id:`epic:${t.id}`,label:t.title,count:epicChildren.get(t.id)?.size ?? 0}));
   const folders: SplitFolder[] = [
     ...[['ready','Ready'],['progress','In progress'],['questions',props.questionFor ? `Needs ${name(props.questionFor)}` : 'Needs you'],['open','All open'],['closed','Recently closed'],['shelved','Shelved']].map(([id,label]) => ({id,label,count:count(id)})),
@@ -115,8 +125,13 @@ export function SharedTasks(props: SharedTasksProps) {
     ...(epics.length ? [{heading:'Epics'}, ...epics] : []),
   ];
   const current = folders.find((f): f is Extract<SplitFolder,{id:string}> => 'id' in f && f.id === folder);
-  const words = query.toLowerCase().trim().split(/\s+/);
-  const shown = tasks.filter(t => inFolder(t,folder) && (!assignee || t.assigneeKind === 'agent' && t.assignee === assignee) && words.every(word => [t.id,t.title,t.goal,t.why,t.description,t.project,t.owner,t.assignee].join(' ').toLowerCase().includes(word)))
+  const words = query.toLowerCase().match(/\S+/g);
+  const shown = tasks.filter(t => {
+    if (!inFolder(t,folder) || (assignee && (t.assigneeKind !== 'agent' || t.assignee !== assignee))) return false;
+    if (!words) return true;
+    const text = [t.id,t.title,t.goal,t.why,t.description,t.project,t.owner,t.assignee].join(' ').toLowerCase();
+    return words.every(word => text.includes(word));
+  })
     .sort((a,b) => a.priority-b.priority || a.position-b.position || a.id.localeCompare(b.id));
   // A related task: its title, then its id as a chip that opens it. One this person may not see is its id alone.
   const relations = (title: string, ids: string[]) => ids.length > 0 && <Fact label={title}><div role="group" aria-label={title} className="grid gap-1">{ids.map(id => {
