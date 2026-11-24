@@ -60,3 +60,13 @@ it('orders mixed UTC precision by instant and keeps internal source fingerprints
  expect(history([{seq:1,trigger:'earlier',at:earlier.changedAt,event:'source-snapshot',note:'internal-fingerprint'},
   {seq:2,trigger:'earlier',at:earlier.changedAt,event:'fired',note:'Delivery'}],'earlier').map(e=>e.seq)).toEqual([2]);
 });
+
+it('lists distant wakes before unscheduled and spent triggers, including old rows with a retained due time', () => {
+  const items = [
+    trigger('spent', {state:'fired',enabled:false,nextDueAt:'2026-11-15T00:00:00Z'}),
+    trigger('wait', {sourceKind:'answer',times:null}),
+    trigger('next-month', {nextDueAt:'2026-12-15T12:00:00Z'}),
+    trigger('tomorrow', {nextDueAt:'2026-11-25T12:00:00Z'}),
+  ];
+  expect(rows(items,'all').map(item=>item.id)).toEqual(['tomorrow','next-month','spent','wait']);
+});
