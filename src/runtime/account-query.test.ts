@@ -405,6 +405,29 @@ it('wakes an open sign-in observation at the warning and silence boundaries with
   expect((await offline).data.observe).toMatchObject({patches:expect.arrayContaining(['reporting','needsSignIn','canRequest'].map(field=>patch(field,false)))});
 });
 
+it('reports the observed sign-in and its effective expiry separately at the coordinator deadline',async()=>{
+  const f=fixture();
+  f.db.update(boxes).set({lastSeenAt:f.now()}).run();
+  f.db.insert(modelAccountLogins).values({account:'private-a',box:'private-box-id',harness:'claude',place:'containers',
+    state:'signed-in',since:f.now(),checkedAt:f.now(),learnedFrom:'check',expiresAt:new Date(f.clock.now()+1000).toISOString()}).run();
+  const query='{modelAccounts(detailId:"private-a"){... on RuntimeAccountDetail{logins{state expired reporting}}}}';
+  const ws=await openSocket(f,'house');
+  const first=nextPayload(ws,'expiry');
+  ws.send(JSON.stringify({type:'subscribe',id:'expiry',payload:{query:
+    `subscription { observe(query:${JSON.stringify(query)}) { revision patches { path value } } }`}}));
+  expect(JSON.stringify(await first)).toContain('"expired":false');
+  const expired=nextPayload(ws,'expiry');
+  f.clock.advance(1000);
+  expect((await expired).data.observe).toMatchObject({patches:[{path:['modelAccounts',0,'logins',0,'expired'],value:true}]});
+  const offline=nextPayload(ws,'expiry');
+  f.clock.advance(SILENCE_MS-999);
+  expect((await offline).data.observe).toMatchObject({patches:expect.arrayContaining([
+    {path:['modelAccounts',0,'logins',0,'expired'],value:false},{path:['modelAccounts',0,'logins',0,'reporting'],value:false},
+  ])});
+  const snapshot=await (await f.post('house',query)).json();
+  expect(snapshot).toMatchObject({data:{modelAccounts:[{logins:[{state:'signed-in',expired:false,reporting:false}]}]}});
+});
+
 it.each([
   {offset:2000,expected:.2},
   {offset:2001,expected:0},

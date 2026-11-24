@@ -24,7 +24,7 @@ const machine = new GraphQLObjectType({ name: 'RuntimeAccountBox', fields: { id:
 /** One sign-in of the account as loom last learned it (account-logins.ts). Usage is the account's, not a sign-in's. */
 const login = new GraphQLObjectType({ name: 'RuntimeAccountLogin', fields: {
   box: { type: new GraphQLNonNull(machine) }, harness: { type: text }, place: { type: text }, state: { type: text },
-  reporting: { type: GraphQLBoolean }, needsSignIn: { type: GraphQLBoolean }, canRequest: { type: GraphQLBoolean },
+  expired: { type: GraphQLBoolean }, reporting: { type: GraphQLBoolean }, needsSignIn: { type: GraphQLBoolean }, canRequest: { type: GraphQLBoolean },
   expiresAt: { type: GraphQLString }, checkedAt: { type: text }, since: { type: text }, learnedFrom: { type: text }, why: { type: GraphQLString },
 } });
 const windowReading = new GraphQLObjectType({ name: 'RuntimeAccountWindow', fields: {
@@ -130,7 +130,8 @@ export function modelAccountQueries(db: DataDatabase, now: () => string, usageSc
           const reporting=!login.box.revokedAt&&loginMachineReporting(login.box.lastSeenAt,nowMs);
           const needsSignIn=reporting&&(login.state==='signed-out'||login.expiresAt!==null&&Date.parse(login.expiresAt)-nowMs<=LOGIN_ENDING_MS);
           const canRequest=needsSignIn&&viewer.kind==='member'&&holds(rules.asksSignIn,viewer,{accountOwner:privateRow.owner,boxOwner:login.box.owner},sharing??=sharedSharing(db));
-          return {...login,reporting,needsSignIn,canRequest};
+          const expired=reporting&&login.state==='signed-in'&&login.expiresAt!==null&&Date.parse(login.expiresAt)<=nowMs;
+          return {...login,reporting,needsSignIn,canRequest,expired};
         });
         const values = { ...privateRow, logins, hasRoom, windows: row.modelAccountWindowsByAccount };
         return { __typename: detail.name, ...publicFields, read(name: PrivateColumn, actor: Viewer) {
@@ -149,7 +150,9 @@ export function modelAccountQueries(db: DataDatabase, now: () => string, usageSc
                 if (!login.reporting) continue;
                 wakeForLogins(seen + SILENCE_MS + 1);
                 if (login.state === 'signed-in' && login.expiresAt) {
-                  const warning = Date.parse(login.expiresAt) - LOGIN_ENDING_MS;
+                  const end = Date.parse(login.expiresAt);
+                  if (end > nowMs) wakeForLogins(end);
+                  const warning = end - LOGIN_ENDING_MS;
                   if (warning > nowMs) wakeForLogins(warning);
                 }
               }
