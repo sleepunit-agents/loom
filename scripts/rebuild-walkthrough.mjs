@@ -383,7 +383,7 @@ export async function* walkthroughSteps(output) {
    const {agentToolsEvidence}=await import('./rebuild-agent-tools.mjs');
    Object.assign(report.actions,await agentToolsEvidence());
   } catch(error) {
-   for(const name of ['namedMemoryLifecycle','namedNotes','namedKnowledge','namedKnowledgeHistory','sharedKnowledgeAudience'])report.actions[name]={ok:false,error:String(error)};
+   for(const name of ['namedCards','namedMemoryLifecycle','namedNotes','namedKnowledge','namedKnowledgeHistory','sharedKnowledgeAudience'])report.actions[name]={ok:false,error:String(error)};
   }
   try {
    const {sharedHouseholdFiles}=await import('./rebuild-shared-household-files.mjs');

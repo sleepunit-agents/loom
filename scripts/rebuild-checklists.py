@@ -263,6 +263,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith(('Retries a job that fails to start','A job that fails to start is tried again')):row['probe']={'kind':'action','action':'workerRetries'}
  if f.stem=='tools':
   for row in rows:
+   if row['promise']=='Read and write its cards on people and on projects, by slug, or list them.':row['probe']={'kind':'action','action':'namedCards'}
    if row['promise'].startswith('Save a memory, find memories by meaning,'):row['probe']={'kind':'action','action':'namedMemoryChanges'}
    if row['promise'].startswith('Draft a memory and ratify it.'):row['probe']={'kind':'action','action':'namedMemoryLifecycle'}
    if row['promise']=='Write a note, read one by path, list notes under a prefix.':row['probe']={'kind':'action','action':'namedNotes'}
