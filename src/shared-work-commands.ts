@@ -121,6 +121,12 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
         const read = sources.words?.(proof.thread, proof.seq);
         const words = await (terminal ? read?.catch(() => null) : read);
         if (words == null && !terminal) throw new OperationError('denied','Those words do not appear in that message.');
+        if (input.reason && !terminal && words) {
+          // Check the whole message: the quoted reason may omit the card ID the owner named.
+          const namedCards = words.match(/\ba-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi) ?? [];
+          if (namedCards.some(card => card.toLowerCase() !== input.id))
+            throw new OperationError('denied', 'That message names a different approval card.');
+        }
         opened.set(proof.item, { sealed: proof.sealed, thread: proof.thread, seq: proof.seq, matches: words == null ? null : !!input.onWord && words.includes(input.onWord.quote) });
       }
       return opened;

@@ -251,16 +251,17 @@ it('carries a quoted Comms denial back to the card in that conversation once', a
  expect(f.root.services.approvals.get(other).state).toBe('pending');
 });
 
-it.each(['unlocated message', 'different words', 'different card conversation', 'card for another member', 'shared conversation', 'other agent', 'expired message', 'absent quote'] as const)(
+it.each(['unlocated message', 'different words', 'different card conversation', 'card for another member', 'shared conversation', 'other agent', 'expired message', 'absent quote', 'another named card'] as const)(
  'keeps the denial reason private for a %s', async scenario => {
   const f=await fixture();
   f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();
   const id=await f.ask();
   const reason='Hold off until the pump test passes.';
-  expect((await f.send(reason,'owner-answer')).status).toBe(200);
+  const words=scenario==='another named card'?'Deny '+await f.ask()+'. '+reason:reason;
+  expect((await f.send(words,'owner-answer')).status).toBe(200);
   const take=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{
    authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({input:{}})});
-  const item=(await take.json()).value.items.find((row:{words:string})=>row.words===reason);
+  const item=(await take.json()).value.items.find((row:{words:string})=>row.words===words);
   const word=scenario==='unlocated message'?{quote:reason}:{item:item.id,quote:reason};
   if(scenario==='different card conversation'){
    const other=f.root.services.comms!.threads.open({member:'alice',agent:'art',title:'Another question'});
