@@ -122,3 +122,17 @@ it('keeps the selected activity beside the agent identity, session details and T
  for(const name of ['Art E Fish agent window','Boot console','Doing now','Conversations · 1 unread'])
   expect(tree!.root.findAllByProps({'aria-label':name}).length).toBeGreaterThan(0);
 });
+
+it('opens an earlier activity and carries its feed page into the thread link',async()=>{
+ const base='/p/agents-preview/agent/art';
+ const threads=Array.from({length:6},(_,i)=>({thread:'thread-'+i,title:'Activity '+i,
+  latest:{id:String(30-i),at:'2026-11-22T12:00:00Z',words:'Post '+i},parent:null}));
+ f.extra.AgentActivityFeed={status:'live',data:{agentActivityFeed:threads}};
+ const go=await draw(base+'?before=31');
+ expect(text()).not.toContain('Post 5');
+ await click('Earlier activities');expect(go).toHaveBeenLastCalledWith(base+'?before=26');
+ await click('Activity 0');expect(go).toHaveBeenLastCalledWith(base+'?before=31&activity=thread-0');
+ await answer('AgentActivityFeed',{status:'live',data:{agentActivityFeed:[]}});
+ expect(text()).toContain('No earlier activities.');
+ await click('Latest activities');expect(go).toHaveBeenLastCalledWith(base);
+});

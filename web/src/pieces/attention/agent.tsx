@@ -20,7 +20,7 @@ import './home.css';
 
 type Agent = ReturnType<typeof namedAgents>[number];
 /** Everything about one agent, in full: what Home's card summarises, and what only lives here (its jobs, its steps). */
-function AgentReader({ agent, selectedThread, names, go }: { agent: Agent; selectedThread?: string; names: ReadonlyMap<string, string>; go(path: string): void }) {
+function AgentReader({ agent, selectedThread, before, names, go }: { agent: Agent; selectedThread?: string; before?: string; names: ReadonlyMap<string, string>; go(path: string): void }) {
   const zone = useHouseholdZone();
   const profiles=useDeskAgentProfiles(), statuses=useDeskAgentStatuses();
   const waiting=useDeskWaitingCounts(), comms=useHomeComms();
@@ -43,8 +43,8 @@ function AgentReader({ agent, selectedThread, names, go }: { agent: Agent; selec
     <div className="desk-agent-columns">
       <div className="desk-agent-feed-column">
         {selectedThread
-          ? <LiveAgentHistory key={selectedThread} agent={agent.id} thread={selectedThread} go={go}/>
-          : <LiveAgentFeed agent={agent.id} go={go} showEmpty/>}
+          ? <LiveAgentHistory key={selectedThread} agent={agent.id} thread={selectedThread} before={before} go={go}/>
+          : <LiveAgentFeed agent={agent.id} go={go} showEmpty before={before}/>}
       </div>
       <div className="desk-agent-context">
         <Section label="Doing now"><Doing doing={doing} name={agent.name} agent={agent.id} names={names} go={go}/></Section>
@@ -73,7 +73,7 @@ export default function AgentApp({ path = '/p/agents-preview', go = p => locatio
   const unavailable=roster.status==='loading'?<Loading label="Opening your agents…"/>:roster.status!=='live'?<Error title="Your agents are unavailable" text="Waiting for access and connection."/>:undefined;
   return <div className="desk-agent-app h-full w-full min-w-0 max-w-full overflow-auto [overflow-wrap:anywhere]"><AppFrame title={agent?.name??'Your agents'} where="Agents" go={go}
     actions={id?<Button variant="outline" onClick={()=>go('/p/agents-preview')}>All your agents</Button>:undefined}>
-    {unavailable??(agent?<AgentReader key={agent.id} agent={agent} selectedThread={activity??undefined} names={new Map(agents.map(a=>[a.id,a.name]))} go={go}/>
+    {unavailable??(agent?<AgentReader key={agent.id} agent={agent} selectedThread={activity??undefined} before={url.searchParams.get('before') ?? undefined} names={new Map(agents.map(a=>[a.id,a.name]))} go={go}/>
       :id?<Empty title="Agent not available" text="Choose one of your agents."/>:agents.length?<List label="Your agents">{agents.map(a=><Row key={a.id} title={a.name} onClick={()=>go(agentPath(a.id))}/>)}</List>:<Empty title="No agents of your own" text="Agents you own appear here."/>)}
   </AppFrame></div>;
 }

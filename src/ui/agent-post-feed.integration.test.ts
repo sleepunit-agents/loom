@@ -62,6 +62,14 @@ it.runIf(process.env.LOOM_TEST_CHROME)('keeps live updates, their linked work an
     await selected.getByRole('region',{name:title,exact:true}).waitFor();
     await post({action:'rename',thread:boot,title:'Boot console restored'});
     await selected.getByRole('region',{name:'Boot console restored',exact:true}).waitFor();
+    await selected.getByRole('button',{name:'Back to agent'}).click();
+    await selected.getByRole('button',{name:'Earlier activities'}).click();
+    await selected.getByRole('button',{name:/Boot console restored/}).click();
+    await selected.getByRole('region',{name:'Boot console restored',exact:true}).waitFor();
+    await selected.getByRole('button',{name:'Back to agent'}).click();
+    await page.reload();
+    await selected.getByRole('button',{name:'Latest activities'}).waitFor();
+    await selected.getByRole('button',{name:/Boot console restored/}).click();
     await page.getByRole('button',{name:'Source conversation'}).click();
     await page.getByText('Start the boot console walkthrough here.',{exact:true}).filter({visible:true}).first().waitFor();
   } finally {

@@ -17,7 +17,7 @@ export interface AgentPostPreview {
   thread: string;
   title: string;
   latest: AgentPost;
-  parent: Pick<AgentPost, 'id' | 'words'> | null;
+  parent?: Pick<AgentPost, 'id' | 'words'> | null;
 }
 
 function excerpt(words: string, limit: number) {
