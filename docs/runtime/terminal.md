@@ -100,6 +100,10 @@ Household owners and agents can use `loom_query` with
 Pass the last slug as `after` to continue. Review each candidate for its
 shared audience before deciding whether to revise it.
 
+For a citation audit, select `{memoryKnowledge { citationCounts { slug sourcing total conversations } }}`.
+This returns one row per active page, including pages with zero citations. An older store
+without the citations table returns `null`. The sourcing field is the stored classification.
+
 Through the generic tools: for private Memory, use `memory.remember` and `memory.recall`; their opaque IDs
 can be read with `memoryProjectMemory(id:){title content}`. For Notes, use
 `memory.noteWrite` with `{path,body,lifespan}` and read

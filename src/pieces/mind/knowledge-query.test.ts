@@ -168,6 +168,24 @@ it('reviews active shared pages by sourcing and pages through candidates by slug
  expect((await f.query(query('first:101'))).errors?.[0].message).toContain('1 to 100');
 });
 
+it('counts citations across active pages, including a classified page with no citations',async()=>{
+ const path=join(home(),'knowledge.db'),store=new KnowledgePages({dbPath:path});closes.push(()=>store.close());
+ const conversation={claim:'Fictional claim',source_kind:'conversation' as const,excerpt:'Fictional discussion'};
+ const web={...conversation,source_kind:'web' as const};
+ for(const [slug,citations] of [['a',[]],['b',[conversation,web]],['c',[conversation]],['d',[web]]] as const){
+  await store.writePage({slug,title:slug,domain:'world',sourcing:'sourced',citations:[...citations],body:'Fictional text'});
+ }
+ await store.archivePage({slug:'d'});
+ const {query}=fixture(path),selection='{memoryKnowledge{citationCounts{slug sourcing total conversations}}}';
+ expect(await query(selection)).toEqual({data:{memoryKnowledge:{citationCounts:[
+  {slug:'a',sourcing:'sourced',total:0,conversations:0},{slug:'b',sourcing:'sourced',total:2,conversations:1},
+  {slug:'c',sourcing:'sourced',total:1,conversations:1},
+ ]}}});
+ expect(await query(selection,{viewer:{kind:'member',id:'member'}})).toEqual({data:{memoryKnowledge:null}});
+ const legacy=new Database(path);try{legacy.exec('DROP TABLE citations');}finally{legacy.close();}
+ expect(await query(selection)).toEqual({data:{memoryKnowledge:{citationCounts:null}}});
+});
+
 it('reviews recorded provisional sourcing in older Knowledge files without a citations table',async()=>{
  const path=join(home(),'legacy.db'),db=new Database(path);
  db.exec("CREATE TABLE pages(id INTEGER PRIMARY KEY, slug TEXT, title TEXT, domain TEXT, status TEXT, sourcing TEXT); INSERT INTO pages VALUES(1,'old','Old','world','active','provisional'),(2,'known','Known','world','active','sourced')");

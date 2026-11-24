@@ -40,10 +40,14 @@ const readerStats = new GraphQLObjectType({name:'MemoryKnowledgeReaderStats',fie
   hitCount:{type:new GraphQLNonNull(GraphQLInt)},lastAccessed:text,
 }});
 const access=new GraphQLObjectType({name:'MemoryKnowledgeAccess',fields:Object.fromEntries(['allowed','canAdd','canVerify','canRecheck'].map(name=>[name,{type:new GraphQLNonNull(GraphQLBoolean)}]))});
+const citationCount = new GraphQLObjectType({ name:'MemoryKnowledgeCitationCount', fields:{
+ slug:requiredText, sourcing:text, total:{type:new GraphQLNonNull(GraphQLInt)}, conversations:{type:new GraphQLNonNull(GraphQLInt)},
+}});
 const overview = new GraphQLObjectType({ name:'MemoryKnowledge',fields:{
  timezone:text,
  total:{type:new GraphQLNonNull(GraphQLInt)}, checkDays:{type:new GraphQLNonNull(GraphQLInt)},recentDays:{type:new GraphQLNonNull(GraphQLInt)},
  pages:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(summary)))},
+ citationCounts:{type:new GraphQLList(new GraphQLNonNull(citationCount)),description:"Counts for each active page, or null if the store has no citation records table. Sourcing is the recorded classification."},
 } });
 
 const match = new GraphQLObjectType({ name:'MemoryKnowledgeMatch', fields:{ slug:requiredText,title:requiredText,domain:requiredText,updated:requiredText,verified_at:text,freshness_anchor:text,sla_class:text,body:requiredText } });
@@ -69,6 +73,16 @@ export function knowledgeQueryFields(options: { path?:string; timezone?():string
   if(failed)throw new GraphQLError('Knowledge is unavailable');
   try{return knowledgeView(db,options.now(),slug,slug!==undefined);}
   catch{throw new GraphQLError('Knowledge is unavailable');}
+ };
+ // The default GraphQL field resolver calls this only when the reader requests citation counts.
+ const citationCounts = () => {
+  try {
+   if(!db || !db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='citations'").get())return null;
+   return db.prepare(`SELECT p.slug, p.sourcing, count(c.page_id) AS total,
+    count(CASE WHEN c.source_kind='conversation' THEN 1 END) AS conversations
+    FROM pages p LEFT JOIN citations c ON c.page_id=p.id
+    WHERE p.status='active' GROUP BY p.id ORDER BY p.slug`).all();
+  } catch { throw new GraphQLError('Knowledge citation counts are unavailable'); }
  };
  const page = new GraphQLObjectType< {slug:string; body:string; freshness_anchor?:string|null; archiveCandidate?:boolean},MemoryQueryContext>({ name:'MemoryKnowledgePage', fields:{
   ...summaryFields,body:requiredText,sourcing:text,
@@ -119,7 +133,7 @@ export function knowledgeQueryFields(options: { path?:string; timezone?():string
   sweep(checkingAgent,alternate){if(failed)throw new GraphQLError('Knowledge is unavailable');return knowledgeSweep(db,{now:options.now},checkingAgent,alternate);},
   fields:{
    memoryKnowledgeAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?knowledgeAccess(context.viewer,options.sharing()):null},
-   memoryKnowledge:{type:overview,resolve:(_source,_args,context)=>allowed(context)?{...read(),timezone:options.timezone}:null},
+   memoryKnowledge:{type:overview,resolve:(_source,_args,context)=>allowed(context)?{...read(),timezone:options.timezone,citationCounts}:null},
    memoryKnowledgeFilingReview:{
     type:new GraphQLList(new GraphQLNonNull(filingCandidate)),
     description:'Review provisional and conversation-only pages for the shared household audience. Private thoughts belong in agent memory.',
