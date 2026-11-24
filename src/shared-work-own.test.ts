@@ -257,3 +257,17 @@ it('makes the card and its Inbox question from the full literal command and spen
  expect((await use(script)).body.value?.used).toBe(true);
  expect((await use(script)).body.value?.used).toBe(false);
 });
+
+it('keeps literal commands pending under standing allowances for named commands', async () => {
+ const f = await fixture();
+ f.ownsArt('pat');
+ const commandText='printf example',target='shell:sha256:'+hash(commandText);
+ for (const scope of ['*', target]) {
+   f.rules.set({kind:'command',scope,tier:'do'},'pat');
+   const literal = await f.call('request',{kind:'command',commandText,why:'Fixture'});
+   expect(literal.body.value?.state).toBe('pending');
+   const named = await f.call('request',{kind:'command',target,...words});
+   expect(named.body.value?.state).toBe('allowed');
+   f.rules.set({kind:'command',scope,tier:null},'pat');
+ }
+});

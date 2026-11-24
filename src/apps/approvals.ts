@@ -1,5 +1,5 @@
 import {shellCommandRecord} from './shell-command-record.js';
-import {sameCommandForm} from './approval-answer.js';
+import {sameCommandForm,shellRequestRecord} from './approval-answer.js';
 import { parseMergeTarget } from './merge-target.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, sql } from 'drizzle-orm';
@@ -53,8 +53,7 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
     const seq = db.select({ n: sql<number>`coalesce(max(${approvalRecord.seq}), 0) + 1` }).from(approvalRecord).get()!.n;
     db.insert(approvalRecord).values({ seq, at: now(), event, approval: row.id, agent: row.agent, note }).run();
   };
-  const isShell = (row: Approval) => row.kind === 'command' && !!db.select({ seq: approvalRecord.seq })
-    .from(approvalRecord).where(and(eq(approvalRecord.approval,row.id),eq(approvalRecord.event,'request'),eq(approvalRecord.note,shellCommandRecord))).get();
+  const isShell = (row: Approval) => row.kind === 'command' && !!shellRequestRecord(db,row.id).get();
   const expire = (row: Approval) => {
     if (row.state === 'allowed' && row.expiresAt && Date.parse(row.expiresAt) <= Date.parse(now())) {
       db.update(approvals).set({ state: 'expired' }).where(eq(approvals.id, row.id)).run();

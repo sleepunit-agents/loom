@@ -133,7 +133,7 @@ notices, through `loom_command` or the command door (`POST /api/<piece>/<operati
   question from the complete text and keeps it under **Full command** in the card. Shortened previews are
   labelled. The full view uses JSON string quoting to make line breaks and invisible characters visible.
   Spend it with `approvals.use {id, kind: "command", commandText}`. Supply exactly the same text, including
-  trailing newlines. An allowance records one use. The caller handles execution.
+  trailing newlines. Each literal request takes its own owner decision. An allowance records one use. The caller handles execution.
 - `notices.raise {key, title, detail?, quiet?}` answers `{item, raised, pushed}`: the key, whether the
   notice was news to the people who have the agent, and whether any push was queued. Nothing is pushed for
   `quiet`, for a key settled within the last ten minutes, or to a person who already has the notice

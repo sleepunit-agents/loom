@@ -15,7 +15,9 @@ export function requestApprovalWithRules(db:DataDatabase,service:ReturnType<type
  if(!['merge','command'].includes(input.kind)||input.operation)throw new Error('Prepared changes require explicit Allow');
  return db.transaction(()=>{
   const row=service.request(input,undefined,literalShell);
-  const rule=lastApprovalAnswer(db,row.agent,row.kind,row.target,literalShell)?.event==='deny'?undefined:rules.resolve({kind:row.kind,target:row.target,project:row.project,actingFor:row.actingFor});
+  // Existing standing rules grant named operations. They never granted arbitrary shell text.
+  if(literalShell)return row;
+  const rule=lastApprovalAnswer(db,row.agent,row.kind,row.target)?.event==='deny'?undefined:rules.resolve({kind:row.kind,target:row.target,project:row.project,actingFor:row.actingFor});
   if(rule&&rule.tier!=='ask'){
    const owner={kind:'member' as const,id:rule.setBy};
    const target=row.kind==='merge'?parseMergeTarget(row.target):undefined;
