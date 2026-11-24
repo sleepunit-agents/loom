@@ -107,6 +107,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise']=='Shows a day as a calendar, with each trigger at the time it fires.':row['probe']={'kind':'action','action':'tempoCalendar'}
    if row['promise']=="Holds an agent's triggers while the agent is paused.":row['probe']={'kind':'action','action':'pausedWake'}
    if row['promise'].startswith('Each recipient sets a volume on an inbox item.'):row['probe']={'kind':'action','action':'inboxVolume'}
+   if row['promise']=='A pull request changing can fire a trigger.':row['probe']={'kind':'action','action':'pullRequestTrigger'}
    if row['promise']=='A job stopping can fire a trigger.':row['probe']={'kind':'action','action':'jobEndTrigger'}
    if row['promise'].startswith('Waiting on an approval is a once-only trigger on that answer.'):row['probe']={'kind':'action','action':'tempoResumed'}
   for check,text in [('held','An answer arriving while the agent is paused does not fire its trigger.'),('resumed','Resuming fires the held once-only answer trigger exactly once.'),('settled','Run now delivers one person Inbox item, then the whole waiting batch notifies after settling.'),('cancelled','Cancelling a future trigger prevents delivery beyond its deadline.')]:add(text,'',{'kind':'action','action':'tempo'+check.capitalize()})

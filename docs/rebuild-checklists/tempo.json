@@ -90,7 +90,11 @@
     {
       "id": "tempo-016",
       "promise": "A pull request changing can fire a trigger.",
-      "source": "docs/how-it-works/site/tempo.html#con-h"
+      "source": "docs/how-it-works/site/tempo.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "pullRequestTrigger"
+      }
     },
     {
       "id": "tempo-017",
