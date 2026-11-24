@@ -8,6 +8,7 @@ import { GraphQLObjectType,GraphQLSchema,graphql } from 'graphql/index.js';
 import { createDataSchema } from '../../core/data/database.js';
 import { dataQueries } from '../../core/data/queries.js';
 import {memoryQueries} from '../../../web/src/memory/queries.js';
+import {slackGrantDirectory} from '../../backends/people-accounts.js';
 import { PeopleStore } from '../../backends/people.js';
 import type { Sharing,Viewer } from '../../policy.js';
 import { peopleQueryFields } from './people-query.js';
@@ -389,4 +390,74 @@ it('keeps mixed-platform sightings ordered and drops a newly ambiguous Discord h
  expect(reader.sightings(owner,'friend').map(row=>row.label)).toEqual(['Slack friend','Discord friend']);
  directory.write({slug:'other',name:'Other',where:{discord_workspace:{value:'shared'},discord:{value:'outside'}}});
  expect(reader.sightings(owner,'friend').map(row=>row.label)).toEqual(['Slack friend']);
+});
+
+it('keeps batched Slack grant names in step with the current directory as recipients change',()=>{
+ const directory=store(join(home(),'directory.db')),owner:Viewer={kind:'member',id:'owner'};
+ const reader=peopleReader({directory:directory.database.name,agents:[],sharing:()=>({members:{owner:{owner:true,agents:[]}},projects:{}}),now:()=>0});
+ closes.push(reader.close);
+ const user='UFICTION01',second='UFICTION02',west='TWEST',east='TEAST';
+ const accounts=[west,east].flatMap(workspace=>[user,second].map(user=>({workspace,user})));
+ const scoped=(slug:string,name:string,workspace:string,value:string|string[])=>directory.write({slug,name,where:{slack:{value},slack_workspace:{value:workspace}}});
+ const check=()=>{
+   const expected=new Map();
+   for(const account of accounts){
+     const name=reader.outsideName(owner,'slack',account.workspace,account.user);
+     const alias=reader.slackRecipient(owner,account.workspace,account.user);
+     if(name||alias)expected.set(JSON.stringify([account.workspace,account.user]),{name:name||alias,alias:!name});
+   }
+   const result=reader.slackGrantNames(owner,[...accounts,...accounts]);
+   expect(result).toEqual(expected);
+   expect(reader.slackGrantNames({kind:'member',id:'other'},accounts).size).toBe(0);
+   expect(reader.slackGrantNames({kind:'agent',id:'art'},accounts).size).toBe(0);
+   return result;
+ };
+ scoped('garden','Garden',west,[user,second,user]);
+ scoped('valley','Valley',east,user);
+ directory.write({slug:'shore',name:'Shore',where:{slack:{value:'Recorded account ('+second+')'}}});
+ directory.database.prepare('INSERT INTO person_sighting_aliases (workspace,account,slug) VALUES (?,?,?)').run(east,second,'shore');
+ expect(check().size).toBe(3);
+ directory.database.prepare('UPDATE person_sighting_aliases SET recipient_display_slug=slug').run();
+ expect(check().size).toBe(4);
+ scoped('another','Another',west,user);
+ expect(check().has(JSON.stringify([west,user]))).toBe(false);
+ scoped('other-shore','Other Shore',east,'Legacy '+second);
+ expect(check().has(JSON.stringify([east,second]))).toBe(false);
+ directory.database.prepare("UPDATE people SET archived_at='2026-01-01' WHERE slug IN ('another','other-shore')").run();
+ expect(check().size).toBe(4);
+ directory.database.prepare('UPDATE person_sighting_aliases SET recipient_display_slug=NULL').run();
+ expect(check().size).toBe(3);
+ // Keep the exact matches if the alias source alone becomes unreadable.
+ directory.database.exec(`ALTER TABLE person_sighting_aliases RENAME TO fixture_saved_aliases;
+   CREATE VIEW person_sighting_aliases AS SELECT workspace,account,slug,json_extract('invalid','$') AS recipient_display_slug FROM fixture_saved_aliases`);
+ const available=reader.slackGrantNames(owner,accounts);
+ expect(available.get(JSON.stringify([west,user]))).toEqual({name:'Garden',alias:false});
+ expect(available.get(JSON.stringify([east,user]))).toEqual({name:'Valley',alias:false});
+ expect(available.has(JSON.stringify([east,second]))).toBe(false);
+
+});
+
+it('resolves one repeated Slack account across many workspaces in a fixed number of directory reads',()=>{
+ const directory=store(join(home(),'directory.db')),account='UREPEATED001';
+ const requests=[];
+ for(let i=0;i<48;i++){
+   const slug='garden-'+i,workspace='TWORK'+i;
+   directory.write({slug,name:'Garden '+i,where:{slack_workspace:{value:workspace},slack:{value:'Contact '+account}}});
+   directory.database.prepare('INSERT INTO person_sighting_aliases(workspace,account,slug,recipient_display_slug) VALUES(?,?,?,?)').run(workspace,account,slug,slug);
+   requests.push({workspace,user:account});
+ }
+ const statements:string[]=[];
+ const probe=new Database(directory.database.name,{readonly:true,verbose:sql=>statements.push(String(sql))});
+ try{
+   const counts=[2,16,48].map(size=>{
+     statements.length=0;
+     const names=slackGrantDirectory(probe,requests.slice(0,size));
+     expect([...names.values()]).toEqual(requests.slice(0,size).map((_,i)=>({name:'Garden '+i,alias:true})));
+     return statements.filter(sql=>/^select/i.test(sql.trim())).length;
+   });
+   expect(counts[0]).toBeGreaterThan(0);
+   expect(counts).toEqual(Array(3).fill(counts[0]));
+   directory.write({slug:'unscoped',name:'Another Garden',where:{slack:{value:'Work '+account}}});
+   expect(slackGrantDirectory(probe,requests).size).toBe(0);
+ }finally{probe.close();}
 });

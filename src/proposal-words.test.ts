@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { householdChanges } from './shared-household-proposals.js';
-import { factLines, proposalCard, storedProposal, type CardNames } from './proposal-words.js';
+import { outsideKitGrantTitle, factLines, proposalCard, storedProposal, type CardNames } from './proposal-words.js';
 
 const gage = { platform: 'slack', workspace: 'T02AYL3QM', user: 'U07V8CZUC1J' };
 const tool = { name: 'pond_status', description: 'Read station status in the Pond deployment.', repository: 'https://github.com/org/house.git', commit: 'a'.repeat(40), image: 'sha256:' + 'b'.repeat(64),
@@ -256,4 +256,13 @@ it('uses a Last seen name only for a Slack access recipient without an existing 
   const bridge = proposalCard('bridge', {action: 'person', ...address, member: 'example'}, {names});
   expect(bridge?.title).toContain('unnamed Slack account');
   expect(proposalCard('kitGrant', {agent:'art', kit:'sample', grant:true, to:{...address, platform:'discord'}}, {names})!.title).not.toContain('Sample Contact');
+});
+
+it('clips the short Inbox grant title at the same whole character as the preview',()=>{
+  const name='a'.repeat(234)+'🌿 field',held={name,source:'household'};
+  const names:CardNames={person:()=>held,workspace:()=>null,channel:()=>null};
+  const input={agent:'art',kit:'garden',grant:true,to:gage};
+  const preview=proposalCard('kitGrant',input,{before:{value:null},names})!;
+  expect(preview.title).toBe('Let '+'a'.repeat(234)+'…');
+  expect(outsideKitGrantTitle(true,'Art','garden',gage,held,names)).toBe(preview.title);
 });

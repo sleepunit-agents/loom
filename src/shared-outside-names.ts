@@ -12,7 +12,7 @@ import type { DataDatabase } from './core/data/database.js';
 import { agents, bridgeConnections, bridgeIncoming, bridgePeople, conversations } from './core/data/schema.js';
 import { outsidePersonKey } from './pieces/bridges/keys.js';
 import { slackRoomLabel } from './pieces/bridges/place.js';
-import type { CardNames, HeldName } from './proposal-words.js';
+import type { CardNames, HeldName, SlackAccount } from './proposal-words.js';
 
 export function outsideNames(db: DataDatabase, directory?: (platform: 'slack' | 'discord', workspace: string, user: string) => string | undefined): CardNames {
   const people = new Map<string, HeldName | null>();
@@ -70,4 +70,27 @@ export function outsideNames(db: DataDatabase, directory?: (platform: 'slack' | 
       return connection ? { name: connection.id, source: 'reached by the connection' } : null;
     },
   };
+}
+
+/** Match exact workspace/user pairs through the bridge's existing account link before consulting the directory. */
+export function slackGrantNames(db:DataDatabase,accounts:SlackAccount[],directory:(missing:SlackAccount[])=>Map<string,{name:string;alias:boolean}>){
+  const distinct=new Map(accounts.map(account=>[JSON.stringify([account.workspace,account.user]),account]));
+  const result=new Map<string,HeldName>();
+  const links=db.select({workspace:bridgePeople.workspace,user:bridgePeople.user,member:bridgePeople.member}).from(bridgePeople)
+    .where(and(eq(bridgePeople.platform,'slack'),sql`(${bridgePeople.workspace}, ${bridgePeople.user}) IN
+      (SELECT json_extract(value,'$.workspace'), json_extract(value,'$.user') FROM json_each(${JSON.stringify([...distinct.values()])}))`)).all();
+  for(const link of links){
+    const key=JSON.stringify([link.workspace,link.user]);
+    result.set(key,{name:link.member,source:'Household person link for this account'});
+    distinct.delete(key);
+  }
+  if(distinct.size){
+    let records:ReturnType<typeof directory>;
+    try{records=directory([...distinct.values()]);}
+    catch{return result;} // A missing directory cannot take away a known bridge link.
+    for(const [key,entry] of records){
+      result.set(key,{name:entry.name,source:entry.alias?'People directory match used for Last seen':'People directory record for this account'});
+    }
+  }
+  return result;
 }

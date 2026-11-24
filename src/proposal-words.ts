@@ -15,6 +15,10 @@ import { parseOutsidePersonKey } from './pieces/bridges/keys.js';
 export interface CardFact { label: string; value: string; /** A raw id kept for certainty: drawn small, and last. */ small?: boolean }
 /** A name loom already holds, and where it came from. */
 export interface HeldName { name: string; source: string }
+export interface SlackAccount {workspace:string;user:string}
+export interface InboxCardNames extends CardNames {
+  slackGrantNames(accounts:SlackAccount[]):Map<string,HeldName>;
+}
 export interface CardNames {
   /** The name held for an outside account, or null when loom holds none. */
   person(platform: string, workspace: string, user: string): HeldName | null;
@@ -63,6 +67,19 @@ export function outsideCardName(change:string, who:Outside, names?:CardNames):He
   if (who.platform !== 'slack' || !['kitGrant', 'colleague', 'projectOutsidePerson'].includes(change)) return null;
   const recipient = names?.slackRecipient?.(who.workspace, who.user);
   return recipient ? { name: recipient, source: 'People directory match used for Last seen' } : null;
+}
+function outsideShort(who:Outside,held:HeldName|null,names?:CardNames){
+  const platform=platformWord(who.platform);
+  return held ? held.name + ' (' + platform + ')'
+      : names && who.platform === 'slack' ? 'an unnamed Slack account'
+      : names ? 'a ' + platform + ' account loom has no name for (' + who.user + ' in workspace ' + who.workspace + ')'
+      : 'the ' + platform + ' account ' + who.user + ' (workspace ' + who.workspace + ')';
+}
+function kitGrantTitle(grant:boolean,whom:string,whose:string){
+  return grant ? 'Let ' + whom + ' use ' + whose : 'Stop letting ' + whom + ' use ' + whose;
+}
+export function outsideKitGrantTitle(grant:boolean,agent:string,kit:string,who:Outside,held:HeldName|null,names:CardNames){
+  return clipProposalText(kitGrantTitle(grant,outsideShort(who,held,names),owns(agent)+' '+kit+' kit'),240);
 }
 type ChangeRow = [label: string, was: string | undefined, asked: string, equal?: boolean];
 const sameValue = (before: unknown, after: unknown) => JSON.stringify(before) === JSON.stringify(after);
@@ -141,10 +158,7 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
   const outside = (who: Outside) => {
     const platform = platformWord(who.platform);
     const held = outsideCardName(change, who, names);
-    const short = held ? held.name + ' (' + platform + ')'
-      : names && who.platform === 'slack' ? 'an unnamed Slack account'
-      : names ? 'a ' + platform + ' account loom has no name for (' + who.user + ' in workspace ' + who.workspace + ')'
-      : 'the ' + platform + ' account ' + who.user + ' (workspace ' + who.workspace + ')';
+    const short = outsideShort(who,held,names);
     const facts: CardFact[] = [
       { label: 'Who', value: held ? held.name + ', on ' + platform : names ? cap(short) : 'A ' + platform + ' account' },
       ...(held ? [{ label: 'Name from', value: held.source }] : []),
@@ -250,7 +264,7 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
       const same = !!was && was.on === grant;
       if (was) facts.push({ label: same ? 'What changes' : 'Now', value: same ? NOTHING : was.on ? 'This grant is in place.' : 'This grant is absent.' });
       if (last) facts.push(last);
-      return { title: grant ? 'Let ' + whom + ' use ' + whose : 'Stop letting ' + whom + ' use ' + whose, facts, nothing: same,
+      return { title: kitGrantTitle(grant,whom,whose), facts, nothing: same,
         ifYes: grant ? 'This grant makes the kit available for eligible work by ' + agent + '.' : 'This grant ends. Access through other grants stays in place.', ifNo: 'Who can use the kit stays as it is.' };
     }
     case 'colleague': {

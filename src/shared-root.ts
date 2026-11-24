@@ -71,7 +71,7 @@ import {installMemorySignals} from './transport/memory-signals.js';
 import { OperationError, Operations, failure, type Change } from './core/operations/index.js';
 import { householdService } from './apps/household.js';
 import { sharedHouseholdProposals } from './shared-household-proposals.js';
-import { outsideNames } from './shared-outside-names.js';
+import { outsideNames,slackGrantNames } from './shared-outside-names.js';
 import { registerSharedJobControl } from './shared-job-control.js';
 import { Jobs } from './runtime/jobs.js';
 import { ConversationSessions } from './core/conversations/sessions.js';
@@ -189,6 +189,9 @@ export function sharedRoot(options: {
     const cache = new Map<string, string | undefined>();
     return {
       ...outsideNames(db, (platform, workspace, user) => memory.people.outsideName(viewer, platform, workspace, user)),
+      slackGrantNames(accounts:{workspace:string;user:string}[]){
+        return slackGrantNames(db,accounts,missing=>memory.people.slackGrantNames(viewer,missing));
+      },
       slackRecipient(workspace: string, user: string) {
         const key = JSON.stringify([workspace, user]);
         if (!cache.has(key)) cache.set(key, memory.people.slackRecipient(viewer, workspace, user));
@@ -224,7 +227,7 @@ export function sharedRoot(options: {
   // currentToken writes it where it reads the job (core/data/authentication.ts).
   const authenticateOutside=(request:Request,options?:Parameters<typeof credentials.authenticate>[1])=>{const auth=credentials.authenticate(request,options);return auth&&{...auth,valid:()=>auth.valid()&&householdQueries.valid(auth.viewer)&&projectQueries.valid(auth.viewer)&&programQueries.valid(auth.viewer)&&kitQueries.valid(auth.viewer)};};
   const bodyScope=conversationBodyScope(db,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
-  const readInboxTitles=inboxProposalTitles(db,proposalNames,householdProposals.inboxTitle);
+  const readInboxTitles=inboxProposalTitles(db,proposalNames,householdProposals.inboxTitles);
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey, (viewer,account)=>{
     let identity:unknown;
     try { identity=JSON.parse(account); } catch { return undefined; }

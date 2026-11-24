@@ -75,7 +75,7 @@ import {agentBodyPolicyInput,readAgentBodyPolicy,saveAgentBodyPolicy} from './sh
 import {placeScheduleAsk,placeScheduleCard,placeScheduleRefusal,placeScheduleWords,type PlaceScheduleAsk} from './shared-place-triggers.js';
 import {triggers as triggerRows} from './core/data/schema.js';
 import {applyKitChange,kitBefore,kitCardName,kitReview,kitQuestion,kitRefusal,kitChange,kitChanges,projectKitDefinitions,type KitRefusal} from './shared-kit-cards.js';
-import {outsideCardName,proposalCard,factLines,storedProposal,clipProposalText,clipWithCount,type CardContext,type CardNames} from './proposal-words.js';
+import {outsideKitGrantTitle,type InboxCardNames,outsideCardName,proposalCard,factLines,storedProposal,clipProposalText,clipWithCount,type CardContext,type CardNames} from './proposal-words.js';
 import {validateBoxSettings,validateMachineReader} from './shared-box-settings.js';
 import {validateAgentRunSettings} from './shared-agent-run-settings.js';
 import {validateAgentAccounts} from './shared-household-access.js';
@@ -505,15 +505,10 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
      };
      return plain(value,context);
  };
- return{
-  operation:[operation,apply] as const,
-  inboxTitle(card:Approval,names:CardNames) {
-   let value:Proposal;
-   try { value=read(card).value; } catch { return undefined; }
+ function otherInboxTitle(card:Approval,value:Proposal,names:CardNames){
    let platform: unknown;
    let was: unknown;
    switch(value.change) {
-    case 'kitGrant': platform='platform' in value.input.to ? value.input.to.platform : undefined; break;
     case 'colleague':
     case 'projectOutsidePerson': platform=value.input.platform; break;
     case 'placeSchedule': platform=value.input.asker.kind==='outside' ? parseOutsidePersonKey(value.input.asker.id)?.platform : undefined; break;
@@ -529,6 +524,33 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    if(platform!=='slack') return undefined;
    // A historical title describes the original request, independent of later configuration.
    return ownerCard(value,was ?? (card.state==='pending' ? before(value) : undefined),names)?.title;
+ }
+ return{
+  operation:[operation,apply] as const,
+  inboxTitles(cards:Approval[],names:InboxCardNames){
+    const titles=new Map<string,string>();
+    const grants=[];
+    for(const card of cards){
+      let value:Proposal;
+      try{value=read(card).value;}catch{continue;}
+      if(value.change==='kitGrant' && 'platform' in value.input.to && value.input.to.platform==='slack'){
+        grants.push({card,input:value.input,to:value.input.to});
+      }else{
+        const title=otherInboxTitle(card,value,names);
+        if(title)titles.set(card.id,title);
+      }
+    }
+    if(!grants.length)return titles;
+    let held:ReturnType<InboxCardNames['slackGrantNames']>;
+    try{held=names.slackGrantNames(grants.map(grant=>grant.to));}
+    catch{ return titles; } // Full previews also omit cards whose bridge lookup is unavailable.
+    for(const {card,input,to} of grants){
+      const recipient=held.get(JSON.stringify([to.workspace,to.user]))??null;
+      const agent=card.state==='pending'?input.agent.charAt(0).toUpperCase()+input.agent.slice(1):input.agent;
+      titles.set(card.id,outsideKitGrantTitle(input.grant,agent,input.kit,to,recipient,names));
+    }
+    return titles;
+
   },
   file,
   // Called after the outer Allow transaction commits, so readers see the change.

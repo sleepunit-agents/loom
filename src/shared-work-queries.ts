@@ -7,13 +7,13 @@ import { workAnswersAllowed } from './shared-work-access.js';
 import { and, eq, getTableColumns, inArray } from 'drizzle-orm';
 import { approvals } from './core/data/schema.js';
 import { workVisibility } from './core/data/work-visibility.js';
-import { type CardNames } from './proposal-words.js';
+import { type InboxCardNames } from './proposal-words.js';
 
 const titleRow = new GraphQLObjectType({ name: 'InboxProposalTitle', fields: {
   approval: { type: GraphQLString }, title: { type: GraphQLString },
 } });
 /** The Inbox and its search use the same current, viewer-visible card wording. */
-export function inboxProposalTitles(db:DataDatabase,names:(viewer:Viewer)=>CardNames,titleOf:(row:typeof approvals.$inferSelect,names:CardNames)=>string|undefined) {
+export function inboxProposalTitles(db:DataDatabase,names:(viewer:Viewer)=>InboxCardNames,titlesOf:(rows:(typeof approvals.$inferSelect)[],names:InboxCardNames)=>Map<string,string>) {
   return (viewer:Viewer, ids:string[]) => {
     const titles=new Map<string,string>();
     if (!ids.length || !workAnswersAllowed(db,viewer)) return titles;
@@ -22,8 +22,9 @@ export function inboxProposalTitles(db:DataDatabase,names:(viewer:Viewer)=>CardN
     for(let offset=0;offset<ids.length;offset+=100){
       const rows=db.select().from(approvals).where(and(inArray(approvals.id,ids.slice(offset,offset+100)),
         eq(approvals.operation,'household.change'),visible)).all();
+      const batch=titlesOf(rows,visibleNames);
       for(const row of rows){
-        const title=titleOf(row,visibleNames);
+        const title=batch.get(row.id);
         if(title)titles.set(row.id,title);
       }
     }
