@@ -2,7 +2,13 @@ import { DAY_MS } from '../day.js';
 /** Household wall-clock scheduling. Independent of the worker's timezone. */
 const day = DAY_MS;
 const names = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+// Day and Week bucket every history entry in the same household timezone.
+let lastCalendar: { zone: string; calendar: ReturnType<typeof makeCalendar> } | undefined;
 function calendar(zone: string) {
+  if (!lastCalendar || lastCalendar.zone !== zone) lastCalendar = { zone, calendar: makeCalendar(zone) };
+  return lastCalendar.calendar;
+}
+function makeCalendar(zone: string) {
   const format = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
   const nominal = (epoch: number) => {
     const p = Object.fromEntries(format.formatToParts(epoch).map(p => [p.type, p.value]));
