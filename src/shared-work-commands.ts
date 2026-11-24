@@ -10,7 +10,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { workAnswersAllowed } from './shared-work-access.js';
 import type { DataDatabase } from './core/data/database.js';
-import { approvals, changes } from './core/data/schema.js';
+import { approvals, changes, conversations } from './core/data/schema.js';
 import { type Operations, type Context, OperationError } from './core/operations/index.js';
 import type { approvalService, Approval } from './apps/approvals.js';
 import { changeAnswers } from './apps/changes-answers.js';
@@ -82,18 +82,32 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
   const decisionBasis = (answer: 'allow' | 'deny', basis: string | undefined) =>
     basis && (answer === 'allow' ? 'Allowed by ' : 'Denied by ') + basis;
   operations.register({ name: 'approvals.answer', write: true, recheckPolicy: true,
-    input: z.object({ id, answer: z.enum(['allow', 'deny']), reason: z.string().trim().min(1).max(2000).optional(), confirm: z.literal(true).optional(), review: z.string().regex(SHA256_HEX).optional(), onWord: ownerWord.optional() }).strict(), output: z.object({ id }).strict(),
+    input: z.object({ id, answer: z.enum(['allow', 'deny']), reason: z.string().refine(value => value.trim().length > 0 && value.trim().length <= 2000).optional(), confirm: z.literal(true).optional(), review: z.string().regex(SHA256_HEX).optional(), onWord: ownerWord.optional() }).strict()
+      .transform(input => input.reason && !(input.onWord && 'item' in input.onWord)
+        ? { ...input, reason: input.reason.trim() } : input), output: z.object({ id }).strict(),
     may(viewer, input) {
       const row = approval(input.id);
       if (!workAnswersAllowed(db, viewer) && !sources.bodyJob(viewer) && !(viewer.kind === 'agent' && viewer.atTerminalOf !== undefined && sources.terminal?.(viewer))) return false;
+      const proofs = evidenceCandidates(db, sources, viewer, input.onWord);
+      if (!row) return false;
       if (input.reason) {
         if (input.answer !== 'deny') return false;
-        if (input.onWord) {
-          if (viewer.kind !== 'agent' || !('venue' in input.onWord) || input.onWord.quote !== input.reason) return false;
-        } else if (viewer.kind !== 'member' || sources.isProgram(viewer)) return false;
+        const word = input.onWord;
+        if (!word) {
+          if (viewer.kind !== 'member' || sources.isProgram(viewer)) return false;
+        } else {
+          if ('venue' in word) {
+            if (viewer.kind !== 'agent' || word.quote !== input.reason) return false;
+          } else {
+            // Only return the owner's quoted reason to the private Comms thread that supplied it.
+            const job = sources.bodyJob(viewer)?.job, proof = proofs[0];
+            if (word.quote !== input.reason || !word.item || !proof?.sealed || !job?.conversation || row.conversation !== job.conversation ||
+                row.agent !== job.agent || row.member !== proof.member) return false;
+            const cv = db.select().from(conversations).where(eq(conversations.id, job.conversation)).get();
+            if (cv?.venue !== 'loom' || cv.place !== proof.thread || cv.agent !== job.agent || cv.member !== proof.member) return false;
+          }
+        }
       }
-      evidenceCandidates(db, sources, viewer, input.onWord);
-      if (!row) return false;
       if (input.review && (viewer.kind !== 'member' || sources.isProgram(viewer) || input.onWord || input.answer !== 'allow' || row.operation !== 'household.change' || !workAnswersAllowed(db, viewer))) return false;
       const merge = mergeTarget(row);
       // A yes to a merge needs its change to still be here; a no is always possible.
@@ -107,7 +121,15 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
         const read = sources.words?.(proof.thread, proof.seq);
         const words = await (terminal ? read?.catch(() => null) : read);
         if (words == null && !terminal) throw new OperationError('denied','Those words do not appear in that message.');
-        opened.set(proof.item, { sealed: proof.sealed, thread: proof.thread, seq: proof.seq, matches: words == null ? null : !!input.onWord && words.includes(input.onWord.quote) });
+        const matches = words == null ? null : !!input.onWord && words.includes(input.onWord.quote);
+        if (!terminal && matches && words) {
+          // Check the whole message: the quoted reason may omit the card ID the owner named.
+          const namedCards = words.match(/(?<![a-z0-9])a-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?![a-z0-9])/gi) ?? [];
+          if (namedCards.length && (!namedCards.some(card => card.toLowerCase() === input.id) ||
+              (input.reason && namedCards.some(card => card.toLowerCase() !== input.id))))
+            throw new OperationError('denied', 'That message names a different approval card.');
+        }
+        opened.set(proof.item, { sealed: proof.sealed, thread: proof.thread, seq: proof.seq, matches });
       }
       return opened;
     },
