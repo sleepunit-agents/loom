@@ -75,7 +75,7 @@ import {agentBodyPolicyInput,readAgentBodyPolicy,saveAgentBodyPolicy} from './sh
 import {placeScheduleAsk,placeScheduleCard,placeScheduleRefusal,placeScheduleWords,type PlaceScheduleAsk} from './shared-place-triggers.js';
 import {triggers as triggerRows} from './core/data/schema.js';
 import {applyKitChange,kitBefore,kitCardName,kitReview,kitQuestion,kitRefusal,kitChange,kitChanges,projectKitDefinitions,type KitRefusal} from './shared-kit-cards.js';
-import {outsideKitGrantTitle,type InboxCardNames,outsideCardName,proposalCard,factLines,storedProposal,clipProposalText,clipWithCount,type CardContext,type CardNames} from './proposal-words.js';
+import {outsideShort,colleagueTitle,outsideProjectTitle,outsideKitGrantTitle,type InboxCardNames,outsideCardName,proposalCard,factLines,storedProposal,clipProposalText,clipWithCount,type CardContext,type CardNames} from './proposal-words.js';
 import {validateBoxSettings,validateMachineReader} from './shared-box-settings.js';
 import {validateAgentRunSettings} from './shared-agent-run-settings.js';
 import {validateAgentAccounts} from './shared-household-access.js';
@@ -509,8 +509,6 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    let platform: unknown;
    let was: unknown;
    switch(value.change) {
-    case 'colleague':
-    case 'projectOutsidePerson': platform=value.input.platform; break;
     case 'placeSchedule': platform=value.input.asker.kind==='outside' ? parseOutsidePersonKey(value.input.asker.id)?.platform : undefined; break;
     case 'bridge':
      if(value.input.action==='disconnect') {
@@ -530,24 +528,50 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   inboxTitles(cards:Approval[],names:InboxCardNames){
     const titles=new Map<string,string>();
     const grants=[];
+    const contacts=[];
+    const projectsNeeded=new Set<string>();
+    const rosterRequests=[];
     for(const card of cards){
       let value:Proposal;
       try{value=read(card).value;}catch{continue;}
       if(value.change==='kitGrant' && 'platform' in value.input.to && value.input.to.platform==='slack'){
         grants.push({card,input:value.input,to:value.input.to});
+      }else if((value.change==='colleague'||value.change==='projectOutsidePerson')&&value.input.platform==='slack'){
+        contacts.push({card,value});
+        if(value.input.project)projectsNeeded.add(value.input.project);
+        if(value.change==='colleague'&&value.input.project&&card.state==='pending'){
+          rosterRequests.push({project:value.input.project,workspace:value.input.workspace,user:value.input.user});
+        }
       }else{
         const title=otherInboxTitle(card,value,names);
         if(title)titles.set(card.id,title);
       }
     }
-    if(!grants.length)return titles;
+    if(!grants.length&&!contacts.length)return titles;
     let held:ReturnType<InboxCardNames['slackGrantNames']>;
-    try{held=names.slackGrantNames(grants.map(grant=>grant.to));}
+    try{held=names.slackGrantNames([...grants.map(grant=>grant.to),...contacts.map(({value})=>({workspace:value.input.workspace,user:value.input.user}))]);}
     catch{ return titles; } // Full previews also omit cards whose bridge lookup is unavailable.
     for(const {card,input,to} of grants){
       const recipient=held.get(JSON.stringify([to.workspace,to.user]))??null;
       const agent=card.state==='pending'?input.agent.charAt(0).toUpperCase()+input.agent.slice(1):input.agent;
       titles.set(card.id,outsideKitGrantTitle(input.grant,agent,input.kit,to,recipient,names));
+    }
+    const projectNames=new Map(projectsNeeded.size?db.select({id:projectRows.id,name:projectRows.name}).from(projectRows)
+      .where(inArray(projectRows.id,[...projectsNeeded])).all().map(row=>[row.id,row.name]):[]);
+    const roster=projectOutsidePeople;
+    const onRoster=new Set(rosterRequests.length?db.select({project:roster.project,workspace:roster.workspace,user:roster.user}).from(roster)
+      .where(and(eq(roster.platform,'slack'),sql`(${roster.project},${roster.workspace},${roster.user}) IN
+        (SELECT json_extract(value,'$.project'),json_extract(value,'$.workspace'),json_extract(value,'$.user') FROM json_each(${JSON.stringify(rosterRequests)}))`))
+      .all().map(row=>JSON.stringify([row.project,row.workspace,row.user])):[]);
+    for(const {card,value} of contacts){
+      const {project,workspace,user}=value.input;
+      const whom=outsideShort(value.input,held.get(JSON.stringify([workspace,user]))??null,names);
+      const projectName=project?(projectNames.get(project)??project):undefined;
+      const title=value.change==='colleague'
+        ?colleagueTitle(whom,String(value.input.tier),value.input.agent.charAt(0).toUpperCase()+value.input.agent.slice(1),projectName,
+          card.state==='pending'?onRoster.has(JSON.stringify([project,workspace,user])):undefined)
+        :outsideProjectTitle(whom,projectName??value.input.project,value.input.on);
+      titles.set(card.id,clipProposalText(title,240));
     }
     return titles;
 
