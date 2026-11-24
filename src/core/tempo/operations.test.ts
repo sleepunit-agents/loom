@@ -10,11 +10,11 @@ import { agents, approvals, inbox, members, operationResults, triggerEdits, trig
 import { Operations } from '../operations/index.js';
 import { approvalService } from '../../apps/approvals.js';
 import { createTempo } from './tempo.js';
-import { registerTempoOperations, type TempoAccess } from './operations.js';
+import { registerTempoOperations, type TempoAccess, type TempoOperationOptions } from './operations.js';
 
 const closes: Array<() => void> = [];
 afterEach(() => closes.splice(0).reverse().forEach(close => close()));
-function fixture() {
+function fixture(policy: Partial<Pick<TempoOperationOptions, 'heldRefusal' | 'wordRefusal' | 'ownersFirst'>> = {}) {
   const client = new Database(':memory:'), clock = new FakeClock(), now = () => new Date(clock.now()).toISOString();
   const db = createDataSchema(client, now);
   db.insert(members).values({ id: 'jonathan', role: 'owner', joinedAt: now() }).run();
@@ -31,6 +31,7 @@ function fixture() {
   const operations = new Operations(client, clock, () => {}, { receipts: new OperationResults(db), writes, reportError(error) { throw error; } });
   let allowed = true;
   registerTempoOperations(operations, db, tempo, {
+    ...policy,
     authorize(viewer, access) { accesses.push(access); return allowed && viewer.kind === 'agent' && viewer.id === 'art'; },
   });
   tempo.start();
@@ -187,4 +188,68 @@ it('sets and edits machine facts, keeping each previous list in the trigger hist
   expect(f.db.select().from(triggerEdits).all().map(edit => JSON.parse(edit.before))).toEqual([
     { prefers: ['local'] }, { needs: ['gpu'], prefers: [] }, { prefers: null },
   ]);
+});
+
+it('joins an older unguarded wake even while held, preserving exact name and receipt semantics', () => {
+  const f = fixture();
+  const times = new Date(f.clock.now() + 60000).toISOString();
+  const first = 'run-alert-dns-20261123t010203-bbbb';
+  const next = { ...f.trigger, times, reusePendingRun: true, id:'run-alert-dns-20261124t010203-aaaa' };
+  expect(f.call('tempo.set', {...f.trigger, times, id:first}, 'old').ok).toBe(true);
+  expect(f.call('tempo.set', {...next, id:'run-alert-dns-check-20261124t010203-aaaa'}, 'different')).toMatchObject({ok:true,value:{id:expect.stringMatching(/^run-alert-dns-check-/)}});
+  const joined = {ok:true,value:{id:first,joined:true}};
+  expect(f.call('tempo.set', next, 'join')).toMatchObject(joined);
+  f.tempo.triggers.pause('art');
+  const late = {...next,times:new Date(f.clock.now()-1000).toISOString()};
+  expect(f.call('tempo.set', late, 'held')).toMatchObject(joined);
+  expect(f.call('tempo.set', {...late,times:'invalid'}, 'invalid').ok).toBe(false);
+  f.tempo.triggers.resume('art');
+  f.clock.advance(60000);
+  expect(f.tempo.triggers.get(first).state).toBe('fired');
+  expect(f.call('tempo.set', late, 'missed').ok).toBe(false);
+  expect(f.call('tempo.set', next, 'join')).toMatchObject(joined);
+  expect(f.call('tempo.set', {...next, id:first}, 'fresh')).toMatchObject({ok:true,value:{id:expect.not.stringMatching(first)}});
+  expect(f.db.select().from(triggers).all()).toHaveLength(3);
+});
+
+it('allocates a fresh id when the proposed one names another agent’s pending wake', () => {
+  const f = fixture();
+  const id='run-alert-garden-20261124t010203-aaaa', times = new Date(f.clock.now()+60000).toISOString();
+  f.db.insert(agents).values({id:'fern', about:'', markBg:'#fff', markFg:'#000', faceShape:'pebble',faceEyes:'dot'}).run();
+  expect(f.call('tempo.set', {...f.trigger, owner:'fern',to:'fern',id,times}, 'seed').ok).toBe(true);
+  const input={...f.trigger,id,times,reusePendingRun:true};
+  expect(f.call('tempo.set',input,'ours')).toMatchObject({ok:true,value:{id:expect.not.stringMatching(id)}});
+  expect(f.tempo.triggers.get(id).owner).toBe('fern');
+  const rows=f.db.select().from(triggers).all();
+  expect(rows).toHaveLength(2);
+  expect(f.call('tempo.set',input,'again')).toMatchObject({ok:true,value:{id:rows.find(t=>t.owner==='art')!.id,joined:true}});
+});
+
+it('checks holds, scheduling authority and owner proposals before returning a pending id', () => {
+  let decision: 'set'|'held'|'refused'|'ask'='set';
+  const f=fixture({
+    heldRefusal:()=>decision==='held'?'On hold':undefined,
+    wordRefusal:()=>decision==='refused'?'Out of scope':undefined,
+    ownersFirst:()=>decision==='ask'?{id:'proposed',card:'approval',waits:'owner'}:undefined,
+  });
+  const input={...f.trigger,id:'run-test-20261124t010203-aaaa',times:new Date(f.clock.now()+60000).toISOString(),reusePendingRun:true};
+  expect(f.call('tempo.set',input,'seed').ok).toBe(true);
+  decision='held'; expect(f.call('tempo.set',input,'held')).toMatchObject({ok:false,code:'denied'});
+  decision='refused'; expect(f.call('tempo.set',input,'refused')).toMatchObject({ok:false,code:'denied'});
+  decision='ask'; expect(f.call('tempo.set',input,'ask')).toMatchObject({ok:true,value:{id:'proposed',waits:'owner'}});
+  expect(f.db.select().from(triggers).all()).toHaveLength(1);
+});
+
+it('retains trigger visibility even when the command authorizer permits setting a wake for another agent', () => {
+  const f = fixture();
+  f.db.insert(agents).values({id:'fern',about:'',markBg:'#fff',markFg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
+  const input = {...f.trigger, id:'run-alert-garden-20261124t010203-aaaa', owner:'fern', to:'fern',
+    times:new Date(f.clock.now()+60000).toISOString()};
+  expect(f.call('tempo.set',input,'private').ok).toBe(true);
+  const result=f.call('tempo.set',{...input,reusePendingRun:true},'guarded');
+  expect(result).toMatchObject({ok:true,value:{id:expect.not.stringMatching(input.id)}});
+  if (!result.ok) throw Error('Expected a new wake');
+  expect(result.value).not.toHaveProperty('joined');
+  expect(f.db.select().from(triggers).all()).toHaveLength(2);
+  expect(f.tempo.triggers.get(input.id)).toMatchObject({owner:'fern',to:'fern',enabled:true,state:'standing'});
 });
