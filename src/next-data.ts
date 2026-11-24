@@ -13,7 +13,7 @@ import type { Viewer } from './policy.js';
 import type { Clock } from './core/clock.js';
 import type { DataDatabase } from './core/data/database.js';
 import { dataAuthentication } from './core/data/authentication.js';
-import { dataHttp, withQueryFields } from './core/data/http.js';
+import { dataHttp } from './core/data/http.js';
 import type { memoryQueryFields } from './transport/memory-queries.js';
 import { DataLive, type MeasureRead } from './core/data/live.js';
 import { dataQueries } from './core/data/queries.js';
@@ -83,16 +83,19 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     const reusable = viewer.kind === 'member' && records === undefined && !full;
     const previous = reusable && memberSchemas.get(viewer);
     if (previous) return previous;
-    const result = withQueryFields(selected.length?dataQueries(db.$client, {tables:selected,
-    // Every rule is stated in policy.ts.
-    visibility: { ...boxVisibility(viewer), ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer),
-      ...measuringVisibility(viewer), ...tempoVisibility(viewer),
-      ...sqlVisibility(viewer, ['agentStatus', 'agentModels', 'agentRunSettings', 'agentBoxes', 'agentHousePorts', 'agentHouseSecrets', 'agentPeople', 'agentDeniedTools', 'members', 'memberAgents', 'memberPreferences']),
-    },
-  }):emptyProgram, records!==undefined?{}:{ ...fields, ...ownFields, ...tempoQueryFields(db, viewer, () => canReadProgram(viewer), () => canReadUsage(viewer)), ...accounts.fields,
-    // A job's title, brief and log tail are words of its conversation; it is read by the jobs rule in policy.ts.
-    ...jobSummaryFields(summaries(viewer), () => canReadUsage(viewer)),
-  });
+    const result = selected.length ? dataQueries(db.$client, {
+      tables:selected,
+      // Every rule is stated in policy.ts.
+      visibility: { ...boxVisibility(viewer), ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer),
+        ...measuringVisibility(viewer), ...tempoVisibility(viewer),
+        ...sqlVisibility(viewer, ['agentStatus', 'agentModels', 'agentRunSettings', 'agentBoxes', 'agentHousePorts', 'agentHouseSecrets', 'agentPeople', 'agentDeniedTools', 'members', 'memberAgents', 'memberPreferences']),
+      },
+      fields: records !== undefined ? undefined : {
+        ...fields, ...ownFields, ...tempoQueryFields(db, viewer, () => canReadProgram(viewer), () => canReadUsage(viewer)), ...accounts.fields,
+        // A job's title, brief and log tail are words of its conversation.
+        ...jobSummaryFields(summaries(viewer), () => canReadUsage(viewer)),
+      },
+    }) : emptyProgram;
     if (reusable) memberSchemas.set(viewer, result);
     return result;
   };

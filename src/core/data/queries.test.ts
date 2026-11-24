@@ -2,7 +2,7 @@ import { tasksQuery } from '../../../web/src/pieces/tasks/query.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { eq, ne, sql } from 'drizzle-orm';
-import { graphql, printSchema } from 'graphql/index.js';
+import { graphql, GraphQLObjectType, GraphQLString, printSchema } from 'graphql/index.js';
 import { createDataSchema } from './database.js';
 import { dataQueries } from './queries.js';
 import { members, projects, tasks, taskComments, taskLinks } from './schema.js';
@@ -28,6 +28,18 @@ function fixture() {
 afterEach(() => { for (const client of opened.splice(0)) client.close(); });
 
 describe('generated SQL reads', () => {
+  it('registers custom output types on just the caller’s schema and keeps table visibility', async () => {
+    const {client}=fixture();
+    const shape=new GraphQLObjectType({name:'TaskBadge',fields:{label:{type:GraphQLString}}});
+    const first=dataQueries(client,{tables:['tasks'],visibility:{tasks:f=>eq(f.id,'a')},
+      fields:{badge:{type:shape,resolve:()=>({label:'First reader'})}}});
+    const second=dataQueries(client,{tables:['tasks'],visibility:{tasks:f=>eq(f.id,'b')}});
+    expect(await graphql({schema:first,source:'{badge {... on TaskBadge {label}} tasks {id}}'})).toEqual({
+      data:{badge:{label:'First reader'},tasks:[{id:'a'}]},
+    });
+    expect(second.getType('TaskBadge')).toBeUndefined();
+    expect(await graphql({schema:second,source:'{tasks {id}}'})).toEqual({data:{tasks:[{id:'b'}]}});
+  });
   it('keeps the pending placement sign-in diagnosis out of raw job projections, ordering and filters', async () => {
     const {client}=fixture();
     const schema=dataQueries(client,{tables:['jobs'],visibility:{jobs:()=>sql`true`}});
