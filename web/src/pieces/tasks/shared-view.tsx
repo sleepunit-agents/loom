@@ -17,11 +17,12 @@ export interface SharedTask {
   sourceKind: string | null; sourceId: string | null;
   /** Unfinished, in a retired project: shown under its project marked shelved, and counted nowhere as open work. */
   isShelved?: boolean;
+  createdAt?: string; createdBy?: string; closedAt?: string | null;
 }
 export interface SharedTaskLink { task: string; dependsOn: string; type: 'blocks' | 'parent-child' }
 export interface SharedTaskComment { task: string; seq: number; actorKind: 'member' | 'agent'; actor: string; at: string; text: string }
-export type SharedTaskChange = Pick<typeof changes.$inferSelect, 'id' | 'repository' | 'number' | 'title' | 'state' | 'draft' | 'checks' | 'review' | 'waitingOn'> & { task: string };
-export type TaskReaderFields = Pick<SharedTask, 'doneWhen' | 'ifYes' | 'ifNo' | 'sourceKind' | 'sourceId'>;
+export type SharedTaskChange = Pick<typeof changes.$inferSelect, 'id' | 'repository' | 'number' | 'title' | 'state' | 'draft' | 'checks' | 'review' | 'waitingOn'> & { task: string; openedAt?: string; closedAt?: string | null };
+export type TaskReaderFields = Pick<SharedTask, 'createdAt' | 'createdBy' | 'closedAt' | 'doneWhen' | 'ifYes' | 'ifNo' | 'sourceKind' | 'sourceId'>;
 export type TaskListRow = Omit<SharedTask, keyof TaskReaderFields>;
 type Task = SharedTask;
 type Link = SharedTaskLink;
@@ -143,6 +144,15 @@ export function SharedTasks(props: SharedTasksProps) {
   })}</div></Fact>;
   const comments = selected ? props.comments.filter(c => c.task === selected.id).toSorted((a,b) => a.seq-b.seq) : [];
   const changes = selected ? props.changes?.filter(change => change.task === selected.id) ?? [] : [];
+  const story: {key: string; at: string; label: string; detail?: string; change?: string}[] = [];
+  if (selected?.createdAt) story.push({key:'filed', at:selected.createdAt, label:'Ticket filed', detail:name(selected.createdBy ?? null)});
+  for (const comment of comments) story.push({key:'comment-'+comment.seq, at:comment.at, label:name(comment.actor), detail:comment.text});
+  for (const change of changes) {
+    if (change.openedAt) story.push({key:'opened-'+change.id, at:change.openedAt, label:'Pull request opened', detail:change.title, change:change.id});
+    if (change.closedAt && change.state !== 'open') story.push({key:'closed-'+change.id, at:change.closedAt, label:change.state === 'merged' ? 'Pull request merged' : 'Pull request closed', detail:change.title, change:change.id});
+  }
+  if (selected?.status === 'closed' && selected.closedAt) story.push({key:'closed', at:selected.closedAt, label:'Ticket closed', detail:selected.closeReason ?? undefined});
+  story.sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
   const mine = !!selected && selected.assigneeKind === 'member' && !!props.questionFor && selected.assignee === props.questionFor;
   const offered = selected ? actions(selected) : [];
   const button = (action: TaskAction, after?: () => void) => <Button key={action} disabled={props.busy}
@@ -168,8 +178,12 @@ export function SharedTasks(props: SharedTasksProps) {
       </Actions>}
       {props.problem && <Error text={props.problem}/>}
       {props.form && props.form.action !== 'create' && <Section data-form="" label={taskFormTitles[props.form.action] ?? labels[props.form.action]}>{props.form.node}</Section>}
+      {selected.goal && <Body>{selected.goal}</Body>}
+      {story.length > 0 && <Section label="Ticket story"><ol className="grid gap-2.5">{story.map(event => <li key={event.key} className="grid gap-0.5">
+        <Body><strong>{event.label}</strong> <time className="loom-reader__meta" dateTime={event.at} title={fullTime(event.at,props.zone)}>{briefTime(event.at,props.zone)}</time></Body>
+        {event.change && props.openChange ? <LinkButton onClick={() => props.openChange!(event.change!)}>{event.detail}</LinkButton> : event.detail && <Body>{event.detail}</Body>}
+      </li>)}</ol></Section>}
       <Facts>
-        <Fact label="Goal">{selected.goal}</Fact>
         <Fact label="Why">{selected.why}</Fact>
         <Fact label="Done when">{selected.doneWhen}</Fact>
         {relations('Parent',links.filter(l => l.task === selected.id && l.type === 'parent-child').map(l => l.dependsOn))}
@@ -192,9 +206,7 @@ export function SharedTasks(props: SharedTasksProps) {
         const href = repository && Number.isInteger(change.number) && change.number > 0 ? `https://github.com/${repository}/pull/${change.number}` : undefined;
         return <RefCard key={change.id} label={`Pull request ${label}`}><ChangeCard id={change.id} snapshot={{status:'live',changes:[change]}} open={props.openChange} link={{label,href}} name={name}/></RefCard>;
       })}</Section>}
-      {comments.length > 0 && <Section label="Comments"><ol className="grid gap-2.5">{comments.map(c => <li key={c.seq} className="grid gap-0.5">
-        <Body><strong>{name(c.actor)}</strong> <time className="loom-reader__meta" dateTime={c.at} title={fullTime(c.at,props.zone)}>{briefTime(c.at,props.zone)}</time></Body>
-        <Body>{c.text}</Body></li>)}</ol></Section>}
+
     </Reader> : live && props.selected && props.loadingReader ? <Loading label="Opening task…"/>
     : live && props.selected && props.readerUnavailable ? <Error text="Could not load this task."/>
     : live && props.selected ? <Empty title="This task is no longer in view" text="Choose another task."/> : null}/>;

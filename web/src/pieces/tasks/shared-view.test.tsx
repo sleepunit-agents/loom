@@ -190,3 +190,15 @@ it('counts project folders in one pass and reads searchable prose only for a sea
   expect(rows()).toHaveLength(1);
   expect(descriptionReads).toBe(3);
 });
+
+it('orders PR events between filing and verified closure without inferring a review or deployment', async () => {
+  const at = (minute: string) => '2026-11-24T17:' + minute + ':00Z';
+  const ticket = task('t-1', {createdAt:at('42'),createdBy:'art',status:'closed',closedAt:at('59')});
+  await draw(props({tasks:[ticket],selected:ticket.id,comments:[
+    {task:ticket.id,seq:1,actorKind:'agent',actor:'art',at:at('57'),text:'Verified both installations.'},
+  ],changes:[{task:ticket.id,id:'pr-3',repository:'acme/app',number:3,title:'Rail fix',
+    state:'merged',draft:false,checks:'passing',review:'not_required',waitingOn:'done',openedAt:at('50'),closedAt:at('52')}] }));
+  const story = tree.root.findByProps({label:'Ticket story'});
+  expect(story.findAllByType('li').map((row: Parameters<typeof visibleText>[0]) => visibleText(row)))
+    .toEqual(['Ticket filed','Pull request opened','Pull request merged','Verified both installations.','Ticket closed'].map(label => expect.stringContaining(label)));
+});
