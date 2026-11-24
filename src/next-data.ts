@@ -39,7 +39,17 @@ export const sharedQueryTables = ['boxes', 'boxAgents', 'boxFacts', 'boxReadings
 export const STAMP_WAKE_MS = 60_000;
 export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>, measure?: MeasureRead, programRecords?: (viewer:Viewer)=>readonly string[]|undefined, canReadUsage: (viewer:Viewer)=>boolean = () => true, canReadProgram: (viewer:Viewer)=>boolean = canReadUsage) {
   const summaries = (viewer:Viewer) => new JobSummaries(db, () => ({ ...talkVisibility(viewer), ...conversationVisibility(viewer), ...boxVisibility(viewer), ...taskVisibility(viewer), ...tempoVisibility(viewer) }), () => clock.now(), () => { if (!currentJobsRead) { currentJobsRead = true; schedule(); } });
-  const accounts = modelAccountQueries(db, () => new Date(clock.now()).toISOString(),viewer=>canReadUsage(viewer) ? summaries(viewer) : undefined, summaries);
+  let cancelLoginWake:(()=>void)|undefined, loginWakeAt = Infinity;
+  const accounts = modelAccountQueries(db, () => new Date(clock.now()).toISOString(),viewer=>canReadUsage(viewer) ? summaries(viewer) : undefined, summaries, at=>{
+    if (stopped || at >= loginWakeAt) return;
+    cancelLoginWake?.();
+    loginWakeAt = at;
+    cancelLoginWake = clock.at(at,()=>{
+      loginWakeAt = Infinity;
+      cancelLoginWake = undefined;
+      live.changed();
+    });
+  });
   const resolve = authentication ?? dataAuthentication(db, () => clock.now());
   const authenticate = (request: Request) => {
     if (!admitted()) return;
@@ -131,7 +141,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
       closing = Promise.resolve().then(async () => {
         try { await socketClosing; } finally { await http.drain(); }
       });
-      stopped = true; cancelDeadline?.(); cancelStamps?.();
+      stopped = true; cancelDeadline?.(); cancelStamps?.(); cancelLoginWake?.();
       http.stop();
       const socketClosing = socket.close();
       live.close();

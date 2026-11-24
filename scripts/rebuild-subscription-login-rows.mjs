@@ -19,15 +19,15 @@ export async function subscriptionLoginRows({page,account,worker,clock}){
  assert.match(await containers.innerText(),/codex.*In houses[\s\S]*Signed in/);
  assert.equal(await containers.getByText(/^Ends /).count(),0);
  assert.equal(await action(containers).count(),0);
- await reportWorkerAccountLogins(worker,[{...host,state:'signed-in',expiresAt:new Date(Date.parse(ends)+1000).toISOString()},house]);
+ await reportWorkerAccountLogins(worker,[{...host,state:'signed-in',expiresAt:new Date(Date.parse(ends)+SILENCE_MS).toISOString()},house]);
  await machine.getByText(/^Ends /).waitFor();
  await action(machine).waitFor({state:'hidden'});
- await reportWorkerAccountLogins(worker,[{...host,state:'signed-in',expiresAt:ends},house]);
+ clock.advance(SILENCE_MS);
  await action(machine).waitFor();
  assert.match(await machine.innerText(),/Signed in/);
  const color=loc=>loc.evaluate(el=>getComputedStyle(el).color);
  const fresh=await color(machine);
- clock.advance(SILENCE_MS+1);
+ clock.advance(1);
  await summary.filter({hasText:'2 last known'}).waitFor();
  for(const loc of [machine,containers]){
   await loc.getByText(/^Last known: Signed in/).waitFor();

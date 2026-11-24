@@ -1,6 +1,7 @@
 /** Account column privacy at the shared GraphQL door. No credentials are read. */
 import { GraphQLBoolean, GraphQLFloat, GraphQLInterfaceType, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, GraphQLUnionType, type GraphQLFieldConfigMap, type GraphQLOutputType } from 'graphql/index.js';
 import { sharedSharing } from '../shared-sharing.js';
+import { SILENCE_MS } from './silence.js';
 import { LOGIN_ENDING_MS, loginMachineReporting } from './account-logins.js';
 import { holds, rules, type Viewer } from '../policy.js';
 import type { DataDatabase } from '../core/data/database.js';
@@ -90,7 +91,7 @@ function weeklyReportReader(db:DataDatabase, at:string, scope:()=>JobSummaries|u
   });
 }
 
-export function modelAccountQueries(db: DataDatabase, now: () => string, usageScope?: (viewer:Viewer)=>JobSummaries | undefined, jobScope?: (viewer:Viewer)=>JobSummaries) {
+export function modelAccountQueries(db: DataDatabase, now: () => string, usageScope?: (viewer:Viewer)=>JobSummaries | undefined, jobScope?: (viewer:Viewer)=>JobSummaries, wakeForLogins?: (at:number)=>void) {
   // The same admitted Viewer object reaches GraphQL context and auth.valid().
   // Retain only the resource identifiers needed to recheck selected private fields.
   const witnesses = new WeakMap<Viewer, Set<string>>();
@@ -138,6 +139,21 @@ export function modelAccountQueries(db: DataDatabase, now: () => string, usageSc
           // actual private column access before checking its current authority.
           witness(viewer, row.id);
           return current(row.id).then<unknown>(() => {
+            if (name === 'logins' && wakeForLogins) {
+              // Only a selected, authorized list schedules a wake. A single coordinator
+              // timer covers all readers and the next read discovers the next transition.
+              for (const login of logins) {
+                if (login.box.revokedAt || !login.box.lastSeenAt) continue;
+                const seen = Date.parse(login.box.lastSeenAt);
+                if (seen > nowMs) wakeForLogins(seen);
+                if (!login.reporting) continue;
+                wakeForLogins(seen + SILENCE_MS + 1);
+                if (login.state === 'signed-in' && login.expiresAt) {
+                  const warning = Date.parse(login.expiresAt) - LOGIN_ENDING_MS;
+                  if (warning > nowMs) wakeForLogins(warning);
+                }
+              }
+            }
             if (name !== 'weeklyUsage') return values[name];
             return weekly(row.id,values.windows);
           });
