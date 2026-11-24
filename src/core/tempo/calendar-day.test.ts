@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest';
-import {nextTime,timesOnDate} from './calendar.js';
+import {localDate,nextTime,timesOnDate} from './calendar.js';
 
 it.each([
   ['2026-03-08',['2026-03-08T07:30:00.000Z','2026-03-08T08:30:00.000Z']],
@@ -18,4 +18,12 @@ it('places an offset timestamp on the household date and rejects an impossible d
   expect(timesOnDate(at,null,'2026-11-01',zone)).toEqual([Date.parse(at)]);
   expect(timesOnDate(at,null,'2026-11-02',zone)).toEqual([]);
   expect(()=>timesOnDate(at,null,'2026-02-30',zone)).toThrow('Invalid calendar date');
+});
+
+it('uses the current household zone after a change or a rejected zone',()=>{
+  const midnight=Date.parse('2026-11-01T03:00:00Z');
+  expect(localDate(midnight,'America/Chicago')).toBe('2026-10-31');
+  expect(localDate(midnight,'Asia/Tokyo')).toBe('2026-11-01');
+  expect(()=>localDate(midnight,'Not/A_Zone')).toThrow(RangeError);
+  expect(localDate(midnight,'America/Chicago')).toBe('2026-10-31');
 });
