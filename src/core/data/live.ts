@@ -11,22 +11,29 @@ export interface DataDelta { revision: number; patches: DataPatch[] }
  * by position so queries need not expose a primary key (counts and join tables
  * are valid selections too). Consumers apply patches in the supplied order. */
 export function dataDiff(before: unknown, after: unknown, path: (string | number)[] = []): DataPatch[] {
-  if (Object.is(before, after)) return [];
-  if (Array.isArray(before) && Array.isArray(after)) {
-    const patches: DataPatch[] = [];
-    for (let i = 0; i < Math.min(before.length, after.length); i++) patches.push(...dataDiff(before[i], after[i], [...path, i]));
-    for (let i = before.length - 1; i >= after.length; i--) patches.push({ path: [...path, i] });
-    for (let i = before.length; i < after.length; i++) patches.push({ path: [...path, i], value: after[i] });
-    return patches;
+  const patches: DataPatch[] = [];
+  function compare(left: unknown, right: unknown, at: (string | number)[]) {
+    if (Array.isArray(left) && Array.isArray(right)) {
+      for (let i = 0; i < Math.min(left.length, right.length); i++) {
+        if (!Object.is(left[i], right[i])) compare(left[i], right[i], [...at, i]);
+      }
+      for (let i = left.length - 1; i >= right.length; i--) patches.push({ path: [...at, i] });
+      for (let i = left.length; i < right.length; i++) patches.push({ path: [...at, i], value: right[i] });
+    } else if (left && right && typeof left === 'object' && typeof right === 'object' && !Array.isArray(left) && !Array.isArray(right)) {
+      const a = left as Record<string, unknown>, b = right as Record<string, unknown>;
+      for (const key of Object.keys(a)) {
+        if (!Object.hasOwn(b, key)) patches.push({ path: [...at, key] });
+      }
+      for (const key of Object.keys(b)) {
+        if (!Object.hasOwn(a, key)) patches.push({ path: [...at, key], value: b[key] });
+        else if (!Object.is(a[key], b[key])) compare(a[key], b[key], [...at, key]);
+      }
+    } else {
+      patches.push({ path: at, value: right });
+    }
   }
-  if (before && after && typeof before === 'object' && typeof after === 'object' && !Array.isArray(before) && !Array.isArray(after)) {
-    const a = before as Record<string, unknown>, b = after as Record<string, unknown>;
-    return [
-      ...Object.keys(a).filter(key => !Object.hasOwn(b, key)).map(key => ({ path: [...path, key] })),
-      ...Object.keys(b).flatMap(key => Object.hasOwn(a, key) ? dataDiff(a[key], b[key], [...path, key]) : [{ path: [...path, key], value: b[key] }]),
-    ];
-  }
-  return [{ path, value: after }];
+  if (!Object.is(before, after)) compare(before, after, path);
+  return patches;
 }
 
 /** One committed-write signal for the shared database. No polling, per-row
