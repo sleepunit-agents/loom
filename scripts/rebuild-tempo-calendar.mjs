@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
+import { PeopleStore } from '../dist/backends/people.js';
 import { FakeClock } from '../dist/core/clock.js';
 import { exampleHome } from '../dist/example-home.js';
 import { startSharedHome } from '../dist/shared-startup.js';
@@ -48,8 +50,10 @@ export async function tempoCalendar({ browser, home }) {
     await checkFrequentRows(page,app);
     await checkDayHistory(page,app,clock);
     await checkStoppedSchedule(page,app,clock);
+    const directory=new PeopleStore({dbPath:join(home,'commons','people.db')});
+    try{directory.write({slug:'fern',name:'Fern Evergreen',how:{kind:'agent'}});}finally{directory.close();}
     await checkKindFilters(page,app,clock);
-    return {ok:true,reason:'The scheduled wake appeared at its household time. Navigating away and back preserved its day. Firing it early moved it to the actual firing time with a fired result, and its reader opened after reload. Four recurring times shared one row in Day and Week, with live outcomes and the next time; three times kept their hourly rows. The selected day’s history showed recurring work, a lost worker’s reason, a delivered notice and a stopped trigger in order. A stopped schedule retained its former deadline and restarted at its next future time. Each of four trigger kinds had a distinct word and colour. Kind and household filters kept the selected day.'};
+    return {ok:true,reason:'The scheduled wake appeared at its household time. Navigating away and back preserved its day. Firing it early moved it to the actual firing time with a fired result, and its reader opened after reload. Four recurring times shared one row in Day and Week, with live outcomes and the next time; three times kept their hourly rows. The selected day’s history showed recurring work, a lost worker’s reason, a delivered notice and a stopped trigger in order. A stopped schedule retained its former deadline and restarted at its next future time. Each of four trigger kinds had a distinct word and colour. Kind and household filters kept the selected day. Opening three triggers showed the household, agent and person who set each one.'};
   } finally {
     await context?.close();
     await app.close();
@@ -192,6 +196,12 @@ async function checkKindFilters(page,app,clock) {
   for(const word of ['Wakes an agent','A program decides','Loom itself','Once']) await rows.getByText(word,{exact:true}).waitFor();
   assert.equal(await rows.count(),4);
   assert.equal(new Set(await rows.evaluateAll(items=>items.map(item=>getComputedStyle(item).borderInlineStartColor))).size,4);
+  for(const [note,owner] of [['Gauge rounds','Household'],['Gauge program','Agent · Fern Evergreen'],['Gauge notice','Person · Alex']]){
+    await day.getByRole('button',{name:new RegExp(note)}).click();
+    const reader=page.locator('article').filter({has:page.getByRole('heading',{name:note,exact:true})});
+    const field=reader.locator('dl > div').filter({has:page.getByText('Set by',{exact:true})});
+    await field.getByText(owner,{exact:true}).waitFor();
+  }
   const kind=page.getByRole('combobox',{name:'Kind',exact:true});
   await kind.selectOption('program');
   await day.getByText('Gauge rounds',{exact:true}).waitFor({state:'hidden'});

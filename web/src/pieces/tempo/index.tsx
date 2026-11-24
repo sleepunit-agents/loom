@@ -4,6 +4,8 @@ import { TempoCalendar } from './day';
 import { triggerHistoryQuery } from './query';
 import { tempoFailureMessage } from './actions';
 import { NativeSelect } from '../../kit/native-select';
+import { displayName } from '../../kit/words';
+import { useAgentNames } from '../../data/names';
 import { useDataQuery } from '../../data/graphql';
 import type { TempoActions } from './actions';
 import { CreateTrigger } from './create';
@@ -73,6 +75,10 @@ function TriggerDetails({ snapshot, trigger, actions, go }: { snapshot: TempoSna
   const journal = journalDetail.status === 'live' ? journalDetail.data?.tempoJournal : null;
   const log = useDataQuery<{ triggerLog: TriggerEvent[]; tempoRecentRuns: TriggerRun[] }>(triggerHistoryQuery, {id: trigger.id});
   const entries = log.status === 'live' && log.data?.triggerLog ? history(log.data.triggerLog, trigger.id) : undefined;
+  const agentNames = useAgentNames();
+  const owner = trigger.ownerKind === 'household' ? 'Household'
+    : trigger.ownerKind === 'agent' ? `Agent · ${displayName(trigger.owner,agentNames)}`
+    : `Person · ${displayName(trigger.owner)}`;
   const next = nextScheduledAt(trigger);
   const lastDecision = program?.lastResult ?? entries?.find(event => event.event === 'program')?.note;
   const format = new Intl.DateTimeFormat(undefined, {
@@ -84,7 +90,7 @@ function TriggerDetails({ snapshot, trigger, actions, go }: { snapshot: TempoSna
     <p>{source(trigger)}</p>
     {next && <p>Due: {time(next)} · {snapshot.timezone}</p>}
     <dl className="grid gap-2">
-      <div><dt>Set by</dt><dd>{trigger.ownerKind === 'household' ? 'Household' : trigger.owner}</dd></div>
+      <div><dt>Set by</dt><dd>{owner}</dd></div>
       {trigger.project && <div><dt>Project</dt><dd>{trigger.project}</dd></div>}
       {!!trigger.needs?.length && <div><dt>Machine needs</dt><dd>{trigger.needs.join(', ')}</dd></div>}
       {trigger.prefers != null && <div><dt>Machine preferences</dt><dd>{trigger.prefers.join(', ') || 'None'}</dd></div>}

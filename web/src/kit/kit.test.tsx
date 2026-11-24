@@ -108,4 +108,6 @@ it('clamps only what is long, cards a reference, keeps a menu closed until asked
   const menu = draw(h(Menu, { label: 'More', name: 'More for this task', children: () => h('i') }));
   expect(menu).toMatch(/^<span class="loom-kit-menu"><button[^>]*aria-label="More for this task"[^>]*aria-expanded="false"[^>]*>More<\/button><\/span>$/);
   expect(displayName('art', { art: 'Art the agent' })).toBe('Art the agent'); expect(displayName('jonathan')).toBe('Jonathan'); expect(displayName(null)).toBe('');
+  expect(displayName('constructor', {})).toBe('Constructor');
+  expect(displayName('constructor', {constructor:'Workshop'})).toBe('Workshop');
 });
