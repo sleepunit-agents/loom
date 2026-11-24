@@ -63,6 +63,30 @@ export async function jobLabelsEvidence() {
    assert.equal(data.commsThread?.id??null,member==='robin'?thread.id:null);
    write(()=>s.signin.revoke(credential.fingerprint));
   }
-  return {ok:true,reason:'Members saw shared project work and only the sender opened the private thread and full job history. After a real worker claimed that job, the household owner of its machine could read its state, times and exact digest. A second household owner saw none of it.'};
+  const read=async(credential,query)=>{
+   const response=await fetch(app.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+credential.token,'content-type':'application/json'},body:JSON.stringify({query})});
+   return {status:response.status,body:await response.json()};
+  };
+  const publicJob=example.runtime.publicJob.id;
+  const fullJobs='{jobHistory(agent:"moss"){id} privateMachineJobs(agent:"moss"){id}}';
+  const agent=write(()=>s.signin.issue({kind:'agent',agent:'moss',label:'Fictional machine reader'}));
+  const agentJobs=await read(agent,fullJobs);
+  assert.equal(agentJobs.status,200);assert.equal(agentJobs.body.errors,undefined);
+  assert(agentJobs.body.data.jobHistory.some(row=>row.id===publicJob));
+  assert(!agentJobs.body.data.jobHistory.some(row=>row.id===privateId));
+  assert.deepEqual(agentJobs.body.data.privateMachineJobs,[]);
+  const workerRead=await read(worker,fullJobs);
+  assert.equal(workerRead.status,403);assert.equal(workerRead.body.data,undefined);
+  for(const member of ['alex','robin']){
+   const program=write(()=>s.programSetup.issue({member,label:'Fictional machine programme '+member,records:['boxes'],operations:[]}));
+   const boxRead=await read(program,'{boxes{id}}');
+   assert.equal(boxRead.status,200);assert.equal(boxRead.body.errors,undefined);
+   assert.equal(boxRead.body.data.boxes.some(row=>row.id===ownBox),member==='alex');
+   const other=await read(program,fullJobs);
+   assert.equal(other.status,200);assert.equal(other.body.data,undefined);
+   for(const field of ['jobHistory','privateMachineJobs'])assert(other.body.errors.some(error=>error.message.includes('Cannot query field "'+field+'"')));
+   write(()=>s.signin.revoke(program.fingerprint));
+  }
+  return {ok:true,reason:'Members saw shared project work and only the sender opened the private thread and full job history. After a real worker claimed that job, the household owner of its machine could read its state, times and exact digest. A second household owner saw none of it. The agent saw its public job, the worker could claim work but could not list it, and two box-scoped programs read only their member’s machines. Neither program could request job details.'};
  } finally {try{await app?.close();}finally{await rm(dir,{recursive:true,force:true});}}
 }

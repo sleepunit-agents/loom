@@ -265,7 +265,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith(('The agent it runs, the project it is for', 'a Jobs. A job carries its agent')):row['probe']={'kind':'action','action':'jobLabels'}
    if row['promise'].startswith(("Starts a job when an agent's inbox", "A non-empty inbox starts a job.", "A job works in one conversation")):row['probe']={'kind':'action','action':'scheduledWorker'}
    if row['promise']=="Shows each agent's current jobs on its card on Home.":row['probe']={'kind':'action','action':'homeJobs'}
-   if row['promise'].startswith('b Who sees it. Members see jobs in their projects'):row['probe']={'kind':'action','action':'jobLabels'}
+   if row['promise'].startswith(('b Who sees it. Members see jobs in their projects','d Checked at the door. Loom applies this to callers from outside')):row['probe']={'kind':'action','action':'jobLabels'}
    if row['promise'].startswith(('A box is a machine with a worker on it.', 'Each agent has run settings.')):row['probe']={'kind':'action','action':'machinePlacement'}
    if row['promise'].startswith(('Records each machine with a worker', 'c Boxes. A box belongs')):row['probe']={'kind':'action','action':'machineRoster'}
    if row['promise'].startswith('A job is one run of an agent'):row['probe']={'kind':'action','action':'jobOutcomes'}
