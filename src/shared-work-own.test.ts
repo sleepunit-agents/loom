@@ -219,3 +219,65 @@ it('leaves a household change proposed from a terminal with nobody behind it: it
  expect((await filed.json() as {value:{state:string}}).value.state).toBe('pending');
  expect(f.cards()).toMatchObject([{kind:'setting',actingFor:'unknown',state:'pending'}]);
 });
+
+it('makes the card and its Inbox question from the full literal command and spends only that command', async () => {
+ const f = await fixture();
+ f.ownsArt('pat');
+ const script = '# ' + 'garden '.repeat(32) + '\r\nprintf one && printf two\r\n';
+ const target = 'shell:sha256:' + hash(script);
+ const input = {kind:'command',commandText:script,why:'Check the example pump'};
+ for (const bad of [{...input,what:'Just look'}, {...input,target},
+   {...input,commandText:'\n'.repeat(60_000)+'x'}])
+   expect((await f.call('request',bad)).status).toBe(400);
+ const result = await f.call('request',input);
+ expect(result.status).toBe(200);
+ const id = result.body.value!.id as string;
+ const card = f.root.services.approvals.get(id);
+ expect(card.target).toBe(target);
+ expect(JSON.parse(card.details)).toBe(script);
+ expect(card.what).toContain('shortened');
+ expect(card.what).toContain(script.slice(0,50));
+ expect(card.ask).toContain('Check for command chaining.');
+ const questions = f.db.select().from(s.inbox).where(eq(s.inbox.waitsOnId,id)).all();
+ expect(questions.length).toBeGreaterThan(0);
+ expect(questions.every(row=>row.words===card.ask && row.words.includes(script.slice(0,50)))).toBe(true);
+ f.root.writes.run(()=>f.root.services.approvals.allow(id,'pat'));
+ const asNamed = (cardId: string) => f.call('use',{id:cardId,kind:'command',target});
+ expect((await asNamed(id)).body.value?.used).toBe(false);
+ // A named request issued under the same spelling remains a distinct allowance.
+ const named = await f.call('request',{kind:'command',target,...words});
+ const namedId = named.body.value!.id as string;
+ f.root.writes.run(()=>f.root.services.approvals.allow(namedId,'pat'));
+ expect((await f.call('use',{id:namedId,kind:'command',commandText:script})).body.value?.used).toBe(false);
+ expect((await asNamed(namedId)).body.value?.used).toBe(true);
+ const denied = await f.call('request',{kind:'command',target,...words});
+ f.root.writes.run(()=>f.root.services.approvals.deny(denied.body.value!.id as string,'pat'));
+ expect(f.root.services.approvals.get(id).state).toBe('allowed');
+ const use = (commandText:string)=>f.call('use',{id,kind:'command',commandText});
+ expect((await use(script.trimEnd())).body.value?.used).toBe(false);
+ expect((await use(script)).body.value?.used).toBe(true);
+ expect((await use(script)).body.value?.used).toBe(false);
+});
+
+it('keeps literal commands pending under standing allowances for named commands', async () => {
+ const f = await fixture();
+ f.ownsArt('pat');
+ const commandText='printf example',target='shell:sha256:'+hash(commandText);
+ for (const scope of ['*', target]) {
+   f.rules.set({kind:'command',scope,tier:'do'},'pat');
+   const literal = await f.call('request',{kind:'command',commandText,why:'Fixture'});
+   expect(literal.body.value?.state).toBe('pending');
+   const named = await f.call('request',{kind:'command',target,...words});
+   expect(named.body.value?.state).toBe('allowed');
+   f.rules.set({kind:'command',scope,tier:null},'pat');
+ }
+});
+
+
+it('describes literal punctuation without treating a quoted semicolon as a second command', async () => {
+ const f=await fixture();
+ const commandText="printf '%s' 'a;b'";
+ const result=await f.call('request',{kind:'command',commandText,why:'Fixture'});
+ expect(f.root.services.approvals.get(result.body.value!.id as string).ask)
+   .toBe('Allow this shell command? '+JSON.stringify(commandText)+' Check for command chaining. The text contains `;`.');
+});
