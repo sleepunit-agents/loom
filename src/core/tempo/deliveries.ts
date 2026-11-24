@@ -10,14 +10,21 @@ import { conversations, inbox, inboxRefs, jobs, jobUsage, programFirings, trigge
 export function wakeDeliveries(db: DataDatabase, viewer: Viewer, agent: string | null, events: number[], includePrograms: boolean) {
   if (events.length > 100) throw Error('At most 100 firings per page');
   if (!events.length) return [];
-  return deliveryRows(db,viewer,agent,inArray(triggerLog.seq,events),includePrograms)
+  const fired = visibleFirings(db, viewer, inArray(triggerLog.seq, events));
+  return deliveryRows(db, viewer, agent, fired, includePrograms)
     .map(({event,kind,conversation,job})=>({event,kind,conversation,job}));
 }
 
-function deliveryRows(db:DataDatabase,viewer:Viewer,agent:string|null,selection:SQL,includePrograms:boolean,includeNotices=false) {
-  const seen = sqlVisibility(viewer, ['triggerLog', 'inbox', 'conversations', 'jobs']);
-  const fired = db.select({event:triggerLog.seq, trigger:triggerLog.trigger, note:triggerLog.note}).from(triggerLog)
+const firingFields = {event:triggerLog.seq, trigger:triggerLog.trigger, note:triggerLog.note};
+
+function visibleFirings(db:DataDatabase, viewer:Viewer, selection:SQL) {
+  const seen = sqlVisibility(viewer, ['triggerLog']);
+  return db.select(firingFields).from(triggerLog)
     .where(and(selection,eq(triggerLog.event,'fired'),seen.triggerLog(getTableColumns(triggerLog)))).all();
+}
+
+function deliveryRows(db:DataDatabase,viewer:Viewer,agent:string|null,fired:ReturnType<typeof visibleFirings>,includePrograms:boolean,includeNotices=false) {
+  const seen = sqlVisibility(viewer, ['inbox', 'conversations', 'jobs']);
   if (!fired.length) return [];
   // Use one SQLite membership lookup per delivery table. Joining a computed key
   // directly to the log scans all the mail again for each firing of a busy lane.
@@ -53,10 +60,10 @@ function deliveryRows(db:DataDatabase,viewer:Viewer,agent:string|null,selection:
  * Access to each delivery, conversation, job and measurement is decided independently. */
 export function recentTriggerRuns(db: DataDatabase, viewer: Viewer, id: string, includePrograms: boolean, includeUsage: boolean) {
   const seen = sqlVisibility(viewer, ['triggerLog','jobs','conversations']);
-  const fired = db.select({event:triggerLog.seq, at:triggerLog.at}).from(triggerLog)
+  const fired = db.select({...firingFields, at:triggerLog.at}).from(triggerLog)
     .where(and(eq(triggerLog.trigger,id), eq(triggerLog.event,'fired'), seen.triggerLog(getTableColumns(triggerLog))))
     .orderBy(desc(triggerLog.seq)).limit(12).all();
-  const deliveries = wakeDeliveries(db, viewer, null, fired.map(row=>row.event), includePrograms);
+  const deliveries = deliveryRows(db, viewer, null, fired, includePrograms);
   const jobIds = [...new Set(deliveries.flatMap(row=>row.job ? [row.job] : []))];
   const conversationIds = [...new Set(deliveries.flatMap(row=>row.conversation ? [row.conversation] : []))];
   const work = jobIds.length ? db.select({id:jobs.id,state:jobs.state,startedAt:jobs.claimedAt,endedAt:jobs.endedAt})
@@ -79,7 +86,8 @@ export function calendarOutcomes(db:DataDatabase,viewer:Viewer,from:string,until
   if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||end-start>9*DAY_MS
     ||new Date(start).toISOString()!==from||new Date(end).toISOString()!==until) throw Error('Expected a range of at most nine days');
   const window=and(gte(triggerLog.at,new Date(start).toISOString()),lt(triggerLog.at,new Date(end).toISOString()))!;
-  return deliveryRows(db,viewer,null,window,includePrograms,true).map(({event,kind,state,endedNote,exitCode})=>({
+  const fired = visibleFirings(db, viewer, window);
+  return deliveryRows(db, viewer, null, fired, includePrograms, true).map(({event,kind,state,endedNote,exitCode})=>({
     event,kind,state,reason:state==='failed'||state==='lost' ? endedNote || (exitCode==null ? null : 'Exit code '+exitCode) : null,
   }));
 }
