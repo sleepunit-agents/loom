@@ -414,9 +414,10 @@ export async function* walkthroughSteps(output) {
   try{report.actions.settingsGrant=await settingsGrant({app,page});}
   catch(error){report.actions.settingsGrant={ok:false,error:String(error)};}
   try {
-    const {standingAnswer,...holder}=await installedSecretHolder();
+    const {callers,standingAnswer,...holder}=await installedSecretHolder();
     report.actions.installedSecretHolder=holder;
     report.actions.secretStandingAnswer=standingAnswer;
+    report.actions.secretCallers=callers;
   }
   catch(error){report.actions.installedSecretHolder={ok:false,error:String(error)};}
   save();yield {phase:'secret-source',actions:safeReport(report.actions)};
