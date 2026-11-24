@@ -14,7 +14,7 @@ export const tasksQuery = `query Tasks($selected: String! = "", $withComments: B
   tasks(orderBy: {priority: {direction: asc, priority: 2}, position: {direction: asc, priority: 1}, id: {direction: asc, priority: 0}}) {
     id title type status priority position ownerKind owner project assigneeKind assignee
     goal why doneWhen description ask ifYes ifNo closeReason sourceKind sourceId
-    commentCount isReady isShelved
+    isReady isShelved
     taskLinksByTask { task dependsOn type }
   }
   selectedTask: tasksSingle(where: {id: {eq: $selected}}) @include(if: $withComments) {
@@ -25,7 +25,6 @@ export const taskCommentsQuery = `query TaskComments($selected: String!) {
   selectedTask: tasksSingle(where: {id: {eq: $selected}}) { ${detailFields} }
 }`;
 export interface TaskSelection extends SharedTask {
-  commentCount: number;
   isReady: boolean;
   isShelved: boolean;
   taskLinksByTask: SharedTaskLink[];

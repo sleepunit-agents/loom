@@ -13,7 +13,7 @@ import TasksApp from '../../web/src/pieces/tasks';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
 afterEach(async () => { await act(async () => tree?.unmount()); f.read.mockClear(); });
-const task = (id: string, isReady: boolean): TaskSelection => ({id,title:id,type:'task',status:'open',priority:2,position:1,ownerKind:'member',owner:'sam',project:'pond',assigneeKind:null,assignee:null,goal:'Goal',why:'Why',doneWhen:'',description:'',ask:null,ifYes:null,ifNo:null,closeReason:null,sourceKind:null,sourceId:null,commentCount:1,isReady,taskLinksByTask:[]});
+const task = (id: string, isReady: boolean): TaskSelection => ({id,title:id,type:'task',status:'open',priority:2,position:1,ownerKind:'member',owner:'sam',project:'pond',assigneeKind:null,assignee:null,goal:'Goal',why:'Why',doneWhen:'',description:'',ask:null,ifYes:null,ifNo:null,closeReason:null,sourceKind:null,sourceId:null,isReady,taskLinksByTask:[]});
 it('mounts the generated selection, authoritative readiness, comments and shell navigation without a record feed', async () => {
   f.snapshot = {status:'live',data:{tasks:[task('a',false),task('b',true)],selectedTask:{id:'a',changeTasksByTask:[{changeRow:null},{changeRow:{id:'pr',repository:'garden',number:3,title:'Repair',state:'open',draft:false,checks:'passing',review:'approved',waitingOn:'done'}}],taskCommentsByTask:[{task:'a',seq:1,actorKind:'member',actor:'sam',at:'2026-11-14T00:00:00Z',text:'Comment'}]}}};
   const go = vi.fn();
