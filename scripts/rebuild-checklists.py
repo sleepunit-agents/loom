@@ -173,6 +173,8 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
 
  if f.stem=='memory':add('Create a provisional Knowledge fact, manually mark it due, verify it with Still true, then retain its words and Fresh state after reload.','',{'kind':'action','app':'Knowledge'})
  if f.stem=='people':
+  for row in rows:
+   if row['promise']=='Lists the agents, and who owns each.':row['probe']={'kind':'action','action':'householdAgentOwners'}
   add('Adding a household member through the normal built program persists that member.','',{'kind':'action','app':'Household setup'})
   add('Creating a project through the normal built program persists its member list.','',{'kind':'action','app':'Sharing'})
  if f.stem=='signing-in':add('A first-run one-time link signs the browser in.','',{'kind':'signin'})
