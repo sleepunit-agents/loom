@@ -79,6 +79,45 @@ it('does not accept caller-selected authority or private-column filter arguments
   const filtered = await (await f.post('guest', '{ modelAccounts(owner:"alice") { ... on RuntimeAccount { label level } } }')).json();
   expect(filtered.errors).toHaveLength(1); expect(filtered.data).toBeUndefined();
 });
+it('limits an open weekly card to its visible account without revealing private identifiers through summaries',async()=>{
+ const f=fixture();
+ const query='query($id:String!){modelAccounts(detailId:$id){... on RuntimeAccount {label} ... on RuntimeAccountDetail {id weeklyUsage {usage}}}}';
+ const read=async(who:keyof typeof keys,id:string)=>(await (await f.post(who,query,{id})).json()).data.modelAccounts;
+ expect(await read('house','private-b')).toEqual([{label:'Other subscription',id:'private-b',weeklyUsage:[{usage:.58}]}]);
+ expect(await read('alice','private-a')).toHaveLength(1);
+ for(const who of ['alice','guest','agent'] as const){
+  expect(await read(who,'private-b')).toEqual([]);
+  expect(await read(who,'unknown')).toEqual([]);
+ }
+});
+it('keeps one open subscription’s weekly SQL count fixed as other subscriptions are added', async()=>{
+ const f=fixture(), counts=[];
+ for(const size of [2,12]){
+  for(let n=2;n<size;n++){
+   const id='growth-'+n;
+   f.db.insert(modelAccounts).values({id,owner:'alice',label:id,provider:'private-provider',usage:.2,hasRoom:true}).run();
+   f.db.insert(modelAccountWindows).values({account:id,window:'week',usage:.2,usageReadAt:f.now(),resetsAt:new Date(f.clock.now()+86400000).toISOString(),durationMs:604800000}).run();
+  }
+  f.statements.length=0;
+  const response=await (await f.post('house','{modelAccounts(detailId:"private-a"){... on RuntimeAccountDetail{id weeklyUsage{usage}}}}')).json();
+  expect(response).toEqual({data:{modelAccounts:[{id:'private-a',weeklyUsage:[{usage:.2}]}]}});
+  counts.push(f.statements.filter(s=>/^select\b/i.test(s)).length);
+ }
+ expect(counts[0]).toBeGreaterThan(0);expect(counts[1]).toBe(counts[0]);
+});
+
+it('rechecks ownership for an identifier lookup even if only its public label is requested',async()=>{
+ const began=Promise.withResolvers<void>(), gate=Promise.withResolvers<void>();
+ const f=fixture({hold:{type:GraphQLString,resolve:async()=>{began.resolve();await gate.promise;return 'ready';}}});
+ const pending=f.post('alice','{modelAccounts(detailId:"private-a"){... on RuntimeAccount{label}} hold}');
+ await began.promise;
+ f.data.writes.run(()=>f.db.update(modelAccounts).set({owner:'bob'}).where(eq(modelAccounts.id,'private-a')).run());
+ gate.resolve();
+ const response=await pending;
+ expect(response.status).toBe(401);
+ expect(await response.text()).not.toContain('Main subscription');
+});
+
 for (const revoke of ['household-role', 'account-owner'] as const) it(`fences buffered private fields after ${revoke} changes during an async sibling`, async () => {
   let begin!: () => void, release!: () => void;
   const started = new Promise<void>(yes => { begin = yes; }), held = new Promise<void>(yes => { release = yes; });

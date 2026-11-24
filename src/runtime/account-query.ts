@@ -62,12 +62,23 @@ export function modelAccountQueries(db: DataDatabase, now: () => string, usageSc
   // Retain only the resource identifiers needed to recheck selected private fields.
   const witnesses = new WeakMap<Viewer, Set<string>>();
   const usageChecks = new WeakMap<Viewer,WeeklyVisibility>();
+  function witness(viewer: Viewer, id: string) {
+    let ids = witnesses.get(viewer);
+    if (!ids) { ids = new Set(); witnesses.set(viewer, ids); }
+    ids.add(id);
+  }
   const fields: GraphQLFieldConfigMap<unknown, { viewer: Viewer }> = { modelAccounts: {
     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(view))),
-    resolve(_source, _args, { viewer }) {
+    args: { detailId: { type: GraphQLString } },
+    resolve(_source, { detailId }, { viewer }) {
       const at = now();
       // Public order must not expose the ordering of hidden account identifiers.
-      const selected = readModelAccounts(db, viewer);
+      const selected = readModelAccounts(db, viewer, detailId ?? undefined);
+      // Looking up even a public label by its private identifier is a private selection.
+      if (detailId != null) {
+        if (!selected.privateRows.has(detailId) || !selected.rows.length) return [];
+        witness(viewer, detailId);
+      }
       const current = modelAccountAuthority(db, viewer);
       let sharing: ReturnType<typeof sharedSharing> | undefined;
       return selected.rows.map(row => {
@@ -85,11 +96,9 @@ export function modelAccountQueries(db: DataDatabase, now: () => string, usageSc
         const values = { ...privateRow, logins, hasRoom, windows: row.modelAccountWindowsByAccount };
         return { __typename: detail.name, ...publicFields, read(name: PrivateColumn, actor: Viewer) {
           if (actor !== viewer) throw new Error('Account access ended');
-          // Public-only selections never acquire a private witness. Record an
+          // Unscoped public-only selections never acquire a private witness. Record an
           // actual private column access before checking its current authority.
-          let selected = witnesses.get(viewer);
-          if (!selected) { selected = new Set(); witnesses.set(viewer, selected); }
-          selected.add(row.id);
+          witness(viewer, row.id);
           return current(row.id).then(() => {
             if (name !== 'weeklyUsage') return values[name];
             const scope = usageScope?.(viewer);
