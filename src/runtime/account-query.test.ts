@@ -106,40 +106,52 @@ it('keeps one open subscription’s weekly SQL count fixed as other subscription
  expect(counts[0]).toBeGreaterThan(0);expect(counts[1]).toBe(counts[0]);
 });
 
-it('batches both windows across subscriptions and attributes each job only to its own account',async()=>{
-  const f = fixture(), counts:number[] = [];
-  const end = f.now(), start = new Date(f.clock.now()-60000).toISOString();
+it('keeps scoped and household statement counts fixed as accounts and distinct weekly windows grow',async()=>{
+  const f = fixture(), counts:number[][] = [];
+  const end = f.now(), middle = new Date(f.clock.now()-30000).toISOString(), start = new Date(f.clock.now()-60000).toISOString();
   const resetsAt = new Date(f.clock.now()+86400000).toISOString();
   for (const size of [1,8]) {
-    for (let n = size === 1 ? 0 : 1; n < size; n++) {
-      const id = 'batch-'+n;
-      f.db.insert(modelAccounts).values({id,owner:'alice',label:id,provider:'example',hasRoom:true}).run();
-      for (const [window,usage] of [['normal',.25],['premium',.5]] as const) {
-        f.db.insert(modelAccountWindows).values({account:id,window,usage,usageReadAt:end,resetsAt,durationMs:604800000}).run();
-        f.db.insert(accountWeekReadings).values({account:id,window,readAt:start,resetsAt,usage:0}).run();
+    for (let n = 0; n < size; n++) {
+      const id = 'batch-'+n, existing = size > 1 && n === 0;
+      if (!existing) {
+        f.db.insert(modelAccounts).values({id,owner:'alice',label:id,provider:'example',hasRoom:true}).run();
+        for (const [suffix,from,to] of [['early',start,middle],['late',middle,end]]) {
+          const job = id+'-'+suffix;
+          f.db.insert(conversations).values({id:job,agent:'agent',member:'alice',venue:'loom',place:job,label:job,
+            direct:true,startedAt:from,lastAt:to,turnCount:1}).run();
+          f.db.insert(jobs).values({id:job,agent:'agent',member:'alice',account:id,conversation:job,title:job,state:'done',
+            model:'m',brief:'',startedByKind:'member',startedBy:'alice',houseRepository:'r',houseFile:'f',
+            houseBranch:'b',queuedAt:from,claimedAt:from,endedAt:to}).run();
+          f.db.insert(jobUsage).values({job,source:'report',tokensIn:10,tokensOut:10}).run();
+        }
       }
-      f.db.insert(conversations).values({id,agent:'agent',member:'alice',venue:'loom',place:id,label:id,
-        direct:true,startedAt:start,lastAt:end,turnCount:1}).run();
-      f.db.insert(jobs).values({id,agent:'agent',member:'alice',account:id,conversation:id,title:id,state:'done',
-        model:'m',brief:'',startedByKind:'member',startedBy:'alice',houseRepository:'r',houseFile:'f',
-        houseBranch:'b',queuedAt:start,claimedAt:start,endedAt:end}).run();
-      f.db.insert(jobUsage).values({job:id,source:'report',tokensIn:10,tokensOut:10}).run();
-    }
-    f.statements.length = 0;
-    const response = await (await f.post('alice','{modelAccounts{... on RuntimeAccountDetail{id weeklyUsage{window conversations{title share} unattributed}}}}')).json();
-    expect(response.errors).toBeUndefined();
-    const accounts = response.data.modelAccounts.filter((row:{id?:string})=>row.id?.startsWith('batch-'));
-    expect(accounts).toHaveLength(size);
-    for (const row of accounts) {
-      expect(row.weeklyUsage).toHaveLength(2);
-      for (const [window,share] of [['normal',.25],['premium',.5]]) {
-        expect(row.weeklyUsage).toContainEqual({window,conversations:[{title:row.id,share}],unattributed:0});
+      for (let w = existing ? 1 : 0; w < size; w++) {
+        const window = 'allowance-'+w;
+        f.db.insert(modelAccountWindows).values({account:id,window,usage:.5,usageReadAt:end,resetsAt,durationMs:604800000}).run();
+        f.db.insert(accountWeekReadings).values({account:id,window,readAt:w%2 ? middle : start,resetsAt,usage:0}).run();
       }
     }
-    counts.push(f.statements.filter(s=>/^select\b/i.test(s)).length);
+    const reads = [];
+    for (const filter of ['', '(detailId:"batch-0")']) {
+      f.statements.length = 0;
+      const response = await (await f.post('alice',`{modelAccounts${filter}{... on RuntimeAccountDetail{id weeklyUsage{window conversations{title share} unattributed}}}}`)).json();
+      expect(response.errors).toBeUndefined();
+      const accounts = response.data.modelAccounts.filter((row:{id?:string})=>row.id?.startsWith('batch-'));
+      expect(accounts).toHaveLength(filter ? 1 : size);
+      for (const row of accounts) {
+        expect(row.weeklyUsage).toHaveLength(size);
+        for (let w = 0; w < size; w++) {
+          const conversations = w%2 ? [{title:row.id+'-late',share:.5}]
+            : [{title:row.id+'-early',share:.25},{title:row.id+'-late',share:.25}];
+          expect(row.weeklyUsage).toContainEqual({window:'allowance-'+w,conversations,unattributed:0});
+        }
+      }
+      reads.push(f.statements.filter(s=>/^select\b/i.test(s)).length);
+    }
+    counts.push(reads);
   }
-  expect(counts[0]).toBeGreaterThan(0);
-  expect(counts[1]).toBe(counts[0]);
+  expect(counts[0].every(count=>count>0)).toBe(true);
+  expect(counts[1]).toEqual(counts[0]);
 });
 
 it('rechecks ownership for an identifier lookup even if only its public label is requested',async()=>{
