@@ -10,7 +10,10 @@ const headerQuery = `query TempoDayHeader {
   modelAccounts { ... on RuntimeAccount { label level } }
 }`;
 type Header = { deskTime: {at: number} | null; modelAccounts: {label: string; level: string}[] };
-const historyQuery = `query TempoDayHistory($from: String!, $until: String!) {
+const historyQuery = `query TempoDayHistory($from: String!, $until: String!, $dueFrom:String!, $dueUntil:String!, $calendar:Boolean!) {
+  stopped:triggerLog(where:{event:{eq:"stopped"},note:{gte:$dueFrom,lt:$dueUntil}}) @include(if:$calendar) {
+    trigger seq at note triggerRow { state scheduleRemovedAt triggerLogByTrigger(where:{event:{eq:"stopped"}},orderBy:{seq:{direction:desc,priority:0}},limit:1){seq} }
+  }
   tempoCalendarOutcomes(from:$from,until:$until)
   triggerLog(where: {at: {gte: $from, lt: $until}, event: {inArray: ["fired","failed","missed","cancelled","skipped","held","stopped","failure"]}},
     orderBy: {at: {direction: asc, priority: 0}, seq: {direction: asc, priority: 1}}) { trigger seq at event note }
@@ -18,7 +21,14 @@ const historyQuery = `query TempoDayHistory($from: String!, $until: String!) {
 type Outcome = { event:number; kind:"program"|"mail"|"notice"; state:string|null; reason:string|null };
 type Event = { trigger: string; seq: number; at: string; event: string; note: string; outcomes?: Outcome[]; failure?:string };
 const shift = (date: string, days: number) => new Date(Date.parse(date + 'T00:00:00Z') + days * DAY_MS).toISOString().slice(0, 10);
-type Entry = {trigger: Trigger; at: number; key: string; state: string; scheduled: boolean; note?: string};
+function stoppedDue(note:string|undefined, format:Intl.DateTimeFormat) {
+  const match=/^Next due (.+)$/.exec(note??'');
+  const epoch=match ? Date.parse(match[1]) : NaN;
+  return Number.isFinite(epoch) ? 'Was due '+format.format(epoch) : undefined;
+}
+
+type Stop = Pick<Event,'trigger'|'seq'|'at'|'note'> & {triggerRow:{state:string;scheduleRemovedAt:string|null;triggerLogByTrigger:{seq:number}[]}|null};
+type Entry = {trigger: Trigger; at: number; key: string; state: string; scheduled: boolean; stoppedAt?:string; note?: string};
 
 type ScheduleProps = {zone: string; now: number; triggers: readonly Trigger[]; pauses: readonly AgentPause[]; open: (id: string) => void};
 const dateLabel = new Intl.DateTimeFormat(undefined,{timeZone:'UTC',weekday:'short',month:'short',day:'numeric',year:'numeric'});
@@ -34,11 +44,14 @@ function DayHistory({events,triggers,zone,open}:{events:Event[];triggers:readonl
   const byId=new Map(triggers.map(trigger=>[trigger.id,trigger]));
   const visible=events.filter(event=>byId.has(event.trigger))
     .sort((a,b)=>Date.parse(b.at)-Date.parse(a.at)||b.seq-a.seq);
+  const full=new Intl.DateTimeFormat(undefined,{timeZone:zone,dateStyle:'medium',timeStyle:'short'});
   const time=new Intl.DateTimeFormat(undefined,{timeZone:zone,hour:'2-digit',minute:'2-digit'});
   return <section aria-label="Day history" className="grid gap-1">
     {visible.length ? visible.map(event=>{
       const trigger=byId.get(event.trigger)!;
       const details=event.outcomes?.flatMap(run=>run.reason ? [run.reason] : []) ?? [];
+      const due=(event.event==='stopped'||event.event==='held') ? stoppedDue(event.note,full) : undefined;
+      if(due)details.push(due);
       if(event.failure) details.push(event.failure);
       if(event.event==='missed') details.push(...recordedOutcomes([{state:'missed',note:event.note,scheduled:false}]));
       return <Row key={event.seq} title={title(trigger)} status={outcomeWords(event)}
@@ -47,14 +60,22 @@ function DayHistory({events,triggers,zone,open}:{events:Event[];triggers:readonl
   </section>;
 }
 
-function DayHours({date, zone, now, triggers, pauses, open, log}: ScheduleProps & {date: string; log: Event[] | undefined}) {
+function DayHours({date, zone, now, triggers, pauses, open, log, stops}: ScheduleProps & {date: string; log: Event[] | undefined; stops:Stop[]|undefined}) {
   const {entries, frequent} = useMemo(() => {
     const items: Entry[] = [];
     const frequentIds = new Set<string>();
     const byId = new Map(triggers.map(t => [t.id,t]));
+    const here=new Set<number>();
+    for(const stop of stops??[]){
+      const trigger=byId.get(stop.trigger), due=Date.parse(stop.note.slice('Next due '.length));
+      if(!trigger || stop.triggerRow?.state!=='stopped' || stop.triggerRow.scheduleRemovedAt ||
+        stop.triggerRow.triggerLogByTrigger[0]?.seq!==stop.seq || !Number.isFinite(due) || localDate(due,zone)!==date)continue;
+      items.push({trigger,at:due,key:'due-'+stop.seq,state:'stopped',scheduled:false,stoppedAt:stop.at,note:stop.note});
+      here.add(stop.seq);
+    }
     for (const event of log ?? []) {
       const t = byId.get(event.trigger), at = Date.parse(event.at);
-      if (!t || ['failure','stopped','held'].includes(event.event)) continue;
+      if (!t || here.has(event.seq) || event.event==='failure') continue;
       items.push({trigger:t, at, key:'event-'+event.seq, state:event.outcomes?.every(run=>run.kind==='notice') ? event.event : outcomeWords(event), note:event.note, scheduled:false});
     }
     for (const t of triggers) {
@@ -69,16 +90,17 @@ function DayHours({date, zone, now, triggers, pauses, open, log}: ScheduleProps 
     const frequent = new Map<string, Entry[]>();
     for (const entry of items) {
       const {id,sourceKind,lifespan} = entry.trigger;
-      if (sourceKind !== 'time' || lifespan === 'once') continue;
+      if (sourceKind !== 'time' || lifespan === 'once' || ['stopped','held'].includes(entry.state)) continue;
       const group = frequent.get(id);
       if (group) group.push(entry); else frequent.set(id,[entry]);
     }
     for (const [id,group] of frequent) {
       if (!frequentIds.has(id) && group.length < frequentRunsPerDay) frequent.delete(id);
     }
-    return {entries:items.filter(entry=>!frequent.has(entry.trigger.id)),frequent};
-  }, [triggers, pauses, date, zone, log]);
+    return {entries:items.filter(entry=>!frequent.has(entry.trigger.id) || ['stopped','held'].includes(entry.state)),frequent};
+  }, [triggers, pauses, date, zone, log, stops]);
   const format = new Intl.DateTimeFormat(undefined,{timeZone:zone,hour:'2-digit',minute:'2-digit'});
+  const full = new Intl.DateTimeFormat(undefined,{timeZone:zone,dateStyle:'medium',timeStyle:'short'});
   const hourFormat = new Intl.DateTimeFormat(undefined,{timeZone:zone,hour:'numeric',timeZoneName:'short'});
   const hours = new Map<string, (Entry | 'now')[]>();
   const add = (at:number, entry: Entry | 'now') => {
@@ -102,8 +124,12 @@ function DayHours({date, zone, now, triggers, pauses, open, log}: ScheduleProps 
       <h3 className="pt-1 text-sm">{hour}</h3>
       <div className="grid gap-1 border-l pl-2">{items.map(entry=>entry === 'now'
         ? <div key="now" className="border-b text-sm" role="separator" aria-label="Now">Now · {format.format(now)}</div>
-        : <Row key={entry.key} title={title(entry.trigger)} className={entry.trigger.sourceKind === 'time' ? undefined : 'tempo-event-firing'}
-          meta={entry.trigger.sourceKind === 'time' ? format.format(entry.at) : format.format(entry.at)+' · '+eventLabels[entry.trigger.sourceKind]} status={entry.state} onClick={()=>open(entry.trigger.id)}/>)}</div>
+        : <Row key={entry.key} title={entry.state==='stopped'||entry.state.toLowerCase().startsWith('held')
+            ? <s>{title(entry.trigger)}</s> : title(entry.trigger)} className={entry.trigger.sourceKind==='time'?undefined:'tempo-event-firing'}
+          meta={[format.format(entry.at), entry.trigger.sourceKind !== 'time' && eventLabels[entry.trigger.sourceKind],
+            entry.stoppedAt && 'Stopped '+full.format(Date.parse(entry.stoppedAt)),
+            (entry.state==='stopped'||entry.state==='held') && stoppedDue(entry.note,full)].filter(Boolean).join(' · ')}
+          status={entry.state} onClick={()=>open(entry.trigger.id)}/>)}</div>
     </div>)}
     {log && !entries.length && !frequent.size && <p>No timed activity for this day.</p>}
   </section>;
@@ -114,14 +140,17 @@ function FrequentTriggerRow({entries,format,open}: {entries: Entry[]; format: In
   const upcoming = entries.filter(entry=>entry.scheduled);
   const summary = recordedOutcomes(entries);
   const next = upcoming[0];
-  if (next) summary.push(upcoming.length+' scheduled', 'Next '+format.format(next.at));
-  return <Row title={title(trigger)} status={next?.state} meta={summary.join(' · ')} onClick={()=>open(trigger.id)}/>;
+  if (next) summary.push(upcoming.length+(next.state.startsWith('Held') ? ' held' : ' scheduled'), 'Next '+format.format(next.at));
+  return <Row title={next?.state.startsWith('Held') ? <s>{title(trigger)}</s> : title(trigger)} status={next?.state} meta={summary.join(' · ')} onClick={()=>open(trigger.id)}/>;
 }
 
 function CalendarHours({start,week,history,selectDay,...schedule}: ScheduleProps & {start:string; week:boolean; history:boolean; selectDay:(date:string)=>void}) {
   const length = week ? 7 : 1;
   // Read the visible range once. The offsets on either side include local dates across DST changes.
-  const feed = useDataQuery<{triggerLog: Event[];tempoCalendarOutcomes:Outcome[]}>(historyQuery,{from:shift(start,-1)+'T00:00:00.000Z',until:shift(start,length+1)+'T00:00:00.000Z'});
+  const from=shift(start,-1)+'T00:00:00.000Z',until=shift(start,length+1)+'T00:00:00.000Z';
+  const feed = useDataQuery<{triggerLog: Event[];tempoCalendarOutcomes:Outcome[];stopped?:Stop[]}>(historyQuery,
+    {from,until,dueFrom:'Next due '+from,dueUntil:'Next due '+until,calendar:!history});
+
   const log = feed.status === 'live' ? feed.data?.triggerLog : undefined;
   const outcomes=feed.status==='live' ? feed.data?.tempoCalendarOutcomes : undefined;
   const events = useMemo(()=>{
@@ -151,7 +180,7 @@ function CalendarHours({start,week,history,selectDay,...schedule}: ScheduleProps
       const date = shift(start,offset);
       return <div key={date} role={week ? 'group' : undefined} aria-label={week ? formatDate(date) : undefined}>
         {week && <h3><Button onClick={()=>selectDay(date)} aria-label={'Open '+formatDate(date)}><time dateTime={date}>{formatDate(date)}</time></Button></h3>}
-        {!history && <DayHours {...schedule} date={date} log={log ? events.get(date) ?? noEvents : undefined}/>}
+        {!history && <DayHours {...schedule} stops={feed.status==='live'?feed.data?.stopped:undefined} date={date} log={log ? events.get(date) ?? noEvents : undefined}/>}
       </div>;
     })}
   </div>;

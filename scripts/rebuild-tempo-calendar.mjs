@@ -47,7 +47,8 @@ export async function tempoCalendar({ browser, home }) {
     await page.getByRole('heading',{name:note,exact:true}).waitFor();
     await checkFrequentRows(page,app);
     await checkDayHistory(page,app,clock);
-    return {ok:true,reason:'The scheduled wake appeared at its household time. Navigating away and back preserved its day. Firing it early moved it to the actual firing time with a fired result, and its reader opened after reload. Four recurring times shared one row in Day and Week, with live outcomes and the next time; three times kept their hourly rows. The selected day’s history showed recurring work, a lost worker’s reason, a delivered notice and a stopped trigger in order.'};
+    await checkStoppedSchedule(page,app,clock);
+    return {ok:true,reason:'The scheduled wake appeared at its household time. Navigating away and back preserved its day. Firing it early moved it to the actual firing time with a fired result, and its reader opened after reload. Four recurring times shared one row in Day and Week, with live outcomes and the next time; three times kept their hourly rows. The selected day’s history showed recurring work, a lost worker’s reason, a delivered notice and a stopped trigger in order. A stopped schedule retained its former deadline and restarted at its next future time.'};
   } finally {
     await context?.close();
     await app.close();
@@ -115,4 +116,55 @@ async function checkDayHistory(page,app,clock) {
    await page.getByRole('button',{name:/Recent history/}).click();await lost.click();
    await page.getByRole('heading',{name:note,exact:true}).waitFor();
    await page.getByRole('region',{name:'Recent runs'}).getByText(/Agent wake · lost/).waitFor();
+}
+
+async function checkStoppedSchedule(page,app,clock) {
+  const note='Water the seed beds';
+  const first=clock.now()+5*60000,second=first+10*60000;
+  const wall=at=>new Date(at).toTimeString().slice(0,5);
+  const schedule=app.writes.run(()=>app.services.tempo.triggers.set({
+    ownerKind:'member',owner:'alex',sourceKind:'time',times:wall(first)+','+wall(second),
+    lifespan:'until-stopped',targetKind:'inbox',toKind:'person',to:'alex',instructions:note,note,
+  })).value;
+  const due=Date.parse(schedule.nextDueAt);
+  const db=app.services.comms.db.$client;
+  const firings=()=>db.prepare("select count(*) from trigger_log where trigger=? and event='fired'").pluck().get(schedule.id);
+  const stored=()=>db.prepare('select enabled,next_due_at from triggers where id=?').get(schedule.id);
+  await page.goto(app.url+'/p/tempo/trigger/'+encodeURIComponent(schedule.id));
+  await page.getByRole('button',{name:'Stop',exact:true}).click();
+  await page.getByRole('button',{name:'Start',exact:true}).waitFor();
+  assert.deepEqual(stored(),{enabled:0,next_due_at:null});
+  await page.reload();
+  await page.getByRole('button',{name:'Start',exact:true}).waitFor();
+  await page.goto(app.url+'/p/tempo');
+  const day=page.getByRole('region',{name:'Day schedule'});
+  const stopped=day.getByRole('button',{name:new RegExp(note)}).filter({hasText:'Was due'});
+  await stopped.waitFor();
+  const when=new Intl.DateTimeFormat('en-US',{timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,dateStyle:'medium',timeStyle:'short'}).format(due);
+  assert.ok((await stopped.innerText()).replace(/\s/g,' ').includes(when.replace(/\s/g,' ')));
+  assert.equal(await stopped.locator('s').innerText(),note);
+  clock.advance(due-clock.now()+1000);
+  assert.equal(firings(),0);
+  await stopped.click();
+  await page.getByRole('button',{name:'Start',exact:true}).click();
+  await page.getByRole('button',{name:'Stop',exact:true}).waitFor();
+  assert.equal(Date.parse(stored().next_due_at),due+10*60000);
+  clock.advance(due+10*60000-clock.now());
+  assert.equal(firings(),1);
+
+  const later='Thursday misting';
+  const weekly=app.writes.run(()=>app.services.tempo.triggers.set({
+    ownerKind:'member',owner:'alex',sourceKind:'time',times:'14:00',days:'thu',lifespan:'until-stopped',
+    targetKind:'inbox',toKind:'person',to:'alex',instructions:later,note:later,
+  })).value;
+  app.writes.run(()=>{app.services.tempo.triggers.stop(weekly.id);app.services.tempo.triggers.start(weekly.id);app.services.tempo.triggers.stop(weekly.id);});
+  await page.goto(app.url+'/p/tempo');
+  await page.getByRole('button',{name:'Next day'}).click();
+  const former=day.getByRole('button',{name:new RegExp(later)}).filter({hasText:'Was due'});
+  await former.waitFor();
+  assert.equal(await former.count(),1);
+  assert.match(await former.innerText(),/Stopped .*17.*Was due .*18/s);
+  await former.click();await page.getByRole('button',{name:'Start',exact:true}).click();
+  await former.waitFor({state:'hidden'});
+  await day.getByRole('button',{name:new RegExp(later)}).filter({hasText:'standing'}).waitFor();
 }

@@ -230,7 +230,7 @@ export class TriggerEngine {
         }
       }
       this.db.update(triggers).set({ enabled: false, state: 'stopped', nextDueAt: null, changedAt: this.now() }).where(eq(triggers.id, id)).run();
-      this.log(id, 'stopped');
+      this.log(id, 'stopped', trigger.nextDueAt ? 'Next due '+trigger.nextDueAt : '');
     });
     this.tick();
   }
@@ -313,7 +313,7 @@ export class TriggerEngine {
     this.db.transaction(() => {
       this.db.insert(agentPauses).values({ agent, since: this.now() }).onConflictDoNothing().run();
       for (const t of this.active().filter(t => this.agent(t) === agent && t.state !== 'held')) {
-        this.db.update(triggers).set({ state: 'held', changedAt: this.now() }).where(eq(triggers.id, t.id)).run(); this.log(t.id, 'held');
+        this.db.update(triggers).set({ state: 'held', changedAt: this.now() }).where(eq(triggers.id, t.id)).run(); this.log(t.id, 'held', t.nextDueAt ? 'Next due '+t.nextDueAt : '');
       }
     }); this.tick();
   }
