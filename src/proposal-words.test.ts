@@ -74,6 +74,23 @@ const names: CardNames = {
   channel: (_platform, _workspace, channel) => channel === 'C9' ? { name: '#pond', source: 'The name Discord gave with a message from there' } : null,
   workspace: (_platform, workspace) => workspace === 'T02AYL3QM' ? { name: 'art-slack', source: 'reached by the connection' } : null,
 };
+it('keeps Slack IDs in secondary policy facts and distinguishes identically labelled contacts', () => {
+  const policy = (user: string) => ({ agent: 'art', people: [{ ...gage, user, tier: 2 }], deniedTools: [] });
+  const card = proposalCard('bodyPolicy', policy('U0SECOND'), { names, before: { value: policy('U0FIRST') } })!;
+  const main = factLines(card.facts.filter(fact => !fact.small));
+  expect(main).toContain('an unnamed Slack account: tier 2');
+  expect(main).toContain('Slack connection art-slack');
+  expect(main).toContain('The contact list changes');
+  expect(main).not.toMatch(/U0FIRST|U0SECOND|T02AYL3QM/);
+  expect(card.facts.filter(fact => fact.small).map(fact => fact.value)).toEqual([
+    '1. U0FIRST in T02AYL3QM (tier 2)', '1. U0SECOND in T02AYL3QM (tier 2)',
+  ]);
+  expect(card.nothing).toBe(false);
+  const unchanged = proposalCard('bodyPolicy', policy('U0FIRST'), { names, before: { value: policy('U0FIRST') } })!;
+  expect(unchanged.nothing).toBe(true);
+  expect(unchanged.facts.some(fact => fact.small)).toBe(false);
+});
+
 it('says who an outside account is for a household owner, and says so when loom holds no name', () => {
   const state = { agentLive: true, tools: [tool], known: true, linked: null, on: false };
   const named = proposalCard('kitGrant', { agent: 'art', kit: 'pond-et-livonia', to: gage, grant: true }, { names, before: { value: state } })!;

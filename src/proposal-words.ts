@@ -368,11 +368,21 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
     case 'bodyPolicy': {
       const people = (value: unknown) => displayList(arr(value).map(rec).map(person => {
         const account = outside(person as unknown as Outside);
-        return account.short + (names ? ' [' + str(person.user) + ' in ' + str(person.workspace) + ']' : '') + ': tier ' + str(person.tier) + (names ? '\n' + workspaceWords(names, str(person.platform), str(person.workspace)) : '');
+        return account.short + (names && person.platform !== 'slack' ? ' [' + str(person.user) + ' in ' + str(person.workspace) + ']' : '') + ': tier ' + str(person.tier) + (names ? '\n' + workspaceWords(names, str(person.platform), str(person.workspace)) : '');
       }), 'Nobody', '\n');
       const denied = (value: unknown) => displayList(arr(value).map(rec).map(tool => str(tool.pattern) + (tool.guestsOnly ? ' (only when working for a guest)' : '')), 'None', '\n');
-      const told = changes(before, [field('Outside contacts', 'people', people), field('Tools its body is not given', 'deniedTools', denied)]);
-      return { title: 'Change ' + owns(name(input.agent)) + ' outside contacts and tool restrictions', ...told };
+      const contacts = field('Outside contacts', 'people', people);
+      const details: CardFact[] = [];
+      if (names && !contacts[3]) {
+        const slackIds = (value: unknown) => arr(value).map(rec).flatMap((person, index) => person.platform === 'slack'
+          ? [(index + 1) + '. ' + str(person.user) + ' in ' + str(person.workspace) + ' (tier ' + str(person.tier) + ')'] : []);
+        const prior = slackIds(was?.people), next = slackIds(input.people);
+        if (prior.length) details.push({ label: 'Slack accounts, now', value: displayList(prior, 'None', '\n'), small: true });
+        if (next.length) details.push({ label: 'Slack accounts, if allowed', value: displayList(next, 'None', '\n'), small: true });
+        if (details.length && contacts[1] === contacts[2]) contacts[2] += '\nThe contact list changes. See the account details.';
+      }
+      const told = changes(before, [contacts, field('Tools its body is not given', 'deniedTools', denied)]);
+      return { title: 'Change ' + owns(name(input.agent)) + ' outside contacts and tool restrictions', ...told, facts: [...told.facts, ...details] };
     }
     case 'secretRule': {
       const answers: Record<string, string> = { ask: 'Ask each time', auto: 'Allow automatically', never: 'Never allow' };
