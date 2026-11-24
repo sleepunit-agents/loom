@@ -91,7 +91,11 @@
     {
       "id": "models-017",
       "promise": "One subscription's fullest window, as a tiny bar and a word, with the subscription's label so two with one service are told apart. It is in the desk's ticker only when a window is getting full or almost full. It is on a job's detail, and at the top of Tempo's day.",
-      "source": "docs/how-it-works/site/models.html#how-h"
+      "source": "docs/how-it-works/site/models.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "subscriptionCapacity"
+      }
     },
     {
       "id": "models-018",
