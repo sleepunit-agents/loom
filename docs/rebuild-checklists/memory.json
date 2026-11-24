@@ -167,7 +167,11 @@
     {
       "id": "memory-020",
       "promise": "each agent's folder Its memories and their history, drafts awaiting ratification, its notes and their earlier versions, people cards, project cards, and its identity files.",
-      "source": "docs/how-it-works/site/memory.html"
+      "source": "docs/how-it-works/site/memory.html",
+      "probe": {
+        "kind": "action",
+        "action": "agentFolderContents"
+      }
     },
     {
       "id": "memory-021",
