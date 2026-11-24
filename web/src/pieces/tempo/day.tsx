@@ -18,17 +18,18 @@ type Event = { trigger: string; seq: number; at: string; event: string };
 const shift = (date: string, days: number) => new Date(Date.parse(date + 'T00:00:00Z') + days * DAY_MS).toISOString().slice(0, 10);
 type Entry = {trigger: Trigger; at: number; key: string; state: string};
 
-function DayHours({date, zone, now, triggers, pauses, open}: {date: string; zone: string; now: number;
-  triggers: readonly Trigger[]; pauses: readonly AgentPause[]; open: (id: string) => void}) {
-  // Cover all local offsets; the final date comparison also handles non-24-hour days.
-  const feed = useDataQuery<{triggerLog: Event[]}>(historyQuery, {from: shift(date,-1)+'T00:00:00.000Z', until: shift(date,2)+'T00:00:00.000Z'});
-  const log = feed.status === 'live' ? feed.data?.triggerLog : undefined;
+type ScheduleProps = {zone: string; now: number; triggers: readonly Trigger[]; pauses: readonly AgentPause[]; open: (id: string) => void};
+const dateLabel = new Intl.DateTimeFormat(undefined,{timeZone:'UTC',weekday:'short',month:'short',day:'numeric',year:'numeric'});
+const formatDate = (date: string) => dateLabel.format(Date.parse(date+'T12:00:00Z'));
+const noEvents: Event[] = [];
+
+function DayHours({date, zone, now, triggers, pauses, open, log}: ScheduleProps & {date: string; log: Event[] | undefined}) {
   const entries = useMemo(() => {
     const items: Entry[] = [];
     const byId = new Map(triggers.map(t => [t.id,t]));
     for (const event of log ?? []) {
       const t = byId.get(event.trigger), at = Date.parse(event.at);
-      if (t && localDate(at,zone) === date) items.push({trigger:t, at, key:'event-'+event.seq, state:event.event});
+      if (t) items.push({trigger:t, at, key:'event-'+event.seq, state:event.event});
     }
     for (const t of triggers) {
       if (t.sourceKind !== 'time' || !t.times || !t.enabled || !t.nextDueAt) continue;
@@ -55,7 +56,6 @@ function DayHours({date, zone, now, triggers, pauses, open}: {date: string; zone
   }
   if (today && !marked) add(now,'now');
   return <section aria-label="Day schedule" className="grid gap-1">
-    {!log && <p>{feed.status === 'loading' ? 'Loading firing history…' : 'Firing history unavailable.'}</p>}
     {[...hours].map(([hour,items])=><div key={hour} className="grid grid-cols-[5em_minmax(0,1fr)] gap-2 border-t py-2">
       <h3 className="pt-1 text-sm">{hour}</h3>
       <div className="grid gap-1 border-l pl-2">{items.map(entry=>entry === 'now'
@@ -66,26 +66,55 @@ function DayHours({date, zone, now, triggers, pauses, open}: {date: string; zone
   </section>;
 }
 
-export function TempoDay({zone,triggers,pauses,open}: {zone:string; triggers: readonly Trigger[]; pauses: readonly AgentPause[]; open:(id:string)=>void}) {
+function CalendarHours({start,week,selectDay,...schedule}: ScheduleProps & {start:string; week:boolean; selectDay:(date:string)=>void}) {
+  const length = week ? 7 : 1;
+  // Read the visible range once. The offsets on either side include local dates across DST changes.
+  const feed = useDataQuery<{triggerLog: Event[]}>(historyQuery,{from:shift(start,-1)+'T00:00:00.000Z',until:shift(start,length+1)+'T00:00:00.000Z'});
+  const log = feed.status === 'live' ? feed.data?.triggerLog : undefined;
+  const events = useMemo(()=>{
+    const days = new Map<string, Event[]>();
+    for (const event of log ?? []) {
+      const date = localDate(Date.parse(event.at),schedule.zone);
+      const group = days.get(date);
+      if (group) group.push(event); else days.set(date,[event]);
+    }
+    return days;
+  },[log,schedule.zone]);
+  return <div aria-label={week ? 'Week schedule' : undefined} role={week ? 'region' : undefined} className="grid gap-3">
+    {!log && <p>{feed.status === 'loading' ? 'Loading firing history…' : 'Firing history unavailable.'}</p>}
+    {Array.from({length},(_,offset)=>{
+      const date = shift(start,offset);
+      return <div key={date} role={week ? 'group' : undefined} aria-label={week ? formatDate(date) : undefined}>
+        {week && <h3><Button onClick={()=>selectDay(date)} aria-label={'Open '+formatDate(date)}><time dateTime={date}>{formatDate(date)}</time></Button></h3>}
+        <DayHours {...schedule} date={date} log={log ? events.get(date) ?? noEvents : undefined}/>
+      </div>;
+    })}
+  </div>;
+}
+
+export function TempoCalendar({week,showDay,clearReader,zone,triggers,pauses,open}: {week:boolean; showDay:()=>void; clearReader:()=>void; zone:string; triggers: readonly Trigger[]; pauses: readonly AgentPause[]; open:(id:string)=>void}) {
   const feed = useDataQuery<Header>(headerQuery);
   const data = feed.status === 'live' ? feed.data : undefined;
   const now = data?.deskTime?.at;
-  const [chosen,select] = useState<string>();
+  const [chosen,setChosen] = useState<string>();
+  function select(date: string | undefined) { setChosen(date); clearReader(); }
   const today = now == null ? undefined : localDate(now,zone);
   const date = chosen ?? today;
+  // Weeks start on Monday. Work in civil dates so DST never shifts a column.
+  const start = week && date ? shift(date,-((new Date(date+'T12:00:00Z').getUTCDay()+6)%7)) : date;
   const waiting = triggers.filter(t=>t.enabled && t.sourceKind!=='time');
   return <div className="grid gap-3 p-3">
-    {date && <nav aria-label="Calendar date" className="flex flex-wrap items-center gap-2">
-      <Button aria-label="Previous day" onClick={()=>select(shift(date,-1))}>‹</Button>
-      <time dateTime={date}>{new Intl.DateTimeFormat(undefined,{timeZone:'UTC',weekday:'short',month:'short',day:'numeric',year:'numeric'}).format(Date.parse(date+'T12:00:00Z'))}</time>
-      <Button aria-label="Next day" onClick={()=>select(shift(date,1))}>›</Button>
+    {date && start && <nav aria-label="Calendar date" className="flex flex-wrap items-center gap-2">
+      <Button aria-label={week?'Previous week':'Previous day'} onClick={()=>select(shift(date,week?-7:-1))}>‹</Button>
+      <span><time dateTime={start}>{formatDate(start)}</time>{week && <> – <time dateTime={shift(start,6)}>{formatDate(shift(start,6))}</time></>}</span>
+      <Button aria-label={week?'Next week':'Next day'} onClick={()=>select(shift(date,week?7:1))}>›</Button>
       <Button disabled={date===today} onClick={()=>select(undefined)}>Today</Button>
     </nav>}
-    {date === today && !!data?.modelAccounts?.length && <section aria-label="Current subscriptions" className="flex flex-wrap gap-3">
+    {!week && date === today && !!data?.modelAccounts?.length && <section aria-label="Current subscriptions" className="flex flex-wrap gap-3">
       {data.modelAccounts.map((account,i)=><span key={i} className="loom-job-capacity" data-capacity={account.level}>{account.label} · {account.level}</span>)}
     </section>}
     {!!waiting.length && <section aria-label="Event triggers"><h3>Waiting for an event now</h3>{waiting.map(t=><Row key={t.id} title={title(t)} meta={t.sourceKind} onClick={()=>open(t.id)}/>)}</section>}
-    {date && now != null ? <DayHours date={date} now={now} zone={zone} triggers={triggers} pauses={pauses} open={open}/>
+    {start && now != null ? <CalendarHours start={start} week={week} selectDay={day=>{select(day);showDay();}} now={now} zone={zone} triggers={triggers} pauses={pauses} open={open}/>
       : <p>{feed.status === 'loading' ? 'Opening calendar…' : 'Household clock unavailable.'}</p>}
   </div>;
 }
