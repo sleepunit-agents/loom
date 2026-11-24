@@ -21,13 +21,20 @@ const access=new GraphQLObjectType({name:'MemoryActivityAccess',fields:{allowed:
 
 /** The authenticated outside door supplies the viewer; the existing reader
  * rechecks current sharing, conversation scope and expiry on every read. */
-export function activityQueryFields(reader:Pick<ReturnType<typeof createActivityReader>,'window'|'read'> & Partial<Pick<ReturnType<typeof createActivityReader>,'access'|'episodePage'>>,deadlines?:QueryDeadlines):GraphQLFieldConfigMap<unknown,{viewer:Viewer}> {
+export type ActivityQueryReader=Pick<ReturnType<typeof createActivityReader>,'window'|'read'> & Partial<Pick<ReturnType<typeof createActivityReader>,'access'|'episodePage'|'ownEpisodeSessions'>>;
+export function activityQueryFields(reader:ActivityQueryReader,deadlines?:QueryDeadlines):GraphQLFieldConfigMap<unknown,{viewer:Viewer}> {
  const safe=<T>(read:()=>T):T=>{try{return read();}catch{throw new GraphQLError('Activity is unavailable');}};
  const track=<T extends {expires?:number}>(value:T|undefined,context:{viewer:Viewer},kind:string,id:string)=>{
   if(value?.expires!==undefined)keepReadUntil(context,value.expires);
   deadlines?.set(JSON.stringify([context.viewer.kind,context.viewer.id,kind,id]),value?.expires);return value??null;
  };
  return {
+  memoryOwnEpisodeSessions:{type:new GraphQLList(new GraphQLNonNull(GraphQLString)),resolve:(_source,_args,context)=>{
+   if(context?.viewer?.kind!=='agent')return null;
+   const result=safe(()=>reader.ownEpisodeSessions?.(context.viewer));
+   if(result?.expires!==undefined)keepReadUntil(context,result.expires);
+   return result?.ids??null;
+  }},
   memoryEpisodePage:{type:episodePage,args:{agent:requiredText,first:{type:GraphQLInt,defaultValue:10},before:text},resolve:(_source,args,context)=>{
    if(!context?.viewer)return null;
    const result=safe(()=>reader.episodePage?.(args.agent,context.viewer,args.first,args.before));
