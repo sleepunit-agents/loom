@@ -3,7 +3,7 @@ import { localDate, timesOnDate } from '../../../../src/core/tempo/calendar';
 import { DAY_MS } from '../../../../src/core/day';
 import { useDataQuery } from '../../data/graphql';
 import { Button, Row } from '../../kit';
-import { status, title, type AgentPause, type Trigger } from './model';
+import { eventLabels, status, title, type AgentPause, type Trigger } from './model';
 
 const headerQuery = `query TempoDayHeader {
   deskTime { at }
@@ -60,7 +60,8 @@ function DayHours({date, zone, now, triggers, pauses, open, log}: ScheduleProps 
       <h3 className="pt-1 text-sm">{hour}</h3>
       <div className="grid gap-1 border-l pl-2">{items.map(entry=>entry === 'now'
         ? <div key="now" className="border-b text-sm" role="separator" aria-label="Now">Now · {format.format(now)}</div>
-        : <Row key={entry.key} title={title(entry.trigger)} meta={format.format(entry.at)} status={entry.state} onClick={()=>open(entry.trigger.id)}/>)}</div>
+        : <Row key={entry.key} title={title(entry.trigger)} className={entry.trigger.sourceKind === 'time' ? undefined : 'tempo-event-firing'}
+          meta={entry.trigger.sourceKind === 'time' ? format.format(entry.at) : format.format(entry.at)+' · '+eventLabels[entry.trigger.sourceKind]} status={entry.state} onClick={()=>open(entry.trigger.id)}/>)}</div>
     </div>)}
     {log && !entries.length && <p>No timed activity for this day.</p>}
   </section>;
@@ -102,7 +103,14 @@ export function TempoCalendar({week,showDay,clearReader,zone,triggers,pauses,ope
   const date = chosen ?? today;
   // Weeks start on Monday. Work in civil dates so DST never shifts a column.
   const start = week && date ? shift(date,-((new Date(date+'T12:00:00Z').getUTCDay()+6)%7)) : date;
-  const waiting = triggers.filter(t=>t.enabled && t.sourceKind!=='time');
+  const waiting = new Map<string, Trigger[]>();
+  for (const trigger of triggers) {
+    if (!trigger.enabled || trigger.sourceKind === 'time') continue;
+    const label = eventLabels[trigger.sourceKind];
+    const group = waiting.get(label);
+    if (group) group.push(trigger);
+    else waiting.set(label, [trigger]);
+  }
   return <div className="tempo-calendar grid gap-3 p-3">
     {date && start && <nav aria-label="Calendar date" className="flex flex-wrap items-center gap-2">
       <Button aria-label={week?'Previous week':'Previous day'} onClick={()=>select(shift(date,week?-7:-1))}>‹</Button>
@@ -113,7 +121,12 @@ export function TempoCalendar({week,showDay,clearReader,zone,triggers,pauses,ope
     {!week && date === today && !!data?.modelAccounts?.length && <section aria-label="Current subscriptions" className="flex flex-wrap gap-3">
       {data.modelAccounts.map((account,i)=><span key={i} className="loom-job-capacity" data-capacity={account.level}>{account.label} · {account.level}</span>)}
     </section>}
-    {!!waiting.length && <section aria-label="Event triggers"><h3>Waiting for an event now</h3>{waiting.map(t=><Row key={t.id} title={title(t)} meta={t.sourceKind} onClick={()=>open(t.id)}/>)}</section>}
+    {waiting.size > 0 && <section aria-label="Event triggers"><h3>Waiting for an event now</h3>
+      {[...waiting].map(([label, group])=><div key={label} role="group" aria-label={label}>
+        <h4 className="text-sm">{label}</h4>
+        {group.map(t=><Row key={t.id} title={title(t)} onClick={()=>open(t.id)}/>)}
+      </div>)}
+    </section>}
     {start && now != null ? <CalendarHours start={start} week={week} selectDay={day=>{select(day);showDay();}} now={now} zone={zone} triggers={triggers} pauses={pauses} open={open}/>
       : <p>{feed.status === 'loading' ? 'Opening calendar…' : 'Household clock unavailable.'}</p>}
   </div>;
