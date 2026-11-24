@@ -10,6 +10,8 @@ import { startSharedHome } from '../dist/shared-startup.js';
 import { httpWorkerControl } from '../dist/runtime/worker-http.js';
 import { REPORT_MS, SILENCE_MS } from '../dist/runtime/silence.js';
 
+import { nativeProtocolSmoke } from './rebuild-native-protocol.mjs';
+
 async function verifyOutcome(ending) {
   const dir = await mkdtemp(join(tmpdir(), 'loom-job-outcome-'));
   const home = join(dir, 'home');
@@ -23,9 +25,7 @@ async function verifyOutcome(ending) {
     app = await open();
     const issue = key => app.writes.run(() => app.services.signin.issue(key)).value.token;
     const owner = issue({ kind: 'owner', member: 'alex', label: 'Example reader' });
-    const runner = issue({ kind: 'runner', box, label: 'Example worker' });
     const signal = AbortSignal.timeout(30_000);
-    const worker = httpWorkerControl({ url: app.url, token: runner, slots: 12, signal });
     const state = () => app.services.comms.db.$client.prepare('SELECT state FROM jobs WHERE id=?').get(job.id).state;
     const post = async (path, payload) => {
       const response = await fetch(app.url + path, { method: 'POST', signal, redirect: 'error',
@@ -36,39 +36,49 @@ async function verifyOutcome(ending) {
     };
 
     assert.equal(state(), 'queued');
-    let assignment;
-    do {
-      assignment = await worker.next();
-      assert.ok(assignment, 'The example worker must receive the original job');
-    } while (assignment.id !== job.id);
-    assert.equal(assignment.box, box);
-    assert.equal(state(), 'starting');
-    // Only the process exit is synthetic. The coordinator sees normal worker calls or silence.
-    child = spawn(process.execPath, ['-e', 'process.stdin.once("data", b => process.exit(Number(b)))'],
-      { env: {}, stdio: ['pipe', 'ignore', 'ignore'] });
-    await once(child, 'spawn');
-    const exited = once(child, 'exit');
-    await worker.started(job.id, 'example-build');
-    assert.equal(state(), 'running');
-    if (ending === 'lost') {
-      child.kill('SIGKILL');
-      assert.equal((await exited)[1], 'SIGKILL');
-      clock.advance(SILENCE_MS - 1);
-      assert.equal(state(), 'running');
-      clock.advance(2 * REPORT_MS + 1001);
-    } else if (ending === 'stopped') {
-      const result = await post('/api/runtime/jobStop', {
-        id: crypto.randomUUID(), input: { job: job.id, reason: 'write-off' } });
-      assert.equal(result.ok, true);
-      assert.equal(await worker.heartbeat(job.id, 'running'), false);
-      child.kill();
-      await exited;
+    if (ending === 'done') {
+      const result = await nativeProtocolSmoke({ app, example, clock, home, signal });
+      const run = result.runs.find(item => item.job === job.id);
+      assert.equal(run?.running, true);
+      assert.equal(run.currentJob, job.id);
+      assert.equal(run.conversation, conversation);
     } else {
-      const code = ending === 'done' ? 0 : 23;
-      child.stdin.end(String(code));
-      const [actual] = await exited;
-      assert.equal(actual, code);
-      await worker.finish(job.id, actual, '', 'body');
+      const runner = issue({ kind: 'runner', box, label: 'Example worker' });
+      const worker = httpWorkerControl({ url: app.url, token: runner, slots: 12, signal });
+      let assignment;
+      do {
+        assignment = await worker.next();
+        assert.ok(assignment, 'The example worker must receive the original job');
+      } while (assignment.id !== job.id);
+      assert.equal(assignment.box, box);
+      assert.equal(state(), 'starting');
+      // Only the process exit is synthetic. The coordinator sees normal worker calls or silence.
+      child = spawn(process.execPath, ['-e', 'process.stdin.once("data", b => process.exit(Number(b)))'],
+        { env: {}, stdio: ['pipe', 'ignore', 'ignore'] });
+      await once(child, 'spawn');
+      const exited = once(child, 'exit');
+      await worker.started(job.id, 'example-build');
+      assert.equal(state(), 'running');
+      if (ending === 'lost') {
+        child.kill('SIGKILL');
+        assert.equal((await exited)[1], 'SIGKILL');
+        clock.advance(SILENCE_MS - 1);
+        assert.equal(state(), 'running');
+        clock.advance(2 * REPORT_MS + 1001);
+      } else if (ending === 'stopped') {
+        const result = await post('/api/runtime/jobStop', {
+          id: crypto.randomUUID(), input: { job: job.id, reason: 'write-off' } });
+        assert.equal(result.ok, true);
+        assert.equal(await worker.heartbeat(job.id, 'running'), false);
+        child.kill();
+        await exited;
+      } else {
+        const code = 23;
+        child.stdin.end(String(code));
+        const [actual] = await exited;
+        assert.equal(actual, code);
+        await worker.finish(job.id, actual, '', 'body');
+      }
     }
     assert.equal(state(), ending);
     await app.close();
@@ -86,5 +96,5 @@ async function verifyOutcome(ending) {
 
 export async function jobOutcomeEvidence() {
   for (const ending of ['done', 'failed', 'stopped', 'lost']) await verifyOutcome(ending);
-  return { ok: true, reason: 'Four queued jobs were claimed and ran. Member history preserved the success, failure, owner stop and silence timeout after restart.' };
+  return { ok: true, reason: 'The normal worker ran the assigned body. Member history preserved the success, failure, owner stop and silence timeout after restart.' };
 }
