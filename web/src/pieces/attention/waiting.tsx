@@ -4,9 +4,9 @@ import { Button, Loading, Row } from '../../kit';
 import { approvalRequestId, type InboxItem } from '../inbox-view/model';
 import { retainedInboxItem, useInboxProposalTitles } from './inbox-query';
 
-export const deskWaitingCountsQuery = `query DeskWaitingCounts {
+export const deskWaitingCountsQuery = `query DeskWaitingCounts($project:String) {
   homeComms { member }
-  inboxFolders { needs agents { id needs } }
+  inboxFolders(project:$project) { needs agents { id needs } }
 }`;
 export interface WaitingCountsData { homeComms:{member:string}|null; inboxFolders:{needs:number;agents:{id:string;needs:number}[]} }
 export interface WaitingCounts {status:DataQuerySnapshot<unknown>['status'];member?:string;total?:number;agents:ReadonlyMap<string,number>}
@@ -25,8 +25,8 @@ export function waitingCounts(query:DataQuerySnapshot<WaitingCountsData>):Waitin
   return {status:'live',member:query.data.homeComms.member,total:folders.needs,agents};
 }
 /** Counts and signals never select message wording. */
-export function useDeskWaitingCounts():WaitingCounts {
-  const query=useDataQuery<WaitingCountsData>(deskWaitingCountsQuery);
+export function useDeskWaitingCounts(project?:string):WaitingCounts {
+  const query=useDataQuery<WaitingCountsData>(deskWaitingCountsQuery,project ? {project} : undefined);
   return useMemo(()=>waitingCounts(query),[query]);
 }
 const fields='id toKind to source agent at state volume answers waitsOnKind waitsOnId thread bodyKeepUntil body { words why } read refs';
@@ -82,7 +82,7 @@ export function useDeskWaitingPreview(agent?:string):WaitingPreview {
 /** Home's band: the first three waiting asks in one small request, with what says whether a Yes or No can be
  * given where the ask stands (who may answer, what it waits on, and whether its buttons have lines of their own). */
 export const bandSize=3;
-export const deskWaitingBandQuery=`query DeskWaitingBand { homeComms { member } inboxItems(folder:"needs",limit:${bandSize}) { ${fields.replace('body { words why }','body { words why ifYes ifNo }')} canAnswer } }`;
+export const deskWaitingBandQuery=`query DeskWaitingBand($project:String,$offset:Int=0) { homeComms { member } inboxItems(folder:"needs",project:$project,offset:$offset,limit:${bandSize}) { ${fields.replace('body { words why }','body { words why ifYes ifNo }')} canAnswer } }`;
 export interface WaitingBand {status:WaitingCounts['status'];items:InboxItem[]}
 export function waitingBand(query:DataQuerySnapshot<WaitingPreviewData>,now:number):WaitingBand {
   const none=(status:WaitingBand['status']):WaitingBand=>({status,items:[]});
@@ -96,8 +96,8 @@ export function waitingBand(query:DataQuerySnapshot<WaitingPreviewData>,now:numb
   if(rows.some(row=>!validWaiting(row)))return none('offline');
   return {status:'live',items:rows.map(row=>retainedInboxItem(row,now))};
 }
-export function useDeskWaitingBand():WaitingBand {
-  const query=useDataQuery<WaitingPreviewData>(deskWaitingBandQuery);
+export function useDeskWaitingBand(project?:string,offset=0):WaitingBand {
+  const query=useDataQuery<WaitingPreviewData>(deskWaitingBandQuery,project ? {project,offset} : undefined);
   const [tick,setTick]=useState(0);
   const band=useMemo(()=>waitingBand(query,Date.now()),[query,tick]);
   const deadline=Math.min(...band.items.filter(item=>item.thread&&item.body).map(item=>Date.parse(item.bodyKeepUntil??'')).filter(Number.isFinite),Infinity);

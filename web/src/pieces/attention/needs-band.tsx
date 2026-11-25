@@ -12,7 +12,7 @@ export function answersInPlace(item: InboxItem): boolean {
 }
 
 /** One waiting ask: its words and who asked, opening it in the Inbox; Yes and No beside it where that is safe. */
-function NeedChip({ item, who, go }: { item: InboxItem; who: string; go(path: string): void }) {
+export function NeedChip({ item, who, go }: { item: InboxItem; who: string; go(path: string): void }) {
   const [busy, setBusy] = useState(false), [failed, setFailed] = useState(false);
   const lock = useRef(false), mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
