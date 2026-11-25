@@ -59,7 +59,7 @@ it('runs the mounted Tasks selection in one SQL statement and respects hidden bl
     db.exec("UPDATE tasks SET status='in_progress' WHERE id='b'");
     const home = await graphql({schema,source:workHomeQuery});
     expect(home.errors).toBeUndefined();
-    expect(home.data?.projects).toMatchObject(expect.arrayContaining([{id:'pond',name:'Pond',lifecycle:'active',tasksByProject:[expect.objectContaining({id:'a'})]}]));
+    expect(home.data?.projects).toMatchObject(expect.arrayContaining([{id:'pond',name:'Pond',goal:null,lifecycle:'active',tasksByProject:[expect.objectContaining({id:'a'})]}]));
     const project = await graphql({schema,source:workProjectQuery,variableValues:{id:'pond'}});
     expect(project.errors).toBeUndefined();
     expect(project.data).toMatchObject({working:[{id:'b'}],recent:[{id:'a'},{id:'b'},{id:'epic'}]});
