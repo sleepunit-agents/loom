@@ -1,3 +1,4 @@
+import {ToolbarFrame} from '../kit/toolbar';
 import type { ReactNode } from 'react';
 import {fullTime} from '../kit/time';
 import { Button, Fact, Facts, Meta, Reader, Section, Title, Empty, Error, List, Loading, Row, Split } from '../kit';
@@ -99,9 +100,11 @@ export function BridgesView({ snapshot, member, folder, selected, select, change
     : folder === 'channels' ? snapshot.channels.map(value => row(bridgePlaceKey(value), value.channel, `${value.platform} · ${value.workspace}`, `Answers: ${value.answers}`))
     : folder === 'people' ? snapshot.people.map(value => row(bridgePersonKey(value), value.member, `${value.platform} · ${value.workspace} · ${value.user}`))
     : sends.map(value => row(value.id, value.channel, value.text, value.state));
-  return <Split label="Bridges" folders={(Object.keys(labels) as BridgeFolder[]).map(id => ({ id, label: labels[id], count: counts[id] }))}
-    folder={folder} onFolder={id => { select(undefined); changeFolder(id as BridgeFolder); }} listAction={onCreate&&cards?.create?<Button onClick={onCreate}>{createLabel}</Button>:undefined} listTop={onCreate?undefined:cards?.create} listTitle={labels[folder]}
+  return <ToolbarFrame title="Bridges" controls={onCreate&&cards?.create?<Button onClick={onCreate}>{createLabel}</Button>:undefined}>
+    <Split label="Bridges" folders={(Object.keys(labels) as BridgeFolder[]).map(id => ({ id, label: labels[id], count: counts[id] }))}
+    folder={folder} onFolder={id => { select(undefined); changeFolder(id as BridgeFolder); }}  listTop={onCreate?undefined:cards?.create} listTitle={labels[folder]}
     list={rows.length ? <List label={labels[folder]}>{rows}</List> : <Empty title={`No ${labels[folder].toLowerCase()}`} />}
     reader={reader} open={reader !== null} onBack={() => select(undefined)} backLabel={`Back to ${labels[folder].toLowerCase()}`}
-    blank={<Empty title={active ? 'This item is no longer available' : 'Choose an item'} />} />;
+    blank={<Empty title={active ? 'This item is no longer available' : 'Choose an item'} />} />
+  </ToolbarFrame>;
 }

@@ -1,3 +1,4 @@
+import {ToolbarFrame} from '../../kit/toolbar';
 import {Fragment, useState} from 'react';
 import {Empty, Error, Fact, Facts, Input, LinkButton, Loading, Meta, Reader, Title} from '../../kit';
 import './usage.css';
@@ -73,11 +74,12 @@ export default function Usage() {
   const [last,setLast]=useState(()=>localDay(0));
   const [first,setFirst]=useState(()=>localDay(-6));
   const valid=first&&last&&first<=last&&Number.isFinite(Date.parse(first))&&Number.isFinite(Date.parse(last));
-  return <main className="usage-page" aria-label="Job usage">
-    <fieldset><legend>Date range ({Intl.DateTimeFormat().resolvedOptions().timeZone})</legend>
+  return <ToolbarFrame title="Job usage" controls={<fieldset className="usage-range"><legend>Date range ({Intl.DateTimeFormat().resolvedOptions().timeZone})</legend>
       <label>From <Input type="date" value={first} max={last} onChange={e=>setFirst(e.target.value)}/></label>
       <label> Through <Input type="date" value={last} min={first} onChange={e=>setLast(e.target.value)}/></label>
-    </fieldset>
+    </fieldset>}>
+  <main className="usage-page" aria-label="Job usage">
+
     {valid?<Conversations range={{from:midnight(first).toISOString(),to:midnight(last,1).toISOString()}}/>:<p>Choose a valid date range.</p>}
-  </main>;
+  </main></ToolbarFrame>;
 }
