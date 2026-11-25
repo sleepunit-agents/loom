@@ -1,5 +1,5 @@
 import { readAll } from '../data/execution.js';
-import { waitsOnShelvedTask } from '../data/project-in-use.js';
+import { projectLifecycle, waitsOnShelvedTask } from '../data/project-in-use.js';
 import { selectedQueryFields } from '../data/queries.js';
 import { readInboxFolders, readInboxSet, type InboxReadSet } from '../data/inbox-read.js';
 import {handoffEnvelope,handoffDeadline} from './handoff-words.js';
@@ -13,7 +13,7 @@ import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectT
 import { rules, type Viewer } from '../../policy.js';
 import { sqlRule } from '../../policy-sql.js';
 import type { DataDatabase } from '../data/database.js';
-import { actionResults, bridgeIncoming, bridgeSends, inbox, inboxReads, inboxRefs, messages, threads } from '../data/schema.js';
+import { actionResults, bridgeIncoming, bridgeSends, projects, inbox, inboxReads, inboxRefs, messages, threads } from '../data/schema.js';
 import { keepReadUntil } from '../data/read-lease.js';
 import type { WordsKey } from './words.js';
 import { commsKeepDays } from '../data/comms-days.js';
@@ -163,6 +163,16 @@ export class InboxQueries {
     const where=this.mailboxWhere(viewer,filter);
     return this.db.query.inbox.findMany({where:()=>sql`${{getSQL:()=>where!}}`,orderBy:f=>[desc(sql`julianday(${f.at})`),desc(f.id)]});
   }
+  projectNeeds(viewer: Viewer) {
+    if (viewer.kind !== 'member') return [];
+    const fields = getTableColumns(projects);
+    return this.db.select({project: projects.id, needs: sql<number>`count(*)`}).from(inbox)
+      .innerJoin(projects, eq(inbox.project, projects.id))
+      .where(and(this.mailboxWhere(viewer, {folder: 'needs'}), sqlRule(rules.project, viewer, fields),
+        ne(projectLifecycle(fields), 'removed')))
+      .groupBy(projects.id).orderBy(asc(projects.id)).all();
+  }
+
   folders(viewer: Viewer, project?: string) {
     if (viewer.kind !== 'member' && viewer.kind !== 'agent') return { needs: 0, alerts: 0, answered: 0, fyi: 0, all: 0, agents: [] };
     return readInboxFolders(this.db, this.mailboxWhere(viewer,{project})!);
@@ -443,7 +453,12 @@ export function inboxQueryFields(service: InboxQueries, discussionAgent?: (viewe
     agent:{type:new GraphQLNonNull(GraphQLString)},receivedAt:{type:new GraphQLNonNull(GraphQLString)},
     acceptedAt:{type:GraphQLString},replied:{type:new GraphQLNonNull(GraphQLBoolean)},
   }});
-  return { latestBridgeReceipt:{type:peerReceipt,args:{conversation:{type:new GraphQLNonNull(GraphQLString)}},
+  const projectCount = new GraphQLObjectType({name:'InboxProjectNeeds', fields:{
+    project:{type:new GraphQLNonNull(GraphQLString)}, needs:{type:new GraphQLNonNull(GraphQLInt)},
+  }});
+  return { inboxProjectNeeds:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(projectCount))),
+    resolve:(_row,_args,context)=>service.projectNeeds(context.viewer)},
+    latestBridgeReceipt:{type:peerReceipt,args:{conversation:{type:new GraphQLNonNull(GraphQLString)}},
     resolve:(_row,args,context)=>service.latestBridgeReceipt(context.viewer,args.conversation)},inboxFolders: { type: new GraphQLNonNull(folders), args:{project:{type:GraphQLString}}, resolve: (_row, args, context) => service.folders(context.viewer,args.project) }, inboxItem: {
     type: item, args: { id: { type: new GraphQLNonNull(GraphQLString) } },
     resolve: async(_row,args,context,info)=>{const row=service.item(context.viewer,args.id);return row?(await service.project(context.viewer,[row],info,until=>keepReadUntil(context,until)))[0]:null;},
