@@ -1,3 +1,4 @@
+import { ClaimControls } from './claim-controls';
 import { WorkDiscussion } from './discuss';
 import { useReadingVisible } from '../../data/visibility';
 import { CatchUp } from './catch-up';
@@ -21,6 +22,8 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
   const [,,,section,sectionId] = path.split('/');
   const projectId = section==='project' ? sectionId : undefined;
   const unfiled = section==='unfiled';
+  const decisions = useDataQuery<{inboxProjectNeeds:{project:string;needs:number}[]}>(
+    'query WorkProjectDecisions { inboxProjectNeeds { project needs } }', {}, {pause:!!projectId || unfiled || !reading});
   const home = useDataQuery<{projects:(Project & {tasksByProject:Ticket[]})[];inFlight:{id:string;tasksByProject:{id:string}[]}[];unfiled:Ticket[]}>(workHomeQuery, {}, {pause:!!projectId || unfiled});
   const detail = useDataQuery<{project:Project|null;working:Ticket[];recent:Ticket[]}>(workProjectQuery,{id:projectId ?? ''},{pause:!projectId});
   if (unfiled) return <div className="p-4"><AppFrame title="Unfiled tickets" where={path} go={go} crumb={{label:'Work',href:base}}>
@@ -45,7 +48,8 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
       {project.lifecycle==='active' && working.length>0 && tickets('Claimed tickets',working)}
       {(project.lifecycle==='retired' ? recentTickets : recent).length>0 && tickets('Recent tickets',project.lifecycle==='retired' ? recentTickets : recent)}
       {!recentTickets.length && <Empty title="No tickets here yet"/>}
-      <WorkDiscussion key={project.id} kind="project" id={project.id} go={go}/>
+      {project.lifecycle==='active' && <ClaimControls key={'claims-'+project.id} project={project.id}/>}
+      <WorkDiscussion key={'discuss-'+project.id} kind="project" id={project.id} go={go}/>
       <LinkButton onClick={()=>go(base+'/project/'+project.id+'/board')}>Open board</LinkButton>
       <LinkButton onClick={()=>go('/p/tasks-preview/?folder='+encodeURIComponent('project:'+project.id))}>Browse project backlog</LinkButton>
     </AppFrame></div>;
@@ -54,14 +58,22 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
   const active = projects.filter(project=>project.lifecycle==='active');
   const workingIds = new Set(home.data?.inFlight.filter(row=>row.tasksByProject.length).map(row=>row.id));
   const activeCount = active.filter(project=>workingIds.has(project.id)).length;
+  const needs = new Map(decisions.status==='live' && !decisions.settling
+    ? decisions.data?.inboxProjectNeeds.map(row=>[row.project,row.needs]) : []);
+  const decisionTotal = projects.reduce((sum,project)=>sum+(needs.get(project.id) ?? 0),0);
   const grid = (rows:typeof projects) => <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,15rem),1fr))]">{rows.map(project=>
     <div key={project.id} className="overflow-hidden rounded-lg border border-[var(--v-border)]">
-      <Row layout="stack" title={project.name} meta={project.tasksByProject[0]?.title} status={project.tasksByProject[0] ? statusWords[project.tasksByProject[0].status] : 'No tickets'} onClick={()=>go(base+'/project/'+project.id)}/>
+      <Row layout="stack" title={project.name} meta={project.tasksByProject[0]?.title} status={[project.tasksByProject[0] ? statusWords[project.tasksByProject[0].status] : 'No tickets',
+        needs.has(project.id) && `Needs you · ${needs.get(project.id)}`].filter(Boolean).join(' · ')} onClick={()=>go(base+'/project/'+project.id)}/>
     </div>
   )}</div>;
   const retired = projects.filter(project=>project.lifecycle==='retired');
-  const latestUnfiled = home.data?.unfiled[0];
-  return <div className="p-4"><AppFrame title="Work" where={base} go={go} context={active.length ? `${active.length} active project${active.length===1 ? '' : 's'} · ${activeCount} with claimed tickets` : undefined}>
+  const latestUnfiled = home.data?.unfiled?.[0];
+  const context = [
+    active.length && `${active.length} active project${active.length===1 ? '' : 's'} · ${activeCount} with claimed tickets`,
+    decisionTotal && `${decisionTotal} project question${decisionTotal===1 ? '' : 's'} waiting for you`,
+  ].filter(Boolean).join(' · ');
+  return <div className="p-4"><AppFrame title="Work" where={base} go={go} context={context || undefined}>
     {grid(active)}
     {latestUnfiled && <div className="overflow-hidden rounded-lg border border-[var(--v-border)]">
       <Row layout="stack" title="Unfiled tickets" meta={latestUnfiled.title} status="Not in a project" onClick={()=>go(unfiledBase)}/>

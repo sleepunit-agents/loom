@@ -42,9 +42,11 @@ export function dataQueries(client: Database.Database, options: {
   tables: readonly TableName[];
   visibility: QueryVisibility;
   relationsDepthLimit?: number;
+  readyForAgent?: string;
   fields?: GraphQLFieldConfigMap<unknown, {viewer:Viewer}>;
 }) {
   if (!options.tables.length) throw new Error('Select at least one query table');
+  const readyForAgent=options.readyForAgent;
   const depth = options.relationsDepthLimit ?? 2;
   if (!Number.isInteger(depth) || depth < 0 || depth > 3) throw new Error('Query relation depth must be between 0 and 3');
   const selected = new Set(options.tables);
@@ -90,7 +92,7 @@ export function dataQueries(client: Database.Database, options: {
         extras: (fields: Fields) => {
           const extras: Record<string, SQL.Aliased> = {};
           if (fieldsSelected.has('isReady')) {
-            const ready = taskReadiness(fields);
+            const ready = taskReadiness(fields,readyForAgent);
             extras.isReady = sql`${{ getSQL: () => ready }}`.mapWith(Boolean).as('data_is_ready');
           }
           if (fieldsSelected.has('isShelved')) {
@@ -119,7 +121,7 @@ export function dataQueries(client: Database.Database, options: {
         // Readiness is a property of the visible task, not of the subset of
         // blockers the caller can read. Never return hidden blocker rows/IDs.
         const ready = root && name === 'tasks' && querySelection.getStore()?.fieldName === 'readyTasks'
-          ? taskReadiness(fields) : undefined;
+          ? taskReadiness(fields,readyForAgent) : undefined;
         return and(sql`${{ getSQL: () => allowed }}`, ready ? sql`${{ getSQL: () => ready }}` : undefined, requested);
       },
       with: config.with && Object.fromEntries(Object.entries(config.with).map(([key, nested]) => {

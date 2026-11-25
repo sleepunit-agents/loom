@@ -244,14 +244,21 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
 });
 
 it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.html')))('opens a shared project in Work and follows its ticket into the existing reader', async () => {
-  const app = await fixture();
+  const app = await fixture(true);
+  const mail = app.data.services.conversations;
+  const ask = app.data.writes.run(()=>mail.send({toKind:'person',to:'sam',member:'sam',project:'pond',
+    source:'notice',fromKind:'agent',words:'Order the pump?',answers:'yes-no'})).value;
   const browser = await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try {
     const context = await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},reducedMotion:'reduce'});
     await context.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
     const page = await context.newPage();
     await page.goto(app.url+'/p/work');
-    const project = page.locator('[data-split-row]').filter({hasText:'pond'});
+    const project = page.locator('[data-split-row]').filter({has:page.getByText('pond',{exact:true})});
+    await expect.poll(()=>project.textContent({timeout:5000})).toContain('Needs you · 1');
+    await page.getByText(/1 project question waiting for you/).waitFor();
+    app.data.writes.run(()=>mail.answer(ask.id,'sam','yes'));
+    await expect.poll(()=>project.textContent({timeout:5000})).not.toContain('Needs you');
     await project.click({timeout:15000});
     await page.getByText('Open board',{exact:true}).click();
     const ticket = page.locator('[data-split-row]').filter({hasText:title});
@@ -334,5 +341,50 @@ it.runIf(process.env.CI==='true' && chrome && existsSync(join(root,'index.html')
     await composer.waitFor();
     expect(page.url()).toBe(href);
     expect(app.db.select().from(s.inbox).all()).toHaveLength(1);
+  } finally {await browser.close();await app.close();}
+});
+
+it.runIf(process.env.CI==='true' && chrome && existsSync(join(root,'index.html')))('pauses new project claims from Work and reads the direction after reload',async()=>{
+  const app=await fixture(true);
+  app.data.writes.run(()=>app.db.insert(s.memberAgents).values({member:'sam',agent:'art'}).run());
+  const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  try {
+    const ctx=await browser.newContext({serviceWorkers:'block',reducedMotion:'reduce'});
+    await ctx.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
+    const page=await ctx.newPage();
+    await page.goto(app.url+'/p/work/project/pond');
+    await page.getByRole('button',{name:'Pause new claims for Art',exact:true}).click();
+    const resume=page.getByRole('button',{name:'Resume new claims for Art',exact:true});
+    await resume.waitFor();
+    await page.reload();await resume.click();
+    await page.getByRole('button',{name:'Pause new claims for Art',exact:true}).waitFor();
+    expect(app.db.select().from(s.projectClaimDirections).all().map(row=>row.paused)).toEqual([true,false]);
+    expect(app.db.select().from(s.agentPauses).all()).toEqual([]);
+  } finally {await browser.close();await app.close();}
+});
+
+it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.html')))('reads a closed-only unfiled backlog across pages and returns from its ticket story', async () => {
+  const app = await fixture(), browser = await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  try {
+    const at = '2026-11-14T20:00:00.000Z';
+    app.data.writes.run(()=>app.db.insert(s.tasks).values(Array.from({length:51},(_,i)=>({
+      id:'t-'+(200+i), title:'Completed inspection '+(200+i), status:'closed' as const, ownerKind:'member' as const,
+      owner:'sam',goal:'Verify pumps',why:'Maintenance',createdByKind:'member' as const,createdBy:'sam',
+      createdAt:at,changedAt:at,closedAt:at,closeReason:'Inspected',
+    }))).run());
+    const context = await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},reducedMotion:'reduce'});
+    await context.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
+    const page = await context.newPage();
+    page.setDefaultTimeout(7000);
+    await page.goto(app.url+'/p/work');
+    await page.getByText('Unfiled tickets',{exact:true}).click();
+    await page.getByRole('button',{name:'Next page'}).click();
+    const last = page.getByText('Completed inspection 250',{exact:true});
+    await last.click();
+    await page.getByRole('region',{name:'Ticket story'}).getByText('Ticket closed',{exact:true}).waitFor();
+    await page.goBack();
+    await last.waitFor();
+    expect(await page.getByText(hiddenTitle,{exact:true}).count()).toBe(0);
+    expect(await page.getByRole('button',{name:'Next page'}).isDisabled()).toBe(true);
   } finally {await browser.close();await app.close();}
 });

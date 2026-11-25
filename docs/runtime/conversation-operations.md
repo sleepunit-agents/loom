@@ -54,6 +54,17 @@ reopens a private thread for a standalone FYI. The notice becomes context for
 the recipient’s question. The first message they send starts delivery.
 `src/shared-action-results.ts` records the member’s action outcomes for Inbox.
 
+In a private Work discussion, the opening notice identifies the project or
+ticket. The current member and their assigned chat agent must be able to read
+the subject for it to appear in the agent’s delivery context.
+
+For a direction to pause after the current ticket, read
+`projectClaimStates(project: $project)` for the agent and its current revision.
+Apply `work.setProjectClaims` with `project`, `agent`, `paused`, and
+`expectedRevision`. A successful result records when new claims became paused
+or enabled. Work already claimed can finish. If the revision changed, read
+the latest direction before acting. The same controls are on the project in Work.
+
 The shared readers replaced the old Attention/Needs readers, the per-venue
 Comms, Discord and Slack inboxes, and the per-agent digest resolver and fold
 timer. New Memory stores keep conversation history in the household database.

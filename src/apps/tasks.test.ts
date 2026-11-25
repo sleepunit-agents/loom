@@ -49,6 +49,14 @@ it('finds ready work by urgency, excludes epics and waits for every blocker to c
   expect(tasks.get(buy.id).links).toEqual([{ task: buy.id, dependsOn: epic.id, type: 'parent-child' }]);
 });
 
+it('holds a ticket out of the ready queue until its question is answered', () => {
+  const pump = file('Buy pump');
+  tasks.ask(pump.id, { to: other, ask: 'Buy today?', ifYes: 'Order today', ifNo: 'Order tomorrow' }, actor);
+  expect(tasks.ready()).toEqual([]);
+  tasks.answer(pump.id, 'yes', '', other);
+  expect(tasks.ready().map(row => row.id)).toEqual([pump.id]);
+});
+
 it('keeps plain summaries, source, claims, cancellation and comments as named fields', () => {
   const task = tasks.create({ title: 'Choose pump', goal: 'A pump chosen', why: 'Old pump failed', owner: actor, source: { kind: 'conversation', id: 'cv-pond' } }, actor);
   expect(task).toMatchObject({ ownerKind: 'member', owner: actor.id, sourceKind: 'conversation', sourceId: 'cv-pond' });

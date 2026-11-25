@@ -86,3 +86,12 @@ it('preserves direct member, owner and agent recipient authority without chat de
  expect((await f.call('inbox.volume',{item:agent.id,volume:'mute'},'direct-agent',unbound)).status).toBe(200);
  expect(f.root.services.conversations.item(agent.id).volume).toBe('mute');
 });
+
+it('applies project claim directions on the current Comms member’s word',async()=>{
+ const f=fixture();
+ const input={project:'pond',agent:'art',paused:true,expectedRevision:0};
+ expect((await f.call('work.setProjectClaims',input,'from-terminal',unbound)).status).toBe(403);
+ expect(await(await f.call('work.setProjectClaims',input,'pause')).json()).toMatchObject({ok:true,value:{paused:true,revision:1}});
+ f.root.writes.run(()=>f.db.delete(memberAgents).where(eq(memberAgents.member,'sam')).run());
+ expect((await f.call('work.setProjectClaims',input,'pause')).status).toBe(403);
+});
