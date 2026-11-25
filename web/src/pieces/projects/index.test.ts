@@ -4,6 +4,7 @@ import {act,create} from '../../../node_modules/react-test-renderer/index.js';
 import type {Snapshot} from '../../data/store';
 import type {ProjectRecord} from './model';
 const f=vi.hoisted(()=>({feed:{records:[],status:'live'} as Snapshot,access:{records:[{id:'projects',allowed:true,agents:['art']}],status:'live'} as Snapshot,memory:{records:[],status:'live'} as Snapshot,detail:{records:[],status:'live'} as Snapshot,call:vi.fn()}));
+vi.mock('../../data/live-agents',()=>({useLiveAgentIds:()=>new Set(['art'])}));
 vi.mock('../../memory/query',()=>({useMemoryRecord:(s:any)=>s?.query.includes('MemoryProjectsAccess')?f.access:s?.query.includes('MemoryProjectMemory(')?f.memory:f.detail,useMemoryList:()=>f.feed}));
 vi.mock('../../kit',()=>({Reader:'article',Title:'h1',Meta:'p',Facts:'dl',Fact:'dd',Section:'section',Field:'label',Disclosure:'section',Search:(p:{value:string;onChange(value:string):void})=>h('input',{value:p.value,onChange:(e:{target:{value:string}})=>p.onChange(e.target.value)}),Split:(p:{list:unknown;reader:unknown;search:unknown})=>h('div',null,p.search,p.list,p.reader),List:(p:{children:unknown})=>h('ul',null,p.children),Empty:(p:{title:string})=>h('p',null,p.title),Loading:(p:{label:string})=>h('p',null,p.label),Error:(p:{text:string})=>h('p',null,p.text),Input:'input'}));
 vi.mock('../attention/agent-displays',()=>({useDeskAgentDisplays:()=>[{id:'art',agent:'art',mark:{bg:'#fff',fg:'#000'},face:{shape:'pebble',eyes:'dot'}}]}));
@@ -44,4 +45,14 @@ it('renders Changes counts, repo truncation and quiet cards without waiting or L
  const p={...project(),changes:{open:4,failing:1,running:2},card:{...project().card,links:{repos:Array.from({length:8},(_,i)=>`github:owner/repo${i}`)}}};f.feed={records:[p],status:'live'};
  await act(async()=>{tree=create(h(Projects,props));});expect(text()).toContain('4');expect(text()).toContain(' failing');expect(text()).toContain(' checking');expect(text()).toContain('+2');expect(text()).toContain('owner/repo5');expect(text()).not.toContain('owner/repo6');
  f.feed={records:[{...p,card:{...p.card,status:'paused'},lately:[{title:'Should be suppressed'}],waiting:[{title:'Should not count'}]}],status:'live'};await act(async()=>tree!.update(h(Projects,props)));expect(text()).not.toContain('Should be suppressed');expect(text()).not.toContain('Should not count');expect(text()).not.toContain(' checking');
+});
+
+it('shows only current household agents on the card and in the picker',async()=>{
+ const p={...project(),agents:['art','mark'],people:['art','art-e-fish','mark','GitHub · dependabot']};
+ f.access={records:[{id:'projects',allowed:true,agents:['art','mark']}],status:'live'};
+ f.feed={records:[p],status:'live'};
+ await act(async()=>{tree=create(h(Projects,props));});
+ expect(tree!.root.findAllByProps({'data-face':true})).toHaveLength(1);
+ expect(tree!.root.findAllByType('option').map(o=>o.props.children)).toEqual(['All authorized agents','art']);
+ expect(text()).not.toMatch(/art-e-fish|"mark"|dependabot/);
 });

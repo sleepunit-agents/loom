@@ -33,7 +33,7 @@ export function sharedProjectSections(db:DataDatabase):{tasks:ProjectSectionRole
      const title=labels[row.waitingOn],waiting=row.waitingOn==='you';let group=groups.find(g=>g.title===title);
      if(!group){group={title,waiting,items:[]};groups.push(group);}
      const status=row.state==='open'?row.checks==='failing'?'CI red':row.checks==='running'?'CI running':'open':row.state;
-     group.items.push({title:row.title,ref:row.id,when:row.updatedAt,status,who:[row.authorLogin],href:'/p/work/changes/change/'+encodeURIComponent(row.id),...(waiting?{waiting:true}:{})});
+     group.items.push({title:row.title,ref:row.id,when:row.updatedAt,status,who:[row.agent ?? ('GitHub · '+row.authorLogin)],href:'/p/work/changes/change/'+encodeURIComponent(row.id),...(waiting?{waiting:true}:{})});
     }
     return {available:true,groups};
    };

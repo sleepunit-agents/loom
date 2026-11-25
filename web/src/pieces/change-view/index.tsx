@@ -60,7 +60,7 @@ function Details({ change: c, snapshot, actions, openTask, name }: { change: Cha
     <Meta>{c.id}{c.project && ` · ${c.project}`}</Meta>
     <Title>{c.title}</Title>
     <Meta>{summary(c, name)}</Meta>
-    <Meta>{c.authorLogin} · {c.branch} into {c.baseBranch}</Meta>
+    <Meta>{/^dependabot(?:\[bot\])?$/i.test(c.authorLogin) ? 'Dependabot · GitHub automation' : c.authorLogin} · {c.branch} into {c.baseBranch}</Meta>
     <Section label="Checks">
       <Body>{checksWord[c.checks] ?? c.checks}</Body>
       {checks.length > 0 && <Facts>{checks.map(k => <Fact key={k.name} label={checkWord[k.state] ?? k.state}>{k.name}</Fact>)}</Facts>}

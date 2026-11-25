@@ -19,5 +19,5 @@ export function readProjectTasks(db: DataDatabase, viewer: Viewer) {
  return {rows,ready:new Set(rows.filter(row=>row.ready).map(row=>row.id)),comments:(id:string)=>byTask.get(id)??[],links:links.map(row=>({id:row.task,dependsOn:row.dependsOn,type:row.type}))};
 }
 export function readProjectChanges(db: DataDatabase, viewer: Viewer) {
- return db.query.changes.findMany({columns:{id:true,title:true,repository:true,project:true,waitingOn:true,state:true,checks:true,updatedAt:true,authorLogin:true},where:f=>sql`${{getSQL:()=>workVisibility(viewer).changes!(f)}}`,orderBy:f=>[desc(f.updatedAt),asc(f.id)]}).sync();
+ return db.query.changes.findMany({columns:{id:true,title:true,repository:true,project:true,waitingOn:true,state:true,checks:true,updatedAt:true,authorLogin:true,agent:true},where:f=>sql`${{getSQL:()=>workVisibility(viewer).changes!(f)}}`,orderBy:f=>[desc(f.updatedAt),asc(f.id)]}).sync();
 }
