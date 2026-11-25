@@ -1,4 +1,4 @@
-import { taskPath } from '../../../../src/task-route';
+import { workTicketPath } from '../../../../src/task-route';
 import { useDataQuery } from '../../data/graphql';
 import { Empty, Error, LinkButton, List, Loading, Pager, Row, Section } from '../../kit';
 import { unfiledBase, unfiledPageSize, unfiledPath, workUnfiledQuery } from './query';
@@ -16,7 +16,7 @@ export function UnfiledTickets({page,go}:{page:number;go:(path:string)=>void}) {
     : <Empty title="No unfiled tickets" text="Every ticket you can see belongs to a project."/>;
   return <>
     <Section label="Tickets with no project"><List label="Unfiled tickets">{rows.map(ticket=>
-      <Row key={ticket.id} title={ticket.title} status={statusWords[ticket.status]} onClick={()=>go(taskPath(ticket.id))}/>
+      <Row key={ticket.id} title={ticket.title} status={statusWords[ticket.status]} onClick={()=>go(workTicketPath(ticket.id))}/>
     )}</List></Section>
     <Pager label="Unfiled tickets" hasPrevious={page>0} hasNext={feed.data.unfiled.length>unfiledPageSize}
       previous={()=>go(unfiledPath(page-1))} next={()=>go(unfiledPath(page+1))}/>

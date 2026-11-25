@@ -1,6 +1,6 @@
 import {ToolbarControls} from '../../kit/toolbar';
 import {useState} from 'react';
-import {taskPath} from '../../../../src/task-route';
+import {workTicketPath} from '../../../../src/task-route';
 import {useDataQuery} from '../../data/graphql';
 import {Actions,Body,Button,Empty,Error,Field,Fields,Input,LinkButton,List,Loading,Pager,Row,Section} from '../../kit';
 
@@ -64,7 +64,7 @@ export function BacklogWindow({project,path,detail,go}:{project:string;path:stri
         onClick={()=>choose(key)}>{labels[key]} · {count(key)}</LinkButton>)}</Actions>
       {group && <Section label={labels[group]}>
         {report.tickets.length ? <List label={labels[group]}>{report.tickets.map(ticket=><Row key={ticket.id} title={ticket.title}
-          onClick={()=>go(taskPath(ticket.id))}/>)}</List> : <Empty title="No tickets on this page"/>}
+          onClick={()=>go(workTicketPath(ticket.id))}/>)}</List> : <Empty title="No tickets on this page"/>}
         <Pager label={labels[group]} hasPrevious={page>0} hasNext={(page+1)*50<count(group)}
           previous={()=>choose(group,page-1)} next={()=>choose(group,page+1)}/>
       </Section>}
