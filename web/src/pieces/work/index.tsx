@@ -1,3 +1,4 @@
+import {ProjectChanges} from './project-changes';
 import {BacklogWindow} from './backlog-window';
 import { ClaimControls } from './claim-controls';
 import { WorkDiscussion } from './discuss';
@@ -36,6 +37,8 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
   if (projectId) {
     const project = detail.data?.project;
     if (!project || project.id !== projectId || project.lifecycle==='removed') return <Empty title="Project unavailable"><LinkButton onClick={()=>go(base)}>All projects</LinkButton></Empty>;
+    if (path.split('?')[0].endsWith('/changes')) return <div className="p-4"><AppFrame title={project.name+' pull requests'} where={path} go={go}
+      crumb={{label:project.name,href:base+'/project/'+project.id}}><ProjectChanges project={project.id} path={path} go={go}/></AppFrame></div>;
     if (path.split('?')[0].endsWith('/history')) return <div className="p-4"><AppFrame title={project.name+' backlog history'} where={path} go={go}
       crumb={{label:project.name,href:base+'/project/'+project.id}}><BacklogWindow key={path} project={project.id} path={path} detail go={go}/></AppFrame></div>;
     if (path.endsWith('/board')) return <div className="p-4"><AppFrame title={project.name+' board'} where={path} go={go}
@@ -54,6 +57,7 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
       {project.lifecycle==='active' && <ClaimControls key={'claims-'+project.id} project={project.id}/>}
       <BacklogWindow key={project.id} project={project.id} path={path} go={go}/>
       <WorkDiscussion key={'discuss-'+project.id} kind="project" id={project.id} go={go}/>
+      <LinkButton onClick={()=>go(base+'/project/'+project.id+'/changes')}>Open pull requests</LinkButton>
       <LinkButton onClick={()=>go(base+'/project/'+project.id+'/board')}>Open board</LinkButton>
       <LinkButton onClick={()=>go('/p/tasks-preview/?folder='+encodeURIComponent('project:'+project.id))}>Browse project backlog</LinkButton>
     </AppFrame></div>;
