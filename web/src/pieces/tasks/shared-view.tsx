@@ -23,6 +23,7 @@ export interface SharedTask {
 export interface SharedTaskLink { task: string; dependsOn: string; type: 'blocks' | 'parent-child' }
 export interface SharedTaskComment { task: string; seq: number; actorKind: 'member' | 'agent'; actor: string; at: string; text: string }
 export type SharedTaskChange = Pick<typeof changes.$inferSelect, 'id' | 'repository' | 'number' | 'title' | 'state' | 'draft' | 'checks' | 'review' | 'waitingOn'> & { task: string; openedAt?: string; closedAt?: string | null };
+export interface TicketPost { task:string; id:string; at:string; agent:string; thread:string; words:string }
 export type TicketReview = ReviewRound & {requestedAt: string; completedAt: string | null};
 export type TaskReaderFields = Pick<SharedTask, 'createdAt' | 'createdBy' | 'closedAt' | 'doneWhen' | 'ifYes' | 'ifNo' | 'sourceKind' | 'sourceId'>;
 export type TaskListRow = Omit<SharedTask, keyof TaskReaderFields>;
@@ -41,6 +42,9 @@ export interface SharedTasksProps {
   changes?: readonly SharedTaskChange[];
   reviews?: readonly TicketReview[];
   reviewsUnavailable?: boolean;
+  posts?: TicketPost[];
+  postNavigation?: ReactNode;
+  openPost?(post:TicketPost): void;
   /** IDs returned by the authorized ready query, never inferred from partial visible links. */
   ready: readonly string[];
   selected?: string;
@@ -148,12 +152,15 @@ export function SharedTasks(props: SharedTasksProps) {
   })}</div></Fact>;
   const comments = selected ? props.comments.filter(c => c.task === selected.id).toSorted((a,b) => a.seq-b.seq) : [];
   const changes = selected ? props.changes?.filter(change => change.task === selected.id) ?? [] : [];
-  const story: {key: string; at: string; label: string; detail?: string; change?: string; revision?: string}[] = [];
+  const story: {key: string; at: string; label: string; detail?: string; change?: string; revision?: string; post?:TicketPost}[] = [];
   if (selected?.createdAt) story.push({key:'filed', at:selected.createdAt, label:'Ticket filed', detail:name(selected.createdBy ?? null)});
   for (const comment of comments) story.push({key:'comment-'+comment.seq, at:comment.at, label:name(comment.actor), detail:comment.text});
   for (const change of changes) {
     if (change.openedAt) story.push({key:'opened-'+change.id, at:change.openedAt, label:'Pull request opened', detail:change.title, change:change.id});
     if (change.closedAt && change.state !== 'open') story.push({key:'closed-'+change.id, at:change.closedAt, label:change.state === 'merged' ? 'Pull request merged' : 'Pull request closed', detail:change.title, change:change.id});
+  }
+  for (const post of props.posts ?? []) {
+    if (post.task === selected?.id) story.push({key:'post-'+post.id,at:post.at,label:name(post.agent),detail:post.words,post});
   }
   for (const review of props.reviews ?? []) {
     const change = changes.find(link => link.id === review.change);
@@ -196,7 +203,8 @@ export function SharedTasks(props: SharedTasksProps) {
       {story.length > 0 && <Section label="Ticket story"><ol className="grid gap-2.5">{story.map(event => <li key={event.key} className="grid gap-0.5">
         <Body><strong title={event.revision}>{event.label}</strong> <time className="loom-reader__meta" dateTime={event.at} title={fullTime(event.at,props.zone)}>{briefTime(event.at,props.zone)}</time></Body>
         {event.change && props.openChange ? <LinkButton onClick={() => props.openChange!(event.change!)}>{event.detail}</LinkButton> : event.detail && <Body>{event.detail}</Body>}
-      </li>)}</ol>{props.reviewsUnavailable && <Body quiet>Review history is unavailable.</Body>}</Section>}
+        {event.post && props.openPost && <LinkButton onClick={()=>props.openPost!(event.post!)}>Activity thread</LinkButton>}
+      </li>)}</ol>{props.postNavigation}{props.reviewsUnavailable && <Body quiet>Review history is unavailable.</Body>}</Section>}
       <Facts>
         <Fact label="Why">{selected.why}</Fact>
         <Fact label="Done when">{selected.doneWhen}</Fact>

@@ -1,3 +1,4 @@
+import { ticketPosts } from './ticket-posts.js';
 import { workForPage } from './agent-post-work.js';
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
@@ -45,6 +46,13 @@ GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
   };
   const args = { agent: { type: string }, limit: { type: GraphQLInt, defaultValue: 20 } };
   return {
+    ticketActivityPosts: {
+      type:new GraphQLList(new GraphQLNonNull(new GraphQLObjectType({name:'TicketActivityPost',fields:{
+        task:{type:string}, id:{type:string}, thread:{type:string}, agent:{type:string}, at:{type:string}, words:{type:string},
+      }}))),
+      args:{task:{type:string},before:{type:GraphQLString,defaultValue:'0'},limit:{type:GraphQLInt,defaultValue:30}},
+      resolve:(_row,{task,before,limit},{viewer})=>ticketPosts(db,key,viewer,()=>allowed(viewer),task,activityCursor(before),size(limit)),
+    },
     agentActivityFeed: { type: new GraphQLList(new GraphQLNonNull(preview)), args: { ...args, thread: { type: GraphQLString }, before: {type: GraphQLString, defaultValue: '0'} },
       async resolve(_row, { agent, limit, thread, before }, { viewer }) {
         const visibleSource = source(viewer, agent);

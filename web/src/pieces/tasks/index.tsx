@@ -1,7 +1,9 @@
+import { Pager } from '../../kit';
+import { agentPath } from '../attention/home-model';
 import { talkPath } from '../comms/shared-query';
 import { useEffect, useRef, useState } from 'react';
 import { useDataQuery } from '../../data/graphql';
-import { SharedTasks, type SharedTask, type TaskAction, type TicketReview } from './shared-view';
+import { SharedTasks, type SharedTask, type TaskAction, type TicketReview, type TicketPost } from './shared-view';
 import { SharedTaskForm, type TaskFormProps } from './shared-form';
 import { taskId, taskSegment } from '../../../../src/task-route';
 import { taskCommentsQuery, taskSourceQuery, tasksQuery, type TasksSelection } from './query';
@@ -51,6 +53,13 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
   const reviewFeed = useDataQuery<{taskReviewHistory: TicketReview[]}>(
     'query TaskReviewHistory($task: String!) { taskReviewHistory(task: $task) { change job headCommit tier round requestedAt completedAt verdict findings } }',
     {task:selected ?? ''}, {pause: !visibleDetail?.changeTasksByTask?.some(link => link.changeRow)});
+  const [postPage,setPostPage] = useState<{task?:string;cursors:string[]}>({cursors:[]});
+  const cursors = postPage.task === selected ? postPage.cursors : [];
+  const postFeed = useDataQuery<{ticketActivityPosts:TicketPost[]}>(
+    'query TicketActivityPosts($task:String!,$before:String!){ticketActivityPosts(task:$task,before:$before,limit:31){task id at agent thread words}}',
+    {task:selected ?? '',before:cursors.at(-1) ?? '0'},{pause:!visibleDetail});
+  const posts = visibleDetail && postFeed.status === 'live' && !postFeed.settling
+    ? postFeed.data?.ticketActivityPosts?.filter(row=>row.task===selected) ?? [] : [];
   const sourceId = reader?.sourceKind === 'conversation' ? reader.sourceId : null;
   const sourceFeed = useDataQuery<{source: Parameters<typeof talkPath>[0] | null}>(
     taskSourceQuery, {id:sourceId}, {pause:!sourceId || !go || !!openConversation});
@@ -92,6 +101,10 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
   const open = !!submit && !!action && status === 'live' && (action.action === 'create' || !!target);
   const links = tasks.flatMap(task => task.taskLinksByTask);
   return <SharedTasks status={status} tasks={tasks} selected={selected} reader={reader} select={navigate} questionFor={questionFor} startFolder={startFolder} startAssignee={startAssignee} liveAgentIds={liveAgentIds}
+    posts={posts.slice(0,30)}
+    openPost={go ? post=>go(agentPath(post.agent)+'?activity='+encodeURIComponent(post.thread)) : undefined}
+    postNavigation={cursors.length || posts.length>30 ? <Pager label="Activity post history" hasPrevious={cursors.length>0} hasNext={posts.length>30}
+      previous={()=>setPostPage({task:selected,cursors:cursors.slice(0,-1)})} next={()=>setPostPage({task:selected,cursors:[...cursors,posts[29].id]})}/> : undefined}
     reviewsUnavailable={!!visibleDetail?.changeTasksByTask?.some(link => link.changeRow) && (reviewFeed.status === 'offline' || reviewFeed.status === 'denied')}
     reviews={visibleDetail && reviewFeed.status === 'live' && !reviewFeed.settling ? reviewFeed.data?.taskReviewHistory : undefined}
     changes={visibleDetail?.changeTasksByTask.flatMap(link => link.changeRow ? [{ ...link.changeRow, task: visibleDetail.id }] : [])}

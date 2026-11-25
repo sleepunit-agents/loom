@@ -2407,6 +2407,17 @@ export const agentPosts = sqliteTable('agent_posts', {
 }, t => [check('agent_posts_at_utc', utc(t.at)), index('agent_posts_thread_seq').on(t.thread, t.seq)]);
 
 /** Removing the conversation that supplied a rename restores the original title. */
+/** Reverse lookup for explicit work references. Keep private references keyed at rest. */
+export const agentPostWorkRefs = sqliteTable('agent_post_work_refs', {
+  digest: text('digest').notNull(),
+  post: integer('post').notNull().references(() => agentPosts.seq, { onDelete: 'cascade' }),
+}, t => [primaryKey({columns:[t.digest,t.post]}),index('agent_post_work_refs_post').on(t.post)]);
+
+/** Existing sealed references awaiting indexing when the household key is available. */
+export const agentPostWorkPending = sqliteTable('agent_post_work_pending', {
+  post: integer('post').primaryKey().references(() => agentPosts.seq, { onDelete: 'cascade' }),
+});
+
 export const agentPostNames = sqliteTable('agent_post_names', {
   thread: text('thread').primaryKey().notNull().references(() => agentPostThreads.id, { onDelete: 'cascade' }),
   source: text('source').notNull().references(() => threads.id, { onDelete: 'cascade' }),
@@ -2424,7 +2435,7 @@ export const bridgePersonSightings = sqliteTable('bridge_person_sightings', {
 
 export const plumbing = {
   bridgePersonSightings,
-  agentPostThreads, agentPosts, agentPostNames,
+  agentPostThreads, agentPosts, agentPostNames, agentPostWorkRefs, agentPostWorkPending,
   guestIoReadings,
   workerJoinRequests,
   archivedQuestions,

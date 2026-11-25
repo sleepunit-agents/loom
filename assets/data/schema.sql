@@ -1417,6 +1417,19 @@ CREATE TABLE `agent_post_names` (
 	FOREIGN KEY (`source`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade
 );
 
+CREATE TABLE `agent_post_work_refs` (
+	`digest` text NOT NULL,
+	`post` integer NOT NULL,
+	PRIMARY KEY(`digest`, `post`),
+	FOREIGN KEY (`post`) REFERENCES `agent_posts`(`seq`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX `agent_post_work_refs_post` ON `agent_post_work_refs` (`post`);
+CREATE TABLE `agent_post_work_pending` (
+	`post` integer PRIMARY KEY NOT NULL,
+	FOREIGN KEY (`post`) REFERENCES `agent_posts`(`seq`) ON UPDATE no action ON DELETE cascade
+);
+
 CREATE TABLE `guest_io_readings` (
 	`box` text NOT NULL,
 	`guest` text NOT NULL,
