@@ -349,12 +349,12 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
    if(task.taskCommentsByTask?.length)lines.push('','## Comments',...[...task.taskCommentsByTask].sort((a,b)=>a.seq-b.seq).map(row=>'- **'+row.actor+'** '+row.at+': '+row.text));
    return lines.join('\n');
   });
- tool('task_create','File a task. It needs a plain title, a goal and a reason. You own it unless you name the household or a project owner.',
+ tool('task_create','File a task. It needs a plain title, a goal and a reason. Aim for one outcome someone can deliver and verify. Several independently shippable outcomes usually belong under an epic. A backend change can ship before its UI. You own the task unless you choose the household.',
   z.object({title:z.string().min(1).max(300),goal:z.string().min(1).max(2000),why:z.string().min(1).max(2000),doneWhen:z.string().max(2000).optional(),description:z.string().max(20000).optional(),priority:z.number().int().min(0).max(4).optional(),
    project:z.string().min(1).max(100).optional(),type:z.enum(tasks.type.enumValues).optional(),parent:taskId.optional(),owner:z.enum(['me','household']).optional()}).strict(),
   async(input,agent)=>{const {owner,...fields}=input;const value=await run('tasks.command',{action:'create',input:{...fields,owner:owner==='household'?{kind:'household'}:{kind:'agent',id:agent}}}) as {id?:string};return 'Filed '+value.id+': '+input.title;});
- tool('task_edit','Change a task\'s title, goal, reason, done-when, description, priority or project.',
-  z.object({id:taskId,title:z.string().min(1).max(300).optional(),goal:z.string().min(1).max(2000).optional(),why:z.string().min(1).max(2000).optional(),doneWhen:z.string().max(2000).optional(),description:z.string().max(20000).optional(),priority:z.number().int().min(0).max(4).optional(),project:z.string().min(1).max(100).nullable().optional()}).strict(),
+ tool('task_edit','Change a task\'s title, goal, reason, done-when, description, priority or project. Set type to epic to promote an existing ticket and keep its history.',
+  z.object({id:taskId,type:z.literal('epic').optional(),title:z.string().min(1).max(300).optional(),goal:z.string().min(1).max(2000).optional(),why:z.string().min(1).max(2000).optional(),doneWhen:z.string().max(2000).optional(),description:z.string().max(20000).optional(),priority:z.number().int().min(0).max(4).optional(),project:z.string().min(1).max(100).nullable().optional()}).strict(),
   async input=>{const {id,...fields}=input;await run('tasks.command',{action:'edit',id,input:fields});return 'Edited '+id;});
  tool('task_move_to_project','Move all listed tasks atomically and record each move in a comment. Requires access to each task and destination project. With project: null, only the task or household owner may remove its project. Retired projects permit moves out only. To split, propose a project then move tasks. Use projectMerge to merge or projectJoin to request access.',
   z.object({ids:z.array(taskId).min(1).max(TASK_MOVE_MAX),project:z.string().min(1).max(100).nullable()}).strict(),
