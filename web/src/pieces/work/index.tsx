@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import './home.css';
 import {ProjectNotes} from './project-notes';
 import {ProjectChanges} from './project-changes';
 import {BacklogWindow} from './backlog-window';
@@ -19,6 +21,7 @@ const base = '/p/work';
 const statusWords = {open:'Open', in_progress:'In progress', closed:'Closed'};
 
 export default function Work({visible=true,path=base,go=(href:string)=>location.assign(href)}:{visible?:boolean;path?:string;go?:(href:string)=>void}) {
+  const [projectSearch, setProjectSearch] = useState('');
   const reading = useReadingVisible(visible);
   const viewer = useDataQuery<{homeComms:{member:string}|null}>('query WorkViewer { homeComms { member } }');
   const member = viewer.status==='live' && !viewer.settling ? viewer.data?.homeComms?.member : undefined;
@@ -73,26 +76,48 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
   const needs = new Map(decisions.status==='live' && !decisions.settling
     ? decisions.data?.inboxProjectNeeds.map(row=>[row.project,row.needs]) : []);
   const decisionTotal = projects.reduce((sum,project)=>sum+(needs.get(project.id) ?? 0),0);
-  const grid = (rows:typeof projects) => <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,15rem),1fr))]">{rows.map(project=>
-    <div key={project.id} className="overflow-hidden rounded-lg border border-[var(--v-border)]">
-      <Row layout="stack" title={project.name} meta={project.tasksByProject[0]?.title} status={[project.tasksByProject[0] ? statusWords[project.tasksByProject[0].status] : 'No tickets',
-        needs.has(project.id) && `Needs you · ${needs.get(project.id)}`].filter(Boolean).join(' · ')} onClick={()=>go(base+'/project/'+project.id)}/>
-      {project.goal && <p className="px-3 pb-3 text-sm">{project.goal}</p>}
-    </div>
-  )}</div>;
-  const retired = projects.filter(project=>project.lifecycle==='retired');
+  const match = projectSearch.trim().toLocaleLowerCase();
+  const matches = (project:Project) => project.name.toLocaleLowerCase().includes(match);
+  const grid = (rows:typeof projects) => <div className="work-files">{rows.map(project=>{
+    const latest = project.tasksByProject[0];
+    const waiting = needs.get(project.id) ?? 0;
+    return <article className="work-file" key={project.id} data-waiting={waiting>0 || undefined}>
+      <button type="button" data-split-row="" className="work-file-target" onClick={()=>go(base+'/project/'+project.id)}>
+        <span className="work-file-name"><i aria-hidden="true" className="work-folder"/>{project.name}</span>
+        {project.goal && <span className="work-file-goal">{project.goal}</span>}
+        <span className="work-file-latest">{latest?.title ?? 'No tickets'}</span>
+        <span className="work-file-foot">
+          {latest && <span>{statusWords[latest.status]}</span>}
+          {waiting>0 && <strong>Needs you · {waiting}</strong>}
+          <span aria-hidden="true" className="work-arrow">↗</span>
+        </span>
+      </button>
+    </article>;
+  })}</div>;
+  const retired = projects.filter(project=>project.lifecycle==='retired' && matches(project));
   const latestUnfiled = home.data?.unfiled?.[0];
-  const context = [
-    active.length && `${active.length} active project${active.length===1 ? '' : 's'} · ${activeCount} with claimed tickets`,
-    decisionTotal && `${decisionTotal} project question${decisionTotal===1 ? '' : 's'} waiting for you`,
-  ].filter(Boolean).join(' · ');
-  return <div className="p-4"><AppFrame title="Work" where={base} go={go} context={context || undefined}>
-    {grid(active)}
-    {latestUnfiled && <div className="overflow-hidden rounded-lg border border-[var(--v-border)]">
-      <Row layout="stack" title="Unfiled tickets" meta={latestUnfiled.title} status="Not in a project" onClick={()=>go(unfiledBase)}/>
-    </div>}
-    {member && reading && <CatchUp key={member} member={member} go={go}/>}
-    {retired.length>0 && <details><summary>Retired projects ({retired.length})</summary>{grid(retired)}</details>}
-    {!projects.length && !latestUnfiled && <Empty title="No projects yet"/>}
+  return <div className="work-desk"><AppFrame title="Work" where={base} go={go}
+    lead={<span className="work-mark" aria-hidden="true"><i/><i/><i/></span>}>
+    <dl className="work-counters" aria-label="Project overview">
+      <div><dt>Active projects</dt><dd>{active.length}</dd></div>
+      <div><dt>With claimed tickets</dt><dd>{activeCount}</dd></div>
+      <div data-waiting={decisionTotal>0 || undefined}><dt>Questions for you</dt>
+        <dd>{decisions.status==='live' && !decisions.settling ? decisionTotal : <span aria-label="Count unavailable">—</span>}</dd></div>
+    </dl>
+    <div className="work-panes">
+      <section className="work-directory" aria-label="Project directory">
+        <div className="work-tools"><h2>Project directory</h2>
+          {projects.length>1 && <input type="search" value={projectSearch} onChange={event=>setProjectSearch(event.target.value)}
+            aria-label="Find a project" placeholder="Find a project…"/>}
+        </div>
+        {grid(active.filter(matches))}
+        {match && !projects.some(matches) && <Empty title="No matching projects"/>}
+        {retired.length>0 && <details key={match ? 'filtered' : 'all'} open={match ? true : undefined}><summary>Retired projects ({retired.length})</summary>{grid(retired)}</details>}
+        {!projects.length && !latestUnfiled && <Empty title="No projects yet"/>}
+        {latestUnfiled && <div className="work-unfiled"><Row title="Unfiled tickets" meta={latestUnfiled.title}
+          trailing={<span aria-hidden="true">↗</span>} onClick={()=>go(unfiledBase)}/></div>}
+      </section>
+      {member && reading && <aside className="work-bulletin" aria-label="Project activity"><CatchUp key={member} member={member} go={go}/></aside>}
+    </div>
   </AppFrame></div>;
 }

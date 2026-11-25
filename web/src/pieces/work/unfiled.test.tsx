@@ -15,7 +15,7 @@ vi.mock('../../data/graphql',()=>({useDataQuery:(query:string,variables?:Record<
 }}));
 vi.mock('../../data/visibility',()=>({useReadingVisible:()=>true}));
 vi.mock('../../kit',()=>Object.fromEntries(['AppFrame','Body','Empty','Error','LinkButton','List','Loading','Pager','Row','Section'].map(name=>
-  [name,(props:{children?:ReactNode})=>h(name,Object.fromEntries(Object.entries(props).filter(([key])=>key!=='children')),props.children)])));
+  [name,({children,lead,trailing,...props}:{children?:ReactNode;lead?:ReactNode;trailing?:ReactNode})=>h(name,props,lead,children,trailing)])));
 import Work from './index';
 (globalThis as typeof globalThis&{IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;
