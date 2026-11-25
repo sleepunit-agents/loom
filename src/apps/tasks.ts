@@ -185,6 +185,10 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
     edit(id, input, actor) {
       const { project, ...patch } = taskEditSchema.parse(input);
       return db.transaction(() => {
+        if (actor && patch.priority !== undefined) {
+          const prior = row(id).priority;
+          if (patch.priority !== prior) addComment(id,`Changed priority from P${prior} to P${patch.priority}.`,actor);
+        }
         // A task changes project one way: an edit that names another project is a move, with its record and its mail.
         if (project !== undefined && project !== row(id).project) {
           if (!actor) throw new Error('A change of project needs to say who made it');
