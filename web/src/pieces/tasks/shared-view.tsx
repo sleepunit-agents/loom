@@ -29,7 +29,7 @@ export type TaskListRow = Omit<SharedTask, keyof TaskReaderFields>;
 type Task = SharedTask;
 type Link = SharedTaskLink;
 type Comment = SharedTaskComment;
-export type TaskAction = 'create' | 'claim' | 'unclaim' | 'close' | 'reopen' | 'comment' | 'edit' | 'priority' | 'project' | 'parent' | 'link' | 'ask';
+export type TaskAction = 'promote' | 'create' | 'claim' | 'unclaim' | 'close' | 'reopen' | 'comment' | 'edit' | 'priority' | 'project' | 'parent' | 'link' | 'ask';
 export interface SharedTasksProps {
   status: 'loading' | 'live' | 'unavailable' | 'denied';
   tasks: readonly TaskListRow[];
@@ -61,12 +61,12 @@ export interface SharedTasksProps {
   /** Display names by id, where the composition has read them; the zone times are said in (the household's). */
   names?: Readonly<Record<string, string>>; zone?: string;
 }
-const labels: Record<TaskAction, string> = {create:'Create task',claim:'Claim',unclaim:'Unclaim',close:'Close',reopen:'Reopen',comment:'Comment',edit:'Edit',priority:'Priority',project:'Project',parent:'Parent',link:'Blocked by…',ask:'Ask a person'};
+const labels: Record<TaskAction, string> = {promote:'Promote to epic',create:'Create task',claim:'Claim',unclaim:'Unclaim',close:'Close',reopen:'Reopen',comment:'Comment',edit:'Edit',priority:'Priority',project:'Project',parent:'Parent',link:'Blocked by…',ask:'Ask a person'};
 /** Behind More: what is done to a task less often than the six beside it. */
-const more: readonly TaskAction[] = ['ask','parent','link'];
+const more: readonly TaskAction[] = ['ask','parent','link','promote'];
 function actions(task: Task): TaskAction[] {
   // A shelved task cannot be claimed; moving it to another project (Project) is how one is taken up.
-  return [ ...(task.status === 'closed' ? ['reopen' as const] : [ ...(!task.ask && !(task.isShelved && task.status === 'open') ? [task.status === 'open' ? 'claim' as const : 'unclaim' as const] : []), 'close' as const, 'ask' as const]), 'comment','edit','priority','project','parent','link'];
+  return [ ...(task.status === 'closed' ? ['reopen' as const] : [ ...(!task.ask && !(task.isShelved && task.status === 'open') ? [task.status === 'open' ? 'claim' as const : 'unclaim' as const] : []), 'close' as const, 'ask' as const]), 'comment','edit','priority','project','parent','link',...(task.type !== 'epic' ? ['promote' as const] : [])];
 }
 /** A task's stored state in plain words ("in_progress" is "in progress"). */
 const stateWord = (task: TaskListRow) => task.closeReason === 'cancelled' && task.status === 'closed' ? 'cancelled' : task.status.replace('_',' ');

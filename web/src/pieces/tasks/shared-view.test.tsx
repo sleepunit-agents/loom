@@ -118,7 +118,7 @@ it('keeps six actions in one row with one filled, the rest behind More, and open
   const row=()=>{const inMenu=tree.root.findByType('Menu').findAllByType('Button');return tree.root.findByType('Actions').findAllByType('Button').filter((b:unknown)=>!inMenu.includes(b));};
   const behind=()=>tree.root.findByType('Menu').findAllByType('Button').map((b:{props:{children:string}})=>b.props.children);
   expect(row().map((b:{props:{children:string}})=>b.props.children)).toEqual(['Claim','Close','Comment','Edit','Priority','Project']);
-  expect(behind()).toEqual(['Ask a person','Parent','Blocked by…']);
+  expect(behind()).toEqual(['Ask a person','Parent','Blocked by…','Promote to epic']);
   expect(row().filter((b:{props:{variant?:string}})=>b.props.variant==='primary').map((b:{props:{children:string}})=>b.props.children)).toEqual(['Claim']);
   // No heading over nothing: a task with no relations and no comments names none.
   expect(tree.root.findAllByType('Fact').map((f:{props:{label:string}})=>f.props.label)).not.toEqual(expect.arrayContaining(['Parent','Children','Blocked by','Blocks']));

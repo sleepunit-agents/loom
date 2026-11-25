@@ -8,7 +8,7 @@ type Summary = Pick<SharedTask, 'title' | 'goal' | 'why' | 'doneWhen' | 'descrip
 /** Commands contain intent only. The authenticated root supplies the actor. */
 export type TaskCommand =
   | { action: 'create'; input: Summary & { type: SharedTask['type']; owner: Person | { kind: 'household' }; parent?: string; source?: { kind: 'conversation'; id: string } } }
-  | { action: 'edit'; id: string; input: Partial<Summary> }
+  | { action: 'edit'; id: string; input: Partial<Summary> & {type?: 'epic'} }
   | { action: 'claim' | 'unclaim' | 'reopen'; id: string }
   | { action: 'close'; id: string; reason: string }
   | { action: 'comment'; id: string; text: string }
@@ -102,7 +102,7 @@ function Draft(p: TaskFormProps) {
         <Field label="Title"><Input required value={title} onChange={e => setTitle(e.target.value)}/></Field>
         <Field label="Goal"><Textarea required value={goal} onChange={e => setGoal(e.target.value)}/></Field>
         <Field label="Why"><Textarea required value={why} onChange={e => setWhy(e.target.value)}/></Field>
-        <Field label="Done when"><Textarea value={doneWhen} onChange={e => setDoneWhen(e.target.value)}/></Field>
+        <Field label="Done when" hint={p.action === 'create' ? 'What can someone deliver and verify? Consider an epic if several outcomes can ship independently.' : undefined}><Textarea value={doneWhen} onChange={e => setDoneWhen(e.target.value)}/></Field>
         <Field label="Description"><Textarea value={description} onChange={e => setDescription(e.target.value)}/></Field>
       </>}
       {(summaryFields || p.action === 'priority') && priorityField}

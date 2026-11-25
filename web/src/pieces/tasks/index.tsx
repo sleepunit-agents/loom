@@ -77,10 +77,10 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
   // A removed row also revokes its draft while the rest of the query stays live.
   useEffect(() => { if (status !== 'live' || (action?.id !== undefined && !hasTarget)) setAction(undefined); }, [status, action?.id, hasTarget]);
   const act = submit ? (next: TaskAction, task?: SharedTask) => {
-    if (next === 'claim' || next === 'unclaim' || next === 'reopen') {
+    if (next === 'promote' || next === 'claim' || next === 'unclaim' || next === 'reopen') {
       if (!task || lock.current) return;
       lock.current = true; setSending(true); setProblem(''); setAction(undefined);
-      void submit({ action: next, id: task.id }).catch((error: unknown) => { if (alive.current) setProblem(error instanceof Error ? error.message : 'Could not save. Try again.'); })
+      void submit(next === 'promote' ? { action:'edit', id:task.id, input:{type:'epic'} } : { action: next, id: task.id }).catch((error: unknown) => { if (alive.current) setProblem(error instanceof Error ? error.message : 'Could not save. Try again.'); })
         .finally(() => { lock.current = false; if (alive.current) setSending(false); });
       return;
     }
