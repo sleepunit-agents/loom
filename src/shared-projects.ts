@@ -18,7 +18,7 @@ import { OperationError, type Operations } from './core/operations/index.js';
 import { householdOwner } from './shared-sharing.js';
 import { householdId, projectId } from './slug.js';
 const id=projectId,list=z.array(householdId).max(1000).transform(values=>[...new Set(values)].sort());
-export const projectInput=z.object({id,name:z.string().trim().min(1).max(200),members:list,agents:list,repositories:z.array(z.string().regex(/^github:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).refine(value=>canonicalRepository(value.slice(7).toLowerCase()),'Write a repository as github:owner/repo, without .git')).max(1000).transform(values=>[...new Set(values.map(repoId))].sort())}).strict();
+export const projectInput=z.object({id,name:z.string().trim().min(1).max(200),goal:z.string().trim().min(1).max(280).nullable().optional(),members:list,agents:list,repositories:z.array(z.string().regex(/^github:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).refine(value=>canonicalRepository(value.slice(7).toLowerCase()),'Write a repository as github:owner/repo, without .git')).max(1000).transform(values=>[...new Set(values.map(repoId))].sort())}).strict();
 /** Merging one project into another: `from` is emptied into `into` and removed. */
 export const projectMergeInput=z.object({from:id,into:id}).strict();
 /** Every household table that names a project, by its SQL name, and what a merge does with the rows that
@@ -89,7 +89,9 @@ export function sharedProjects(db:DataDatabase,now:()=>string=()=>new Date().toI
  return {
   validate,
   save(raw:z.input<typeof projectInput>){const value=projectInput.parse(raw);return db.transaction(()=>{
-   validate(value);db.insert(projects).values({id:value.id,name:value.name}).onConflictDoUpdate({target:projects.id,set:{name:value.name}}).run();
+   validate(value);
+   const details={name:value.name,...(value.goal!==undefined?{goal:value.goal}:{})};
+   db.insert(projects).values({id:value.id,...details}).onConflictDoUpdate({target:projects.id,set:details}).run();
    db.delete(projectMembers).where(eq(projectMembers.project,value.id)).run();db.delete(projectAgents).where(eq(projectAgents.project,value.id)).run();db.delete(projectRepositories).where(eq(projectRepositories.project,value.id)).run();
    if(value.members.length)db.insert(projectMembers).values(value.members.map(member=>({project:value.id,member}))).run();
    if(value.agents.length)db.insert(projectAgents).values(value.agents.map(agent=>({project:value.id,agent}))).run();
@@ -167,7 +169,7 @@ export function sharedProjects(db:DataDatabase,now:()=>string=()=>new Date().toI
 }
 export function sharedProjectQueries(db:DataDatabase){
  const ownerReads=new WeakSet<Viewer>();
- const strings=new GraphQLList(GraphQLString),project=new GraphQLObjectType({name:'SharingProject',fields:{id:{type:GraphQLString},name:{type:GraphQLString},members:{type:strings},agents:{type:strings},repositories:{type:strings}}});
+ const strings=new GraphQLList(GraphQLString),project=new GraphQLObjectType({name:'SharingProject',fields:{id:{type:GraphQLString},name:{type:GraphQLString},goal:{type:GraphQLString},members:{type:strings},agents:{type:strings},repositories:{type:strings}}});
  const sharing=new GraphQLObjectType({name:'HouseholdSharing',fields:{members:{type:strings},agents:{type:strings},projects:{type:new GraphQLList(project)}}});
  const service=sharedProjects(db);
  const fields:GraphQLFieldConfigMap<unknown,{viewer:Viewer}>={householdSharing:{type:sharing,resolve(_row,_args,{viewer}){if(!householdOwner(db,viewer))return null;ownerReads.add(viewer);return service.read();}}};

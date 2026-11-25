@@ -44,6 +44,7 @@ CREATE TABLE `projects` (
 	`name` text NOT NULL,
 	`removed_at` text,
 	`retired_at` text,
+	`goal` text,
 	CONSTRAINT "projects_removed_at_utc" CHECK("projects"."removed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "projects"."removed_at") = "projects"."removed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "projects"."removed_at") = "projects"."removed_at", 0)),
 	CONSTRAINT "projects_retired_at_utc" CHECK("projects"."retired_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "projects"."retired_at") = "projects"."retired_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "projects"."retired_at") = "projects"."retired_at", 0))
 );

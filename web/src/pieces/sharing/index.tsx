@@ -3,9 +3,9 @@ import {useDataQuery} from '../../data/graphql';
 import {HomeMessageComposer} from '../attention/home-composer';
 import {threadPath} from '../attention/home-comms-data';
 import {AppFrame,List,Row,Empty,Error,Loading,Button,Input} from '../../kit';
-interface Project{id:string;name:string;members:string[];agents:string[];repositories:string[]}
+interface Project{id:string;name:string;goal?:string|null;members:string[];agents:string[];repositories:string[]}
 interface Sharing{members:string[];agents:string[];projects:Project[]}
-const query=`{ householdSharing { members agents projects { id name members agents repositories } } }`;
+const query=`{ householdSharing { members agents projects { id name goal members agents repositories } } }`;
 interface Recipient {member:string;agent:string}
 function ProjectForm({project,choices,enabled,recipient,go}:{project?:Project;choices:Sharing;enabled:boolean;recipient?:Recipient;go:(path:string)=>void}){
  const [words,setWords]=useState('');
@@ -13,7 +13,9 @@ function ProjectForm({project,choices,enabled,recipient,go}:{project?:Project;ch
   event.preventDefault();
   if(!enabled||!recipient)return;
   const fields=new FormData(event.currentTarget);
+  const goal=String(fields.get('goal')??'').trim() || null;
   const request={
+   ...(goal!==(project?.goal??null)?{goal}:{}),
    id:project?.id??fields.get('id'),name:fields.get('name'),
    members:fields.getAll('members'),agents:fields.getAll('agents'),
    repositories:String(fields.get('repositories')??'').trim().split(/\s+/).filter(Boolean),
@@ -23,6 +25,7 @@ function ProjectForm({project,choices,enabled,recipient,go}:{project?:Project;ch
  return <><form aria-label={project?'Edit project':'Create project'} onSubmit={prepare} onChange={()=>setWords('')} className="grid gap-4"><h2>{project?project.name:'Create project'}</h2><fieldset disabled={!enabled||!recipient} className="grid gap-3">
  {!project&&<label>Slug<Input name="id" required pattern="[a-z0-9]+(-[a-z0-9]+)*" maxLength={100}/></label>}
  <label>Name<Input name="name" defaultValue={project?.name} required maxLength={200}/></label>
+ <label>Project goal<Input name="goal" defaultValue={project?.goal??''} maxLength={280}/></label>
  {(['members','agents'] as const).map(field=><fieldset key={field}><legend>{field==='members'?'Members':'Agents'}</legend>{choices[field].map(id=><label key={id} className="flex gap-2"><input type="checkbox" name={field} value={id} defaultChecked={project?.[field].includes(id)}/>{id}</label>)}</fieldset>)}
  <label>Repositories<Input name="repositories" defaultValue={project?.repositories.join(' ')} placeholder="github:owner/repo"/></label>
  <Button type="submit">{project?'Review project changes':'Review new project'}</Button></fieldset></form>

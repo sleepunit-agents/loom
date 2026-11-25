@@ -135,3 +135,20 @@ it('holds a project\'s id to the length its card allows, and leaves its name fre
  // A member or an agent named on it may have a longer id than the project's own.
  expect(projectInput.safeParse({...input,id:'pond',members:['m'.repeat(100)],agents:['a'.repeat(100)]}).success).toBe(true);
 });
+
+it('keeps a shared goal across older edits and limits it to project readers',async()=>{
+ const f=fixture();
+ const query='{projectsSingle(where:{id:{eq:"pond"}}){goal}}';
+ const read=async()=> (await f.read(query,'sam')).data.projectsSingle;
+ expect((await f.call(project)).status).toBe(200);
+ expect(await read()).toEqual({goal:null});
+ expect((await f.call({...project,goal:'Keep the pump running'},'owner','set-goal')).status).toBe(200);
+ expect(await read()).toEqual({goal:'Keep the pump running'});
+ expect((await f.call({...project,name:'Pond water'},'owner','old-client')).status).toBe(200);
+ expect(await read()).toEqual({goal:'Keep the pump running'});
+ expect((await f.call({...project,members:[],goal:'Restore circulation'},'owner','revise')).status).toBe(200);
+ expect(await read()).toBeNull();
+ expect((await f.read(query)).data.projectsSingle).toEqual({goal:'Restore circulation'});
+ expect((await f.call({...project,goal:null},'owner','clear')).status).toBe(200);
+ expect(await read()).toEqual({goal:null});
+});

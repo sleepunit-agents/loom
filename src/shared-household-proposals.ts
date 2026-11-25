@@ -268,7 +268,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  const before=(value:Proposal):unknown=>{
   if(value.change==='machineReader'||value.change==='boxSettings')return machineBefore(value,readMachineSettings(db,value.input.box));
   if(kitChange(value))return kitBefore(db,value);
-  if(value.change==='project'){const row=projects.read().projects.find(row=>row.id===value.input.id);const kits=projectKitDefinitions(db,value.input.id);return row?sorted({...(kits.length?{kits}:{}),id:row.id,name:row.name,members:[...row.members].sort(),agents:[...row.agents].sort(),repositories:[...row.repositories].sort()}):null;}
+  if(value.change==='project'){const row=projects.read().projects.find(row=>row.id===value.input.id);const kits=projectKitDefinitions(db,value.input.id);return row?sorted({...(kits.length?{kits}:{}),id:row.id,name:row.name,...(value.input.goal!==undefined&&row.goal!==null?{goal:row.goal}:{}),members:[...row.members].sort(),agents:[...row.agents].sort(),repositories:[...row.repositories].sort()}):null;}
   if(value.change==='projectMerge')return sorted({from:projects.describe(value.input.from),into:projects.describe(value.input.into)});
   if(isState(value)){const project=projects.describe(value.input.project);return sorted({project:project&&{id:project.id,removed:project.removed,retired:project.retired}});}
   // A join card is sealed on what it changes and nothing more: that the project and the agent are in use, and
