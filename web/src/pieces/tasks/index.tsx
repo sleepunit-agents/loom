@@ -144,7 +144,7 @@ export default function TasksApp({ path: shellPath, backlogProject, go, question
     readerUnavailable={readDetail && (detailFeed.status === 'offline' || detailFeed.status === 'denied')}
     ready={tasks.filter(task => task.isReady).map(task => task.id)} conversation={openSource}
     projectLink={projectRow && go ? { ...projectRow, open: () => go(`/p/work/project/${encodeURIComponent(projectRow.id)}`) } : undefined}
-    openChange={go ? id => go(`/p/changes-preview/change/${encodeURIComponent(id)}`) : undefined}
+    openChange={go ? id => go((base.startsWith('/p/work/') ? '/p/work/changes' : '/p/changes-preview')+'/change/'+encodeURIComponent(id)) : undefined}
     names={names} zone={zone} busy={sending} problem={problem || undefined} act={act}
     form={open ? { action: action.action, node: <SharedTaskForm status={status} action={action.action} task={target} tasks={tasks} links={links}
       people={people} projects={projects} initialProject={backlogProject} conversation={conversation} submit={submit}

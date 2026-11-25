@@ -1,4 +1,4 @@
-import { taskPath } from '../../../src/task-route';
+import { taskPath, workTicketPath } from '../../../src/task-route';
 import { renderTempoChange } from '../pieces/tempo/settings';
 import { renderMeasuringChange } from '../pieces/measuring/settings';
 import { useEffect, useState } from 'react';
@@ -97,7 +97,7 @@ export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; t
     window.addEventListener('popstate', pop);
     return () => window.removeEventListener('popstate', pop);
   }, [go]);
-  const currentPath = path ?? localPath;
+  const currentPath = (path ?? localPath).split('?')[0];
   let selected: string | undefined;
   if (currentPath.startsWith(`${base}/approval/`)) {
     try { selected = decodeURIComponent(currentPath.slice(`${base}/approval/`.length)) || undefined; }
@@ -126,15 +126,15 @@ export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; t
       folder: folder,
       openFolder: id => visit(id === 'pending' ? base : `${base}/${id}`) }} />;
 }
-export function ChangesApp({ path, timezone, actions, go }: { path?: string; timezone?: string; actions?: ChangeActions; go?(path: string): void } = {}) {
-  const snapshot = useChangeSnapshot(timezone), access = useWorkAccess(), owner = access.owner, names = useAgentNames();
+export function ChangesApp({ path, timezone, actions, go, base='/p/changes-preview', project }: { path?: string; base?: string; project?: string; timezone?: string; actions?: ChangeActions; go?(path: string): void } = {}) {
+  const visible = useChangeSnapshot(timezone), access = useWorkAccess(), owner = access.owner, names = useAgentNames();
+  const snapshot = project ? {...visible, changes:visible.changes.filter(change=>change.project===project)} : visible;
   const requests = useDataQuery<{approvals:MergeRequest[]}>(mergeRequestsQuery);
   const findRequest = (id:string,head:string) => {
     const row = snapshot.changes.find(row => row.id === id && row.headCommit === head);
     return row && requests.status === 'live' ? requests.data?.approvals?.find(request => request.kind === 'merge' && request.state === 'pending'
       && request.target === `${id}@${head}` && request.agent === row.agent && request.project === row.project && request.operation === null) : undefined;
   };
-  const base = '/p/changes-preview';
   const [localPath, setLocalPath] = useState(() => typeof location === 'undefined' ? base : location.pathname);
   useEffect(() => {
     if (go) return;
@@ -143,10 +143,12 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
     window.addEventListener('popstate', pop);
     return () => window.removeEventListener('popstate', pop);
   }, [go]);
-  const currentPath = path ?? localPath;
+  const pathOnly = (path ?? localPath).split('?')[0];
+  const changeAt = pathOnly.indexOf('/change/',base.length);
+  const currentPath = changeAt<0 ? pathOnly : pathOnly.slice(0,changeAt);
   let selected: string | undefined;
-  if (currentPath.startsWith(`${base}/change/`)) {
-    try { selected = decodeURIComponent(currentPath.slice(`${base}/change/`.length)) || undefined; }
+  if (changeAt>=0) {
+    try { selected = decodeURIComponent(pathOnly.slice(changeAt+'/change/'.length)) || undefined; }
     catch { /* Malformed URLs leave the reader closed. */ }
   }
   let folder = ['you', 'lately'].find(id => currentPath === `${base}/${id}`) ?? 'all';
@@ -179,10 +181,11 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
       await sendWorkAnswer({piece:'changes',id,head,approval:request.id,answer});
     },
   } : undefined;
-  return <Changes snapshot={{ ...snapshot, reviewHistory }} actions={actions ?? defaultActions} names={names}
-    navigation={{ selected, select: id => visit(id ? `${base}/change/${encodeURIComponent(id)}` : base), folder,
+  const listPath = base.startsWith('/p/work/') ? currentPath : base;
+  return <Changes projectReader={!!project} snapshot={{ ...snapshot, reviewHistory }} actions={actions ?? defaultActions} names={names}
+    navigation={{ selected, select: id => visit(id ? `${listPath}/change/${encodeURIComponent(id)}` : listPath), folder,
       openFolder: id => visit(id.startsWith('project:') ? `${base}/project/${encodeURIComponent(id.slice(8))}` : id === 'all' ? base : `${base}/${id}`) }}
-    openTask={go ? id => go(taskPath(id)) : undefined} />;
+    openTask={go ? id => go(base.startsWith('/p/work/') ? workTicketPath(id) : taskPath(id)) : undefined} />;
 }
 /** Cards read current entities. Inline approvals answer one request; standing grants live in the tiles. */
 type LiveApprovalProps = { id: string; showBlocker?: boolean; displayTitle?: string; timezone?: string; actions?: ApprovalActions };

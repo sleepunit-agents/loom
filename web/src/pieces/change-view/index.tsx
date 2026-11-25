@@ -85,7 +85,7 @@ function Details({ change: c, snapshot, actions, openTask, name }: { change: Cha
     </Facts></Disclosure>
   </Reader>;
 }
-export default function Changes({ snapshot, actions, openTask, navigation, names }: { snapshot: ChangeSnapshot; actions?: ChangeActions; openTask?(id: string): void; navigation?: { selected?: string; select(id?: string): void; folder?: string; openFolder?(id: string): void };
+export default function Changes({ snapshot, actions, openTask, navigation, names, projectReader }: { projectReader?:boolean; snapshot: ChangeSnapshot; actions?: ChangeActions; openTask?(id: string): void; navigation?: { selected?: string; select(id?: string): void; folder?: string; openFolder?(id: string): void };
   /** Agents' display names by id, where the composition has read them. */
   names?: Readonly<Record<string, string>> }) {
   const [localFolder, setLocalFolder] = useState('all'), [query, setQuery] = useState(''), [localSelected, setLocalSelected] = useState<string>();
@@ -109,6 +109,12 @@ export default function Changes({ snapshot, actions, openTask, navigation, names
   }
   const readAt = live ? snapshot.sync?.readAt : undefined;
   // Lately is every change again in another order, so it carries no count of its own.
+  if (projectReader) return <>
+    <Button onClick={()=>setSelected(undefined)}>Back to pull requests</Button>
+    {!live ? <Unavailable status={snapshot.status}/> : current
+      ? <Details key={current.id} change={current} snapshot={snapshot} actions={actions} openTask={openTask} name={name}/>
+      : <Empty title="Pull request unavailable"/>}
+  </>;
   return <Split label="Changes" folders={folders.map(f => ({ ...f, count: live && f.id !== 'lately' ? rows(snapshot, f.id, '').length : undefined }))}
     folder={folder} onFolder={id => { if (navigation?.openFolder) navigation.openFolder(id); else { setLocalFolder(id); setSelected(undefined); } }}
     search={<Search label="Search changes" value={query} onChange={setQuery} />}

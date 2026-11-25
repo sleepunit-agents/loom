@@ -28,7 +28,7 @@ export function ProjectChanges({project,path,go}:{project:string;path:string;go:
     {rows.length ? <List label="Project pull requests">{rows.slice(0,size).map(pr=><Row key={pr.id} title={pr.title}
       meta={pr.repository.replace(/^github:/,'')+' #'+pr.number+' · '+(pr.changeTasksByChange.length ? 'Linked ticket' : 'No visible ticket link')}
       status={pr.state==='open' ? [pr.draft?'Draft':'Open','checks '+pr.checks,pr.review.replaceAll('_',' ')].join(' · ') : pr.state}
-      onClick={()=>go('/p/changes-preview/change/'+encodeURIComponent(pr.id))}/>)}</List> :
+      onClick={()=>go(base+'/change/'+encodeURIComponent(pr.id)+(page ? '?page='+(page+1) : ''))}/>)}</List> :
       <Empty title={page?'No more pull requests':'No visible pull requests for this project'}/>}
     <Pager label="Project pull requests" hasPrevious={page>0} hasNext={rows.length>size}
       previous={()=>openPage(page-1)} next={()=>openPage(page+1)}/>

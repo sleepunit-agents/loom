@@ -158,7 +158,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     await owners.addCookies([{name:'loom_ui',value:app.ownerCookie,url:app.url}]);
     const c=await owners.newPage(), d=await owners.newPage();
     for (const page of [c,d]) page.on('pageerror',error=>errors.push(error.message));
-    await Promise.all([c.goto(`${app.url}/p/changes-preview/change/${encodeURIComponent(changeId)}`),d.goto(`${app.url}/p/changes-preview/change/${encodeURIComponent(changeId)}`)]);
+    await Promise.all([c.goto(`${app.url}/p/work/changes/change/${encodeURIComponent(changeId)}`),d.goto(`${app.url}/p/changes-preview/change/${encodeURIComponent(changeId)}`)]);
     await c.getByRole('button',{name:'Refresh',exact:true}).click();
     await expect.poll(()=>app.sourceReads()).toBe(1);
     for (const page of [c,d]) await expect.poll(()=>page.getByText(/^Last read /).count()).toBe(1);
