@@ -3,7 +3,7 @@ import {BacklogWindow} from './backlog-window';
 import { ClaimControls } from './claim-controls';
 import { WorkDiscussion } from './discuss';
 import { useReadingVisible } from '../../data/visibility';
-import { CatchUp } from './catch-up';
+import { CatchUp, ProjectPosts } from './catch-up';
 import { ProjectNeeds } from './project-needs';
 import { ProjectBoard } from './board';
 import { UnfiledTickets } from './unfiled';
@@ -55,6 +55,7 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
       {(project.lifecycle==='retired' ? recentTickets : recent).length>0 && tickets('Recent tickets',project.lifecycle==='retired' ? recentTickets : recent)}
       {!recentTickets.length && <Empty title="No tickets here yet"/>}
       {project.lifecycle==='active' && <ClaimControls key={'claims-'+project.id} project={project.id}/>}
+      <ProjectPosts project={project.id} go={go}/>
       <BacklogWindow key={project.id} project={project.id} path={path} go={go}/>
       <WorkDiscussion key={'discuss-'+project.id} kind="project" id={project.id} go={go}/>
       <LinkButton onClick={()=>go(base+'/project/'+project.id+'/changes')}>Open pull requests</LinkButton>
