@@ -1,7 +1,10 @@
+import { ChatReferences } from './chat-references';
+import { openLinkedEntity } from './entity-links';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { useDiscussion } from './discussion';
 import type { CommsMessage } from '../pieces/comms-view/model';
 import { memberOperation } from '../data/operation';
+import { ConversationHistory } from './conversation-history';
 const Question = lazy(async () => ({
   default: (await import('../pieces/comms/inline-question')).InlineQuestion,
 }));
@@ -14,6 +17,9 @@ export function Chat({
   onClose,
   onSend,
   receipts,
+  subject,
+  subjectRef,
+  excerpt,
 }: {
   name: string;
   agent: string;
@@ -22,8 +28,13 @@ export function Chat({
   onClose(): void;
   onSend(words: string): Promise<boolean>;
   receipts: string[];
+  subject?: string;
+  subjectRef?: string;
+  excerpt?: string;
 }) {
   const [draft, setDraft] = useState('');
+  const [included, setIncluded] = useState('');
+  const [historyOpen, setHistoryOpen] = useState(false);
   const list = useRef<HTMLDivElement>(null),
     input = useRef<HTMLTextAreaElement>(null);
   const read = useRef(0),
@@ -71,7 +82,13 @@ export function Chat({
     if (!text || lock.current) return;
     lock.current = true;
     try {
-      if (await onSend(text)) {
+      if (
+        await onSend(
+          included && included === subjectRef && excerpt
+            ? text + '\n\nRecord details shared with you:\n' + excerpt
+            : text,
+        )
+      ) {
         bottom.current = true;
         setDraft((prev) => (prev.trim() === text ? '' : prev));
         input.current?.focus();
@@ -116,7 +133,7 @@ export function Chat({
           bottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
         }}
       >
-        {!discussion.href && !discussion.error && (
+        {!discussion.available && !discussion.error && (
           <p role="status">
             {discussion.unavailable ? 'Conversation unavailable.' : 'Opening conversation…'}
           </p>
@@ -129,22 +146,26 @@ export function Chat({
                 {m.kind === 'message' || m.kind === 'answer' ? 'You' : title(m.sender)} ·{' '}
                 {new Date(m.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
               </small>
-              <p>{printable(m)}</p>
+              <p>
+                <ChatReferences words={printable(m)} />
+              </p>
               {m.delivery === 'failed' && <small>Delivery failed</small>}
             </article>
           ))}
         {discussion.questions.map((id) => (
           <Suspense key={id} fallback={<p>Opening question…</p>}>
-            <Question id={id} go={(path) => location.assign(path)} writable readVisible={visible} />
+            <Question id={id} go={openLinkedEntity} contextWorkspace writable readVisible={visible} />
           </Suspense>
         ))}
-        {(receipts.length > 0 || discussion.href) && (
-          <details>
+        {(receipts.length > 0 || discussion.available) && (
+          <details onToggle={(event) => setHistoryOpen(event.currentTarget.open)}>
             <summary>Conversation details</summary>
             {receipts.map((r, i) => (
               <p key={i}>{r}</p>
             ))}
-            {discussion.href && <a href={discussion.href}>Full history in Comms</a>}
+            {historyOpen && discussion.available && (
+              <ConversationHistory key={discussion.thread} thread={discussion.thread} />
+            )}
           </details>
         )}
       </div>
@@ -155,6 +176,25 @@ export function Chat({
           void submit();
         }}
       >
+        {subject && (
+          <div className="chatSubject">
+            <strong>About {subject}</strong>
+            {excerpt && (
+              <details>
+                <summary>Record details</summary>
+                <pre>{excerpt}</pre>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={included === subjectRef}
+                    onChange={(e) => setIncluded(e.target.checked ? subjectRef || '' : '')}
+                  />
+                  Include these details in my message
+                </label>
+              </details>
+            )}
+          </div>
+        )}
         <textarea
           ref={input}
           rows={2}

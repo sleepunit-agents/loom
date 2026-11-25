@@ -4,7 +4,6 @@ import { memberOperation } from '../data/operation';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { newId } from '../data/id';
 import { useDeadline } from '../pieces/comms/use-deadline';
-import { threadPath } from '../pieces/attention/home-comms-data';
 import type { CommsMessage } from '../pieces/comms-view/model';
 
 const query = `query ContextConversation($id:String!){
@@ -71,11 +70,22 @@ export function useDiscussion(
   );
   async function resolveThread() {
     if (namedThread) return namedThread;
-    const { thread: id } = await memberOperation<{ thread: string }>('work.discuss', {
-      kind: 'project',
-      id: project,
-      agent,
-    });
+    const homeId =
+      'th:home-' +
+      Array.from(sha256(new TextEncoder().encode(JSON.stringify([member, agent]))), (b) =>
+        b.toString(16).padStart(2, '0'),
+      ).join('');
+    const { thread: id } = project
+      ? await memberOperation<{ thread: string }>('work.discuss', {
+          kind: 'project',
+          id: project,
+          agent,
+        })
+      : await memberOperation<{ thread: string }>('comms.open', {
+          thread: homeId,
+          agent,
+          title: 'Workspace',
+        });
     if (alive.current) {
       setThread(id);
       try {
@@ -147,7 +157,7 @@ export function useDiscussion(
     busy,
     error,
     send,
-    href: read ? threadPath(thread) : null,
+    available: !!read,
     unavailable: !!thread && feed.status !== 'loading' && !read,
   };
 }

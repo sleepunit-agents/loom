@@ -17,7 +17,7 @@ export function inlineQuestionSelection(id: string): QuerySelection<InboxItem | 
 /** Inline questions use the same Inbox item and authenticated operations. Drawn as the compact card a conversation
  * has (the question, what Yes and No do, the answer); everything else about the item is one link away, in the Inbox.
  * `onWaiting` hears whether this is an open question this person can answer, so the thread can say it waits on them. */
-export function InlineQuestion({ id, go, writable, readVisible, onWaiting }: { id: string; go(path: string): void; writable: boolean; readVisible: boolean; onWaiting?(id: string, waiting: boolean): void }) {
+export function InlineQuestion({ id, go, writable, readVisible, onWaiting, contextWorkspace }: { id: string; go(path: string): void; writable: boolean; readVisible: boolean; contextWorkspace?:boolean; onWaiting?(id: string, waiting: boolean): void }) {
   const reading = useSelection(useMemo(() => inlineQuestionSelection(id), [id])), zone = useHouseholdZone();
   const item = reading.status === 'live' ? reading.data : null;
   const now = useDeadline(item ? [item.bodyKeepUntil, item.answerKeepUntil] : []);
@@ -34,5 +34,5 @@ export function InlineQuestion({ id, go, writable, readVisible, onWaiting }: { i
   const open = writable && !!retained && retained.state === 'waiting' && !!retained.answers;
   useEffect(() => { onWaiting?.(id, open); return () => onWaiting?.(id, false); }, [id, open]);
   return <InboxQuestionCard zone={zone} sourceCard={approval ? <LiveApprovalCard id={approval} /> : writable && retained?.body && retained.source==='task' && retained.waitsOnKind==='task' ? <TaskQuestionAnswer key={retained.id} item={retained} compact/> : undefined} id={id} inline actions={actions} snapshot={{ status: reading.status,
-    items: retained ? [retained] : [] }} openInbox={retained ? () => go(waitingPath(retained.id)) : undefined} />;
+    items: retained ? [retained] : [] }} openInbox={retained && !contextWorkspace ? () => go(waitingPath(retained.id)) : undefined} />;
 }

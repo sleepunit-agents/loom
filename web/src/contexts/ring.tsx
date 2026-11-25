@@ -1,3 +1,5 @@
+import { entityAddress } from './entities';
+import { linkedEntity } from './entity-links';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { memberOperation } from '../data/operation';
@@ -281,7 +283,16 @@ export function Ring({
           )}
           {quick && quick === details[notice.id].question && (
             <Suspense fallback="Opening question…">
-              <InlineQuestion id={quick} go={(path) => location.assign(path)} writable readVisible />
+              <InlineQuestion
+                id={quick}
+                go={(path) => {
+                  const target = linkedEntity(path);
+                  if (target) choose(notice, false, entityAddress(target));
+                }}
+                contextWorkspace
+                writable
+                readVisible
+              />
             </Suspense>
           )}
           <button
