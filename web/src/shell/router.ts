@@ -71,12 +71,20 @@ export class DeskRouter {
     this.browser.history[replace ? 'replaceState' : 'pushState']({loomNext:route}, '', writeRoute(route)); this.emit();
   }
   asTiles(tiles = this.route.tiles): AppTile[] { return tiles.filter(t => !t.minimized).map(t => ({ id: t.id, name: this.apps.find(a => a.id === t.id)!.title, fit: this.apps.find(a => a.id === t.id)!.fit, pinned: t.pinned })); }
-  open(id: string, area?: Rect, screen = this.screen, from?: string, oneWindow = this.oneWindow) {
+  open(id: string, area?: Rect, screen = this.screen, from?: string, oneWindow = this.oneWindow, destination?: string) {
     this.oneWindow = oneWindow;
     const app = this.apps.find(a => a.id === id); if (!app) return;
     const old = this.route.tiles.find(t => t.id === id);
-    if (old && !old.minimized) { this.focus(id); return; }
+    if (old && !old.minimized) {
+      if (destination) this.go(id,destination);
+      else this.focus(id);
+      return;
+    }
     const added: Tile = old ? { ...old, minimized: false, used: ++this.serial } : { id, trail: [app.path], at: 0, used: ++this.serial };
+    if (destination && currentPath(added) !== destination) {
+      added.trail = [...added.trail.slice(0,added.at+1),destination];
+      added.at = added.trail.length-1;
+    }
     const others = this.route.tiles.filter(t => t.id !== id);
     const tile = { id, name: app.title, fit: app.fit, pinned: added.pinned };
     const result = oneWindow ? { apps: [...this.asTiles(others), tile], docked: [] } : admit(this.asTiles(others), tile, area ?? this.area, screen, { from: from ? { tile: from } : undefined, usedAt: Object.fromEntries(others.map(t => [t.id,t.used])) });
@@ -89,7 +97,9 @@ export class DeskRouter {
   go(id: string, path: string) {
     const app = this.apps.find(a => a.id === id);
     if (!app || !(path === app.path || path.startsWith(app.path + '/') || path.startsWith(app.path + '?'))) {
-      const other = this.apps.find(a => path === a.path || path.startsWith(a.path + '/')); if (other) { this.open(other.id,undefined,undefined,id); this.go(other.id,path); } return;
+      const other = this.apps.find(a => path === a.path || path.startsWith(a.path + '/') || path.startsWith(a.path + '?'));
+      if (other) this.open(other.id,undefined,undefined,id,this.oneWindow,path);
+      return;
     }
     this.save({ maximized:this.route.maximized===id?id:undefined, focused:id, tiles: this.route.tiles.map(t => t.id === id ? { ...t, used: ++this.serial, trail: [...t.trail.slice(0,t.at+1),path], at:t.at+1 } : t) });
   }

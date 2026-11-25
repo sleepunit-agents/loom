@@ -362,3 +362,29 @@ it.runIf(process.env.CI==='true' && chrome && existsSync(join(root,'index.html')
     expect(app.db.select().from(s.agentPauses).all()).toEqual([]);
   } finally {await browser.close();await app.close();}
 });
+
+it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.html')))('reads a closed-only unfiled backlog across pages and returns from its ticket story', async () => {
+  const app = await fixture(), browser = await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  try {
+    const at = '2026-11-14T20:00:00.000Z';
+    app.data.writes.run(()=>app.db.insert(s.tasks).values(Array.from({length:51},(_,i)=>({
+      id:'t-'+(200+i), title:'Completed inspection '+(200+i), status:'closed' as const, ownerKind:'member' as const,
+      owner:'sam',goal:'Verify pumps',why:'Maintenance',createdByKind:'member' as const,createdBy:'sam',
+      createdAt:at,changedAt:at,closedAt:at,closeReason:'Inspected',
+    }))).run());
+    const context = await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},reducedMotion:'reduce'});
+    await context.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
+    const page = await context.newPage();
+    page.setDefaultTimeout(7000);
+    await page.goto(app.url+'/p/work');
+    await page.getByText('Unfiled tickets',{exact:true}).click();
+    await page.getByRole('button',{name:'Next page'}).click();
+    const last = page.getByText('Completed inspection 250',{exact:true});
+    await last.click();
+    await page.getByRole('region',{name:'Ticket story'}).getByText('Ticket closed',{exact:true}).waitFor();
+    await page.goBack();
+    await last.waitFor();
+    expect(await page.getByText(hiddenTitle,{exact:true}).count()).toBe(0);
+    expect(await page.getByRole('button',{name:'Next page'}).isDisabled()).toBe(true);
+  } finally {await browser.close();await app.close();}
+});
