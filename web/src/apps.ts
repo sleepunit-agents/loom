@@ -7,7 +7,6 @@ import { settingsApp } from './pieces/settings/registration';
 import { setupApp } from './pieces/household/registration';
 import { activityApp } from './pieces/activity/registration';
 import { agentApp, homeApp, HomeSurface, RailSurface, BarSurface, SignalsSurface } from './pieces/attention/home-registration';
-import { projectsApp } from './pieces/projects/registration';
 import { knowledgeApp } from './pieces/knowledge/registration';
 import { sharingApp } from './pieces/sharing/registration';
 import { tempoApp } from './pieces/tempo/registration';
@@ -20,7 +19,7 @@ import { inboxApp } from './pieces/attention/registration';
 import { peopleApp } from './pieces/people/registration';
 import { appearanceApp } from './pieces/appearance/registration';
 /** Composition is the one place that chooses the installed first-party apps. */
-export const apps = [workApp, approvalsApp, sharingApp, knowledgeApp, inboxApp, bridgesApp, tempoApp, commsApp, homeApp, agentApp, peopleApp, projectsApp, activityApp, usageApp, machinesApp, subscriptionsApp, settingsApp, setupApp, accountApp, appearanceApp];
+export const apps = [workApp, approvalsApp, sharingApp, knowledgeApp, inboxApp, bridgesApp, tempoApp, commsApp, homeApp, agentApp, peopleApp, activityApp, usageApp, machinesApp, subscriptionsApp, settingsApp, setupApp, accountApp, appearanceApp];
 
 export const appAt = (path: string) => resolveAppPath(path,apps)?.app;
 

@@ -511,6 +511,10 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
   const memories=join(directory,'memories.db');
   const store=new ProjectsStore({dbPath:memories});
   store.write({slug:'field-notes',name:'Pump field notes',summary:'Cold starts need a second reading.',links:{epic:'t-1'}});
+  store.write({slug:'quiet-card',name:'Workshop journal',status:'paused'});
+  const noteDb=new Database(memories);
+  noteDb.exec("CREATE TABLE memories(id INTEGER PRIMARY KEY,ref TEXT,category TEXT,title TEXT,content TEXT,created TEXT,updated TEXT,project TEXT,archived INTEGER,expires_at TEXT,salience REAL,metadata TEXT); INSERT INTO memories VALUES(1,'m-reading','project','Pressure reading','Twice before noon','2026-11-13T10:00:00Z',NULL,'field-notes',0,NULL,1,'{}')");
+  noteDb.close();
   store.close();
   const app=await fixture(false,{checkingAgent:'art',sources:{agents:[{agent:'art',directory,memories}],commons:{
     directory,knowledge:join(directory,'knowledge.db'),people:join(directory,'people.db'),
@@ -529,8 +533,23 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     await notes.getByText('Cold starts need a second reading.').waitFor();
     await notes.getByRole('button',{name:/art.*Pump field notes/i}).click();
     await page.getByRole('heading',{level:1,name:'Pump field notes',exact:true}).waitFor();
+    const selected=new URL(page.url()).pathname;
+    expect(selected).toBe('/p/work/project/pond/notes/project/art%3Afield-notes');
+    await page.getByText('Memories',{exact:true}).click();
+    await page.getByRole('link',{name:/Pressure reading/}).click();
+    await page.getByRole('heading',{name:'Pressure reading',exact:true}).waitFor();
+    expect(new URL(page.url()).pathname).toBe(selected+'/memory/m-reading');
+    await page.goBack();
     await page.goBack();
     await notes.getByText('Cold starts need a second reading.').waitFor();
+    await page.goto(app.url+'/p/work/project/bank/notes/project/art%3Afield-notes/memory/m-reading');
+    await page.getByText('Contribution unavailable',{exact:true}).waitFor();
+    expect(await page.getByText('Twice before noon',{exact:true}).count()).toBe(0);
+    await page.goto(app.url+'/p/projects-preview/project/art%3Afield-notes/memory/m-reading');
+    await page.getByRole('heading',{name:'Pressure reading',exact:true}).waitFor();
+    app.data.writes.run(()=>app.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'sam')).run());
+    await page.getByRole('heading',{name:'Pressure reading',exact:true}).waitFor({state:'detached'});
+    expect(await page.getByText('Twice before noon',{exact:true}).count()).toBe(0);
   }finally{await browser.close();await app.close();rmSync(directory,{recursive:true,force:true});}
 });
 

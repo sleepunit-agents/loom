@@ -63,7 +63,7 @@ export function projectMemorySections(db:Database, agent:string, queries:Project
   const changed = row.updated??row.created;
   items.get(row.slug)!.set(row.ref,{
    title:`${row.title} — ${row.content}`.replace(/\s+/g,' ').slice(0,200),
-   href:`/p/projects-preview/project/${encodeURIComponent(agent+':'+row.slug)}/memory/${encodeURIComponent(row.ref)}`,
+   href:`/p/work/notes/project/${encodeURIComponent(agent+':'+row.slug)}/memory/${encodeURIComponent(row.ref)}`,
    ref:row.ref,when:row.created,changed,status:row.category,new:Date.parse(changed)>Date.parse(bySlug.get(row.slug)!.since),
   });
  }

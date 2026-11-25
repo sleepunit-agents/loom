@@ -3,6 +3,7 @@ import { lazy } from 'react';
 export const workApp = {
   id: 'work', title: 'Work', icon: 'folder-kanban', path: '/p/work',
   aliases: [
+    {id:'projects', path:'/p/projects-preview', destination:'/p/work/notes'},
     {id:'tasks', path:'/p/tasks-preview', destination:'/p/work/backlog'},
     {id:'changes', path:'/p/changes-preview', destination:'/p/work/changes'},
   ],

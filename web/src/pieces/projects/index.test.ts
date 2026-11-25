@@ -19,9 +19,9 @@ afterEach(async()=>{if(tree)await act(async()=>tree!.unmount());tree=undefined;O
 const text=()=>JSON.stringify(tree!.toJSON());
 it('distinguishes loading, denied, offline and no projects without calls',async()=>{
  f.access={records:[],status:'loading'};await act(async()=>{tree=create(h(Projects,props));});expect(text()).toContain('Opening projects');
- f.access={records:[{id:'projects',allowed:false}],status:'live'};await act(async()=>tree!.update(h(Projects,props)));expect(text()).toContain('don’t have access');expect(text()).not.toContain('No projects yet');
+ f.access={records:[{id:'projects',allowed:false}],status:'live'};await act(async()=>tree!.update(h(Projects,props)));expect(text()).toContain('don’t have access');expect(text()).not.toContain('No contributions yet');
  f.access={records:[],status:'offline'};await act(async()=>tree!.update(h(Projects,props)));expect(text()).toContain('Connection lost');
- f.access={records:[{id:'projects',allowed:true,agents:[]}],status:'live'};await act(async()=>tree!.update(h(Projects,props)));expect(text()).toContain('No projects yet');expect(f.call).not.toHaveBeenCalled();
+ f.access={records:[{id:'projects',allowed:true,agents:[]}],status:'live'};await act(async()=>tree!.update(h(Projects,props)));expect(text()).toContain('No contributions yet');expect(f.call).not.toHaveBeenCalled();
 });
 it('ranks waiting then unknown then activity; folds quiet cards, searches and normalizes safe links',()=>{
  const a=project('art:a'),b={...project('art:b'),unknown:true},c={...project('art:c'),waiting:[{title:'Need an answer'}]},quiet={...project('other:paused'),card:{...project().card,status:'paused'}};
