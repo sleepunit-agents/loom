@@ -16,7 +16,6 @@ vi.mock('./graphql/selection', () => ({ useSelection: () => ({ status: 'live', d
 } }) }));
 import { ConversationQuestions } from '../pieces/comms/conversation-questions';
 import { approvalsApp } from '../pieces/approvals/registration';
-import { changesApp } from '../pieces/changes/registration';
 import { ApprovalsApp, ChangesApp, LiveApprovalCard, LiveChangeCard } from './work-views';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
@@ -40,7 +39,7 @@ it('the registered lazy tiles actually render the generated shared rows', async 
   expect(words()).toContain('Keep one day?');
   expect(words()).toContain('Measuring settings change');
   expect(tree.root.findAllByType('Button')).toHaveLength(0);
-  await act(async () => tree.update(h(Suspense, { fallback: 'Opening' }, h(changesApp.Screen, {}))));
+  await act(async () => tree.update(h(Suspense, { fallback: 'Opening' }, h(ChangesApp, {base:'/p/work/changes'}))));
   await act(async () => { await vi.dynamicImportSettled(); });
   expect(words()).toContain('Current change');
   await selectRow();
@@ -86,7 +85,7 @@ it('opens the linked imported task even when its ID begins with the route marker
   ] };
   await draw(h(ChangesApp, { path: '/p/changes-preview/change/c-one', go }));
   await act(async () => tree.root.findByProps({ label: 'Open Imported tray, ~t-1' }).props.onClick());
-  expect(go).toHaveBeenCalledExactlyOnceWith('/p/tasks-preview/task/~~t-1');
+  expect(go).toHaveBeenCalledExactlyOnceWith('/p/work/backlog/task/~~t-1');
 });
 
 it('opens the exact change from a Comms deep link and follows shell navigation and back', async () => {
@@ -124,7 +123,7 @@ it('linked work opens the Tasks reader route and unavailability withdraws the de
   expect(words()).toContain('Linked task');
   const linked = tree.root.findAllByType('Chip').find((chip: { props: { children: string } }) => chip.props.children === 't-42');
   await act(async () => linked.props.onClick());
-  expect(go).toHaveBeenLastCalledWith('/p/tasks-preview/task/t-42');
+  expect(go).toHaveBeenLastCalledWith('/p/work/backlog/task/t-42');
   for (const status of ['offline', 'denied', 'loading']) {
     feed.status = status;
     await act(async () => tree.update(h(ChangesApp, { path: '/p/changes-preview/change/c-one', go })));

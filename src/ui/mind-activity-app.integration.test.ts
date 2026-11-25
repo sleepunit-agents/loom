@@ -42,7 +42,7 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('Activity filters,
   expect(await row(a,'Planning the next release').count()).toBe(1);await row(a,'Planning the next release').click();await expect.poll(()=>a.getByRole('heading',{name:'Planning the next release',exact:true}).count()).toBe(1);
   await row(a,'Build the household desk').click();await row(b,'Build the household desk').click();
   await expect.poll(()=>b.getByRole('heading',{name:'What happened',exact:true}).count()).toBe(1);expect(await b.getByText('Keep content in the agents’ stores',{exact:true}).count()).toBe(1);
-  expect(await b.locator('article a[href="/p/tasks-preview/task/t-2207"]').count()).toBe(1);expect(await b.getByText('Review the result',{exact:false}).count()).toBe(1);
+  expect(await b.locator('article a[href="/p/work/backlog/task/t-2207"]').count()).toBe(1);expect(await b.getByText('Review the result',{exact:false}).count()).toBe(1);
   await b.getByRole('link',{name:'Conversation',exact:true}).click();
   const conversationTile=b.locator('[data-tile=comms]');
   await expect.poll(()=>conversationTile.getByRole('heading',{name:'Conversation activity',exact:true}).count()).toBe(1);

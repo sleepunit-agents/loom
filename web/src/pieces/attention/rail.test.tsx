@@ -124,7 +124,7 @@ it('lists what each agent is doing in compact pills that open what they name, sa
  f.snapshots['generated.jobs']=live([
   {id:'terminal-proof',agent:'art',kind:'terminal',machine:'atelier',title:'codex',href:'/p/comms-preview/thread/terminal-proof'},
   {id:'j:talk',agent:'art',kind:'discord',place:'#pond',title:'Discord channel #pond',href:'/p/comms-preview/conversation/cv-pond',machine:'one'},
-  {id:'t-7',agent:'art',kind:'task',title:'Order hose',ref:'t-7',state:'in_progress',href:'/p/tasks-preview/task/t-7'},
+  {id:'t-7',agent:'art',kind:'task',title:'Order hose',ref:'t-7',state:'in_progress',href:'/p/work/backlog/task/t-7'},
   {id:'j:private',agent:'art',kind:'private'},
   {id:'j:other',agent:'other',kind:'job',title:'Other agent job'},
  ]);

@@ -85,7 +85,7 @@ export async function activityWorkLinks({page,tile,example,out}) {
   await tile.locator('[data-split-row]').filter({has:page.getByText('Repair the garden pump',{exact:true})}).first().click();
   const reader=tile.locator('article');
   const section=reader.locator('section').filter({has:page.getByRole('heading',{name:'Tasks and pull requests',exact:true})});
-  const expected=new Map(example.tasks.map((id,i)=>['/p/tasks-preview/task/'+id,
+  const expected=new Map(example.tasks.map((id,i)=>['/p/work/backlog/task/'+id,
    ['Compare garden pumps','Order the selected pump','Measure the hose','Retire the broken pump'][i]]));
   expected.set('https://github.com/example-house/garden/pull/12',`Plan the pump repair (${example.tasks[0]})`);
   for(const [href,label] of expected){

@@ -59,7 +59,7 @@ it('keeps the page-wide control rules to the tile page, compact at a desk and a 
   expect(rows).toMatch(/\[data-split-row\]:focus-visible[^{]*\{\s*outline: 2px solid/);
   expect(app).not.toMatch(/\.loom-kit-status \{[^}]*border:/);
   // Every Split fills its tile page and scrolls pane by pane without its app asking.
-  expect(rows).toMatch(/\.next-page > \.loom-split \{ height: 100%/);
+  expect(rows).toMatch(/:is\(\.next-page, \.work-desk\) > \.loom-split \{ height: 100%/);
 });
 it('opening an item leaves the rows mounted and where they were scrolled; only another list starts from its top', async () => {
   const { act, create } = await import('react-test-renderer' as string) as { act(run: () => Promise<void>): Promise<void>; create(node: unknown, options: object): { update(node: unknown): void; unmount(): void; root: { findByProps(props: object): { props: Record<string, unknown> } } } };

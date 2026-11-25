@@ -38,7 +38,7 @@ it('composes Activity with generated fields, selecting summaries separately from
  expect((await graphql({schema:f.generated,source:'{ memoryActivity { id } }'})).errors?.[0].message).toContain('Cannot query field "memoryActivity"');
  const result=await f.query('{ tasks { id } memoryActivity { days conversations episodes entries { id title what } } memoryActivityEntry(id:"e~fiction~m-story") { story asked decided tasks { label href } prs { label href } } }');
  expect(result.errors).toBeUndefined();
- expect(result.data).toEqual({tasks:[],memoryActivity:{days:['2026-11-14','2026-11-13','2026-11-12'],conversations:'unavailable',episodes:'available',entries:[{id:'e~fiction~m-story',title:'Shipped the pond fix',what:'work'}]},memoryActivityEntry:{story:s.body,asked:[],decided:[],tasks:[{label:'t-998',href:'/p/tasks-preview/task/t-998'}],prs:[{label:'loom#998',href:'https://github.com/sleepunit-agents/loom/pull/998'}]}});
+ expect(result.data).toEqual({tasks:[],memoryActivity:{days:['2026-11-14','2026-11-13','2026-11-12'],conversations:'unavailable',episodes:'available',entries:[{id:'e~fiction~m-story',title:'Shipped the pond fix',what:'work'}]},memoryActivityEntry:{story:s.body,asked:[],decided:[],tasks:[{label:'t-998',href:'/p/work/backlog/task/t-998'}],prs:[{label:'loom#998',href:'https://github.com/sleepunit-agents/loom/pull/998'}]}});
  expect(await f.query('{ memoryActivity(to:"2026-02-30") { id } memoryActivityEntry(id:"bad") { id } }')).toEqual({data:{memoryActivity:null,memoryActivityEntry:null}});
 });
 it('uses each authenticated viewer and replacement sharing snapshots without exposing private episodes through a project',async()=>{

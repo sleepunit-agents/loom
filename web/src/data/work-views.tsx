@@ -1,4 +1,4 @@
-import { taskPath, workTicketPath } from '../../../src/task-route';
+import { taskPath } from '../../../src/task-route';
 import { renderTempoChange } from '../pieces/tempo/settings';
 import { renderMeasuringChange } from '../pieces/measuring/settings';
 import { useEffect, useState } from 'react';
@@ -185,7 +185,7 @@ export function ChangesApp({ path, timezone, actions, go, base='/p/changes-previ
   return <Changes projectReader={!!project} snapshot={{ ...snapshot, reviewHistory }} actions={actions ?? defaultActions} names={names}
     navigation={{ selected, select: id => visit(id ? `${listPath}/change/${encodeURIComponent(id)}` : listPath), folder,
       openFolder: id => visit(id.startsWith('project:') ? `${base}/project/${encodeURIComponent(id.slice(8))}` : id === 'all' ? base : `${base}/${id}`) }}
-    openTask={go ? id => go(base.startsWith('/p/work/') ? workTicketPath(id) : taskPath(id)) : undefined} />;
+    openTask={go ? id => go(taskPath(id)) : undefined} />;
 }
 /** Cards read current entities. Inline approvals answer one request; standing grants live in the tiles. */
 type LiveApprovalProps = { id: string; showBlocker?: boolean; displayTitle?: string; timezone?: string; actions?: ApprovalActions };

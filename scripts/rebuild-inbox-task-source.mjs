@@ -23,7 +23,7 @@ export async function inboxTaskSource({page,tile,app,example,out,approval,open})
   const source=tile.getByRole('button',{name:'Open the task',exact:true});let tasks;
   if(await source.count()){
    await source.first().click();tasks=page.getByRole('region',{name:'Tasks tile',exact:true});await tasks.getByRole('heading',{name:title,exact:true}).waitFor();
-   check(new URL(page.url()).pathname==='/p/tasks-preview/task/'+encodeURIComponent(task.id),'The source link opened a different task');
+   check(new URL(page.url()).pathname==='/p/work/backlog/task/'+encodeURIComponent(task.id),'The source link opened a different task');
    evidence.inboxTaskArrival={ok:true,reason:'One waiting question for Alex opened its exact task through the Inbox source link.',task:task.id,item:items[0].id};
   }else{
    const screenshot='action-inboxTaskSource-missing-link.png';let captured=false;

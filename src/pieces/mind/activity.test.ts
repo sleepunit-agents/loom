@@ -34,7 +34,7 @@ it('does not arm Activity or inspect Conversations when no agent source is confi
 it('reads active episodes only and keeps absent files absent, with explicit missing conversation owner',async()=>{
  const a=source();a.add('m-visible');a.add('m-expired',{expires_at:new Date(now).toISOString()});a.add('m-archived',{archived:1});a.add('m-fact',{category:'project'});a.add('m-old',{created:'2026-10-01T00:00:00Z'});
  const missing=join(dir(),'missing.db'),app=await fixture(a.path,missing);const w=list(app);expect(w.days).toEqual(['2026-11-13','2026-11-12','2026-11-11']);expect(w.earlier).toBe('2026-11-10');expect(w.entries.map(e=>e.id)).toEqual(['e~art~m-visible']);expect(w).toMatchObject({conversations:'unavailable',episodes:'unavailable'});expect(existsSync(missing)).toBe(false);
- expect(read(app,'e~art~m-visible')).toMatchObject({story:expect.stringContaining('complete story'),tasks:[{label:'t-12',href:'/p/tasks-preview/task/t-12'}],prs:[{label:'loom#941'}]});
+ expect(read(app,'e~art~m-visible')).toMatchObject({story:expect.stringContaining('complete story'),tasks:[{label:'t-12',href:'/p/work/backlog/task/t-12'}],prs:[{label:'loom#941'}]});
  expect(list(app,owner,'2026-10-14').days).toEqual(['2026-10-14']);expect(app.reader.window('2026-02-30',owner)).toBeUndefined();expect(app.reader.window('2026-10-13',owner)).toBeUndefined();
 });
 it('opens the complete episode and resolves references beyond the first twenty thousand characters',async()=>{
@@ -80,7 +80,7 @@ it('checks shared-service UUID conversation ids in episode metadata and text',as
 });
 it('extracts task and PR references from shared digest item text',async()=>{
  const a=source(),app=await fixture(a.path,undefined,role([run('refs',{summary:'Checked the hose',asked:['Review t-43'],tasks:['Task t-42 with sleepunit-agents/loom#42'],references:['Pond: t-44 sleepunit-agents/loom#44']})]));
- expect(read(app,'d~art~refs')).toMatchObject({tasks:[{label:'t-43',href:'/p/tasks-preview/task/t-43'},{label:'t-42',href:'/p/tasks-preview/task/t-42'},{label:'t-44',href:'/p/tasks-preview/task/t-44'}],prs:[{label:'loom#42'},{label:'loom#44'}]});
+ expect(read(app,'d~art~refs')).toMatchObject({tasks:[{label:'t-43',href:'/p/work/backlog/task/t-43'},{label:'t-42',href:'/p/work/backlog/task/t-42'},{label:'t-44',href:'/p/work/backlog/task/t-44'}],prs:[{label:'loom#42'},{label:'loom#44'}]});
 });
 it('deduplicates moved conversations and covered episodes; readers preserve stories, refs, own needs and card-only steps',async()=>{
  const a=source();a.add('covered',{metadata:JSON.stringify({where:'terminal',conversation:'cv-111111111111'}),created:'2026-11-13T14:00:00Z'});a.add('near-duplicate',{created:'2026-11-13T17:15:00Z'});a.add('independent',{created:'2026-11-13T15:00:00Z',title:'Weekly check: all clear'});

@@ -83,7 +83,7 @@ it('consumes whole-mailbox search without locally discarding source matches, pag
   expect(listed()?.variables).toMatchObject({ search: 'needle', offset: 0 });
   expect(text()).toContain('Different display text'); expect(tree.root.findByType('Pager').props).toMatchObject({ hasPrevious: false, hasNext: false });
 });
-it.each([['task','t-1','Open the task','/p/tasks-preview/task/t-1'], ['approval','a-1','Open in Approvals','/p/approvals-preview/approval/a-1'], ['secret-request','s /1','Open in Secrets','/p/settings-preview/requests/s%20%2F1']])('opens %s source questions and dismisses actual action notices without central answers', async (source, sourceId, label, path) => {
+it.each([['task','t-1','Open the task','/p/work/backlog/task/t-1'], ['approval','a-1','Open in Approvals','/p/approvals-preview/approval/a-1'], ['secret-request','s /1','Open in Secrets','/p/settings-preview/requests/s%20%2F1']])('opens %s source questions and dismisses actual action notices without central answers', async (source, sourceId, label, path) => {
   setup(row({ source, sourceId, read: true })); const go = vi.fn();
   await act(async () => { tree = create(h(InboxApp, { path: '/p/inbox-preview/ask/in-1', go })); });
   expect(button('Yes')).toBeUndefined();

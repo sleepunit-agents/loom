@@ -213,7 +213,7 @@ export function SharedTasks(props: SharedTasksProps) {
     listAction={<Button disabled={!live || !props.act} onClick={() => act('create')}>Create task</Button>}
     listTop={live && assignee && <Body quiet>Only {name(assignee)}’s tasks · <LinkButton onClick={() => setAssignee(undefined)}>show everyone’s</LinkButton></Body>}
     list={props.status === 'loading' ? <Loading label="Opening tasks…"/> : !live ? <Error text={props.status === 'denied' ? 'Sign in to see tasks.' : 'Waiting for connection.'}/> : shown.length ? <List label="Task list">{shown.map(t => <Row key={t.id} title={t.title} meta={t.goal} status={`${t.id} · P${t.priority} · ${t.isShelved ? `shelved · was ${stateWord(t)}` : stateWord(t)}`} selected={t.id === props.selected} onClick={() => props.select(t.id)}/>)}</List> : <Empty title="No tasks here" text="Choose another folder or change your search."/>}
-    open={!!props.selected || creating} onBack={() => props.select()} backLabel="Back to Tasks" blank={<Empty title="Open a task" text="Choose work from the list."/>}
+    open={!!props.selected || creating} onBack={() => props.select()} backLabel="Back to backlog" blank={<Empty title="Open a task" text="Choose work from the list."/>}
     reader={creating ? <Reader aria-label="Create task"><Title>Create task</Title>{props.form!.node}</Reader>
     : selected ? <Reader aria-label="Task">
       <Meta>{selected.id} · {selected.type}</Meta>

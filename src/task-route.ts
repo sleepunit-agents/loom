@@ -20,13 +20,8 @@ export function taskId(path:string):string|undefined {
  try {return decodeURIComponent(raw.startsWith('~')?raw.slice(1):raw)||undefined;}catch{return;}
 }
 
-/** A desktop link that selects this exact task, including IDs imported from older stores. */
-export function taskPath(id: string): string {
-  return `/p/tasks-preview/task/${taskSegment(id)}`;
-}
-
 /** Keep the project toolbar when opening a ticket from a scoped view. */
-export function workTicketPath(id: string, project?: string): string {
+export function taskPath(id: string, project?: string): string {
   const scope = project ? '/project/' + encodeURIComponent(project) : '';
   return '/p/work' + scope + '/backlog/task/' + taskSegment(id);
 }

@@ -65,8 +65,8 @@ it('clears working-agent count when just the roster becomes unavailable',async()
 it('uses real piece counts, puts CI trouble first, and says nothing about health it has no source for',async()=>{
  await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn()}));});
  expect(tree.root.findByType('ticker-test').props.parts.slice(2)).toEqual([
-  {text:'Changes · 1 open · 1 CI red',href:'/p/changes-preview',tone:'bad'},
-  {text:'Tasks · 1 in progress · 1 ready',href:'/p/tasks-preview'},
+  {text:'Changes · 1 open · 1 CI red',href:'/p/work/changes',tone:'bad'},
+  {text:'Tasks · 1 in progress · 1 ready',href:'/p/work/backlog'},
   {text:'Tempo · 1 active trigger · 1 paused agent',href:'/p/tempo',tone:undefined},
   {text:'Bridges · 1 enabled connection',href:'/p/bridges-preview'},
   {text:'1 enrolled box'},
@@ -149,14 +149,14 @@ it('updates generated bridge counts and clears retained configuration when unava
 
 it('updates generated Changes counts, clears retained failures and distinguishes live zero',async()=>{
  await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn()}));});
- const changes=()=>tree.root.findByType('ticker-test').props.parts.find((p:any)=>p.href==='/p/changes-preview');
+ const changes=()=>tree.root.findByType('ticker-test').props.parts.find((p:any)=>p.href==='/p/work/changes');
  f.changes={status:'live',data:{changes:[{id:'a',checks:'passing'},{id:'b',checks:'running'}]}};
  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
- expect(changes()).toEqual({text:'Changes · 2 open',href:'/p/changes-preview',tone:undefined});
+ expect(changes()).toEqual({text:'Changes · 2 open',href:'/p/work/changes',tone:undefined});
  for(const status of ['loading','offline','denied']){
   f.changes={status,data:{changes:[{id:'red',checks:'failing'}]}};
   await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
-  expect(changes()).toEqual({text:'Changes unavailable',href:'/p/changes-preview',tone:undefined});
+  expect(changes()).toEqual({text:'Changes unavailable',href:'/p/work/changes',tone:undefined});
  }
  f.changes={status:'live',data:{changes:[]}};
  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
@@ -165,7 +165,7 @@ it('updates generated Changes counts, clears retained failures and distinguishes
 
 it('updates generated task counts independently and clears retained readiness in unavailable states',async()=>{
  await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn()}));});
- const tasks=()=>tree.root.findByType('ticker-test').props.parts.find((p:any)=>p.href==='/p/tasks-preview');
+ const tasks=()=>tree.root.findByType('ticker-test').props.parts.find((p:any)=>p.href==='/p/work/backlog');
  f.tasks={status:'live',data:{inProgress:[{id:'a'},{id:'b'}],readyTasks:[]}};
  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
  expect(tasks().text).toBe('Tasks · 2 in progress · 0 ready');

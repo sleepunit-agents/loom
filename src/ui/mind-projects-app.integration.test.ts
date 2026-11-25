@@ -42,7 +42,7 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('Projects tasks-fi
   await expect.poll(()=>b.getByRole('heading',{name:'Pond',exact:true}).count()).toBe(1);
   expect(await b.getByRole('heading',{name:'Tasks',exact:true}).count()).toBe(1);await b.getByRole('region',{name:'People',exact:true}).getByRole('button',{name:'Details'}).click();expect(await b.getByText('Field coordinator',{exact:false}).count()).toBe(1);
   const headings=await b.locator('article section[aria-label] > h3').allTextContents();expect(headings.indexOf('Tasks')).toBeLessThan(headings.indexOf('People'));
-  expect(await b.locator('article a[href="/p/tasks-preview/task/t-2"]').count()).toBe(1);
+  expect(await b.locator('article a[href="/p/work/backlog/task/t-2"]').count()).toBe(1);
   expect(await b.getByRole('heading',{name:'Conversations',exact:true}).count()).toBe(1);expect(await b.getByText('Conversations service is not available yet.',{exact:true}).count()).toBe(0);
   await b.getByText('Memories',{exact:true}).click();await b.getByRole('link',{name:'Field update — Complete field update',exact:true}).click();await expect.poll(()=>b.getByRole('heading',{name:'Field update',exact:true}).count()).toBe(1);expect(await b.getByText('Complete field update',{exact:true}).count()).toBe(1);await b.getByRole('button',{name:'Projects',exact:true}).last().click();await expect.poll(()=>b.getByRole('heading',{name:'Pond',exact:true}).count()).toBe(1);
   const shots=resolve('artifacts/projects-app');mkdirSync(shots,{recursive:true});

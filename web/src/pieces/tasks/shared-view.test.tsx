@@ -148,7 +148,7 @@ it('names its folders as the site does, counts projects and epics, and heads nei
   expect(folders().filter(f=>f.id&&!f.id.includes(':')).map(f=>f.label)).toEqual(['Ready','In progress','Needs Jonathan','All open','Recently closed','Shelved']);
   expect(folders().filter(f=>f.id?.includes(':')).map(f=>[f.label,f.count])).toEqual([['pond',1],['Fix the pond',1]]);
   expect(folders().filter(f=>f.heading).map(f=>f.heading)).toEqual(['Projects','Epics']);
-  expect(tree.root.findByType('Split').props.listTitle).toBe('Ready'); expect(tree.root.findByType('Split').props.backLabel).toBe('Back to Tasks');
+  expect(tree.root.findByType('Split').props.listTitle).toBe('Ready'); expect(tree.root.findByType('Split').props.backLabel).toBe('Back to backlog');
   await act(async () => tree.update(h(SharedTasks,props({tasks:[task('t-1')]}))));
   expect(folders().some(f=>f.heading)).toBe(false);
 });

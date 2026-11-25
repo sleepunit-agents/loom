@@ -1,6 +1,6 @@
 import { useDataQuery } from '../../data/graphql';
 import { LinkButton } from '../../kit';
-import { workTicketPath } from '../../../../src/task-route';
+import { taskPath } from '../../../../src/task-route';
 
 export function WorkSubjectLink({kind,id,go}:{kind:'ticket'|'project';id:string;go:(href:string)=>void}) {
   const ticket=kind==='ticket';
@@ -10,5 +10,5 @@ export function WorkSubjectLink({kind,id,go}:{kind:'ticket'|'project';id:string;
   if(feed.status==='loading' || feed.settling) return <>Opening work item…</>;
   const row=feed.status==='live' ? feed.data?.subject : null;
   if(row?.id!==id || row.lifecycle==='removed') return <>Work item unavailable</>;
-  return <LinkButton onClick={()=>go(ticket ? workTicketPath(id) : '/p/work/project/'+encodeURIComponent(id))}>{row.label}</LinkButton>;
+  return <LinkButton onClick={()=>go(ticket ? taskPath(id) : '/p/work/project/'+encodeURIComponent(id))}>{row.label}</LinkButton>;
 }
