@@ -47,6 +47,14 @@ it('filters readiness and hidden blockers in SQL before pagination, keeping ordi
   expect(ordinary.errors).toBeUndefined();
   expect(ordinary.data).toEqual({ tasks: [{ id: 'a-blocked' }] });
 });
+it('skips outstanding questions before limiting the queue and restores answered tickets', async () => {
+  const { db, schema } = fixture();
+  const read = () => graphql({ schema, source: '{ readyTasks(orderBy:{id:{direction:asc,priority:0}},limit:1) { id } }' });
+  db.update(s.tasks).set({ ask: 'Which pump?' }).where(eq(s.tasks.id, 'b-ready')).run();
+  expect((await read()).data).toEqual({ readyTasks: [{ id: 'c-ready' }] });
+  db.update(s.tasks).set({ ask: null }).where(eq(s.tasks.id, 'b-ready')).run();
+  expect((await read()).data).toEqual({ readyTasks: [{ id: 'b-ready' }] });
+});
 it('rechecks retained schemas on blocker closure, reopening and membership withdrawal', async () => {
   const { db, schema } = fixture();
   const read = () => graphql({ schema, source: '{ readyTasks(orderBy:{id:{direction:asc,priority:0}}) { id } }' });
