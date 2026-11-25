@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import './home.css';
 import './project.css';
 import {WorkFrame} from './toolbar';
@@ -19,6 +19,7 @@ import { unfiledBase, unfiledPage, workHomeQuery, workProjectQuery } from './que
 
 type Ticket = {id:string; title:string; status:'open'|'in_progress'|'closed'; changedAt:string};
 type Project = {id:string; name:string; goal:string|null; lifecycle:'active'|'retired'|'removed'};
+const Backlog = lazy(()=>import('../../data/tasks-app'));
 const base = '/p/work';
 const statusWords = {open:'Open', in_progress:'In progress', closed:'Closed'};
 
@@ -30,10 +31,15 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
   const [,,,section,sectionId] = path.split('?')[0].split('/');
   const projectId = section==='project' ? sectionId : undefined;
   const unfiled = section==='unfiled';
+  const backlog = section==='backlog';
+  const offHome = !!projectId || unfiled || backlog;
   const decisions = useDataQuery<{inboxProjectNeeds:{project:string;needs:number}[]}>(
-    'query WorkProjectDecisions { inboxProjectNeeds { project needs } }', {}, {pause:!!projectId || unfiled || !reading});
-  const home = useDataQuery<{projects:(Project & {tasksByProject:Ticket[]})[];inFlight:{id:string;tasksByProject:{id:string}[]}[];unfiled:Ticket[]}>(workHomeQuery, {}, {pause:!!projectId || unfiled});
+    'query WorkProjectDecisions { inboxProjectNeeds { project needs } }', {}, {pause:offHome || !reading});
+  const home = useDataQuery<{projects:(Project & {tasksByProject:Ticket[]})[];inFlight:{id:string;tasksByProject:{id:string}[]}[];unfiled:Ticket[]}>(workHomeQuery, {}, {pause:offHome});
   const detail = useDataQuery<{project:Project|null;working:Ticket[];recent:Ticket[]}>(workProjectQuery,{id:projectId ?? ''},{pause:!projectId});
+  if (backlog) return <WorkFrame title="Work" path={path} go={go}>
+    <Suspense fallback={<Loading label="Opening backlog…"/>}><Backlog path={path} go={go}/></Suspense>
+  </WorkFrame>;
   if (unfiled) return <WorkFrame title="Unfiled tickets" path={path} go={go}>
     <UnfiledTickets page={unfiledPage(path)} go={go}/>
   </WorkFrame>;
@@ -45,6 +51,9 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
     if (!project || project.id !== projectId || project.lifecycle==='removed') return <WorkFrame title="Work" path={path} go={go}><Empty title="Project unavailable"/></WorkFrame>;
     const frame = {title:project.name,path,go,project:project.id};
     const view = path.split('?')[0].split('/')[5];
+    if (view==='backlog') return <WorkFrame {...frame}>
+      <Suspense fallback={<Loading label="Opening backlog…"/>}><Backlog key={project.id} path={path} go={go} backlogProject={project.id}/></Suspense>
+    </WorkFrame>;
     if (view==='changes') return <WorkFrame {...frame}><ProjectChanges project={project.id} path={path} go={go}/></WorkFrame>;
     if (view==='history') return <WorkFrame {...frame}><BacklogWindow key={path} project={project.id} path={path} detail go={go}/></WorkFrame>;
     if (view==='board') return <WorkFrame {...frame}><ProjectBoard key={project.id} project={project.id} path={path} go={go}/></WorkFrame>;

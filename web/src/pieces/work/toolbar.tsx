@@ -3,6 +3,7 @@ import {ToolbarFrame} from '../../kit/toolbar';
 const views = [
   {label:'Overview', suffix:''},
   {label:'Board', suffix:'/board'},
+  {label:'Backlog', suffix:'/backlog'},
   {label:'Pull requests', suffix:'/changes'},
   {label:'History', suffix:'/history'},
 ] as const;
@@ -16,11 +17,13 @@ export function WorkFrame({title,path,project,go,controls,children}:{
   return <div className={'work-desk'+(project ? ' work-project' : '')}>
     <ToolbarFrame title={title} controls={controls}
       mark={<span className="work-mark" aria-hidden="true"><i/><i/><i/></span>}
-      back={route!==home ? {label:'Projects',open:()=>go(home)} : undefined}
+      back={project || route===home+'/unfiled' || route.startsWith(home+'/unfiled/') ? {label:'Projects',open:()=>go(home)} : undefined}
       navigation={root ? {label:'Project views',views:views.map(({label,suffix})=>({
-        label,current:route===root+suffix,open:()=>go(root+suffix),
-      }))} : undefined}
-      action={root ? {label:'Backlog',open:()=>go('/p/tasks-preview/?folder='+encodeURIComponent('project:'+project))} : undefined}>
+        label,current:route===root+suffix || (suffix==='/backlog' && route.startsWith(root+'/backlog/task/')),open:()=>go(root+suffix),
+      }))} : {label:'Work views',views:[
+        {label:'Projects',current:route===home,open:()=>go(home)},
+        {label:'Backlog',current:route===home+'/backlog' || route.startsWith(home+'/backlog/'),open:()=>go(home+'/backlog')},
+      ]}}>
       {children}
     </ToolbarFrame>
   </div>;

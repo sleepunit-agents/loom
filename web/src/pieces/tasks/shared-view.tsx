@@ -68,6 +68,7 @@ export interface SharedTasksProps {
   ready: readonly string[];
   selected?: string;
   /** What the path asked to open on: a folder's id, and one agent whose tasks alone are listed until the person says otherwise. */
+  backlogProject?: string;
   startFolder?: string; startAssignee?: string;
   liveAgentIds?: ReadonlySet<string>;
   questionFor: string;
@@ -106,7 +107,7 @@ export function SharedTasks(props: SharedTasksProps) {
   const act = (action: TaskAction, task?: Task) => { opener.current = typeof document === 'undefined' ? null : document.activeElement as HTMLElement | null; props.act?.(action, task); };
   // Losing the authorized snapshot also hides selected detail and comments immediately.
   const live = props.status === 'live';
-  const tasks = live ? props.tasks : [];
+  const tasks = live ? (props.backlogProject ? props.tasks.filter(task=>task.project===props.backlogProject) : props.tasks) : [];
   const links = live ? props.links : [];
   const selected = live ? props.reader : undefined;
   const project = props.projectLink?.id === selected?.project ? props.projectLink : undefined;
@@ -153,7 +154,7 @@ export function SharedTasks(props: SharedTasksProps) {
   const epics = tasks.filter(t => t.type === 'epic' && t.status !== 'closed').map(t => ({id:`epic:${t.id}`,label:t.title,count:epicChildren.get(t.id)?.size ?? 0}));
   const folders: SplitFolder[] = [
     ...[['ready','Ready'],['progress','In progress'],['questions',props.questionFor ? `Needs ${name(props.questionFor)}` : 'Needs you'],['open','All open'],['closed','Recently closed'],['shelved','Shelved']].map(([id,label]) => ({id,label,count:count(id)})),
-    ...(projects.length ? [{heading:'Projects'}, ...projects] : []),
+    ...(!props.backlogProject && projects.length ? [{heading:'Projects'}, ...projects] : []),
     ...(epics.length ? [{heading:'Epics'}, ...epics] : []),
   ];
   const current = folders.find((f): f is Extract<SplitFolder,{id:string}> => 'id' in f && f.id === folder);

@@ -11,6 +11,7 @@ import { earlierNotesQuery, notePageSize, taskCommentsQuery, taskSourceQuery, ta
 
 export interface TasksAppProps {
   path?: string;
+  backlogProject?: string;
   go?: (path: string) => void;
   questionFor?: string;
   conversation?: string;
@@ -24,7 +25,7 @@ export interface TasksAppProps {
   zone?: string;
   liveAgentIds?: ReadonlySet<string>;
 }
-export default function TasksApp({ path: shellPath, go, questionFor = '', conversation, openConversation, submit, people = [], projects = [], names, zone, liveAgentIds }: TasksAppProps = {}) {
+export default function TasksApp({ path: shellPath, backlogProject, go, questionFor = '', conversation, openConversation, submit, people = [], projects = [], names, zone, liveAgentIds }: TasksAppProps = {}) {
   const [localPath, setLocalPath] = useState(() => typeof location === 'undefined' ? '/p/tasks-preview' : location.pathname);
   const [whole, search = ''] = (shellPath ?? localPath).split('?');
   // The path may ask for a folder and one agent's tasks (Home's "tasks in progress" does):
@@ -43,7 +44,7 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
   const snapshot = useDataQuery<TasksSelection>(tasksQuery, listVariables, { keep: true });
   const status = snapshot.status === 'offline' ? 'unavailable' : snapshot.status;
   const tasks = status === 'live' ? snapshot.data?.tasks ?? [] : [];
-  const selectedTask = tasks.find(task => task.id === selected);
+  const selectedTask = tasks.find(task => task.id === selected && (!backlogProject || task.project===backlogProject));
   const readDetail = !combined && !!selectedTask;
   const detailFeed = useDataQuery<Pick<TasksSelection, 'selectedTask'>>(taskCommentsQuery, { selected }, { pause: !readDetail });
   const readerFeed = combined ? snapshot : detailFeed;
@@ -87,7 +88,8 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const navigate = (id?: string) => {
     setAction(undefined); setProblem('');
-    const next = id === undefined ? base : `${base}/task/${taskSegment(id)}`;
+    const target = id === undefined ? base : `${base}/task/${taskSegment(id)}`;
+    const next = base.startsWith('/p/work/') && search ? target+'?'+search : target;
     if (go) go(next);
     else { if (typeof history !== 'undefined') history.pushState(null, '', next); setLocalPath(next); }
   };
@@ -116,7 +118,7 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
   } : undefined;
   const open = !!submit && !!action && status === 'live' && (action.action === 'create' || !!target);
   const links = tasks.flatMap(task => task.taskLinksByTask);
-  return <SharedTasks status={status} tasks={tasks} selected={selected} reader={reader} select={navigate} questionFor={questionFor} startFolder={startFolder} startAssignee={startAssignee} liveAgentIds={liveAgentIds}
+  return <SharedTasks status={status} tasks={tasks} backlogProject={backlogProject} selected={selected} reader={reader} select={navigate} questionFor={questionFor} startFolder={startFolder ?? (backlogProject ? 'open' : undefined)} startAssignee={startAssignee} liveAgentIds={liveAgentIds}
     discussion={reader && go ? <WorkDiscussion key={reader.id} kind="ticket" id={reader.id} go={go}/> : undefined}
     posts={posts.slice(0,30)}
     openPost={go ? post=>go(agentPath(post.agent)+'?activity='+encodeURIComponent(post.thread)) : undefined}
@@ -145,6 +147,6 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
     openChange={go ? id => go(`/p/changes-preview/change/${encodeURIComponent(id)}`) : undefined}
     names={names} zone={zone} busy={sending} problem={problem || undefined} act={act}
     form={open ? { action: action.action, node: <SharedTaskForm status={status} action={action.action} task={target} tasks={tasks} links={links}
-      people={people} projects={projects} conversation={conversation} submit={submit}
+      people={people} projects={projects} initialProject={backlogProject} conversation={conversation} submit={submit}
       done={() => setAction(undefined)} cancel={() => setAction(undefined)}/> } : undefined}/>;
 }
