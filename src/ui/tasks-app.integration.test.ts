@@ -696,3 +696,29 @@ it.runIf(process.env.CI==='true' && chrome && existsSync(join(root,'index.html')
     expect(await page.getByText(/^Inspection note \d+$/).count()).toBe(0);
   }finally{await browser.close();await app.close();}
 });
+
+it.runIf(process.env.CI==='true' && chrome && existsSync(join(root,'index.html')))('grooms a project backlog inside Work and keeps its filter when returning from a ticket',async()=>{
+  const app=await fixture(true),browser=await chromium.launch({executablePath:chrome});
+  try{
+    const ctx=await browser.newContext({viewport:{width:1440,height:900},reducedMotion:'reduce'});
+    await ctx.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
+    const page=await ctx.newPage();page.setDefaultTimeout(5000);
+    await page.goto(app.url+'/p/work/project/pond');
+    const views=page.getByRole('navigation',{name:'Project views'});
+    await views.getByRole('button',{name:'Backlog'}).click();
+    await views.getByRole('button',{name:'Backlog',current:'page'}).waitFor();
+    const search=page.getByRole('searchbox',{name:'Search tasks'});
+    await search.fill('pond pump');
+    await page.getByRole('group',{name:'Task list'}).getByText(title,{exact:true}).click();
+    await page.getByRole('region',{name:'Ticket story'}).waitFor();
+    expect(new URL(page.url()).pathname).toMatch(/^\/p\/work\/project\/pond\/backlog\/task\/t-1$/);
+    await page.goBack();
+    expect(await search.inputValue()).toBe('pond pump');
+    await page.getByRole('button',{name:'Create task',exact:true}).click();
+    expect(await page.getByRole('form',{name:'Create task',exact:true}).getByRole('combobox',{name:'Project',exact:true}).inputValue()).toBe('pond');
+    expect(await page.getByText(hiddenTitle,{exact:true}).count()).toBe(0);
+    await page.goto(app.url+'/p/work/backlog');
+    await page.getByRole('button',{name:'Backlog',current:'page'}).waitFor();
+    await page.getByRole('searchbox',{name:'Search tasks'}).waitFor();
+  }finally{await browser.close();await app.close();}
+});

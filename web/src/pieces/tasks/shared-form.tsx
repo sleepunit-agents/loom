@@ -21,6 +21,7 @@ export interface TaskFormProps {
   task?: SharedTask;
   /** Authorized choices from the existing shared feed, never a separate fetch. Each label is a display name. */
   people: readonly (Person & { label: string })[];
+  initialProject?:string;
   projects: readonly { id: string; label: string }[];
   tasks: readonly Pick<SharedTask, 'id' | 'title'>[];
   /** The relations already in view, so Parent and Blocked by can list what the task has and take one away. */
@@ -47,7 +48,7 @@ function Draft(p: TaskFormProps) {
   const t = p.task;
   const [title, setTitle] = useState(t?.title ?? ''), [goal, setGoal] = useState(t?.goal ?? ''), [why, setWhy] = useState(t?.why ?? '');
   const [doneWhen, setDoneWhen] = useState(t?.doneWhen ?? ''), [description, setDescription] = useState(t?.description ?? '');
-  const [priority, setPriority] = useState(t?.priority ?? 2), [project, setProject] = useState(t?.project ?? '');
+  const [priority, setPriority] = useState(t?.priority ?? 2), [project, setProject] = useState(t?.project ?? (p.action==='create' ? p.initialProject : '') ?? '');
   const [type, setType] = useState<SharedTask['type']>('task'), [owner, setOwner] = useState('household');
   const [text, setText] = useState(''), [related, setRelated] = useState('');
   const [to, setTo] = useState(''), [ask, setAsk] = useState(t?.ask ?? ''), [ifYes, setIfYes] = useState(t?.ifYes ?? ''), [ifNo, setIfNo] = useState(t?.ifNo ?? '');
