@@ -1,3 +1,5 @@
+import { useReadingVisible } from '../../data/visibility';
+import { CatchUp } from './catch-up';
 import { ProjectNeeds } from './project-needs';
 import { ProjectBoard } from './board';
 import { taskPath } from '../../../../src/task-route';
@@ -10,7 +12,10 @@ type Project = {id:string; name:string; lifecycle:'active'|'retired'|'removed'};
 const base = '/p/work';
 const statusWords = {open:'Open', in_progress:'In progress', closed:'Closed'};
 
-export default function Work({path=base,go=(href:string)=>location.assign(href)}:{path?:string;go?:(href:string)=>void}) {
+export default function Work({visible=true,path=base,go=(href:string)=>location.assign(href)}:{visible?:boolean;path?:string;go?:(href:string)=>void}) {
+  const reading = useReadingVisible(visible);
+  const viewer = useDataQuery<{homeComms:{member:string}|null}>('query WorkViewer { homeComms { member } }');
+  const member = viewer.status==='live' && !viewer.settling ? viewer.data?.homeComms?.member : undefined;
   const projectId = path.split('/')[4];
   const home = useDataQuery<{projects:(Project & {tasksByProject:Ticket[]})[];inFlight:{id:string;tasksByProject:{id:string}[]}[]}>(workHomeQuery, {}, {pause:!!projectId});
   const detail = useDataQuery<{project:Project|null;working:Ticket[];recent:Ticket[]}>(workProjectQuery,{id:projectId ?? ''},{pause:!projectId});
@@ -49,6 +54,7 @@ export default function Work({path=base,go=(href:string)=>location.assign(href)}
   const retired = projects.filter(project=>project.lifecycle==='retired');
   return <div className="p-4"><AppFrame title="Work" where={base} go={go} context={active.length ? `${active.length} active project${active.length===1 ? '' : 's'} · ${activeCount} with claimed tickets` : undefined}>
     {grid(active)}
+    {member && reading && <CatchUp key={member} member={member} go={go}/>}
     {retired.length>0 && <details><summary>Retired projects ({retired.length})</summary>{grid(retired)}</details>}
     {!projects.length && <Empty title="No projects yet"/>}
   </AppFrame></div>;
