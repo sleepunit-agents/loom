@@ -8,7 +8,7 @@ import './controls.css';
 /** Header, filters and content. about participates in the desktop's Chat about this menu. */
 export function AppFrame({ children, filters, about, ...header }: ComponentProps<typeof AppHeader> & { children: ReactNode; filters?: ReactNode; about?: About }) {
   return <section className="loom-kit-frame" {...(about ? aboutAttr(about) : {})}>
-    <AppHeader {...header} />{filters && <div className="loom-kit-filters">{filters}</div>}{children}
+    <AppHeader {...header} filters={filters}>{children}</AppHeader>
   </section>;
 }
 

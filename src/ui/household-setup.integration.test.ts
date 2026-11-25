@@ -13,7 +13,7 @@ import {members,agents,tokens,sessions,agentAccounts,household,memberAgents} fro
 import {serveShared} from '../shared-serve.js';
 import {deskMemoryFixture} from './desk-memory.fixture.js';
 const enabled=process.env.LOOM_DESK_EVIDENCE==='1',chrome=process.env.LOOM_TEST_CHROME,webRoot=resolve('dist/web');
-if(enabled&&(!chrome||!existsSync(chrome)||!existsSync(join(webRoot,'next.html'))))throw Error('Setup evidence needs Chrome and the built app');
+if(enabled&&(!chrome||!existsSync(chrome)||!existsSync(join(webRoot,'index.html'))))throw Error('Setup evidence needs Chrome and the built app');
 it.runIf(enabled)('Household owners request roster changes, see automated token issuance refused and end another browser across shared windows',async()=>{
  const client=new Database(':memory:'),clock=new FakeClock(),now=()=>new Date(clock.now()).toISOString(),db=createDataSchema(client,now),hash=(value:string)=>createHash('sha256').update(value).digest('hex'),cookie='c'.repeat(64);
  db.insert(members).values([{id:'owner',role:'owner',joinedAt:now()},{id:'sam',role:'member',joinedAt:now()}]).run();db.insert(agents).values({id:'art',about:'Fixture agent',markBg:'#000000',markFg:'#ffffff',faceShape:'pebble',faceEyes:'dot'}).run();
@@ -29,9 +29,10 @@ it.runIf(enabled)('Household owners request roster changes, see automated token 
   await a.goto(app.url+(await login.json()).value.path);
   await a.getByRole('button',{name:'Sign in',exact:true}).click();
   for(const page of [a,b]){page.on('pageerror',error=>errors.push(error.message));page.on('websocket',socket=>{if(new URL(socket.url()).pathname==='/live')legacy++;});await page.goto(app.url+'/p/setup-preview');}
+  await a.locator('.loom-desk-boot').waitFor({state:'hidden'});
   const add=a.getByRole('form',{name:'Add member',exact:true});
-  await add.getByRole('textbox',{name:'Member name'}).fill('pat');
   await add.getByRole('checkbox',{name:'art',exact:true}).check();
+  await add.getByRole('textbox',{name:'Member name'}).fill('pat');
   await add.getByRole('button',{name:'Request new member'}).click();
   const draft=a.getByRole('textbox',{name:'Message art',exact:true});
   expect(await draft.inputValue()).toContain('pat');
@@ -53,7 +54,10 @@ it.runIf(enabled)('Household owners request roster changes, see automated token 
   await expect.poll(()=>a.getByText('Please propose setting the GitHub accounts for art to ART-BOT.',{exact:true}).count()).toBe(1);
   expect(db.select().from(agentAccounts).all()).toEqual([]);
   await a.goto(app.url+'/p/setup-preview');
-  const mint=a.getByRole('form',{name:'Create token',exact:true});await mint.getByRole('textbox',{name:'Token label',exact:true}).fill('Fictional owner token');await mint.getByRole('button',{name:'Create token',exact:true}).click();
+  await a.locator('.loom-desk-boot').waitFor({state:'hidden'});
+  const mint=a.getByRole('form',{name:'Create token',exact:true});await mint.getByRole('textbox',{name:'Token label',exact:true}).fill('Fictional owner token');const refused=a.waitForResponse(response=>new URL(response.url()).pathname==='/api/signin/token');
+  await mint.getByRole('button',{name:'Create token',exact:true}).click();
+  expect((await refused).status()).toBe(403);
   await expect.poll(()=>a.getByText('Sign in again to make a token.',{exact:false}).count()).toBe(1);
   expect(await a.getByLabel('Token value',{exact:true}).count()).toBe(0);
   expect(db.select().from(tokens).all().some(token=>token.label==='Fictional owner token')).toBe(false);
