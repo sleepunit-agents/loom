@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { and, desc, eq, gt, lt, inArray, isNull, notExists, notInArray, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { DataDatabase } from '../data/database.js';
-import { agentPostNames, agentPosts, agentPostThreads, conversations, threads } from '../data/schema.js';
+import { agentPostNames, agentPostWorkRefs, agentPostWorkPending, agentPosts, agentPostThreads, conversations, threads } from '../data/schema.js';
 import { threadTitle } from './title.js';
 import { MESSAGE_WORDS_MAX, type WordsKey } from './words.js';
 
@@ -31,6 +31,31 @@ export function allActivitySourcesMatch(db: DataDatabase, sources: ReturnType<ty
       eq(agentPosts.thread, agentPostThreads.id), notInArray(agentPosts.source, sources)))),
     notExists(db.select({ id: agentPostNames.thread }).from(agentPostNames).where(and(
       eq(agentPostNames.thread, agentPostThreads.id), notInArray(agentPostNames.source, sources)))))!;
+}
+
+export function ticketRefDigest(key: WordsKey, id: string) {
+  return key.hash(JSON.stringify(['activity-ticket', id]));
+}
+
+function indexPostRefs(db: DataDatabase, key: WordsKey, post: number, refs: readonly string[]) {
+  const rows = [...new Set(refs)].filter(id => id.startsWith('t-')).map(id => ({post,digest:ticketRefDigest(key,id)}));
+  if (rows.length) db.insert(agentPostWorkRefs).values(rows).onConflictDoNothing().run();
+}
+
+/** Upgrade old rows in restartable batches. Recheck each pending row after async key access. */
+export async function indexEarlierPostRefs(db: DataDatabase, key: WordsKey) {
+  for (;;) {
+    const page = db.select({post:agentPostWorkPending.post,sealed:agentPosts.workRefs}).from(agentPostWorkPending)
+      .innerJoin(agentPosts,eq(agentPosts.seq,agentPostWorkPending.post)).orderBy(agentPostWorkPending.post).limit(64).all();
+    if (!page.length) return;
+    const entries = await Promise.all(page.map(async row => ({post:row.post, refs:await openRefs(key,row.sealed)})));
+    db.transaction(() => {
+      for (const {post,refs} of entries) {
+        const removed = db.delete(agentPostWorkPending).where(eq(agentPostWorkPending.post,post)).run();
+        if (removed.changes) indexPostRefs(db,key,post,refs);
+      }
+    });
+  }
 }
 
 /** The operation authenticates the source and runs this prepared write inside its receipt transaction. */
@@ -72,7 +97,8 @@ export async function prepareAgentPost(db: DataDatabase, key: WordsKey, source: 
         target:agentPostNames.thread,set:{source,title:sealedTitle!},
       }).run();
     } else {
-      db.insert(agentPosts).values({ thread: id, source, at, workRefs, words: sealedWords! }).run();
+      const post = db.insert(agentPosts).values({ thread: id, source, at, workRefs, words: sealedWords! }).returning({seq:agentPosts.seq}).get();
+      indexPostRefs(db,key,post.seq,edit.refs ?? []);
     }
     return id;
   });

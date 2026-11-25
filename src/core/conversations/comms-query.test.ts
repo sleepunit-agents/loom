@@ -611,3 +611,32 @@ it.each(['feed','history'] as const)('withholds removed source words during an i
   expect(result.errors).toBeUndefined();
   expect(result.data).toEqual(surface==='feed' ? {agentActivityFeed:[]} : {agentActivityHistory:[{words:'Boot console'}]});
 });
+
+it('pages activity by explicit ticket reference, inherits replies and rechecks the task and source', async () => {
+  const f=await fixture(), {tasks,agentPosts,agentPostWorkRefs,agentPostWorkPending}=await import('../data/schema.js');
+  const {prepareAgentPost}=await import('./agent-posts.js');
+  const at='2026-11-14T18:00:00Z';
+  f.db.insert(tasks).values({id:'t-41',title:'Fix the rail',ownerKind:'member',owner:'alice',
+    createdByKind:'member',createdBy:'alice',createdAt:at,changedAt:at}).run();
+  const open=(source:string,words:string)=>prepareAgentPost(f.db,f.key,source,{action:'open',words,refs:['t-41']});
+  const activity=(await open(f.thread.id,'Found the flash'))(at);
+  (await prepareAgentPost(f.db,f.key,f.thread.id,{action:'reply',thread:activity,words:'Both desktops verified'}))(at);
+  const foreign=f.comms.threads.open({member:'bob',agent:'art',title:'Bob'});
+  (await open(foreign.id,'Private work on the same ticket'))(at);
+  // The migration leaves existing sealed references in a durable queue.
+  f.db.delete(agentPostWorkRefs).run();
+  const posts=f.db.select().from(agentPosts).all();
+  f.db.insert(agentPostWorkPending).values(posts.filter(p=>p.workRefs).map(p=>({post:p.seq}))).run();
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:commsQueryFields(f.service)})});
+  const read=async(before='0',task='t-41')=>{
+    const result=await graphql({schema,source:'query($before:String!,$task:String!){ticketActivityPosts(task:$task,before:$before,limit:1){id words thread}}',
+      variableValues:{before,task},contextValue:{viewer:alice}});
+    expect(result.errors).toBeUndefined(); return result.data?.ticketActivityPosts;
+  };
+  expect(await read()).toEqual([{id:'2',words:'Both desktops verified',thread:activity}]);
+  expect(f.db.select().from(agentPostWorkPending).all()).toHaveLength(0);
+  expect(await read('2')).toEqual([{id:'1',words:'Found the flash',thread:activity}]);
+  expect(await read('0','t-99')).toEqual([]);
+  f.onOpen(()=>f.revoke());
+  expect(await read()).toEqual([]);
+});
