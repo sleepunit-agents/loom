@@ -9,6 +9,7 @@ vi.mock('../../data/graphql',()=>({useDataQuery:(query:string,variables?:Record<
   f.calls.push({query,variables,options});
   if(options?.pause) return {status:'loading'};
   if(query.includes('WorkUnfiled')) return {status:f.status,data:{unfiled:f.pages.get(Number(variables?.offset)) ?? []}};
+  if(query.includes('WorkProjectDecisions')) return {status:'live',data:{inboxProjectNeeds:[]}};
   if(query.includes('WorkHome')) return {status:'live',data:{projects:[],inFlight:[],unfiled:f.home}};
   return {status:'live',data:{homeComms:null}};
 }}));
