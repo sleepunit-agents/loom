@@ -36,7 +36,20 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Comms opens, s
     const thread = db.select().from(threads).get()!;
     expect(thread.title).toBe('New conversation');
     await expect.poll(() => a.getByRole('textbox',{name:'Message Art',exact:true}).count()).toBe(1);
-    await b.goto(`${url}/p/comms-preview/thread/${encodeURIComponent(thread.id.replace(/^th:/,''))}`);
+    await b.setViewportSize({width:390,height:844});
+    await b.goto(`${url}/p/comms-preview`);
+    const search=b.locator('header[aria-label="Comms toolbar"]').getByRole('searchbox',{name:'Search conversations'});
+    await search.click();
+    await search.fill('no fixture matches this');
+    expect(await search.inputValue()).toBe('no fixture matches this');
+    await b.getByText('No conversations here',{exact:true}).waitFor();
+    await search.fill(thread.title);
+    const match=b.locator('[data-split-row]').filter({hasText:thread.title});
+    await match.press('Enter');
+    await b.getByRole('textbox',{name:'Message Art',exact:true}).waitFor();
+    await b.getByRole('button',{name:'Back to conversations'}).click();
+    await expect.poll(()=>match.evaluate(row=>row===document.activeElement)).toBe(true);
+    await b.keyboard.press('Enter');
     await a.getByRole('textbox',{name:'Message Art',exact:true}).fill('PRIVATE PERSON MESSAGE');
     // A reconnect/remount must retain the unsent device draft without sending it.
     expect(db.select().from(messages).all()).toHaveLength(0);

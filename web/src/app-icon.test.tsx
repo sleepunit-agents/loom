@@ -6,6 +6,7 @@ vi.mock('@/components/ui/animated-icon', () => ({ AnimatedIcon: (props: Record<s
 import { AppIcon, houseIcon } from './app-icon';
 import { HOUSE_ICONS } from './assets/house-icons';
 import { apps } from './apps';
+import type {AppRegistration} from './shell/router';
 
 type Node = { type: unknown; props: Record<string, any> };
 const draw = (props: Parameters<typeof AppIcon>[0]) => { let tree!: ReturnType<typeof create>; act(() => { tree = create(h(AppIcon, props)); }); return tree; };
@@ -26,8 +27,8 @@ it('goes by the id and never by a title or the line icon’s name', () => {
   expect(houseIcon('toString')).toBeUndefined();
   expect(only(draw({ name: 'inbox' })).type).toBe('line-icon');
   expect(only(draw({ app: 'Inbox', name: 'inbox' })).type).toBe('line-icon');
-  // every icon in the set is a registered app's (or one of the dock's own two keys)
-  const ids = new Set([...apps.map(app => app.id), 'home', 'launcher']);
+  // Historical app IDs still resolve when a saved tile names an absorbed app.
+  const ids = new Set([...apps.flatMap((app:AppRegistration) => [app.id,...(app.aliases ?? []).map(alias=>alias.id)]), 'home', 'launcher']);
   for (const app of Object.keys(HOUSE_ICONS)) expect(ids.has(app), app).toBe(true);
 });
 it('draws the same art small, from the file that fits the slot', () => {

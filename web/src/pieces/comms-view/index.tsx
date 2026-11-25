@@ -1,3 +1,4 @@
+import {ToolbarFrame} from '../../kit/toolbar';
 // Comms as its page on the "how it works" site draws it (docs/how-it-works/site/conversations.html, site.css `.cm`):
 // threads on the left; the open thread as a conversation, the person's words on the right and tinted, the agent's on
 // the left and quiet, a tool step as one dashed line, a question as a small card where it was asked; the message
@@ -277,15 +278,16 @@ export function CommsView({ snapshot, detail, selected, select, actions, cards, 
     finally { openingLock.current = false; if (mounted.current) setOpening(false); }
   };
   const folders = ['Threads', 'Archived'].map((label, index) => ({ id: String(index), label, count: live && snapshot.folders ? index ? snapshot.folders.archived : snapshot.folders.threads : threadRows(display, !!index, '').length }));
-  return <Split className="loom-comms" label="Comms" folders={folders} folder={archived ? '1' : '0'} onFolder={id => navigation ? navigation.folder(id === '1') : setArchived(id === '1')}
+  return <ToolbarFrame title="Comms" controls={<Search label="Search conversations" value={live ? query : ''} disabled={!live} onChange={value => navigation ? navigation.query(value) : setQuery(value)} />}>
+    <Split className="loom-comms" label="Comms" folders={folders} folder={archived ? '1' : '0'} onFolder={id => navigation ? navigation.folder(id === '1') : setArchived(id === '1')}
     listTitle={folders[drawn ? 1 : 0].label} listCount={live ? folders[drawn ? 1 : 0].count : undefined} listBusy={snapshot.settling} listKey={JSON.stringify([archived, navigation?.search, navigation?.offset])}
     listAction={live && actions && <Opener agents={snapshot.agents} busy={opening} open={agent => void open(agent)} />}
-    search={<Search label="Search conversations" value={live ? query : ''} disabled={!live} onChange={value => navigation ? navigation.query(value) : setQuery(value)} />}
     listTop={<>{navigation && <Pager label="Conversation pages" disabled={!live} hasPrevious={navigation.offset > 0} hasNext={navigation.hasNext} previous={navigation.previous} next={navigation.next} />}
       {live && failed && <Error text="Could not start the conversation. Try again." />}</>}
     list={!live ? snapshot.status === 'loading' ? <Loading /> : <Empty title="Conversations are unavailable" /> : shown.length ? shown.map(thread => <Row key={thread.id} title={thread.title}
       icon={<span className="comms-letter" aria-hidden="true">{name(thread.agent).slice(0, 1).toUpperCase()}</span>} unread={thread.unread || undefined}
       meta={`${name(thread.agent)}${thread.project ? ` · ${thread.project}` : ''}`} status={thread.working ? 'Working' : thread.pinned ? 'Pinned' : undefined} selected={thread.id === selected} onClick={() => select(thread.id)} />) : <Empty title="No conversations here" />}
     reader={current ? <ThreadReader key={JSON.stringify([snapshot.member, current.thread!.id])} member={snapshot.member} detail={current} actions={current.thread!.member === snapshot.member ? actions : undefined} cards={cards} navigation={messageNavigation} readVisible={readVisible} name={name} zone={zone} /> : selected && live && detail?.status === 'loading' ? <Loading /> : null}
-    open={!!selected} onBack={() => select(undefined)} backLabel="Back to conversations" blank={<Empty title="Choose a conversation" />} />;
+    open={!!selected} onBack={() => select(undefined)} backLabel="Back to conversations" blank={<Empty title="Choose a conversation" />} />
+  </ToolbarFrame>;
 }

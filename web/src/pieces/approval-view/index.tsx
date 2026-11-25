@@ -1,3 +1,4 @@
+import { ToolbarFrame } from '../../kit/toolbar';
 import { shellCommandRecord } from '../../../../src/apps/shell-command-record';
 import { RuleEditor } from './rule-editor';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -186,9 +187,9 @@ export default function Approvals({ snapshot, actions, renderChange, navigation,
   const openRule = live && rulesView && !approval ? ruleOpen : undefined;
   const pending = live ? snapshot.approvals.reduce((count, card) => count + Number(card.state === 'pending'), 0) : 0;
   const counts: Record<string, number> = { pending, history: snapshot.approvals.length - pending, rules: snapshot.rules.length, notices: snapshot.notices.length };
-  return <Split label="Approvals" folders={folders.map(f => ({ ...f, count: live ? counts[f.id] : undefined }))}
+  return <ToolbarFrame title="Approvals" controls={<Search label="Search approvals" value={live ? query : ''} disabled={!live} onChange={setQuery}/>}>
+    <Split label="Approvals" folders={folders.map(f => ({ ...f, count: live ? counts[f.id] : undefined }))}
     folder={folder} onFolder={id => { setRuleOpen(undefined); if (navigation) navigation.openFolder(id); else { setLocalFolder(id); setLocalSelected(undefined); } }}
-    search={<Search label="Search approvals" value={query} onChange={setQuery} />}
     listTitle={folders.find(f => f.id === folder)?.label ?? 'Approvals'} listKey={JSON.stringify([folder, query])}
     listCount={live ? rulesView ? rules.length : noticesView ? notices.length : shown.length : undefined}
     listAction={live && rulesView && actions?.openRuleConversation && <Button onClick={() => setRuleOpen({ key: 'new' })}>New rule</Button>}
@@ -200,5 +201,6 @@ export default function Approvals({ snapshot, actions, renderChange, navigation,
     reader={approval ? <Details key={approval.id} approval={approval} snapshot={snapshot} actions={actions} renderChange={renderChange} viewer={viewer} name={name} />
       : openRule ? <RuleReader key={openRule.key} rule={openRule.rule} rules={snapshot.rules} go={actions?.openRuleConversation} name={name} zone={snapshot.timezone} /> : null}
     open={!!approval || !!openRule} onBack={() => { setRuleOpen(undefined); if (approval) setSelected(undefined); }} backLabel="Back to Approvals"
-    blank={<Empty title={rulesView ? 'Open a rule' : noticesView ? 'Reported steps' : 'Open an approval'} text={rulesView ? (actions?.openRuleConversation ? 'Choose a rule to change it, or start a new one.' : 'Only a household owner can change standing rules.') : noticesView ? 'Each step is shown whole in the list.' : 'Choose a request to read exactly what it allows.'} />} />;
+    blank={<Empty title={rulesView ? 'Open a rule' : noticesView ? 'Reported steps' : 'Open an approval'} text={rulesView ? (actions?.openRuleConversation ? 'Choose a rule to change it, or start a new one.' : 'Only a household owner can change standing rules.') : noticesView ? 'Each step is shown whole in the list.' : 'Choose a request to read exactly what it allows.'} />} />
+  </ToolbarFrame>;
 }
