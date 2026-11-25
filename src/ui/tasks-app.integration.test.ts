@@ -419,3 +419,31 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     expect(page.url()).toBe(selection);
   }finally{await browser.close();await app.close();}
 });
+
+it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html')))('opens an unlinked project PR alongside linked work and preserves the project list on Back',async()=>{
+  const app=await fixture(),browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  try {
+    const existing=app.db.select().from(s.changes).where(eq(s.changes.id,'github:acme/app#3')).get()!;
+    app.data.writes.run(()=>{
+      app.db.insert(s.changes).values({...existing,id:'github:acme/second#8',repository:'acme/second',number:8,title:'New repository change'}).run();
+      app.db.insert(s.changeSync).values({readAt:existing.updatedAt,failed:true}).run();
+    });
+    const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},reducedMotion:'reduce'});
+    await context.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
+    const page=await context.newPage();page.setDefaultTimeout(7000);
+    await page.goto(app.url+'/p/work/project/pond');
+    await page.getByRole('button',{name:'Open pull requests'}).click();
+    const url=page.url(),rows=page.getByRole('group',{name:'Project pull requests'});
+    await rows.getByText('acme/app #3 · Linked ticket',{exact:true}).waitFor();
+    await rows.getByText('acme/second #8 · No visible ticket link',{exact:true}).waitFor();
+    await page.getByText('GitHub read time unavailable.',{exact:true}).waitFor();
+    expect(await rows.getByText('Hidden linked change',{exact:true}).count()).toBe(0);
+    await rows.getByText('New repository change',{exact:true}).click();
+    await page.getByRole('article',{name:'Change',exact:true}).getByText('New repository change',{exact:true}).waitFor();
+    await page.goBack();
+    await rows.waitFor();
+    expect(page.url()).toBe(url);
+    app.data.writes.run(()=>app.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'sam')).run());
+    await page.getByText(/Latest GitHub read failed.*Last successful household GitHub read/).waitFor();
+  }finally{await browser.close();await app.close();}
+});
