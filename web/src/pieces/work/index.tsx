@@ -2,7 +2,7 @@ import { lazy, Suspense, useState } from 'react';
 import './home.css';
 import './project.css';
 import {WorkFrame} from './toolbar';
-import {ProjectNotes} from './project-notes';
+import {ProjectNotes,WorkNotes} from './project-notes';
 import {ProjectChanges} from './project-changes';
 import {BacklogWindow} from './backlog-window';
 import { ClaimControls } from './claim-controls';
@@ -34,11 +34,12 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
   const unfiled = section==='unfiled';
   const backlog = section==='backlog';
   const changes = section==='changes';
-  const offHome = !!projectId || unfiled || backlog || changes;
+  const offHome = !!projectId || unfiled || backlog || changes || section==='notes';
   const decisions = useDataQuery<{inboxProjectNeeds:{project:string;needs:number}[]}>(
     'query WorkProjectDecisions { inboxProjectNeeds { project needs } }', {}, {pause:offHome || !reading});
   const home = useDataQuery<{projects:(Project & {tasksByProject:Ticket[]})[];inFlight:{id:string;tasksByProject:{id:string}[]}[];unfiled:Ticket[]}>(workHomeQuery, {}, {pause:offHome});
   const detail = useDataQuery<{project:Project|null;working:Ticket[];recent:Ticket[]}>(workProjectQuery,{id:projectId ?? ''},{pause:!projectId});
+  if (section==='notes') return <WorkFrame title="Work" path={path} go={go}><WorkNotes path={path} go={go}/></WorkFrame>;
   if (changes) return <WorkFrame title="Work" path={path} go={go}>
     <Suspense fallback={<Loading label="Opening pull requests…"/>}><Changes path={path} base={base+'/changes'} go={go}/></Suspense>
   </WorkFrame>;
@@ -56,6 +57,7 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
     if (!project || project.id !== projectId || project.lifecycle==='removed') return <WorkFrame title="Work" path={path} go={go}><Empty title="Project unavailable"/></WorkFrame>;
     const frame = {title:project.name,path,go,project:project.id};
     const view = path.split('?')[0].split('/')[5];
+    if (view==='notes') return <WorkFrame {...frame}><WorkNotes project={project.id} path={path} go={go}/></WorkFrame>;
     if (view==='backlog') return <WorkFrame {...frame}>
       <Suspense fallback={<Loading label="Opening backlog…"/>}><Backlog key={project.id} path={path} go={go} backlogProject={project.id}/></Suspense>
     </WorkFrame>;

@@ -156,7 +156,7 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
  // Handed to each reader as a property that is read again each time, never as a copy.
  const listed={get agents(){return sources?.agents??[];}};
  const conversationHref=(id:string)=>'/p/comms-preview/conversation/'+encodeURIComponent(id);
- const projectHref=(agent:string,slug:string)=>'/p/projects-preview/project/'+encodeURIComponent(agent+':'+slug);
+ const projectHref=(agent:string,slug:string)=>'/p/work/notes/project/'+encodeURIComponent(agent+':'+slug);
  try{
   const defaultAgent=()=>householdSettings(db).defaultAgent??undefined;
   const people=peopleReader({defaultAgent,directory:sources?.commons.people,get agents(){return listed.agents;},sharing,now:()=>clock.now(),projectHref});closers.push(people.close);
