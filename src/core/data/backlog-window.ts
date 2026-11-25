@@ -8,6 +8,7 @@ import {migrations,projects,tasks} from './schema.js';
 const groups = {
   start: 'started = 1',
   end: 'finished = 1',
+  originalEverClosed: 'started = 1 and closedHere = 1',
   originalClosed: 'started = 1 and lastHere = 1 and finished = 0',
   originalMovedOut: 'started = 1 and lastHere = 0',
   addedOpen: 'started = 0 and finished = 1',
@@ -56,7 +57,7 @@ export function backlogWindow(db:DataDatabase,viewer:Viewer,project:string,since
       max(CASE WHEN e.seq=b.lastSeq AND e.project IS ${project} AND e.open THEN 1 ELSE 0 END) AS finished,
       max(CASE WHEN e.seq=b.lastSeq AND e.project IS ${project} THEN 1 ELSE 0 END) AS lastHere,
       max(e.at>${from} AND e.project IS ${project} AND e.prev IS NULL) AS wasCreated,
-      max(e.at>${from} AND e.project IS ${project} AND e.open=0) AS closedHere,
+      max(e.at>${from} AND e.project IS ${project} AND e.open=0 AND (e.prev IS NULL OR (e.previousProject IS ${project} AND e.previousOpen=1))) AS closedHere,
       max(e.at>${from} AND e.project IS ${project} AND e.previousProject IS ${project} AND e.previousOpen=0 AND e.open=1) AS wasReopened,
       max(e.at>${from} AND e.prev IS NOT NULL AND e.previousProject IS NOT ${project} AND e.project IS ${project}) AS cameIn,
       max(e.at>${from} AND e.previousProject IS ${project} AND e.project IS NOT ${project}) AS wentOut

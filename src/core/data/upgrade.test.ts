@@ -70,6 +70,21 @@ describe('upgrading a household database', () => {
     expect(dataSchemaShape(old)).toEqual(dataSchemaShape(fresh()));
   });
 
+  it('starts backlog coverage at the upgrade, preserves existing tickets and records later moves and reopens',()=>{
+    const old=household(43), baseline='2026-11-21T00:00:00.000Z', later='2026-11-22T00:00:00.000Z';
+    old.exec("insert into projects(id,name) values ('pond','Pond'),('loom','Loom')");
+    old.prepare("insert into members(id,role,joined_at) values ('sam','member',?)").run(at);
+    old.prepare("insert into tasks(id,title,goal,why,project,owner_kind,owner,created_by_kind,created_by,status,created_at,changed_at,closed_at) values ('legacy','Imported','Restore','Recovery','pond','member','sam','member','sam','closed',?,?,?)").run(at,at,at);
+    upgradeDataSchema(old,()=>baseline);
+    dataDatabase(old,()=>later);
+    old.exec("update tasks set status='open',closed_at=null where id='legacy'");
+    old.exec("update tasks set project='loom' where id='legacy'");
+    old.exec("update tasks set title='Renamed',status='open' where id='legacy'");
+    expect(old.prepare('select project,open,at from task_backlog_events order by seq').all()).toEqual([
+      {project:'pond',open:0,at:baseline},{project:'pond',open:1,at:later},{project:'loom',open:1,at:later},
+    ]);
+  });
+
   it('keeps authored words, original private sources and deleted sequence high water from schema 42', async () => {
     const old = household(42), db = dataDatabase(old, () => at);
     old.prepare("insert into members(id,role,joined_at) values ('sam','member',?)").run(at);

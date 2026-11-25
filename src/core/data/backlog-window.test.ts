@@ -29,7 +29,7 @@ it('reconciles the starting cohort, new and reopened work, and movements using t
     const user={kind:'member' as const,id:'sam'};
     const read=(group?:string)=>backlogWindow(db,user,'loom',day(2),day(4),group)!;
     expect(Object.fromEntries(read().counts.map(c=>[c.key,c.total]))).toEqual({
-      start:3,end:4,originalClosed:1,originalMovedOut:1,addedOpen:3,created:2,arrivalsClosed:1,reopened:1,movedIn:1,movedOut:1,
+      start:3,end:4,originalEverClosed:1,originalClosed:1,originalMovedOut:1,addedOpen:3,created:2,arrivalsClosed:1,reopened:1,movedIn:1,movedOut:1,
     });
     expect(read('originalMovedOut').tickets.map(t=>t.id)).toEqual(['moved']);
     expect(read('addedOpen').tickets.map(t=>t.id)).toEqual(['from-pond','new-open','old-closed']);
