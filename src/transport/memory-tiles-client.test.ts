@@ -76,8 +76,9 @@ it('reads all four Memory tiles on one canonical client, switches details and cl
   await source.writePage({slug:'pump',title:'Fictional pump',domain:'fiction',body:'Private pump words'});
   await source.writePage({slug:'clock',title:'Fictional clock',domain:'fiction',body:'Private clock words'});
   await act(async()=>{tree=create(render('pump'));});
-  await act(async()=>{await expect.poll(()=>selections.size).toBe(13);});expect(wire.create).toHaveBeenCalledTimes(1);
+  await act(async()=>{await expect.poll(()=>selections.size).toBe(14);});expect(wire.create).toHaveBeenCalledTimes(1);
   expect([...selections.values()].filter(s=>s.query.includes('query DeskAgentDisplays'))).toHaveLength(1);
+  expect([...selections.values()].filter(s=>s.query.includes('query LiveAgents'))).toHaveLength(1);
   expect(text()).toContain('Opening knowledge');expect(text()).not.toContain('Private pump words');
   await refresh();await act(async()=>{await expect.poll(()=>[...selections.values()].some(s=>s.variables?.id==='fiction:friend')&&[...selections.values()].some(s=>s.variables?.to==='2026-11-14')).toBe(true);});await refresh();expect(text()).toContain('Private fictional friend');expect(text()).toContain('Private fictional pond');expect(text()).toContain('Private fictional session');expect(text()).toContain('Fictional pump');expect(text()).toContain('Private pump words');expect(wire.call).not.toHaveBeenCalled();
   const projectText=()=>JSON.stringify(tree!.root.findAllByType('main').find(p=>p.props['data-tile']==='Projects')!.findAllByType('h3').map(p=>p.props.children));
