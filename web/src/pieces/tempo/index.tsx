@@ -1,3 +1,4 @@
+import {ToolbarFrame} from '../../kit/toolbar';
 import './calendar.css';
 import { RecentRuns, type TriggerRun } from './recent-runs';
 import { TempoCalendar } from './day';
@@ -147,9 +148,7 @@ export default function Tempo({ snapshot, actions, inUse, go }: { snapshot: Temp
   const agents = [...new Set(triggers.map(triggerAgent).filter((agent): agent is string => !!agent && (!inUse || inUse.has(agent))))].sort();
   const reader = live && creating && actions?.create ? <CreateTrigger timezone={snapshot.timezone} submit={actions.create} done={() => setCreating(false)} /> : trigger ? <TriggerDetails key={trigger.id} snapshot={snapshot} trigger={trigger} actions={actions} go={go} /> : null;
   const time = (at: string) => new Intl.DateTimeFormat(undefined, { timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(at));
-  return <Split label="Tempo" className={folder === 'week' ? 'h-full tempo-week' : 'h-full'} folders={[{id:'day',label:'Day'}, {id:'week',label:'Week'}, ...folders.map(item => ({ ...item, count: live && item.id!=='history' ? rows(filtered, item.id, '', selectedAgent).length : undefined }))]}
-    folder={folder} onFolder={id => { setFolder(id as Folder | 'day' | 'week' | 'history'); setCreating(false); setSelected(undefined); }}
-    search={<div className="grid gap-2"><label>Search tempo<Input type="search" value={query} onChange={event => setQuery(event.target.value)} /></label>
+  return <ToolbarFrame title="Tempo" controls={<><label>Search tempo<Input type="search" value={query} onChange={event => setQuery(event.target.value)} /></label>
       <label>Whose<NativeSelect value={selectedAgent ? 'agent:'+selectedAgent : whose==='lanes' ? 'lanes' : ''} onChange={event=>{setWhose(event.target.value);setSelected(undefined);}}>
         <option value="">Everyone</option><option value="lanes">Household lanes</option>
         {agents.map(id=><option key={id} value={'agent:'+id}>{id}</option>)}
@@ -159,7 +158,10 @@ export default function Tempo({ snapshot, actions, inUse, go }: { snapshot: Temp
       </NativeSelect></label>
       <label>State<NativeSelect value={state} onChange={event=>{setState(event.target.value);setSelected(undefined);}}>
         <option value="">All states</option>{Object.entries(stateLabels).map(([id,label])=><option key={id} value={id}>{label}</option>)}
-      </NativeSelect></label></div>}
+      </NativeSelect></label></>}>
+    <Split label="Tempo" className={folder === 'week' ? 'h-full tempo-week' : 'h-full'} folders={[{id:'day',label:'Day'}, {id:'week',label:'Week'}, ...folders.map(item => ({ ...item, count: live && item.id!=='history' ? rows(filtered, item.id, '', selectedAgent).length : undefined }))]}
+    folder={folder} onFolder={id => { setFolder(id as Folder | 'day' | 'week' | 'history'); setCreating(false); setSelected(undefined); }}
+
     listTitle={folder==='day' ? 'Day' : folder==='week' ? 'Week' : folders.find(item => item.id === folder)?.label} listMeta={live && !calendar ? shown.length : undefined}
     listTop={live ? <div className="grid gap-2 p-3">{actions?.create && <Button onClick={() => setCreating(true)}>Create trigger</Button>}{snapshot.pauses.length > 0 && <p>Paused: {snapshot.pauses.map(pause => pause.agent).join(', ')}</p>}</div> : undefined}
     list={!live ? snapshot.status === 'loading' ? <Loading label="Opening Tempo…" /> : <Error text={snapshot.status === 'denied' ? 'Sign in with access to see Tempo.' : 'Waiting for connection.'} />
@@ -170,5 +172,6 @@ export default function Tempo({ snapshot, actions, inUse, go }: { snapshot: Temp
         })}</List>
         : <Empty title={query ? `Nothing matches “${query}”` : 'No triggers here'} text="Ask an agent in chat to set a trigger." />}
     reader={reader} open={!!reader} onBack={() => { setCreating(false); setSelected(undefined); }} backLabel="Tempo"
-    blank={<Empty title="Open a trigger" text="Choose a trigger to see its source, target, words and history." />} />;
+    blank={<Empty title="Open a trigger" text="Choose a trigger to see its source, target, words and history." />} />
+  </ToolbarFrame>;
 }

@@ -3,14 +3,14 @@
   overflow: auto;
   padding: 1rem;
 }
-.usage-page fieldset {
+.usage-range {
   display: flex;
   flex-wrap: wrap;
   gap: .5rem 1rem;
-  margin-bottom: 1rem;
+  min-width: 0;
 }
-.usage-page legend { margin-bottom: .5rem; }
-.usage-page label { display: grid; gap: .25rem; }
+.usage-range legend { margin-bottom: .5rem; }
+.usage-range label { display: grid; gap: .25rem; }
 .usage-groups {
   width: 100%;
   border-collapse: collapse;

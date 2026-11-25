@@ -1,3 +1,4 @@
+import {ToolbarFrame} from '../kit/toolbar';
 import type { ReactNode } from 'react';
 import {fullTime} from '../kit/time';
 import { Button, Fact, Facts, Meta, Reader, Section, Title, Empty, Error, List, Loading, Row, Split } from '../kit';
@@ -92,13 +93,15 @@ export function SecretsView({ snapshot, member, zone, folder, selected, select, 
     : folder === 'grants' ? snapshot.grants.map(value => row(value.id, `${value.agent}: ${value.secret}`, value.job ? `Job: ${value.job}` : 'Agent-wide', `Expires ${fullTime(value.expiresAt,zone)}`))
     : folder === 'pieces' ? pieces.map(value => <Row key={value.id} title={value.label} meta={value.description} onClick={value.open} />)
     : snapshot.secrets.map(value => row(value.name, value.name, value.description));
-  return <Split label="Settings" folders={[
+  return <ToolbarFrame title="Settings" controls={view === 'secrets' && cards?.add ? <Button onClick={() => { select(undefined); changeFolder('add'); }}>Add a secret</Button> : undefined}>
+    <Split label="Settings" folders={[
     { id: 'secrets', label: labels.secrets, count: snapshot.secrets.length },
     { id: 'requests', label: labels.requests, count: snapshot.requests.filter(value => value.state === 'pending').length },
     { id: 'grants', label: labels.grants, count: snapshot.grants.length }, { id: 'pieces', label: labels.pieces },
   ]} folder={view} onFolder={id => { select(undefined); changeFolder(id as SecretsFolder); }} listTitle={labels[view]}
-    listAction={view === 'secrets' && cards?.add ? <Button onClick={() => { select(undefined); changeFolder('add'); }}>Add a secret</Button> : undefined}
+
     list={rows.length ? <List label={labels[view]}>{rows}</List> : <Empty title={`No ${labels[view].toLowerCase()}`} />}
     reader={reader} open={reader !== null} onBack={() => { select(undefined); if (folder === 'add') changeFolder('secrets'); }} backLabel="Back to Settings"
-    blank={<Empty title={active ? 'This item is no longer available' : 'Choose an item'} />} />;
+    blank={<Empty title={active ? 'This item is no longer available' : 'Choose an item'} />} />
+  </ToolbarFrame>;
 }
