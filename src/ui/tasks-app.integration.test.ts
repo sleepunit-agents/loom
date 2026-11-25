@@ -241,3 +241,20 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     expect(errors).toEqual([]); await context.tracing.stop(); await context.close();
   } finally { await browser.close(); await app.close(); }
 });
+
+it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.html')))('opens a shared project in Work and follows its ticket into the existing reader', async () => {
+  const app = await fixture();
+  const browser = await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  try {
+    const context = await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},reducedMotion:'reduce'});
+    await context.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
+    const page = await context.newPage();
+    await page.goto(app.url+'/p/work');
+    const project = page.locator('[data-split-row]').filter({hasText:'pond'});
+    await project.click({timeout:15000});
+    const ticket = page.locator('[data-split-row]').filter({hasText:title});
+    await ticket.click({timeout:10000});
+    await expect.poll(()=>page.getByRole('group',{name:'Pull request acme/app#3',exact:true}).count()).toBe(1);
+    expect(await page.getByText(hiddenTitle,{exact:true}).count()).toBe(0);
+  } finally {await browser.close();await app.close();}
+});

@@ -23,6 +23,10 @@ export function projectState(db: DataDatabase, project: string): { removed: bool
   const found = db.select({ removedAt: projects.removedAt, retiredAt: projects.retiredAt }).from(projects).where(eq(projects.id, project)).get();
   return found && { removed: !!found.removedAt, retired: !!found.retiredAt };
 }
+/** Project state in an existing relational selection, including an aliased project row. */
+export function projectLifecycle(fields: Record<string, AnyColumn | SQL>): SQL {
+  return sql`case when ${fields.removedAt} is not null then 'removed' when ${fields.retiredAt} is not null then 'retired' else 'active' end`;
+}
 /** Why this project will not do, or nothing when it will.
  *  - `enter`: something new is to be filed under it (a new task, a task moved in, a project merged in). It
  *    must be in use: there, not removed and not retired.
