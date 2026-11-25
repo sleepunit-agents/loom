@@ -1,3 +1,4 @@
+import {ToolbarControls} from '../../kit/toolbar';
 import {memberOperation} from '../../data/operation';
 import {WeeklyUsage} from './weekly-usage';
 import {Fragment,useState} from 'react';
@@ -115,8 +116,10 @@ export function RuntimeAccounts({active=true,go}:{active?:boolean;go?:(path:stri
    {rows.some(row=>row.__typename==='RuntimeAccountDetail')&&<details onToggle={event=>setWeeklyOpen(event.currentTarget.open)}>
     <summary>Weekly usage across subscriptions</summary>{weeklyOpen&&<WeeklyUsage go={go}/>}
    </details>}
+   <ToolbarControls>
    <Search label="Search subscriptions" value={search} onChange={setSearch}/>
    <label><input type="checkbox" checked={attentionOnly} onChange={event=>setAttentionOnly(event.target.checked)}/> Needs attention</label>
+   </ToolbarControls>
    {!rows.length?<p>No model accounts yet.</p>:!services.size?<p>No matching subscriptions.</p>:[...services].map(([provider,accounts])=>{
     const level=accounts.some(a=>a.level==='almost full')?'almost full':accounts.some(a=>a.level==='getting full')?'getting full':accounts[0].level;
     return <details open key={JSON.stringify(provider)} className="grid gap-2"><summary>{provider??'Shared summaries'} · {accounts.length} · {level}{accounts.some(a=>a.__typename==='RuntimeAccountDetail'&&a.logins?.some(l=>l.needsSignIn))&&' · Sign-in needed'}</summary>
