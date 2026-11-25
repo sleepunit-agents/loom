@@ -282,6 +282,15 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     const page=await context.newPage();
     await page.goto(app.url+'/p/tasks-preview/task/t-1');
     await page.getByRole('button',{name:'More for this task',exact:true}).click({timeout:10000});
+    const menu = page.getByRole('group',{name:'More for this task'});
+    for (const width of [1280,1440]) {
+      await page.setViewportSize({width,height:900});
+      await expect.poll(()=>menu.evaluate(box=>{
+        const bounds=box.getBoundingClientRect();
+        const actions=box.closest('.loom-kit-actions')!.getBoundingClientRect();
+        return bounds.left>=actions.left-1 && bounds.right<=actions.right+1;
+      })).toBe(true);
+    }
     await page.getByText('Promote to epic',{exact:true}).click();
     await page.getByText('Promoted this ticket to an epic.',{exact:true}).waitFor();
     expect(new URL(page.url()).pathname).toBe('/p/tasks-preview/task/t-1');
