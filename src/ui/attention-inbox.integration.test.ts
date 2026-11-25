@@ -35,6 +35,14 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Inbox reads, s
     await Promise.all([a,b].map(page => page.goto(`${url}/p/inbox-preview/ask/${encodeURIComponent(question.inboxItem!)}`)));
     for (const page of [a,b]) await expect.poll(() => page.getByRole('heading',{name:'PRIVATE PUMP QUESTION',exact:true}).count()).toBe(1); console.info('Inbox: private question visible');
     await expect.poll(() => client.prepare('SELECT count(*) AS n FROM inbox_reads').get()).toEqual({n:1});
+    // The toolbar stays reachable above the one-pane list and its reader.
+    await b.setViewportSize({width:390,height:844});
+    await b.getByRole('button',{name:'Back to Inbox'}).click();
+    const search=b.locator('header[aria-label="Inbox toolbar"]').getByRole('searchbox',{name:'Search asks'});
+    await search.fill('PRIVATE PUMP');
+    const pump=b.getByRole('button',{name:/PRIVATE PUMP QUESTION/});
+    await pump.focus();await pump.press('Enter');
+    await b.getByRole('heading',{name:'PRIVATE PUMP QUESTION',exact:true}).waitFor();
     // Recipient volume uses this already-open Inbox item, before answering it.
     const notify=a.getByRole('combobox',{name:'Notify',exact:true});
     await notify.selectOption('dim');
