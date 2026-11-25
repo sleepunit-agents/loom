@@ -16,7 +16,6 @@ vi.mock('./graphql/selection', () => ({ useSelection: () => ({ status: 'live', d
 } }) }));
 import { ConversationQuestions } from '../pieces/comms/conversation-questions';
 import { approvalsApp } from '../pieces/approvals/registration';
-import { changesApp } from '../pieces/changes/registration';
 import { ApprovalsApp, ChangesApp, LiveApprovalCard, LiveChangeCard } from './work-views';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
@@ -40,7 +39,7 @@ it('the registered lazy tiles actually render the generated shared rows', async 
   expect(words()).toContain('Keep one day?');
   expect(words()).toContain('Measuring settings change');
   expect(tree.root.findAllByType('Button')).toHaveLength(0);
-  await act(async () => tree.update(h(Suspense, { fallback: 'Opening' }, h(changesApp.Screen, {}))));
+  await act(async () => tree.update(h(Suspense, { fallback: 'Opening' }, h(ChangesApp, {base:'/p/work/changes'}))));
   await act(async () => { await vi.dynamicImportSettled(); });
   expect(words()).toContain('Current change');
   await selectRow();
