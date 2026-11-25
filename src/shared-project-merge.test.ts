@@ -67,13 +67,13 @@ const filedUnder = (db: DataDatabase, table: SQLiteTable, column: string, projec
 it('says what a merge does with every table that names a project, and no table is left out', () => {
   // A new table with a project on it fails here until shared-projects.ts lists it in `projectLabelled`.
   expect([...tablesNamingAProject().keys()].sort()).toEqual(Object.keys(projectLabelled).sort());
-  expect(Object.keys(projectLabelled).sort()).toEqual(['agent_kit_projects', 'approvals', 'changes', 'conversations', 'inbox', 'jobs', 'project_agents', 'project_members', 'project_outside_people', 'project_repositories', 'tasks', 'triggers']);
+  expect(Object.keys(projectLabelled).sort()).toEqual(['agent_kit_projects', 'approvals', 'changes', 'conversations', 'inbox', 'jobs', 'project_agents', 'project_claim_directions', 'project_members', 'project_outside_people', 'project_repositories', 'tasks', 'triggers']);
 });
 
 it('files every record of the merged project under the other, in every table that names a project', () => {
   const f = fixture(), named = tablesNamingAProject();
   // Kit grants and outside identities stay bound to the exact project the owner named.
-  named.delete('agent_kit_projects'); named.delete('project_outside_people');
+  named.delete('project_claim_directions'); named.delete('agent_kit_projects'); named.delete('project_outside_people');
   const pond = fileEverything(f.db, f.client, 'pond'), garden = fileEverything(f.db, f.client, 'garden');
   // The fixture puts a pond record in every one of the tables, so none is passed over for being empty.
   for (const [name, { table, column }] of named) expect(filedUnder(f.db, table, column, 'pond'), name).toBeGreaterThan(0);
@@ -102,6 +102,19 @@ it('files every record of the merged project under the other, in every table tha
   const sees = (viewer: Viewer, id: string) => holds(rules.task, viewer, f.db.select().from(tasks).where(eq(tasks.id, id)).get()!, sharedSharing(f.db));
   for (const viewer of [{ kind: 'member', id: 'lee' }, { kind: 'member', id: 'sam' }, { kind: 'agent', id: 'art' }, { kind: 'agent', id: 'mark' }] as Viewer[])
     expect([sees(viewer, pond.task.id), sees(viewer, garden.task.id)], viewer.id).toEqual([true, true]);
+});
+
+it('preserves each project’s original claim directions when their work is merged', () => {
+  const f = fixture();
+  const directions = schema.projectClaimDirections;
+  f.db.insert(directions).values([
+    {project:'garden', member:'kit', agent:'art', paused:false, at},
+    {project:'pond', member:'kit', agent:'art', paused:true, at:later},
+  ]).run();
+  const read = () => f.db.select().from(directions).orderBy(directions.seq).all();
+  const before = read();
+  f.service.merge({from:'pond', into:'garden'});
+  expect(read()).toEqual(before);
 });
 
 it('makes the whole merge or none of it', () => {

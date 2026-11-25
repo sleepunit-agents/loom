@@ -37,6 +37,8 @@ export const projectMergeInput=z.object({from:id,into:id}).strict();
 export const projectLabelled:Readonly<Record<string,(db:DataDatabase,from:string,into:string)=>void>>={
  // A merge never copies owner grants or outside identities onto a different project.
  agent_kit_projects(){},project_outside_people(){},
+ // A direction applies only to the project named by the member.
+ project_claim_directions(){},
  tasks:refileTasks,
  conversations:refileConversations,
  inbox:refileInbox,
