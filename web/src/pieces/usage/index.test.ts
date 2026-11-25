@@ -17,10 +17,18 @@ it('orders conversations by reported tokens and opens the selected jobs in the s
     expect(tree.root.findAllByType('small').map(node=>node.children.join(''))).toEqual(['1 of 2 measured','0 of 1 measured']);
     expect(buttons.map(b=>b.props.children)).toEqual(['Large','Small']);
     await act(async()=>buttons[0].props.onClick());
+    const job=tree.root.findByProps({'data-split-row':''});
+    expect(job.props['aria-expanded']).toBe(false);
+    expect(JSON.stringify(tree.toJSON())).not.toContain('Large context with no tool calls.');
+    await act(async()=>job.props.onClick());
+    expect(job.props['aria-expanded']).toBe(true);
     expect(JSON.stringify(tree.toJSON())).toContain('Large context with no tool calls.');
     expect(JSON.stringify(tree.toJSON())).toContain('Unknown');
     expect(JSON.stringify(tree.toJSON())).toContain('Inspect parser');
     expect(JSON.stringify(tree.toJSON())).toContain('Subagent');
+    await act(async()=>job.props.onClick());
+    expect(job.props['aria-expanded']).toBe(false);
+    expect(tree.root.findAllByType('button')[0].props['aria-expanded']).toBe(true);
     const vars=feed.mock.calls.find(([q])=>q.includes('conversationJobUsage'))![1];
     expect(vars).toMatchObject({...feed.mock.calls[0][1],conversation:'large'});
     await act(async()=>tree.root.findAllByType('input')[0].props.onChange({target:{value:''}}));

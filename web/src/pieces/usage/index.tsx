@@ -1,6 +1,6 @@
 import {ToolbarFrame} from '../../kit/toolbar';
 import {Fragment, useState} from 'react';
-import {Empty, Error, Fact, Facts, Input, LinkButton, Loading, Meta, Reader, Title} from '../../kit';
+import {Empty, Error, Fact, Facts, Input, LinkButton, Loading, Reader, Row} from '../../kit';
 import './usage.css';
 import {useDataQuery} from '../../data/graphql';
 
@@ -25,15 +25,18 @@ interface Range {from:string;to:string}
 const format=(value:number|null|undefined)=>value==null?'Unknown':value.toLocaleString();
 
 function Jobs({range,conversation}:{range:Range;conversation:string|null}) {
+  const [selected,setSelected]=useState<string>();
   // Another date range keeps this conversation's last table until its own answers. A row is mounted per conversation,
   // so a kept table is never another conversation's.
   const {status,data,settling}=useDataQuery<{conversationJobUsage:Job[]}>(jobsQuery,{...range,conversation},{keep:true});
   if(status!=='live'||!data)return status==='loading'?<Loading label="Loading jobs…" />:<Error text="Job usage unavailable." />;
   if(!data.conversationJobUsage.length)return <Empty title="No jobs in this conversation for this period." />;
   return <section aria-label="Jobs in this conversation" aria-busy={settling||undefined}>
-    {data.conversationJobUsage.map(({id,title,runKind,linkedWakeJob,state,usage,observations})=><Reader key={id} data-inline>
-      <header><Meta>{[runKind && (runKind==='program'?'Program':runKind==='main'?'Main session':'Subagent'),state].filter(Boolean).join(' · ')}</Meta>
-        <Title>{title||id}</Title></header>
+    {data.conversationJobUsage.map(({id,title,runKind,linkedWakeJob,state,usage,observations})=><Fragment key={id}>
+      <Row title={title||id} selected={selected===id} aria-expanded={selected===id}
+        meta={[runKind && (runKind==='program'?'Program':runKind==='main'?'Main session':'Subagent'),state].filter(Boolean).join(' · ')}
+        onClick={()=>setSelected(selected===id?undefined:id)}/>
+      {selected===id&&<Reader data-inline aria-label={title||id}>
       <Facts>
         <Fact label="Job ID">{title && title!==id ? id : undefined}</Fact>
         <Fact label="Woke job">{linkedWakeJob}</Fact>
@@ -43,7 +46,7 @@ function Jobs({range,conversation}:{range:Range;conversation:string|null}) {
         <Fact label="Source">{usage?.source??'Pending'}</Fact>
       </Facts>
       {observations.map((words,index)=><p key={index}>{words}</p>)}
-    </Reader>)}
+    </Reader>}</Fragment>)}
   </section>;
 }
 function Conversations({range}:{range:Range}) {
