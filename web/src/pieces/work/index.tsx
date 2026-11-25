@@ -3,10 +3,11 @@ import { useReadingVisible } from '../../data/visibility';
 import { CatchUp } from './catch-up';
 import { ProjectNeeds } from './project-needs';
 import { ProjectBoard } from './board';
+import { UnfiledTickets } from './unfiled';
 import { taskPath } from '../../../../src/task-route';
 import { AppFrame, Body, Empty, Error, LinkButton, List, Loading, Row, Section } from '../../kit';
 import { useDataQuery } from '../../data/graphql';
-import { workHomeQuery, workProjectQuery } from './query';
+import { unfiledBase, unfiledPage, workHomeQuery, workProjectQuery } from './query';
 
 type Ticket = {id:string; title:string; status:'open'|'in_progress'|'closed'; changedAt:string};
 type Project = {id:string; name:string; lifecycle:'active'|'retired'|'removed'};
@@ -17,9 +18,14 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
   const reading = useReadingVisible(visible);
   const viewer = useDataQuery<{homeComms:{member:string}|null}>('query WorkViewer { homeComms { member } }');
   const member = viewer.status==='live' && !viewer.settling ? viewer.data?.homeComms?.member : undefined;
-  const projectId = path.split('/')[4];
-  const home = useDataQuery<{projects:(Project & {tasksByProject:Ticket[]})[];inFlight:{id:string;tasksByProject:{id:string}[]}[]}>(workHomeQuery, {}, {pause:!!projectId});
+  const [,,,section,sectionId] = path.split('/');
+  const projectId = section==='project' ? sectionId : undefined;
+  const unfiled = section==='unfiled';
+  const home = useDataQuery<{projects:(Project & {tasksByProject:Ticket[]})[];inFlight:{id:string;tasksByProject:{id:string}[]}[];unfiled:Ticket[]}>(workHomeQuery, {}, {pause:!!projectId || unfiled});
   const detail = useDataQuery<{project:Project|null;working:Ticket[];recent:Ticket[]}>(workProjectQuery,{id:projectId ?? ''},{pause:!projectId});
+  if (unfiled) return <div className="p-4"><AppFrame title="Unfiled tickets" where={path} go={go} crumb={{label:'Work',href:base}}>
+    <UnfiledTickets page={unfiledPage(path)} go={go}/>
+  </AppFrame></div>;
   const feed = projectId ? detail : home;
   if (feed.status === 'loading' || feed.settling) return <Loading label="Opening Work…"/>;
   if (feed.status !== 'live') return <Error text="Project information is unavailable."/>;
@@ -54,10 +60,14 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
     </div>
   )}</div>;
   const retired = projects.filter(project=>project.lifecycle==='retired');
+  const latestUnfiled = home.data?.unfiled[0];
   return <div className="p-4"><AppFrame title="Work" where={base} go={go} context={active.length ? `${active.length} active project${active.length===1 ? '' : 's'} · ${activeCount} with claimed tickets` : undefined}>
     {grid(active)}
+    {latestUnfiled && <div className="overflow-hidden rounded-lg border border-[var(--v-border)]">
+      <Row layout="stack" title="Unfiled tickets" meta={latestUnfiled.title} status="Not in a project" onClick={()=>go(unfiledBase)}/>
+    </div>}
     {member && reading && <CatchUp key={member} member={member} go={go}/>}
     {retired.length>0 && <details><summary>Retired projects ({retired.length})</summary>{grid(retired)}</details>}
-    {!projects.length && <Empty title="No projects yet"/>}
+    {!projects.length && !latestUnfiled && <Empty title="No projects yet"/>}
   </AppFrame></div>;
 }
