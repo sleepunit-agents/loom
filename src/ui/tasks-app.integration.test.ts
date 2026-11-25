@@ -182,7 +182,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     form = a.getByRole('form', { name: 'Close task', exact: true });
     await form.getByLabel('Reason', { exact: true }).fill('Finished in browser');
     await form.getByRole('button', { name: 'Close task', exact: true }).click();
-    for (const page of [a,b]) await expect.poll(() => page.getByText('Finished in browser', { exact: true }).count()).toBe(1);
+    for (const page of [a,b]) await expect.poll(() => page.getByRole('region',{name:'Ticket story'}).getByText('Finished in browser', { exact: true }).count()).toBe(1);
     step('Reopen');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Reopen', exact: true }).click();
     for (const page of [a,b]) await expect.poll(() => page.getByText('open · P0 · pond', {exact:true}).count()).toBe(1);
