@@ -1,13 +1,13 @@
 # Desktop app language
 
-The composition in `web/src/apps.ts` registers 22 first-party surfaces. This inventory tracks where a user goes to do each job. A shared window can still read from several services with different permissions.
+The desktop started with 22 first-party surfaces. The composition in `web/src/apps.ts` now registers 18 apps and the Home shell surface. Work owns three former launchers. Their old addresses still open the corresponding Work reader, including when restoring a saved desktop.
 
-| Registered ID | Destination | Workflow to exercise |
+| Original ID | Current destination | Workflow to exercise |
 | --- | --- | --- |
 | work | Keep | Open a project, follow activity into its ticket, switch board views, filter by epic and return. |
-| tasks | Work | Create, search and groom tickets, including unfiled and household-wide work. Read the story, discuss, change priority, manage links, promote to epic and close. |
-| changes | Work | Browse all visible PRs, including unlinked changes. Read checks and exact-revision reviews, refresh GitHub, follow or request a merge approval. |
-| projects | Work | Preserve the agent filter, active and quiet cards, sourced fields, people, repositories, recent activity, waiting items and links to authorized notes and memories. |
+| tasks | Work backlog, `/p/work/backlog` | Create, search and groom tickets, including unfiled and household-wide work. Read the story, discuss, change priority, manage links, promote to epic and close. |
+| changes | Work pull requests, `/p/work/changes` | Browse all visible PRs, including unlinked changes. Read checks and exact-revision reviews, refresh GitHub, follow or request a merge approval. |
+| projects | Work agent notes, `/p/work/notes` | Preserve the agent filter, active and quiet cards, sourced fields, people, repositories, recent activity, waiting items and links to authorized notes and memories. |
 | inbox | Keep | Switch folders, find a notice, read and answer it, then return to the list. |
 | approvals | Keep | Follow a request from Inbox to its exact target, inspect its consequences, answer, and inspect household rules and history. |
 | sharing | Keep | Inspect project membership, agent participation and proposed access changes. |
@@ -42,3 +42,5 @@ Exercise a wide window and a narrow tile; operate the views, filter, list and re
 `ToolbarFrame` in `web/src/kit/toolbar.tsx` accepts an app title and optional mark, a return destination, named views, an action accompanying those views, and controls. The caller identifies the current view from its route. Supply a search field as controls, or render `ToolbarControls` inside a child when that child owns the query. Each mounted frame has its own controls slot. Work supplies its cyan mark and project destinations from `pieces/work/toolbar.tsx`.
 
 For a split-view app, put the shared toolbar and `Split` next to each other in the tile. The toolbar occupies the first row and the split takes the remaining height. Keep folder selection and counts in the folder pane, list paging with the list, and actions that apply to one item with the reader. Inbox supplies its search through the toolbar controls. The split retains Enter to open, Escape to return in a narrow pane, and focus restoration.
+
+Apps built with `AppFrame` inherit the shared toolbar through `AppHeader`. Pass the return destination, commands and filters to the frame. A nested reader can place its controls in the same window using `ToolbarControls`. Sharing keeps its selected project in the window address so returning from Comms restores that project. Approvals carries the History folder in the reader address so closing a past decision returns focus to its original row.
