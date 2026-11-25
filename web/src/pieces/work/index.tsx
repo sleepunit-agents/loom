@@ -51,7 +51,7 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
     const recent = recentTickets.filter(ticket=>!working.some(active=>active.id===ticket.id));
     return <div className="p-4"><AppFrame title={project.name} where={path} go={go} crumb={{label:'Work',href:base}}>
       {project.goal && <Body>{project.goal}</Body>}
-      <ProjectNeeds key={project.id} project={project.id} go={go}/>
+      <ProjectNeeds key={'needs-'+project.id} project={project.id} go={go}/>
       {project.lifecycle==='retired' && <Body quiet>Retired project</Body>}
       {project.lifecycle==='active' && working.length>0 && tickets('Claimed tickets',working)}
       {(project.lifecycle==='retired' ? recentTickets : recent).length>0 && tickets('Recent tickets',project.lifecycle==='retired' ? recentTickets : recent)}
@@ -59,7 +59,7 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
       {project.lifecycle==='active' && <ClaimControls key={'claims-'+project.id} project={project.id}/>}
       <ProjectPosts project={project.id} go={go}/>
       <ProjectNotes project={project.id} go={go}/>
-      <BacklogWindow key={project.id} project={project.id} path={path} go={go}/>
+      <BacklogWindow key={'history-'+project.id} project={project.id} path={path} go={go}/>
       <WorkDiscussion key={'discuss-'+project.id} kind="project" id={project.id} go={go}/>
       <LinkButton onClick={()=>go(base+'/project/'+project.id+'/changes')}>Open pull requests</LinkButton>
       <LinkButton onClick={()=>go(base+'/project/'+project.id+'/board')}>Open board</LinkButton>
