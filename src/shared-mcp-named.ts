@@ -328,14 +328,14 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
  type TaskRow={id:string;title:string;type:string;status:string;isShelved?:boolean;priority:number;project:string|null;ownerKind:string;owner:string|null;assigneeKind:string|null;assignee:string|null;goal:string;why:string;doneWhen:string;description:string;ask:string|null;closeReason:string|null;
   taskCommentsByTask?:{seq:number;actor:string;at:string;text:string}[];taskLinksByTask?:{dependsOn:string;type:string}[]};
  const taskLine=(task:TaskRow)=>'- '+task.id+' P'+task.priority+' '+task.title+(task.project?' ['+task.project+']':'')+(task.status==='open'?'':' ('+task.status+(task.assignee?', '+task.assignee:'')+')');
- tool('task_ready','List the tasks ready to pick up, most urgent first. Pass project to narrow it.',
+ tool('task_ready','List ready tasks by urgency, optionally by project.',
   z.object({project:z.string().min(1).max(100).optional(),limit:z.number().int().min(1).max(100).optional()}).strict(),
   async input=>{
    const data=await read<{readyTasks:TaskRow[]}>('query($limit:Int){readyTasks(limit:$limit){id title type status priority project ownerKind owner assigneeKind assignee goal why doneWhen description ask closeReason}}',{limit:input.project?500:input.limit??20});
    const rows=data.readyTasks.filter(task=>!input.project||task.project===input.project).slice(0,input.limit??20);
    return rows.length?rows.map(taskLine).join('\n'):'Nothing is ready.';
   });
- tool('task','Read one task with its comments and what it depends on.',
+ tool('task','Read a task, its comments and dependencies.',
   z.object({id:taskId}).strict(),
   async input=>{
    const data=await read<{tasks:TaskRow[]}>('query($id:String!){tasks(where:{id:{eq:$id}}){id title type status isShelved priority project ownerKind owner assigneeKind assignee goal why doneWhen description ask closeReason taskCommentsByTask{seq actor at text} taskLinksByTask{dependsOn type}}}',{id:input.id});
@@ -349,11 +349,11 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
    if(task.taskCommentsByTask?.length)lines.push('','## Comments',...[...task.taskCommentsByTask].sort((a,b)=>a.seq-b.seq).map(row=>'- **'+row.actor+'** '+row.at+': '+row.text));
    return lines.join('\n');
   });
- tool('task_create','File a task. It needs a plain title, a goal and a reason. Aim for one outcome someone can deliver and verify. Several independently shippable outcomes usually belong under an epic. A backend change can ship before its UI. You own the task unless you choose the household.',
+ tool('task_create','File one deliverable, verifiable outcome. Group independently shippable outcomes under an epic. Ownership defaults to you.',
   z.object({title:z.string().min(1).max(300),goal:z.string().min(1).max(2000),why:z.string().min(1).max(2000),doneWhen:z.string().max(2000).optional(),description:z.string().max(20000).optional(),priority:z.number().int().min(0).max(4).optional(),
    project:z.string().min(1).max(100).optional(),type:z.enum(tasks.type.enumValues).optional(),parent:taskId.optional(),owner:z.enum(['me','household']).optional()}).strict(),
   async(input,agent)=>{const {owner,...fields}=input;const value=await run('tasks.command',{action:'create',input:{...fields,owner:owner==='household'?{kind:'household'}:{kind:'agent',id:agent}}}) as {id?:string};return 'Filed '+value.id+': '+input.title;});
- tool('task_edit','Change a task\'s title, goal, reason, done-when, description, priority or project. Set type to epic to promote an existing ticket and keep its history.',
+ tool('task_edit','Edit task fields. Set type to epic to promote it with its history.',
   z.object({id:taskId,type:z.literal('epic').optional(),title:z.string().min(1).max(300).optional(),goal:z.string().min(1).max(2000).optional(),why:z.string().min(1).max(2000).optional(),doneWhen:z.string().max(2000).optional(),description:z.string().max(20000).optional(),priority:z.number().int().min(0).max(4).optional(),project:z.string().min(1).max(100).nullable().optional()}).strict(),
   async input=>{const {id,...fields}=input;await run('tasks.command',{action:'edit',id,input:fields});return 'Edited '+id;});
  tool('task_move_to_project','Move all listed tasks atomically and record each move in a comment. Requires access to each task and destination project. With project: null, only the task or household owner may remove its project. Retired projects permit moves out only. To split, propose a project then move tasks. Use projectMerge to merge or projectJoin to request access.',
@@ -363,10 +363,10 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
    const moved=value.moved??[],where=input.project===null?'out of every project':'to project '+input.project;
    return moved.length?'Moved '+moved.join(', ')+' '+where+'.'+(moved.length<new Set(input.ids).size?' The rest were already there.':''):'Nothing moved: '+(input.project===null?'none of them is in a project.':'they are already in project '+input.project+'.');
   });
- tool('task_claim','Claim an open task: it moves to in progress and you hold it. Pass release: true to hand it back.',
+ tool('task_claim','Claim an open task or pass release:true to hand it back.',
   z.object({id:taskId,release:z.boolean().optional()}).strict(),
   async input=>{await run('tasks.command',{action:input.release?'unclaim':'claim',id:input.id});return (input.release?'Released ':'Claimed ')+input.id;});
- tool('task_close','Close a task with a reason. The reason "cancelled" marks it cancelled. Pass reopen: true to open a closed task again.',
+ tool('task_close','Close with a reason ("cancelled" for cancellation), or pass reopen:true.',
   z.object({id:taskId,reason:z.string().min(1).max(2000).optional(),reopen:z.boolean().optional()}).strict().refine(value=>value.reopen||!!value.reason,'A reason is needed to close a task'),
   async input=>{if(input.reopen){await run('tasks.command',{action:'reopen',id:input.id});return 'Reopened '+input.id;}await run('tasks.command',{action:'close',id:input.id,reason:input.reason});return 'Closed '+input.id;});
  tool('task_comment','Leave a comment on a task.',
