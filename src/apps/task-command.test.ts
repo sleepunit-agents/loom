@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createDataSchema, type DataDatabase } from '../core/data/database.js';
-import { members, inbox } from '../core/data/schema.js';
+import { agents, members, inbox } from '../core/data/schema.js';
 import { taskService, type TaskService } from './tasks.js';
 import { dispatchTaskCommand, taskCommandSchema, TASK_MOVE_MAX, type TaskCommand } from './task-command.js';
 
@@ -33,7 +33,9 @@ it('executes form intents against shared rows with the root actor and explicit r
   send({ action: 'unclaim', id: task.id });
   expect(service.get(task.id).status).toBe('open');
   send({ action: 'comment', id: task.id, text: 'Pump ready' });
-  expect(service.get(task.id).comments[0]).toMatchObject({ actor: actor.id, text: 'Pump ready' });
+  expect(service.get(task.id).comments.map(({actor,text})=>({actor,text}))).toEqual([
+    {actor:actor.id,text:'Changed priority from P2 to P0.'},{actor:actor.id,text:'Pump ready'},
+  ]);
   send({ action: 'close', id: task.id, reason: 'Installed' });
   expect(service.get(task.id)).toMatchObject({ status: 'closed', closeReason: 'Installed' });
   send({ action: 'reopen', id: task.id });
@@ -118,4 +120,16 @@ it('promotes in place and records the decision once across retries', () => {
   ]});
   expect(service.get(child.id).links).toContainEqual({task:child.id,type:'parent-child',dependsOn:parent.id});
   expect(service.ready().map(row=>row.id)).toEqual([child.id]);
+});
+
+
+it('keeps an applied priority decision and the new order for the next reader',()=>{
+  db.insert(agents).values({id:'art',about:'',markBg:'#000',markFg:'#fff',faceShape:'pebble',faceEyes:'dot'}).run();
+  const earlier=create('First ticket'),promoted=create('Next direction');
+  const change=taskCommandSchema.parse({action:'edit',id:promoted.id,input:{priority:0}});
+  dispatchTaskCommand(service,change,{kind:'agent',id:'art'});
+  dispatchTaskCommand(service,change,{kind:'agent',id:'art'});
+  const fresh=taskService(db,()=>at);
+  expect(fresh.ready().map(row=>row.id)).toEqual([promoted.id,earlier.id]);
+  expect(fresh.get(promoted.id).comments).toMatchObject([{actorKind:'agent',actor:'art',text:'Changed priority from P2 to P0.'}]);
 });
