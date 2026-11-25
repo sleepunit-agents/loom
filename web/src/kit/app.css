@@ -1,5 +1,6 @@
 .loom-kit-frame { display: grid; gap: 16px; min-width: 0; }
-.loom-kit-filters { display: flex; flex-wrap: wrap; gap: 12px; }
+.loom-kit-frame > .loom-toolbar { margin-bottom: 0; --toolbar-accent: var(--t,var(--v-blue)); }
+.loom-frame-context { margin-inline: 16px; color: var(--v-text-2); }
 .loom-kit-list { display: flex; flex-direction: column; min-width: 0; }
 .loom-kit-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 12px 14px 12px 18px; width: 100%; text-align: left; color: var(--v-text); border-bottom: 1px solid var(--v-border); }
 .loom-kit-row[data-icon] { grid-template-columns: 32px minmax(0, 1fr) auto; }
