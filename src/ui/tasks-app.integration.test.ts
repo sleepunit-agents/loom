@@ -3,7 +3,7 @@ import { it, expect, onTestFailed } from 'vitest';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { existsSync, readFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { join, extname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { getRequestListener } from '@hono/node-server';
@@ -17,7 +17,7 @@ import { tasksQuery, taskChoicesQuery } from '../../web/src/pieces/tasks/query.j
 const root = resolve(import.meta.dirname, '../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find(p => p && existsSync(p));
 const title = 'Fix pond pump', hiddenTitle = 'Private lee task';
-async function fixture(withComms=false) {
+async function fixture(withComms=false, memory?:import('../shared-memory.js').SharedMemoryOptions) {
   const client = new Database(':memory:');
   const at = '2026-11-14T20:00:00.000Z', clock = new FakeClock(Date.parse(at));
   const db = createDataSchema(client, () => new Date(clock.now()).toISOString());
@@ -41,7 +41,7 @@ async function fixture(withComms=false) {
     db.insert(s.changeTasks).values({change:id,task:'t-1'}).run();
   }
   const key = {seal:async (s:string)=>Buffer.from(s),open:async (b:Uint8Array)=>Buffer.from(b).toString(),hash:(s:string)=>createHash('sha256').update(s).digest('hex')};
-  const data = sharedRoot({ db, clock, commsKey:withComms ? key : undefined, originAllowed: request => request.headers.origin === `http://${request.headers.host}`, reportError: error => { throw error; } });
+  const data = sharedRoot({ db, clock, memory, commsKey:withComms ? key : undefined, originAllowed: request => request.headers.origin === `http://${request.headers.host}`, reportError: error => { throw error; } });
   await data.ready;
   const serveData = getRequestListener(request => data.http.fetch(request));
   const http = createServer((request, response) => {
@@ -474,4 +474,33 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     await highlights.getByText(/Gauge is steady after restart/).click();
     await page.getByRole('region',{name:'Ticket story'}).getByText('Gauge is steady after restart.',{exact:true}).waitFor();
   }finally{await browser.close();await app.close();}
+});
+
+it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html')))('opens the attributed project note from Work and returns to the shared project',async()=>{
+  const directory=mkdtempSync(join(tmpdir(),'work-project-notes-'));
+  const {ProjectsStore}=await import('../backends/projects.js');
+  const memories=join(directory,'memories.db');
+  const store=new ProjectsStore({dbPath:memories});
+  store.write({slug:'field-notes',name:'Pump field notes',summary:'Cold starts need a second reading.',links:{epic:'t-1'}});
+  store.close();
+  const app=await fixture(false,{checkingAgent:'art',sources:{agents:[{agent:'art',directory,memories}],commons:{
+    directory,knowledge:join(directory,'knowledge.db'),people:join(directory,'people.db'),
+  }}});
+  const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  try {
+    app.data.writes.run(()=>{
+      app.db.insert(s.memberAgents).values({member:'sam',agent:'art'}).run();
+      app.db.update(s.tasks).set({type:'epic'}).where(eq(s.tasks.id,'t-1')).run();
+    });
+    const ctx=await browser.newContext({serviceWorkers:'block',reducedMotion:'reduce'});
+    await ctx.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
+    const page=await ctx.newPage();page.setDefaultTimeout(8000);
+    await page.goto(app.url+'/p/work/project/pond');
+    const notes=page.getByRole('region',{name:'Project notes'});
+    await notes.getByText('Cold starts need a second reading.').waitFor();
+    await notes.getByRole('button',{name:/art.*Pump field notes/i}).click();
+    await page.getByRole('heading',{level:1,name:'Pump field notes',exact:true}).waitFor();
+    await page.goBack();
+    await notes.getByText('Cold starts need a second reading.').waitFor();
+  }finally{await browser.close();await app.close();rmSync(directory,{recursive:true,force:true});}
 });

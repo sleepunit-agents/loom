@@ -4,7 +4,7 @@ import { GraphQLBoolean, GraphQLError, GraphQLFloat, GraphQLInt, GraphQLList, Gr
 import type { Viewer } from '../../core/index.js';
 import type {ProjectsReader} from './projects.js';
 import {retainedQueryFields} from './retained-query.js';
-export type ProjectQueryReader=Pick<ProjectsReader,'list'|'read'|'memoryRead'|'memoryHistory'|'retained'|'memoryList'|'access'>;
+export type ProjectQueryReader=Pick<ProjectsReader,'list'|'read'|'memoryRead'|'memoryHistory'|'retained'|'memoryList'|'access'> & Partial<Pick<ProjectsReader,'cards'>>;
 import {projectDeadline} from './project-deadlines.js';
 import type {QueryDeadlines} from './query-deadlines.js';
 import type { ProjectRecord, ProjectMemory, ProjectCard, ProjectSection } from './projects-model.js';

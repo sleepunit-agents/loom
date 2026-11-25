@@ -1,3 +1,4 @@
+import {projectContributionFields} from '../pieces/mind/project-contributions.js';
 /** File-backed Memory joins the generated schema; no copied tables or second door. */
 import type { DataDatabase } from '../core/data/database.js';
 import { householdSettings, householdTimezone } from '../core/data/household-settings.js';
@@ -31,7 +32,7 @@ export function memoryQueryFields(db: DataDatabase, options: {
       const digests:TapeDigestReader=(viewer,agent,window)=>readActivityWindow(db,viewer,{agent,from:window.from,until:window.until+1,limit:200}).digestRows
         .map(row=>({at:row.at,venue:row.conversationRow.venue,label:row.conversationRow.label,place:row.conversationRow.place,summary:row.summary}));
       const context=memoryIdentityFields({...options,timezone:()=>householdTimezone(db),digests:hasConversations?digests:undefined},deadlines);
-      return {sweep:knowledge.sweep,nextDeadline(){const times=[knowledge.nextDeadline(),deadlines.nextDeadline(),people.nextDeadline(),options.activity.nextDeadline?.()].filter((at):at is number=>at!==undefined);return times.length?Math.min(...times):undefined;},observeDeadlines:(fn:()=>void)=>deadlines.observe(fn),fields: {...knowledge.fields, ...people.fields, ...projectsQueryFields(options.projects,deadlines,options.now), ...activityQueryFields(options.activity,deadlines),...context.fields},
+      return {sweep:knowledge.sweep,nextDeadline(){const times=[knowledge.nextDeadline(),deadlines.nextDeadline(),people.nextDeadline(),options.activity.nextDeadline?.()].filter((at):at is number=>at!==undefined);return times.length?Math.min(...times):undefined;},observeDeadlines:(fn:()=>void)=>deadlines.observe(fn),fields: {...knowledge.fields, ...people.fields, ...projectContributionFields(db,options.projects), ...projectsQueryFields(options.projects,deadlines,options.now), ...activityQueryFields(options.activity,deadlines),...context.fields},
         // Query readers own their complete cleanup even when the enclosing service also closes.
         close() {const errors:unknown[]=[];for(const close of [()=>deadlines.close(),context.close,people.close,knowledge.close])try{close();}catch(error){errors.push(error);}if(errors.length)throw new AggregateError(errors,'Memory queries failed to close');}};
     }catch(error){people.close();throw error;}
