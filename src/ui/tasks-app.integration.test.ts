@@ -17,7 +17,7 @@ import { tasksQuery, taskChoicesQuery } from '../../web/src/pieces/tasks/query.j
 const root = resolve(import.meta.dirname, '../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find(p => p && existsSync(p));
 const title = 'Fix pond pump', hiddenTitle = 'Private lee task';
-async function fixture() {
+async function fixture(withComms=false) {
   const client = new Database(':memory:');
   const at = '2026-11-14T20:00:00.000Z', clock = new FakeClock(Date.parse(at));
   const db = createDataSchema(client, () => new Date(clock.now()).toISOString());
@@ -40,7 +40,8 @@ async function fixture() {
     db.insert(s.changes).values({ id, repository:id.slice(0,id.indexOf('#')), number: Number(id.split('#')[1]), title:name, body:'', url:`https://github.com/${id.slice(7).replace('#','/pull/')}`, state:'open', draft:false, authorLogin:'fixture', project, branch:'feature', headCommit:'a'.repeat(40), baseBranch:'next', checks:'passing', review:'approved', mergeable:'yes', waitingOn:'done', openedAt:at, updatedAt:at }).run();
     db.insert(s.changeTasks).values({change:id,task:'t-1'}).run();
   }
-  const data = sharedRoot({ db, clock, originAllowed: request => request.headers.origin === `http://${request.headers.host}`, reportError: error => { throw error; } });
+  const key = {seal:async (s:string)=>Buffer.from(s),open:async (b:Uint8Array)=>Buffer.from(b).toString(),hash:(s:string)=>createHash('sha256').update(s).digest('hex')};
+  const data = sharedRoot({ db, clock, commsKey:withComms ? key : undefined, originAllowed: request => request.headers.origin === `http://${request.headers.host}`, reportError: error => { throw error; } });
   await data.ready;
   const serveData = getRequestListener(request => data.http.fetch(request));
   const http = createServer((request, response) => {
@@ -181,7 +182,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     form = a.getByRole('form', { name: 'Close task', exact: true });
     await form.getByLabel('Reason', { exact: true }).fill('Finished in browser');
     await form.getByRole('button', { name: 'Close task', exact: true }).click();
-    for (const page of [a,b]) await expect.poll(() => page.getByText('Finished in browser', { exact: true }).count()).toBe(1);
+    for (const page of [a,b]) await expect.poll(() => page.getByRole('region',{name:'Ticket story'}).getByText('Finished in browser', { exact: true }).count()).toBe(1);
     step('Reopen');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Reopen', exact: true }).click();
     for (const page of [a,b]) await expect.poll(() => page.getByText('open · P0 · pond', {exact:true}).count()).toBe(1);
@@ -279,5 +280,31 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     expect(new URL(page.url()).pathname).toBe('/p/tasks-preview/task/t-1');
     expect(await page.getByRole('group',{name:'Pull request acme/app#3',exact:true}).count()).toBe(1);
     expect(app.data.services.tasks.get('t-1').type).toBe('epic');
+  } finally { await browser.close(); await app.close(); }
+});
+
+
+it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.html')))('reads new ticket updates on a return visit to Work', async()=>{
+  const app=await fixture(true);
+  const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  try {
+    const ctx=await browser.newContext({serviceWorkers:'block',reducedMotion:'reduce'});
+    await ctx.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
+    const page=await ctx.newPage();
+    await page.goto(app.url+'/p/work');
+    const updates=page.getByRole('region',{name:'pond updates'});
+    await updates.getByText(title,{exact:true}).waitFor();
+    await page.reload();
+    await page.getByText('No project tickets have changed since your last visit.').waitFor();
+    const at='2026-11-15T20:00:00.000Z';
+    app.data.writes.run(()=>{
+      app.db.update(s.tasks).set({changedAt:at}).where(eq(s.tasks.id,'t-1')).run();
+      app.db.insert(s.taskComments).values({task:'t-1',seq:1,at,actorKind:'agent',actor:'art',text:'Found a worn bearing.'}).run();
+    });
+    await updates.getByText('Found a worn bearing.',{exact:true}).waitFor();
+    expect(await updates.getByText(hiddenTitle,{exact:true}).count()).toBe(0);
+    await updates.getByText(title,{exact:true}).click();
+    await page.getByRole('region',{name:'Ticket story'}).getByText('Found a worn bearing.',{exact:true}).waitFor();
+    expect(new URL(page.url()).pathname).toBe('/p/tasks-preview/task/t-1');
   } finally { await browser.close(); await app.close(); }
 });
