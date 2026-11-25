@@ -114,3 +114,14 @@
   color: var(--v-blue); border: 1px solid color-mix(in srgb, var(--v-blue) 55%, transparent); text-decoration: none; overflow-wrap: anywhere; }
 .loom-split__chip:hover, .loom-split__chip:focus-visible { background: color-mix(in srgb, var(--v-blue) 10%, transparent); outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--v-blue) 40%, transparent); }
 @media (pointer: coarse) { .loom-split__chip { min-height: 44px; } }
+
+/* A toolbar uses one row of the tile. The split keeps the remaining height
+   and its existing pane scroll containers, keyboard handling and return target. */
+.next-page:has(> .loom-toolbar + .loom-split) {
+  display: grid; grid-template-rows: auto minmax(0, 1fr);
+}
+.next-page > .loom-toolbar:has(+ .loom-split) {
+  --toolbar-accent: var(--t, var(--v-pink)); position: static; margin: 0;
+  display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between;
+}
+.next-page > .loom-toolbar:has(+ .loom-split) .loom-toolbar-controls { border: 0; min-width: 0; max-width: 100%; }
