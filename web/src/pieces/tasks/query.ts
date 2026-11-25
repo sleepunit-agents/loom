@@ -1,10 +1,17 @@
 import type { TaskListRow, TaskReaderFields, SharedTaskComment, SharedTaskLink, SharedTaskChange } from './shared-view';
 
+export const notePageSize = 30;
+const noteSelection = `orderBy:{seq:{direction:desc,priority:0}},limit:${notePageSize+1}`;
+const noteFields = 'task seq actorKind actor at text';
+export const earlierNotesQuery = `query EarlierTicketNotes($selected:String!,$before:Int!) {
+  notes:taskComments(where:{task:{eq:$selected},seq:{lt:$before}},${noteSelection}) { ${noteFields} }
+}`;
+
 const detailFields = `
   id createdAt createdBy closedAt doneWhen ifYes ifNo sourceKind sourceId
   projectRow { id name }
   changeTasksByTask { changeRow { id repository number title openedAt closedAt state draft checks review waitingOn } }
-  taskCommentsByTask(orderBy: {seq: {direction: asc, priority: 0}}) { task seq actorKind actor at text }
+  taskCommentsByTask(${noteSelection}) { ${noteFields} }
 `;
 
 /** The list can include the opening task’s details when entered by direct link.

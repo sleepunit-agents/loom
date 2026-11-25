@@ -61,6 +61,7 @@ export interface SharedTasksProps {
   posts?: TicketPost[];
   discussion?: ReactNode;
   postNavigation?: ReactNode;
+  noteNavigation?: ReactNode;
   projectLink?: { id: string; name: string; open(): void };
   openPost?(post:TicketPost): void;
   /** IDs returned by the authorized ready query, never inferred from partial visible links. */
@@ -238,7 +239,7 @@ export function SharedTasks(props: SharedTasksProps) {
           <LinkButton onClick={()=>props.openChange!(event.change!)}>Open pull request</LinkButton>}
         {event.reviewUrl && <a href={event.reviewUrl} target="_blank" rel="noreferrer">GitHub review{event.revision && ' · '+event.revision.slice(0,8)}</a>}
         {event.post && props.openPost && <LinkButton onClick={()=>props.openPost!(event.post!)}>Activity thread</LinkButton>}
-      </li>)}</ol>{props.githubNavigation}{props.postNavigation}{props.reviewsUnavailable && <Body quiet>Review history is unavailable.</Body>}</Section>}
+      </li>)}</ol>{props.noteNavigation}{props.githubNavigation}{props.postNavigation}{props.reviewsUnavailable && <Body quiet>Review history is unavailable.</Body>}</Section>}
       <Facts>
         <Fact label="Why">{selected.why}</Fact>
         {relations('Parent',links.filter(l => l.task === selected.id && l.type === 'parent-child').map(l => l.dependsOn))}
