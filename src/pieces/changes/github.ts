@@ -1,6 +1,6 @@
 /** The only forge boundary. A fixed query and URL: no caller can supply a mutation or destination. */
 import { z } from 'zod';
-import { submittedReviewSchema, type SubmittedReview, changeSchema, repoId, active, type Change } from './model.js';
+import { submittedReviewSchema, type SubmittedReview, changeSchema, repoId, active, week, type Change } from './model.js';
 import { parseRedactedJSON } from './redact.js';
 import { withGitHub, type Secrets } from './roles.js';
 const reviewFields = 'id url submittedAt state bodyText author{login} commit{oid}';
@@ -16,7 +16,7 @@ const fields=`number title url state isDraft createdAt updatedAt closedAt merged
  reviewRequests(first:10){nodes{requestedReviewer{... on User{login name} ... on Team{slug name}}}}
  latestReviews(first:10){nodes{state author{login ... on User{name}}}} assignees(first:5){nodes{login name}} participants(first:15){nodes{login name}}
  commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}}`;
-const query=`query($owner:String!,$name:String!,$states:[PullRequestState!],$after:String){repository(owner:$owner,name:$name){pullRequests(states:$states,first:100,after:$after,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{${fields}} pageInfo{hasNextPage endCursor}}}}`;
+const query=`query($owner:String!,$name:String!,$states:[PullRequestState!],$after:String){repository(owner:$owner,name:$name){pullRequests(states:$states,first:20,after:$after,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{${fields}} pageInfo{hasNextPage endCursor}}}}`;
 const failed=new Set(['FAILURE','TIMED_OUT','CANCELLED','ACTION_REQUIRED','STARTUP_FAILURE','ERROR']);
 // GitHub JSON is untrusted; pick normalized fields, then validate at the boundary.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -73,9 +73,13 @@ export function githubReader(secrets:Secrets, request:typeof fetch=fetch) {
     for(;;) {
      const page=(await read(query,{owner,name,states,after})).pullRequests;
      if(!page||!Array.isArray(page.nodes))throw new Error('GitHub read failed');
+     let pastWindow=false;
      for(const node of page.nodes){
       if(!node)continue;
       const change=normalize(repo,node);
+      // GitHub orders by updatedAt. Closing or merging also updates the PR,
+      // so after an old update no later page can contain a recent closure.
+      if(!states.includes('OPEN') && change.updated && Date.parse(change.updated)<=now-week)pastWindow=true;
       if(!active(change,now))continue;
       const first=(node as {reviews?:unknown}).reviews;
       change.submittedReviews=await reviewsFor(change,first);
@@ -83,7 +87,7 @@ export function githubReader(secrets:Secrets, request:typeof fetch=fetch) {
      }
      const info=page.pageInfo;
      if(!info||typeof info.hasNextPage!=='boolean'||!(info.endCursor===null||typeof info.endCursor==='string')) throw new Error('Invalid GitHub pagination');
-     if(!info.hasNextPage) break;
+     if(!info.hasNextPage || pastWindow) break;
      const cursor:unknown=info.endCursor;if(typeof cursor!=='string'||!cursor||seen.has(cursor)) throw new Error('Invalid GitHub pagination');seen.add(cursor);after=cursor;
     }
    }

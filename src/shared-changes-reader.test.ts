@@ -64,3 +64,19 @@ it('keeps distinct submitted reviews by one reviewer, follows their cursor and e
  expect(change.submittedReviews).toEqual([first,second].map(r=>({id:r.id,state:r.state,login:'reviewer',headCommit:r.commit.oid,
    submittedAt:new Date(r.submittedAt).toISOString(),url:r.url,body:r.bodyText.replace(token,'[redacted]')})));
 });
+it('reads old open PRs but stops closed pagination beyond the last week',async()=>{
+ const now=Date.parse('2026-11-20T12:00:00Z'),old='2026-10-01T12:00:00Z',recent='2026-11-19T12:00:00Z';
+ const calls:string[]=[];
+ const request:typeof fetch=async(_url,init)=>{
+   const {variables,query}=JSON.parse(String(init?.body));
+   expect(query).toContain('states:$states,first:20');
+   const open=variables.states.includes('OPEN');
+   calls.push((open?'open':'closed')+':'+variables.after);
+   const node=(number:number,at:string)=>({...raw,number,state:open?'OPEN':'MERGED',updatedAt:at,mergedAt:open?null:at});
+   const nodes=open ? [node(variables.after?2:1,old)] : [node(3,recent),node(4,old)];
+   return Response.json({data:{repository:{pullRequests:{nodes,pageInfo:{hasNextPage:!variables.after,endCursor:!variables.after?'next':null}}}}});
+ };
+ const read=sharedChangesReader({source:{read:async()=>Buffer.from('FAKE_TOKEN')},bindings:{acme:'forge'},request});
+ expect((await read('acme/app',now)).map(c=>c.number)).toEqual([1,2,3]);
+ expect(calls).toEqual(['open:null','open:next','closed:null']);
+});
