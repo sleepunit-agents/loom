@@ -1,3 +1,4 @@
+import {projectPosts} from './project-posts.js';
 import { ticketPosts } from './ticket-posts.js';
 import { workForPage } from './agent-post-work.js';
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
@@ -46,6 +47,15 @@ GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
   };
   const args = { agent: { type: string }, limit: { type: GraphQLInt, defaultValue: 20 } };
   return {
+    projectActivityHighlights: {
+      type:new GraphQLList(new GraphQLNonNull(new GraphQLObjectType({name:'ProjectActivityHighlight',fields:{
+        project:{type:string},task:{type:string},title:{type:string},id:{type:string},at:{type:string},
+        thread:{type:string},agent:{type:string},words:{type:string},
+      }}))),args:{project:{type:GraphQLString},since:{type:GraphQLString,defaultValue:''},
+        after:{type:GraphQLString},perProject:{type:GraphQLInt,defaultValue:4}},
+      resolve:(_row,{project,since,after,perProject},{viewer})=>projectPosts(db,key,viewer,()=>allowed(viewer),project,since,
+        after==null?undefined:activityCursor(after),perProject),
+    },
     ticketActivityPosts: {
       type:new GraphQLList(new GraphQLNonNull(new GraphQLObjectType({name:'TicketActivityPost',fields:{
         task:{type:string}, id:{type:string}, thread:{type:string}, agent:{type:string}, at:{type:string}, words:{type:string},

@@ -447,3 +447,31 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     await page.getByText(/Latest GitHub read failed.*Last successful household GitHub read/).waitFor();
   }finally{await browser.close();await app.close();}
 });
+
+it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html')))('reads a fresh reply on a quiet ticket in desk and project catch-up',async()=>{
+  const app=await fixture(true),browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  try {
+    const {prepareAgentPost}=await import('../core/conversations/agent-posts.js');
+    const comms=app.data.services.comms!;
+    const th=comms.threads.open({member:'sam',agent:'art',title:'Inspection'});
+    const add=async(input:Parameters<typeof prepareAgentPost>[3])=>{
+      const save=await prepareAgentPost(app.db,comms.key,th.id,input);
+      return app.data.writes.run(()=>save(new Date(app.clock.now()).toISOString())).value;
+    };
+    const activity=await add({action:'open',words:'Checking idle pressure.',refs:['t-1']});
+    const ctx=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},reducedMotion:'reduce'});
+    await ctx.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
+    const page=await ctx.newPage();page.setDefaultTimeout(8000);
+    await page.goto(app.url+'/p/work');
+    const pond=page.getByRole('region',{name:'pond updates'});
+    await pond.getByText(/Checking idle pressure/).waitFor();
+    await page.reload();
+    await page.getByText('No project tickets have changed since your last visit.').waitFor();
+    await add({action:'reply',thread:activity,words:'Gauge is steady after restart.'});
+    await pond.getByText(/Gauge is steady after restart/).waitFor();
+    await pond.getByRole('button',{name:'pond',exact:true}).click();
+    const highlights=page.getByRole('region',{name:'Latest agent updates'});
+    await highlights.getByText(/Gauge is steady after restart/).click();
+    await page.getByRole('region',{name:'Ticket story'}).getByText('Gauge is steady after restart.',{exact:true}).waitFor();
+  }finally{await browser.close();await app.close();}
+});

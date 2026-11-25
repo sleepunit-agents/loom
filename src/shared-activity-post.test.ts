@@ -108,3 +108,36 @@ it('drops the prepared update when its job finishes before the post commits',asy
   expect([401,403]).toContain((await pending).status);
   expect(f.db.select().from(agentPosts).all()).toEqual([]);
 });
+
+it('selects fresh replies on unchanged tickets for the project and desk without exposing another conversation',async()=>{
+  const f=await bodyFixture(clean);
+  const {prepareAgentPost}=await import('./core/conversations/agent-posts.js');
+  const {tasks,projectMembers}=await import('./core/data/schema.js');
+  const {and,eq}=await import('drizzle-orm');
+  const at=new Date(f.clock.now()).toISOString();
+  f.db.insert(tasks).values({id:'t-701',title:'Inspect the pump',project:'pond',ownerKind:'agent',owner:'art',
+    goal:'Read pressure',why:'Maintenance',createdByKind:'member',createdBy:'alice',createdAt:at,changedAt:at}).run();
+  const hidden=f.root.services.comms!.threads.open({agent:'art',member:'bob',title:'Private field notes'});
+  const add=async(source:string,input:Parameters<typeof prepareAgentPost>[3])=>(await prepareAgentPost(f.db,f.key,source,input))(at);
+  const activity=await add(f.thread.id,{action:'open',words:'Checking the pump.',refs:['t-701']});
+  await add(hidden.id,{action:'open',words:'Private draft.',refs:['t-701']});
+  async function read(project?:string,after?:string){
+    return f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',cookie:'loom_ui='+bodyCredentials.memberCookie},
+      body:JSON.stringify({query:'query Highlights($project:String,$after:String){projectActivityHighlights(project:$project,after:$after){project task title id words agent}}',variables:{project,after}})}).then(r=>r.json());
+  }
+  const first=await read();
+  expect(first).toMatchObject({data:{projectActivityHighlights:[{project:'pond',task:'t-701',words:'Checking the pump.',agent:'art'}]}});
+  const cursor=first.data.projectActivityHighlights[0].id;
+  await add(f.thread.id,{action:'reply',thread:activity,words:'Pressure is back.'});
+  for(const project of [undefined,'pond'])expect(await read(project,cursor)).toMatchObject({data:{projectActivityHighlights:[{words:'Pressure is back.'}]}});
+  expect(await read('other',cursor)).toEqual({data:{projectActivityHighlights:[]}});
+  expect(f.db.select().from(tasks).where(eq(tasks.id,'t-701')).get()?.changedAt).toBe(at);
+  const entered=Promise.withResolvers<void>(),resume=Promise.withResolvers<void>();
+  f.openGate(async()=>{entered.resolve();await resume.promise;});
+  const pending=read();
+  await entered.promise;
+  f.db.delete(projectMembers).where(and(eq(projectMembers.project,'pond'),eq(projectMembers.member,'alice'))).run();
+  resume.resolve();
+  expect(await pending).toEqual({data:{projectActivityHighlights:[]}});
+  expect(await read()).toEqual({data:{projectActivityHighlights:[]}});
+});
