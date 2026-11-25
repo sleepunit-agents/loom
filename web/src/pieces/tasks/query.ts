@@ -2,6 +2,7 @@ import type { TaskListRow, TaskReaderFields, SharedTaskComment, SharedTaskLink, 
 
 const detailFields = `
   id createdAt createdBy closedAt doneWhen ifYes ifNo sourceKind sourceId
+  projectRow { id name }
   changeTasksByTask { changeRow { id repository number title openedAt closedAt state draft checks review waitingOn } }
   taskCommentsByTask(orderBy: {seq: {direction: asc, priority: 0}}) { task seq actorKind actor at text }
 `;
@@ -33,6 +34,7 @@ export interface TasksSelection {
   tasks: TaskSelection[];
   selectedTask?: TaskReaderFields & {
     id: string;
+    projectRow: { id: string; name: string } | null;
     taskCommentsByTask: SharedTaskComment[];
     changeTasksByTask: { changeRow: Omit<SharedTaskChange, 'task'> | null }[];
   } | null;

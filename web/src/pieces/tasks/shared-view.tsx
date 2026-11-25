@@ -61,6 +61,7 @@ export interface SharedTasksProps {
   posts?: TicketPost[];
   discussion?: ReactNode;
   postNavigation?: ReactNode;
+  projectLink?: { id: string; name: string; open(): void };
   openPost?(post:TicketPost): void;
   /** IDs returned by the authorized ready query, never inferred from partial visible links. */
   ready: readonly string[];
@@ -107,6 +108,7 @@ export function SharedTasks(props: SharedTasksProps) {
   const tasks = live ? props.tasks : [];
   const links = live ? props.links : [];
   const selected = live ? props.reader : undefined;
+  const project = props.projectLink?.id === selected?.project ? props.projectLink : undefined;
   const name = (id: string | null) => displayName(id, props.names);
   const readyIds = new Set(live ? props.ready : []);
   const openTaskIds = new Set<string>();
@@ -214,7 +216,7 @@ export function SharedTasks(props: SharedTasksProps) {
     : selected ? <Reader aria-label="Task">
       <Meta>{selected.id} · {selected.type}</Meta>
       <Title>{selected.title}</Title>
-      <Meta>{selected.isShelved ? `shelved with its project · was ${stateWord(selected)}` : stateWord(selected)} · P{selected.priority}{selected.project && ` · ${selected.project}`}</Meta>
+      <Meta>{selected.isShelved ? `shelved with its project · was ${stateWord(selected)}` : stateWord(selected)} · P{selected.priority}{project ? <> · <LinkButton onClick={project.open}>{project.name}</LinkButton></> : selected.project && ` · ${selected.project}`}</Meta>
       {props.act && <Actions label="Task actions">
         {offered.filter(action => !more.includes(action)).map(action => button(action))}
         {offered.some(action => more.includes(action)) && <Menu label="More" name="More for this task" disabled={props.busy}>{close => offered.filter(action => more.includes(action)).map(action => button(action, close))}</Menu>}

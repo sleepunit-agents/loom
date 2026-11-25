@@ -282,7 +282,8 @@ it('orders the actual Tasks selection by urgency, then position, then ID', async
   db.update(tasks).set({ priority: 1, position: 1 }).where(eq(tasks.id, 'b')).run();
   db.insert(tasks).values({ id: 'c', title: 'Urgent first', priority: 1, position: -1, ownerKind: 'member', owner: 'sam', createdByKind: 'member', createdBy: 'sam', createdAt: at, changedAt: at }).run();
   db.insert(tasks).values({ id: 'd', title: 'Equal urgency and position', priority: 1, position: 1, ownerKind: 'member', owner: 'sam', createdByKind: 'member', createdBy: 'sam', createdAt: at, changedAt: at }).run();
-  const schema = dataQueries(client, { tables: ['tasks', 'taskComments', 'taskLinks', 'changeTasks', 'changes'], visibility: {
+  const schema = dataQueries(client, { tables: ['tasks', 'taskComments', 'taskLinks', 'changeTasks', 'changes', 'projects'], visibility: {
+    projects: fields => eq(fields.id, 'pond'),
     tasks: fields => ne(fields.id, 'hidden'), taskComments: () => sql`true`, taskLinks: () => sql`true`, changeTasks: () => sql`true`, changes: () => sql`true`,
   } });
   const result = await graphql({ schema, source: tasksQuery });

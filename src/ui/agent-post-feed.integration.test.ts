@@ -80,7 +80,19 @@ it.runIf(process.env.LOOM_TEST_CHROME)('keeps live updates, their linked work an
     await rail.click();
     await page.getByRole('button',{name:'Source ticket'}).click();
     await page.getByText('Compare garden pumps',{exact:true}).filter({visible:true}).first().waitFor();
-    await page.getByText('Pressure checked at the pump.',{exact:true}).filter({visible:true}).last().waitFor();
+    const ticket = page.getByRole('article', {name:'Task'});
+    await ticket.getByText('Pressure checked at the pump.', {exact:true}).waitFor();
+    const project = ticket.getByRole('button', {name:'Example garden', exact:true});
+    await project.click();
+    const board = page.getByRole('button', {name:'Open board', exact:true});
+    await board.click();
+    await page.getByRole('region', {name:'Working', exact:true}).getByText('Compare garden pumps', {exact:true}).waitFor();
+    await page.goBack();
+    await board.waitFor();
+    await page.goBack();
+    await project.waitFor();
+    await page.goBack();
+    await page.getByRole('button', {name:'Source ticket'}).waitFor();
 
   } finally {
     try { await browser?.close(); await app?.close(); } finally { await rm(dir,{recursive:true,force:true}); }
