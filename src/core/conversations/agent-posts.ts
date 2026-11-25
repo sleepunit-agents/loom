@@ -1,10 +1,12 @@
+import type { Viewer } from '../../policy.js';
+import { taskVisibility } from '../data/visibility.js';
 import { TASK_ID } from '../../slug.js';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq, gt, lt, inArray, isNull, notExists, notInArray, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, gt, lt, inArray, isNull, notExists, notInArray, sql, type SQL, type SQLWrapper } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { DataDatabase } from '../data/database.js';
-import { agentPostNames, agentPostWorkRefs, agentPostWorkPending, agentPosts, agentPostThreads, conversations, threads } from '../data/schema.js';
+import { agentPostNames, agentPostSources, agentPostWorkRefs, agentPostWorkPending, agentPosts, agentPostThreads, conversations, projects, tasks, threads } from '../data/schema.js';
 import { threadTitle } from './title.js';
 import { MESSAGE_WORDS_MAX, type WordsKey } from './words.js';
 
@@ -25,7 +27,19 @@ export function activitySources(db: DataDatabase, predicate: SQL) {
     .innerJoin(conversations, eq(threads.conversation, conversations.id)).where(predicate);
 }
 
-export function allActivitySourcesMatch(db: DataDatabase, sources: ReturnType<typeof activitySources>) {
+/** A page can contain posts backed by private conversations and by explicitly published ticket updates.
+ * Resolve both audiences before ordering or limiting the page, and again after opening the words. */
+export function readableActivitySources(db:DataDatabase, viewer:Viewer, conversationAllowed:SQL, agent?:string) {
+  const privateSources = activitySources(db,and(conversationAllowed,agent ? eq(conversations.agent,agent) : undefined)!);
+  const ticketSources = db.select({id:agentPostSources.id}).from(agentPostSources)
+    .innerJoin(tasks,eq(tasks.id,agentPostSources.task))
+    .innerJoin(projects,eq(projects.id,agentPostSources.project))
+    .where(and(viewer.kind === 'member' ? taskVisibility(viewer).tasks!(getTableColumns(tasks)) : sql`false`,
+      taskVisibility(viewer).projects!(getTableColumns(projects)),eq(tasks.project,agentPostSources.project),agent ? eq(agentPostSources.agent,agent) : undefined));
+  return privateSources.unionAll(ticketSources);
+}
+
+export function allActivitySourcesMatch(db: DataDatabase, sources: SQLWrapper) {
   return and(inArray(agentPostThreads.source, sources),
     notExists(db.select({ id: agentPosts.seq }).from(agentPosts).where(and(
       eq(agentPosts.thread, agentPostThreads.id), notInArray(agentPosts.source, sources)))),
@@ -59,7 +73,7 @@ export async function indexEarlierPostRefs(db: DataDatabase, key: WordsKey) {
 }
 
 /** The operation authenticates the source and runs this prepared write inside its receipt transaction. */
-export async function prepareAgentPost(db: DataDatabase, key: WordsKey, source: string, edit: Edit) {
+export async function prepareAgentPost(db: DataDatabase, key: WordsKey, source: string, edit: Edit, ticket?: {project:string;task:string;agent:string}) {
   const id = edit.action === 'open' ? 'activity:' + randomUUID() : edit.thread;
   const audience = (thread: string) => db.select({
     agent: conversations.agent, member: conversations.member, project: conversations.project,
@@ -80,8 +94,18 @@ export async function prepareAgentPost(db: DataDatabase, key: WordsKey, source: 
     edit.action !== 'rename' && edit.refs?.length ? key.seal(JSON.stringify(edit.refs)) : null,
   ]);
   return (at: string) => db.transaction(() => {
+    if (!ticket && !audience(source)?.member) throw new Error('Activity source unavailable');
+    db.insert(agentPostSources).values(ticket ? {id:source,...ticket} : {id:source,conversationThread:source})
+      .onConflictDoNothing().run();
+    const origin = db.select().from(agentPostSources).where(eq(agentPostSources.id,source)).get();
+    if (!origin || (ticket ? origin.project!==ticket.project || origin.task!==ticket.task || origin.agent!==ticket.agent : origin.conversationThread!==source))
+      throw new Error('Activity source unavailable');
     if (edit.action === 'open') {
       db.insert(agentPostThreads).values({ id, source, title: sealedTitle! }).run();
+    } else if (ticket) {
+      const onlyThisTicket = db.select({id:agentPostSources.id}).from(agentPostSources).where(eq(agentPostSources.id,source));
+      if (!db.select({id:agentPostThreads.id}).from(agentPostThreads).where(and(eq(agentPostThreads.id,id),
+        allActivitySourcesMatch(db,onlyThisTicket))).get()) throw new Error('Activity thread unavailable');
     } else {
       const writer = audience(source);
       if (!writer?.member) throw new Error('Activity thread unavailable');
@@ -98,7 +122,11 @@ export async function prepareAgentPost(db: DataDatabase, key: WordsKey, source: 
       }).run();
     } else {
       const post = db.insert(agentPosts).values({ thread: id, source, at, workRefs, words: sealedWords! }).returning({seq:agentPosts.seq}).get();
-      indexPostRefs(db,key,post.seq,edit.refs ?? []);
+      if (ticket) {
+        db.insert(agentPostWorkRefs).values({post:post.seq,digest:ticketRefDigest(key,ticket.task)}).run();
+      } else {
+        indexPostRefs(db,key,post.seq,edit.refs ?? []);
+      }
     }
     return id;
   });
@@ -113,17 +141,18 @@ export async function agentPostPreviews(db: DataDatabase, key: WordsKey, visible
     where p.thread = ${agentPostThreads.id} and p.seq < ${agentPosts.seq})`;
   const rows = db.select({
     thread: agentPostThreads.id, source: agentPostThreads.source, title: agentPostThreads.title, rename: { source:agentPostNames.source, title:agentPostNames.title },
-    latest: { source: agentPosts.source, seq: agentPosts.seq, at: agentPosts.at, words: agentPosts.words, workRefs: agentPosts.workRefs },
+    latest: { sourceTask: agentPostSources.task, source: agentPosts.source, seq: agentPosts.seq, at: agentPosts.at, words: agentPosts.words, workRefs: agentPosts.workRefs },
     parent: { source: parent.source, seq: parent.seq, words: parent.words },
   }).from(agentPostThreads)
     .leftJoin(agentPostNames, eq(agentPostNames.thread,agentPostThreads.id))
     .innerJoin(agentPosts, eq(agentPosts.seq, latest))
+    .innerJoin(agentPostSources, eq(agentPostSources.id, agentPosts.source))
     .leftJoin(parent, eq(parent.seq, previous))
     .where(and(visibleSource, before ? lt(agentPosts.seq, before) : undefined)).orderBy(desc(agentPosts.seq)).limit(limit).all();
   return Promise.all(rows.map(async row => ({
     thread: row.thread, sources: [row.source,row.latest.source,...(row.parent?[row.parent.source]:[]),...(row.rename?[row.rename.source]:[])],
     title: await key.open(row.rename?.title ?? row.title),
-    latest: { source: row.latest.source, id: String(row.latest.seq), at: row.latest.at, refs: await openRefs(key,row.latest.workRefs), words: await key.open(row.latest.words) },
+    latest: { sourceTask:row.latest.sourceTask, source: row.latest.source, id: String(row.latest.seq), at: row.latest.at, refs: await openRefs(key,row.latest.workRefs), words: await key.open(row.latest.words) },
     parent: row.parent ? { id: String(row.parent.seq), words: await key.open(row.parent.words) } : null,
   })));
 }
@@ -132,11 +161,12 @@ export async function agentPostPreviews(db: DataDatabase, key: WordsKey, visible
 export async function agentPostHistory(db: DataDatabase, key: WordsKey, visibleSource: SQL,
   thread: string, after: number, limit: number, newestFirst = false) {
   const cursor = after === 0 ? undefined : newestFirst ? lt(agentPosts.seq, after) : gt(agentPosts.seq, after);
-  const rows = db.select({ source: agentPosts.source, seq: agentPosts.seq, words: agentPosts.words, at: agentPosts.at, workRefs: agentPosts.workRefs })
+  const rows = db.select({ sourceTask:agentPostSources.task, source: agentPosts.source, seq: agentPosts.seq, words: agentPosts.words, at: agentPosts.at, workRefs: agentPosts.workRefs })
     .from(agentPostThreads).innerJoin(agentPosts, eq(agentPosts.thread, agentPostThreads.id))
+    .innerJoin(agentPostSources, eq(agentPostSources.id, agentPosts.source))
     .where(and(visibleSource, eq(agentPostThreads.id, thread), cursor))
     .orderBy(newestFirst ? desc(agentPosts.seq) : agentPosts.seq).limit(limit).all();
-  return Promise.all(rows.map(async row => ({ source: row.source, id: String(row.seq), at: row.at, refs: await openRefs(key,row.workRefs), words: await key.open(row.words) })));
+  return Promise.all(rows.map(async row => ({ sourceTask:row.sourceTask, source: row.source, id: String(row.seq), at: row.at, refs: await openRefs(key,row.workRefs), words: await key.open(row.words) })));
 }
 
 async function openRefs(key: WordsKey, sealed: Buffer | null): Promise<string[]> {

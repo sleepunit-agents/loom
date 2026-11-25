@@ -39,6 +39,8 @@ export const projectLabelled:Readonly<Record<string,(db:DataDatabase,from:string
  agent_kit_projects(){},project_outside_people(){},
  // A direction applies only to the project named by the member.
  project_claim_directions(){},
+ // Work posts retain their original project audience after a ticket moves.
+ agent_post_sources(){},
  tasks:refileTasks,
  conversations:refileConversations,
  inbox:refileInbox,

@@ -4,8 +4,8 @@ import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
-import { agentPostThreads, conversations, threads } from '../data/schema.js';
-import { activitySources, allActivitySourcesMatch, agentPostHistory, agentPostPreviews } from './agent-posts.js';
+import { agentPostSources, agentPostThreads } from '../data/schema.js';
+import { readableActivitySources, allActivitySourcesMatch, agentPostHistory, agentPostPreviews } from './agent-posts.js';
 import type { WordsKey } from './words.js';
 
 function activityCursor(value: string) {
@@ -22,7 +22,7 @@ GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
   } });
   const post = new GraphQLObjectType({ name: 'AgentActivityPost', fields: {
     work: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(workLink))) },
-    source: { type: string }, id: { type: string }, at: { type: string }, words: { type: string },
+    sourceTask: { type: GraphQLString }, source: { type: string }, id: { type: string }, at: { type: string }, words: { type: string },
   } });
   const excerpt = new GraphQLObjectType({ name: 'AgentActivityExcerpt', fields: {
     id: { type: string }, words: { type: string },
@@ -31,15 +31,15 @@ GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
     thread: { type: string }, title: { type: string },
     latest: { type: new GraphQLNonNull(post) }, parent: { type: excerpt },
   } });
-  const sources = (viewer: Viewer, agent: string) => activitySources(db,
-    viewer.kind === 'member' ? and(eq(conversations.agent, agent), allowed(viewer))! : sql`false`);
+  const sources = (viewer: Viewer, agent: string) => readableActivitySources(db, viewer,
+    viewer.kind === 'member' ? allowed(viewer) : sql`false`, agent);
   const source = (viewer: Viewer, agent: string) => allActivitySourcesMatch(db, sources(viewer, agent));
   const visibleThreads = (viewer: Viewer, agent: string, ids: string[]) => new Set(
     db.select({ id: agentPostThreads.id }).from(agentPostThreads)
       .where(and(source(viewer, agent), inArray(agentPostThreads.id, ids))).all().map(row => row.id));
   const visibleSources = (viewer: Viewer, agent: string, ids: string[]) => new Set(
-    db.select({id:threads.id}).from(threads).where(and(inArray(threads.id,[...new Set(ids)]),
-      inArray(threads.id,sources(viewer,agent)))).all().map(row=>row.id));
+    db.select({id:agentPostSources.id}).from(agentPostSources).where(and(inArray(agentPostSources.id,[...new Set(ids)]),
+      inArray(agentPostSources.id,sources(viewer,agent)))).all().map(row=>row.id));
   const size = (limit: number) => {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid activity page size');
     return limit;

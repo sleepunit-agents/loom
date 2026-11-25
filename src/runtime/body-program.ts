@@ -152,6 +152,7 @@ export async function bodyProgram(input: {
     // loom read who is in the room when it claimed the job. The body takes everything waiting, so mail from
     // outside the household may have arrived since; nobody looked that sender up, so they count as a guest.
     let deliveredItems = 0;
+    let hasOwnSchedule = false;
     const journalDeliveries: string[] = [];
     const claimed=job.run?.policy?.mail;let lateStranger=false,placed=false;
     const batch = await client.takeAndAccept(async (item, sinkSignal) => {
@@ -160,8 +161,10 @@ export async function bodyProgram(input: {
       // This is the receiving body's context, never a parent's pipe queue.
       // Mail in a bridge conversation that is no message from the bridge: a trigger's firing there, or a note
       // from another body of this agent. Its answer is a post in the conversation, answering no message.
-      if(job.venue === 'wake' && item.source === 'trigger' && item.fromKind === 'schedule' && item.words !== null)
+      if(job.venue === 'wake' && item.source === 'trigger' && item.fromKind === 'schedule' && item.words !== null) {
         journalDeliveries.push(item.id);
+        if (item.fromId === job.agent) hasOwnSchedule = true;
+      }
       const decision=bridge&&item.source==='answer'&&item.sourceId?.startsWith('guest-decision:')&&item.fromKind==='agent';
       if(decision&&!item.question)return;
       if(bridge&&(item.source==='trigger'||item.source==='handoff'||decision)&&item.words!==null)placed=true;
@@ -249,6 +252,10 @@ export async function bodyProgram(input: {
     if (coordinating || job.review) {
       const nativeBudget = 'Native subagents work within this job and share its account quota. Provider readings can lag while children are running. Start only as many children as the brief needs, and account for outstanding children before starting more.';
       context.unshift(nativeBudget);continued.unshift(nativeBudget);
+    }
+    if (job.venue === 'wake' && policy?.word === 'own' && hasOwnSchedule) {
+      const activity = 'If you claim a project ticket, post meaningful updates for its readers through loom_command work.postUpdate. Use input {"task":"t-17","post":{"action":"open","title":"…","words":"…"}}. Save value.thread with the ticket checkpoint and reply there with {"action":"reply","thread":"…","words":"…"}. Give each update a stable command id and reuse it on retry. Share only information for the project audience.';
+      context.unshift(activity); continued.unshift(activity);
     }
     if(coordinating){
       const activity = 'Post a short update to your agent card when you pick up work, discover something worth sharing, or finish. Use loom_command with operation "conversation.activityPost", a distinct id for each post (reuse it on retry), and input {"action":"open","words":"…","title":"…"} for a new activity. Write the post in your own voice. Give it a short thread title that summarizes what you picked up. Rename it later if the work takes a clearer shape. Keep value.thread from the receipt. Reply with {"action":"reply","thread":"…","words":"…"} or rename with {"action":"rename","thread":"…","title":"…"}. Attach related work with optional refs such as ["t-17","github:house/loom#7"] on an opener or reply. Returning to an activity? Reply to its thread.';

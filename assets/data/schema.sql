@@ -1402,11 +1402,26 @@ CREATE TABLE `bridge_person_sightings` (
 	FOREIGN KEY (`incoming`) REFERENCES `bridge_incoming`(`id`) ON UPDATE no action ON DELETE cascade
 );
 
+CREATE TABLE `agent_post_sources` (
+	`id` text PRIMARY KEY NOT NULL,
+	`conversation_thread` text,
+	`project` text,
+	`task` text,
+	`agent` text,
+	FOREIGN KEY (`conversation_thread`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`task`) REFERENCES `tasks`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "agent_post_source_kind" CHECK(("agent_post_sources"."conversation_thread" = "agent_post_sources"."id" and "agent_post_sources"."conversation_thread" is not null and "agent_post_sources"."project" is null and "agent_post_sources"."task" is null and "agent_post_sources"."agent" is null)
+    or ("agent_post_sources"."conversation_thread" is null and "agent_post_sources"."project" is not null and "agent_post_sources"."task" is not null and "agent_post_sources"."agent" is not null))
+);
+
+CREATE UNIQUE INDEX `agent_post_source_task_agent` ON `agent_post_sources` (`project`,`task`,`agent`);
 CREATE TABLE `agent_post_threads` (
 	`id` text PRIMARY KEY NOT NULL,
 	`source` text NOT NULL,
 	`title` blob NOT NULL,
-	FOREIGN KEY (`source`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade
+	FOREIGN KEY (`source`) REFERENCES `agent_post_sources`(`id`) ON UPDATE no action ON DELETE cascade
 );
 
 CREATE INDEX `agent_post_threads_source` ON `agent_post_threads` (`source`);
@@ -1418,7 +1433,7 @@ CREATE TABLE `agent_posts` (
 	`words` blob NOT NULL,
 	`work_refs` blob,
 	FOREIGN KEY (`thread`) REFERENCES `agent_post_threads`(`id`) ON UPDATE no action ON DELETE cascade,
-	FOREIGN KEY (`source`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`source`) REFERENCES `agent_post_sources`(`id`) ON UPDATE no action ON DELETE cascade,
 	CONSTRAINT "agent_posts_at_utc" CHECK("agent_posts"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "agent_posts"."at") = "agent_posts"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "agent_posts"."at") = "agent_posts"."at", 0))
 );
 
@@ -1428,7 +1443,7 @@ CREATE TABLE `agent_post_names` (
 	`source` text NOT NULL,
 	`title` blob NOT NULL,
 	FOREIGN KEY (`thread`) REFERENCES `agent_post_threads`(`id`) ON UPDATE no action ON DELETE cascade,
-	FOREIGN KEY (`source`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade
+	FOREIGN KEY (`source`) REFERENCES `agent_post_sources`(`id`) ON UPDATE no action ON DELETE cascade
 );
 
 CREATE TABLE `agent_post_work_refs` (

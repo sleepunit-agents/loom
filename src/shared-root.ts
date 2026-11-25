@@ -87,6 +87,7 @@ import { registerWorkRefresh } from './shared-work-refresh.js';
 import { inboxProposalTitles, workQueryFields } from './shared-work-queries.js';
 import { workLifetime } from './shared-work-lifetime.js';
 import { guardedResponse, isGuardedCommandRead } from './core/data/guarded-response.js';
+import { registerWorkActivity } from './shared-work-activity.js';
 import { registerTriggerJournal } from './shared-trigger-journal.js';
 import { registerSharedWorkBody } from './shared-work-body.js';
 import { registerSharedNotices } from './shared-notices.js';
@@ -604,6 +605,7 @@ export function sharedRoot(options: {
 
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
+  if(options.commsKey)registerWorkActivity(operations, db, bodyScope, options.commsKey);
   if(options.commsKey)registerTriggerJournal(operations, db, bodyScope, text => options.commsKey!.hash(text), profiles);
   if(options.commsKey)registerSharedWorkBody(operations,db,services.approvals,services.approvalRules,bodyScope,words=>options.commsKey!.hash(words),credentials.agentSession,held('approval'));
   registerSharedWorkCommands(operations,db,services.approvals, {

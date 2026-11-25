@@ -423,6 +423,30 @@ const upgrades: readonly (readonly string[])[] = [
   ["CREATE TABLE `agent_post_work_refs` (\n\t`digest` text NOT NULL,\n\t`post` integer NOT NULL,\n\tPRIMARY KEY(`digest`, `post`),\n\tFOREIGN KEY (`post`) REFERENCES `agent_posts`(`seq`) ON UPDATE no action ON DELETE cascade\n);", "CREATE INDEX `agent_post_work_refs_post` ON `agent_post_work_refs` (`post`);", "CREATE TABLE `agent_post_work_pending` (\n\t`post` integer PRIMARY KEY NOT NULL,\n\tFOREIGN KEY (`post`) REFERENCES `agent_posts`(`seq`) ON UPDATE no action ON DELETE cascade\n);", "INSERT INTO agent_post_work_pending(post) SELECT seq FROM agent_posts WHERE work_refs IS NOT NULL"],
   // 42: keep project-scoped directions across sessions and worker restarts.
   ["CREATE TABLE `project_claim_directions` (\n\t`seq` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`project` text NOT NULL,\n\t`agent` text NOT NULL,\n\t`member` text NOT NULL,\n\t`paused` integer NOT NULL,\n\t`at` text NOT NULL,\n\tFOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,\n\tCONSTRAINT \"project_claim_directions_at_utc\" CHECK(\"project_claim_directions\".\"at\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"project_claim_directions\".\"at\") = \"project_claim_directions\".\"at\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"project_claim_directions\".\"at\") = \"project_claim_directions\".\"at\", 0))\n);", "CREATE INDEX `project_claim_directions_latest` ON `project_claim_directions` (`project`,`agent`,`seq`);"],
+  // 43: retain original conversation audiences and sequence numbers when adding ticket sources.
+  ["CREATE TABLE `agent_post_sources` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`conversation_thread` text,\n\t`project` text,\n\t`task` text,\n\t`agent` text,\n\tFOREIGN KEY (`conversation_thread`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`task`) REFERENCES `tasks`(`id`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE cascade,\n\tCONSTRAINT \"agent_post_source_kind\" CHECK((\"agent_post_sources\".\"conversation_thread\" = \"agent_post_sources\".\"id\" and \"agent_post_sources\".\"conversation_thread\" is not null and \"agent_post_sources\".\"project\" is null and \"agent_post_sources\".\"task\" is null and \"agent_post_sources\".\"agent\" is null)\n    or (\"agent_post_sources\".\"conversation_thread\" is null and \"agent_post_sources\".\"project\" is not null and \"agent_post_sources\".\"task\" is not null and \"agent_post_sources\".\"agent\" is not null))\n);",
+   "CREATE UNIQUE INDEX `agent_post_source_task_agent` ON `agent_post_sources` (`project`,`task`,`agent`);",
+   "INSERT INTO agent_post_sources(id,conversation_thread) SELECT source,source FROM agent_post_threads UNION SELECT source,source FROM agent_posts UNION SELECT source,source FROM agent_post_names",
+   "CREATE TEMP TABLE saved_agent_post_sequence AS SELECT seq FROM sqlite_sequence WHERE name='agent_posts'",
+   "CREATE TEMP TABLE saved_agent_post_threads AS SELECT * FROM agent_post_threads",
+   "DROP TABLE agent_post_threads",
+   "CREATE TABLE `agent_post_threads` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`source` text NOT NULL,\n\t`title` blob NOT NULL,\n\tFOREIGN KEY (`source`) REFERENCES `agent_post_sources`(`id`) ON UPDATE no action ON DELETE cascade\n);",
+   "INSERT INTO agent_post_threads(id,source,title) SELECT id,source,title FROM saved_agent_post_threads",
+   "DROP TABLE saved_agent_post_threads",
+   "CREATE INDEX `agent_post_threads_source` ON `agent_post_threads` (`source`)",
+   "CREATE TEMP TABLE saved_agent_posts AS SELECT * FROM agent_posts",
+   "DROP TABLE agent_posts",
+   "CREATE TABLE `agent_posts` (\n\t`seq` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`thread` text NOT NULL,\n\t`source` text NOT NULL,\n\t`at` text NOT NULL,\n\t`words` blob NOT NULL,\n\t`work_refs` blob,\n\tFOREIGN KEY (`thread`) REFERENCES `agent_post_threads`(`id`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`source`) REFERENCES `agent_post_sources`(`id`) ON UPDATE no action ON DELETE cascade,\n\tCONSTRAINT \"agent_posts_at_utc\" CHECK(\"agent_posts\".\"at\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"agent_posts\".\"at\") = \"agent_posts\".\"at\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"agent_posts\".\"at\") = \"agent_posts\".\"at\", 0))\n);",
+   "INSERT INTO agent_posts(seq,thread,source,at,words,work_refs) SELECT seq,thread,source,at,words,work_refs FROM saved_agent_posts",
+   "DROP TABLE saved_agent_posts",
+   "CREATE INDEX `agent_posts_thread_seq` ON `agent_posts` (`thread`,`seq`)",
+   "CREATE TEMP TABLE saved_agent_post_names AS SELECT * FROM agent_post_names",
+   "DROP TABLE agent_post_names",
+   "CREATE TABLE `agent_post_names` (\n\t`thread` text PRIMARY KEY NOT NULL,\n\t`source` text NOT NULL,\n\t`title` blob NOT NULL,\n\tFOREIGN KEY (`thread`) REFERENCES `agent_post_threads`(`id`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`source`) REFERENCES `agent_post_sources`(`id`) ON UPDATE no action ON DELETE cascade\n);",
+   "INSERT INTO agent_post_names(thread,source,title) SELECT thread,source,title FROM saved_agent_post_names",
+   "DROP TABLE saved_agent_post_names",
+   "UPDATE sqlite_sequence SET seq=max(seq,coalesce((SELECT seq FROM saved_agent_post_sequence),0)) WHERE name='agent_posts'",
+   "DROP TABLE saved_agent_post_sequence"],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

@@ -2402,10 +2402,24 @@ export const guestIoReadings = sqliteTable('guest_io_readings', {
   check('guest_io_observed_utc', utc(t.observedAt)), check('guest_io_high_utc', utc(t.highSince)),
   check('guest_io_percent', sql`${t.ioHundredths} between 0 and 10000`)]);
 
-/** The source conversation determines the audience. Titles and posts carry private words. */
+/** Where an authored update was published. A private conversation retains its own audience,
+ * while a worker's deliberate ticket update follows the current task's readership. */
+export const agentPostSources = sqliteTable('agent_post_sources', {
+  id: text('id').primaryKey().notNull(),
+  conversationThread: text('conversation_thread').references(() => threads.id, {onDelete:'cascade'}),
+  project: text('project').references(() => projects.id),
+  task: text('task').references(() => tasks.id, {onDelete:'cascade'}),
+  agent: text('agent').references(() => agents.id, {onDelete:'cascade'}),
+}, t=>[
+  check('agent_post_source_kind', sql`(${t.conversationThread} = ${t.id} and ${t.conversationThread} is not null and ${t.project} is null and ${t.task} is null and ${t.agent} is null)
+    or (${t.conversationThread} is null and ${t.project} is not null and ${t.task} is not null and ${t.agent} is not null)`),
+  uniqueIndex('agent_post_source_task_agent').on(t.project,t.task,t.agent),
+]);
+
+/** The opening source determines the initial audience. Titles and posts carry private words. */
 export const agentPostThreads = sqliteTable('agent_post_threads', {
   id: text('id').primaryKey().notNull(),
-  source: text('source').notNull().references(() => threads.id, { onDelete: 'cascade' }),
+  source: text('source').notNull().references(() => agentPostSources.id, { onDelete: 'cascade' }),
   title: blob('title', { mode: 'buffer' }).notNull(),
 }, t => [index('agent_post_threads_source').on(t.source)]);
 
@@ -2413,7 +2427,7 @@ export const agentPostThreads = sqliteTable('agent_post_threads', {
 export const agentPosts = sqliteTable('agent_posts', {
   seq: integer('seq').primaryKey({ autoIncrement: true }),
   thread: text('thread').notNull().references(() => agentPostThreads.id, { onDelete: 'cascade' }),
-  source: text('source').notNull().references(() => threads.id, { onDelete: 'cascade' }),
+  source: text('source').notNull().references(() => agentPostSources.id, { onDelete: 'cascade' }),
   at: text('at').notNull(),
   words: blob('words', { mode: 'buffer' }).notNull(),
   workRefs: blob('work_refs', { mode: 'buffer' }),
@@ -2433,7 +2447,7 @@ export const agentPostWorkPending = sqliteTable('agent_post_work_pending', {
 
 export const agentPostNames = sqliteTable('agent_post_names', {
   thread: text('thread').primaryKey().notNull().references(() => agentPostThreads.id, { onDelete: 'cascade' }),
-  source: text('source').notNull().references(() => threads.id, { onDelete: 'cascade' }),
+  source: text('source').notNull().references(() => agentPostSources.id, { onDelete: 'cascade' }),
   title: blob('title', { mode: 'buffer' }).notNull(),
 });
 
@@ -2449,7 +2463,7 @@ export const bridgePersonSightings = sqliteTable('bridge_person_sightings', {
 export const plumbing = {
   projectClaimDirections,
   bridgePersonSightings,
-  agentPostThreads, agentPosts, agentPostNames, agentPostWorkRefs, agentPostWorkPending,
+  agentPostSources, agentPostThreads, agentPosts, agentPostNames, agentPostWorkRefs, agentPostWorkPending,
   guestIoReadings,
   workerJoinRequests,
   archivedQuestions,
