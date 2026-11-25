@@ -329,7 +329,7 @@ it('shows an open question once: in the stream where it was asked, or in the one
   // No pager under one page of questions (the kit's Pager draws nothing then).
   expect(pager('Question pages').props).toMatchObject({ hasPrevious: false, hasNext: false });
   // The thread's head says it waits on this person, as nothing else is going on in it.
-  expect(words(tree.root.findByType('header').findByType('Meta'))).toBe('with Art · Waiting on you'); expect(text()).not.toContain('Newer questions'); expect(text()).not.toContain('Older questions');
+  expect(words(tree.root.findByType('Split').findByType('header').findByType('Meta'))).toBe('with Art · Waiting on you'); expect(text()).not.toContain('Newer questions'); expect(text()).not.toContain('Older questions');
 });
 
 it('says times in the household\'s zone, briefly, and names an agent as the shared directory does', async () => {
@@ -341,7 +341,7 @@ it('says times in the household\'s zone, briefly, and names an agent as the shar
   expect(tree.root.findAllByType('time').map((node: Drawn) => words(node))).toEqual(['3:00 AM']);
   expect(text()).not.toContain('Asia/Tokyo'); expect(text()).not.toContain(' CT');
   expect(tree.root.findByType('Textarea').props['aria-label']).toBe('Message Arthur'); expect(tree.root.findByType('Row').props.meta).toBe('Arthur');
-  expect(words(tree.root.findByType('header').findByType('Meta'))).toBe('with Arthur · Working');
+  expect(words(tree.root.findByType('Split').findByType('header').findByType('Meta'))).toBe('with Arthur · Working');
 });
 
 // Only the part that changes is replaced: opening a thread is the reader's business, another folder, search or page the list's.
