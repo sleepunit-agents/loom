@@ -8,24 +8,30 @@ import { Body, Error, LinkButton, Loading, Row, Section } from '../../kit';
 const query = `query WorkCatchUp($since:String!) {
   projects(orderBy:{name:{direction:asc,priority:1},id:{direction:asc,priority:0}}) {
     id name lifecycle
-    tasksByProject(where:{changedAt:{gt:$since}},orderBy:{changedAt:{direction:desc,priority:1},id:{direction:asc,priority:0}},limit:4) {
+    tasksByProject(where:{changedAt:{gte:$since}},orderBy:{changedAt:{direction:desc,priority:1},id:{direction:asc,priority:0}},limit:4) {
       id title changedAt createdAt startedAt closedAt status closeReason ask
-      taskCommentsByTask(orderBy:{seq:{direction:desc,priority:0}},limit:1){at text}
+      taskCommentsByTask(orderBy:{seq:{direction:desc,priority:0}},limit:1){at actor text}
     }
   }
 }`;
 type Ticket = {
   id:string; title:string; changedAt:string; createdAt:string; startedAt:string|null; closedAt:string|null;
-  status:string; closeReason:string|null; ask:string|null; taskCommentsByTask:{at:string;text:string}[];
+  status:string; closeReason:string|null; ask:string|null; taskCommentsByTask:{at:string;actor:string;text:string}[];
 };
 type Project = { id:string; name:string; lifecycle:string; tasksByProject:Ticket[] };
 
-function headline(ticket:Ticket,since:string) {
+function headline(ticket:Ticket,since:string,names:Readonly<Record<string,string>>,post?:Post) {
   const latest = ticket.taskCommentsByTask[0];
   if (ticket.status==='closed' && ticket.closedAt===ticket.changedAt) {
-    return ticket.closeReason==='done' ? 'Completed' : 'Closed' + (ticket.closeReason ? ' · '+ticket.closeReason : '');
+    if (!ticket.closeReason) return 'Closed';
+    if (ticket.closeReason==='cancelled') return 'Cancelled';
+    if (ticket.closeReason!=='done') return 'Closed · '+excerpt(ticket.closeReason);
+    const note = latest && latest.at>since ? latest : undefined;
+    const update = post && (!note || post.at>=note.at)
+      ? {actor:post.agent,text:post.words} : note;
+    return update ? 'Completed · '+displayName(update.actor,names)+' · '+excerpt(update.text) : 'Completed';
   }
-  if (latest && latest.at>since) return latest.text;
+  if (latest && latest.at>since) return excerpt(latest.text);
   if (ticket.ask) return ticket.ask;
   if (ticket.startedAt===ticket.changedAt) return 'Work started';
   if (ticket.createdAt===ticket.changedAt) return 'Ticket opened';
@@ -70,10 +76,18 @@ export function CatchUp({member,go}:{member:string;go:(path:string)=>void}) {
     rows.push(post);grouped.set(post.project,rows);
   }
   const projects=live ? (feed.data?.projects ?? []).filter(p=>p.lifecycle!=='removed').map(project=>{
-    const tickets=new Map(project.tasksByProject.map(t=>[t.id,{id:t.id,title:t.title,at:t.changedAt,words:headline(t,since)}]));
-    for(const p of grouped.get(project.id) ?? []){
-      const prior=tickets.get(p.task);
-      if(!prior || p.at>=prior.at)tickets.set(p.task,{id:p.task,title:p.title,at:p.at,words:displayName(p.agent,names)+' · '+excerpt(p.words)});
+    const updates=new Map((grouped.get(project.id) ?? []).map(post=>[post.task,post]));
+    const changed=project.tasksByProject.filter(t=>t.changedAt>since || updates.has(t.id));
+    const tickets=new Map(changed.map(t=>{
+      const post=updates.get(t.id);
+      const closing=t.status==='closed' && t.closedAt===t.changedAt;
+      if (post && (post.at>t.changedAt || (!closing && post.at===t.changedAt))) {
+        return [t.id,{id:t.id,title:t.title,at:post.at,words:displayName(post.agent,names)+' · '+excerpt(post.words)}] as const;
+      }
+      return [t.id,{id:t.id,title:t.title,at:t.changedAt,words:headline(t,since,names,post)}] as const;
+    }));
+    for(const p of updates.values()){
+      if(!tickets.has(p.task))tickets.set(p.task,{id:p.task,title:p.title,at:p.at,words:displayName(p.agent,names)+' · '+excerpt(p.words)});
     }
     return {...project,items:[...tickets.values()].sort((a,b)=>b.at.localeCompare(a.at)||a.id.localeCompare(b.id))};
   }).filter(p=>p.items.length) : [];

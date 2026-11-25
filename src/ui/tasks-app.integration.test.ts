@@ -478,6 +478,19 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     await page.getByText('No project tickets have changed since your last visit.').waitFor();
     await add({action:'reply',thread:activity,words:'Gauge is steady after restart.'});
     await pond.getByText(/Gauge is steady after restart/).waitFor();
+    app.data.writes.run(()=>app.data.services.tasks.close('t-1','done'));
+    await pond.getByText(/Completed · Art · Gauge is steady after restart/).waitFor();
+    app.clock.advance(1000);
+    app.data.writes.run(()=>{
+      const tasks=app.data.services.tasks;
+      tasks.comment('t-2','Both installed readers showed the correct portrait. '+'More evidence. '.repeat(40),{kind:'agent',id:'art'});
+      tasks.close('t-2','done');
+    });
+    const receipt=pond.getByText(/Completed · Art · Both installed readers/);
+    await receipt.waitFor();
+    expect((await receipt.textContent())!.length).toBeLessThan(250);
+    app.data.writes.run(()=>{app.data.services.tasks.reopen('t-2');app.data.services.tasks.close('t-2','The old pump was recycled.');});
+    await pond.getByText('Closed · The old pump was recycled.',{exact:true}).waitFor();
     await pond.getByRole('button',{name:'pond',exact:true}).click();
     const highlights=page.getByRole('region',{name:'Latest agent updates'});
     await highlights.getByText(/Gauge is steady after restart/).click();
