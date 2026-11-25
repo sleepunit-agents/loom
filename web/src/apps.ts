@@ -13,6 +13,7 @@ import { sharingApp } from './pieces/sharing/registration';
 import { tempoApp } from './pieces/tempo/registration';
 import { commsApp } from './pieces/comms/registration';
 import { tasksApp } from './pieces/tasks/registration';
+import { workApp } from './pieces/work/registration';
 import { changesApp } from './pieces/changes/registration';
 import { approvalsApp } from './pieces/approvals/registration';
 import { bridgesApp } from './pieces/bridges/registration';
@@ -20,7 +21,7 @@ import { inboxApp } from './pieces/attention/registration';
 import { peopleApp } from './pieces/people/registration';
 import { appearanceApp } from './pieces/appearance/registration';
 /** Composition is the one place that chooses the installed first-party apps. */
-export const apps = [tasksApp, approvalsApp, sharingApp, changesApp, knowledgeApp, inboxApp, bridgesApp, tempoApp, commsApp, homeApp, agentApp, peopleApp, projectsApp, activityApp, usageApp, machinesApp, subscriptionsApp, settingsApp, setupApp, accountApp, appearanceApp];
+export const apps = [workApp, tasksApp, approvalsApp, sharingApp, changesApp, knowledgeApp, inboxApp, bridgesApp, tempoApp, commsApp, homeApp, agentApp, peopleApp, projectsApp, activityApp, usageApp, machinesApp, subscriptionsApp, settingsApp, setupApp, accountApp, appearanceApp];
 
 export const appAt = (path: string) => apps.find(app => path === app.path || path.startsWith(`${app.path}/`));
 

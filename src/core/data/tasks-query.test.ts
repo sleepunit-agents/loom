@@ -5,6 +5,7 @@ import { createDataSchema } from './database.js';
 import { dataQueries } from './queries.js';
 import { workVisibility } from './work-visibility.js';
 import { taskVisibility } from './visibility.js';
+import { workProjectQuery, workHomeQuery } from '../../../web/src/pieces/work/query.js';
 import { tasksQuery } from '../../../web/src/pieces/tasks/query.js';
 
 it('runs the mounted Tasks selection in one SQL statement and respects hidden blockers and connected visibility', async () => {
@@ -55,6 +56,14 @@ it('runs the mounted Tasks selection in one SQL statement and respects hidden bl
     statements.length = 0;
     expect((await graphql({schema,source:'{ projects { tasksByProject { id isReady } } }'})).errors).toBeUndefined();
     expect(statements).toHaveLength(1);
+    db.exec("UPDATE tasks SET status='in_progress' WHERE id='b'");
+    const home = await graphql({schema,source:workHomeQuery});
+    expect(home.errors).toBeUndefined();
+    expect(home.data?.projects).toMatchObject(expect.arrayContaining([{id:'pond',name:'Pond',removedAt:null,retiredAt:null,tasksByProject:[expect.objectContaining({id:'a'})]}]));
+    const project = await graphql({schema,source:workProjectQuery,variableValues:{id:'pond'}});
+    expect(project.errors).toBeUndefined();
+    expect(project.data).toMatchObject({working:[{id:'b'}],recent:[{id:'a'},{id:'b'},{id:'epic'}]});
+    expect(JSON.stringify(project.data)).not.toContain('Secret blocker');
     db.exec("DELETE FROM project_members");
     expect((await graphql({schema,source:tasksQuery})).data).toEqual({tasks:[]});
   } finally { db.close(); }
