@@ -1379,6 +1379,20 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `project_claim_directions` (
+	`seq` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`project` text NOT NULL,
+	`agent` text NOT NULL,
+	`member` text NOT NULL,
+	`paused` integer NOT NULL,
+	`at` text NOT NULL,
+	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "project_claim_directions_at_utc" CHECK("project_claim_directions"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "project_claim_directions"."at") = "project_claim_directions"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "project_claim_directions"."at") = "project_claim_directions"."at", 0))
+);
+
+CREATE INDEX `project_claim_directions_latest` ON `project_claim_directions` (`project`,`agent`,`seq`);
 CREATE TABLE `bridge_person_sightings` (
 	`incoming` text PRIMARY KEY NOT NULL,
 	`seen_at` text NOT NULL,

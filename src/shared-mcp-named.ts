@@ -331,8 +331,10 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
  tool('task_ready','List ready tasks by urgency, optionally by project.',
   z.object({project:z.string().min(1).max(100).optional(),limit:z.number().int().min(1).max(100).optional()}).strict(),
   async input=>{
-   const data=await read<{readyTasks:TaskRow[]}>('query($limit:Int){readyTasks(limit:$limit){id title type status priority project ownerKind owner assigneeKind assignee goal why doneWhen description ask closeReason}}',{limit:input.project?500:input.limit??20});
-   const rows=data.readyTasks.filter(task=>!input.project||task.project===input.project).slice(0,input.limit??20);
+   const project=input.project ? 'where:{project:{eq:$project}},' : '';
+   const query=`query($limit:Int${input.project ? ',$project:String!' : ''}){readyTasks(${project}limit:$limit,orderBy:{priority:{direction:asc,priority:2},position:{direction:asc,priority:1},id:{direction:asc,priority:0}}){id title status priority project assignee}}`;
+   const data=await read<{readyTasks:TaskRow[]}>(query,{limit:input.limit??20,...(input.project ? {project:input.project} : {})});
+   const rows=data.readyTasks;
    return rows.length?rows.map(taskLine).join('\n'):'Nothing is ready.';
   });
  tool('task','Read a task, its comments and dependencies.',

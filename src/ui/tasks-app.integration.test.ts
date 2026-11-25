@@ -336,3 +336,22 @@ it.runIf(process.env.CI==='true' && chrome && existsSync(join(root,'index.html')
     expect(app.db.select().from(s.inbox).all()).toHaveLength(1);
   } finally {await browser.close();await app.close();}
 });
+
+it.runIf(process.env.CI==='true' && chrome && existsSync(join(root,'index.html')))('pauses new project claims from Work and reads the direction after reload',async()=>{
+  const app=await fixture(true);
+  app.data.writes.run(()=>app.db.insert(s.memberAgents).values({member:'sam',agent:'art'}).run());
+  const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  try {
+    const ctx=await browser.newContext({serviceWorkers:'block',reducedMotion:'reduce'});
+    await ctx.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
+    const page=await ctx.newPage();
+    await page.goto(app.url+'/p/work/project/pond');
+    await page.getByRole('button',{name:'Pause new claims for Art',exact:true}).click();
+    const resume=page.getByRole('button',{name:'Resume new claims for Art',exact:true});
+    await resume.waitFor();
+    await page.reload();await resume.click();
+    await page.getByRole('button',{name:'Pause new claims for Art',exact:true}).waitFor();
+    expect(app.db.select().from(s.projectClaimDirections).all().map(row=>row.paused)).toEqual([true,false]);
+    expect(app.db.select().from(s.agentPauses).all()).toEqual([]);
+  } finally {await browser.close();await app.close();}
+});
