@@ -120,6 +120,17 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     for (const page of [a, b]) page.on('pageerror', error => errors.push(error.message));
     await Promise.all([a.goto(`${app.url}/p/approvals-preview`), b.goto(`${app.url}/p/approvals-preview`)]);
     const row = (page: typeof a) => page.locator('[data-split-row]').filter({ hasText: title });
+    await b.setViewportSize({width:440,height:900});
+    const toolbar=b.locator('header[aria-label="Approvals toolbar"]');
+    const search=toolbar.getByRole('searchbox',{name:'Search approvals'});
+    await search.fill('no matching fixture');
+    await b.getByText('No matching approvals',{exact:true}).waitFor();
+    await search.fill(title);
+    await row(b).focus();await b.keyboard.press('Enter');
+    await b.getByRole('button',{name:'Back to Approvals'}).click();
+    await expect.poll(()=>row(b).evaluate(element=>element===document.activeElement)).toBe(true);
+    await search.fill('');
+    await b.setViewportSize({width:1280,height:900});
     for (const page of [a, b]) {
       await expect.poll(() => row(page).count()).toBe(1);
       expect(await page.getByText(hidden, { exact: true }).count()).toBe(0);
