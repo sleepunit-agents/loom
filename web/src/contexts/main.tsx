@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import Signin from '../shell/signin';
 import { useDataQuery } from '../data/graphql';
@@ -7,110 +7,889 @@ import '../looks/looks.css';
 import './style.css';
 import face from './art.png';
 
+import { useTaskCommandSubmitter } from '../data/task-command';
+import { Head } from '../kit/reader';
+import { DeskMember } from '../signin/desk-member';
+import { evidence, reviewRequest, readReview } from './evidence';
+import { useDiscussion } from './discussion';
+import { taskPath } from '../../../src/task-route';
+
+const Question = lazy(async () => ({
+  default: (await import('../pieces/comms/inline-question')).InlineQuestion,
+}));
 const ticketId = 't-9';
 const query = `query ContextTicket($id:String!) {
   ticket:tasksSingle(where:{id:{eq:$id}}) {
-    id title status goal doneWhen createdAt createdBy closeReason ask
+    id title status goal doneWhen createdAt createdBy closeReason ask projectRow {id name}
+    changeTasksByTask {changeRow {id number title state checks}}
     taskCommentsByTask(orderBy:{seq:{direction:desc,priority:0}}) {seq at actor text}
   }
 }`;
-type Note = Pick<SharedTaskComment,'seq'|'at'|'actor'|'text'>;
-type Ticket = Pick<SharedTask,'id'|'title'|'status'|'goal'|'doneWhen'|'createdAt'|'createdBy'|'closeReason'|'ask'> & {taskCommentsByTask: Note[]};
-type Intent = 'history'|'decision';
-const labels = {history:'What happened?', decision:'What needs a decision?'};
-const intentFromAddress = ():Intent => location.hash === '#history' ? 'history' : 'decision';
-const date = (value:string) => new Date(value).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
+type Note = Pick<SharedTaskComment, 'seq' | 'at' | 'actor' | 'text'>;
+type Ticket = Pick<
+  SharedTask,
+  'id' | 'title' | 'status' | 'goal' | 'doneWhen' | 'createdAt' | 'createdBy' | 'closeReason' | 'ask'
+> & {
+  projectRow: { id: string; name: string } | null;
+  changeTasksByTask: {
+    changeRow: { id: string; number: number; title: string; state: string; checks: string } | null;
+  }[];
+  taskCommentsByTask: Note[];
+};
+type Intent = 'history' | 'decision';
+const labels = { history: 'What happened?', decision: 'What needs a decision?' };
+const intentFromAddress = (): Intent => (location.hash === '#history' ? 'history' : 'decision');
+const date = (value: string) =>
+  new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 
-function Module({title,children,core=false}:{title:string;children:ReactNode;core?:boolean}) {
-  return <section className={'module'+(core?' core':'')}><h2>{title}</h2>{children}</section>;
-}
-function Source({note}:{note:Note}) {
-  return <details className="source"><summary>Read note · {date(note.at)}</summary><p>{note.text}</p><small>{note.actor} · Note {note.seq}</small></details>;
+function Source({ note }: { note: Note }) {
+  return (
+    <details className="source">
+      <summary>Read note · {date(note.at)}</summary>
+      <p>{note.text}</p>
+      <small>
+        {note.actor} · Note {note.seq}
+      </small>
+    </details>
+  );
 }
 // Keep note text and its preview behind the same authorized read.
-function noteLead(note:Note) {
-  const words=note.text.replace(/^(?:night shift )?\d{4}-\d{2}-\d{2}[^:]{0,30}:\s*/i,'');
-  const first=words.split(/(?<=[.!?])\s+/)[0];
-  return first.length<=95 ? first : first.slice(0,92).replace(/\s+\S*$/,'')+'…';
+function noteLead(note: Note) {
+  const words = note.text.replace(/^(?:night shift )?\d{4}-\d{2}-\d{2}[^:]{0,30}:\s*/i, '');
+  const first = words.split(/(?<=[.!?])\s+/)[0];
+  return first.length <= 95 ? first : first.slice(0, 92).replace(/\s+\S*$/, '') + '…';
 }
-function Timeline({notes}:{notes:Note[]}) {
-  return <ol className="timeline">{notes.map(note=><li key={note.seq}><time dateTime={note.at}>{date(note.at)}</time>
-    <details><summary>{noteLead(note)}</summary><p>{note.text}</p><small>{note.actor} · Note {note.seq}</small></details></li>)}</ol>;
+function Timeline({ notes }: { notes: Note[] }) {
+  return (
+    <ol className="timeline">
+      {notes.map((note) => (
+        <li key={note.seq}>
+          <time dateTime={note.at}>{date(note.at)}</time>
+          <details>
+            <summary>{noteLead(note)}</summary>
+            <p>{note.text}</p>
+            <small>
+              {note.actor} · Note {note.seq}
+            </small>
+          </details>
+        </li>
+      ))}
+    </ol>
+  );
 }
-function Brief({ticket}:{ticket:Ticket}) {
-  return <Module title="Original brief"><p>{ticket.goal}</p>{ticket.createdAt && <small>Opened {date(ticket.createdAt)} by {ticket.createdBy}</small>}</Module>;
-}
-function Decision({ticket}:{ticket:Ticket}) {
-  const notes=ticket.taskCommentsByTask;
-  const sample=notes.find(note=>note.seq===7), verification=notes.find(note=>note.seq===8);
-  const request=notes.find(note=>note.seq===2);
-  const openIssue=verification?.text.match(/(?:^|(?<=\. ))[^.]*remains a separate decision[^.]*\./i)?.[0];
-  const counts=sample?.text.match(/\((\d+)\s*\/\s*(\d+)\)/);
-  return <>
-    <Module core title={ticket.status==='closed'?'Outcome':'Decision in scope'}>
-      <h3>{ticket.status==='closed'?'Ticket closed':ticket.ask || openIssue || ticket.goal}</h3>
-      {ticket.closeReason && <p>{ticket.closeReason}</p>}
-      {ticket.status!=='closed' && <details className="source"><summary>Completion criterion</summary><p>{ticket.doneWhen}</p></details>}
-      {request && <Source note={request}/>}
-    </Module>
-    {sample && <Module title="Routing sample">{counts && <><div className="measure">{counts[1]} <span>/ {counts[2]}</span></div><p>Sampled memories classified as misfiled</p></>}<Source note={sample}/></Module>}
-    {verification && <Module title="Duplicate handling"><p>{verification.text.split('. ')[0]}.</p><Source note={verification}/></Module>}
-    {notes[0] && notes[0].seq>8 && <Module title="Latest update"><p>{notes[0].text}</p><small>{date(notes[0].at)}</small></Module>}
-  </>;
-}
-function Workspace({ticket}:{ticket:Ticket}) {
-  const [intent,focus]=useState(intentFromAddress),[bar,openBar]=useState(false);
-  const [command,setCommand]=useState(''),[miss,setMiss]=useState(false);
-  const [extras,setExtras]=useState({history:false,decision:false});
-  const [turns,setTurns]=useState<string[]>([]),[chat,showChat]=useState(false);
-  const input=useRef<HTMLInputElement>(null), dock=useRef<HTMLButtonElement>(null);
-  const notes=ticket.taskCommentsByTask;
-  useEffect(()=>{
-    const change=()=>{focus(intentFromAddress());setMiss(false);};
-    const key=(event:KeyboardEvent)=>{if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k'){event.preventDefault();openBar(v=>!v);}};
-    window.addEventListener('hashchange',change);window.addEventListener('keydown',key);
-    return ()=>{window.removeEventListener('hashchange',change);window.removeEventListener('keydown',key);};
-  },[]);
-  useEffect(()=>{if(bar) input.current?.focus();},[bar]);
-  function closeBar(){openBar(false);setCommand('');dock.current?.focus();}
-  function run(words:string){
-    const value=words.trim().toLowerCase();if(!value)return;
-    const extra=intent==='history'?'decision criteria':'history';
-    let result:string;
-    if(/^(add|show|include)\b/.test(value) && value.includes(extra)){
-      setExtras(current=>({...current,[intent]:true}));result='Added '+extra+' to this view.';
-    } else if(/decision|needs? (me|my)|attention/.test(value)){
-      location.hash='decision';result='Opened the decision view.';
-    } else if(/what happened|history|catch me up/.test(value)){
-      location.hash='history';result='Opened the history view.';
-    } else {
-      setMiss(true);setTurns(t=>[...t,words+' — No matching view.']);closeBar();return;
-    }
-    setMiss(false);setTurns(t=>[...t,words+' — '+result]);closeBar();
+const moduleLabels = {
+  decision: 'Decision in scope',
+  sample: 'Reported measurement',
+  finding: 'Recorded finding',
+  history: 'Ticket history',
+  brief: 'Original brief',
+  latest: 'Latest update',
+  criteria: 'Completion criterion',
+  project: 'Project',
+  changes: 'Pull requests',
+};
+type Kind = keyof typeof moduleLabels;
+const defaults: Record<Intent, Kind[]> = {
+  decision: ['decision', 'sample', 'finding', 'changes', 'project'],
+  history: ['history', 'latest', 'brief', 'changes', 'project'],
+};
+type Edits = Partial<Record<Intent, { added: Kind[]; removed: Kind[] }>>;
+function readEdits(key: string): Edits {
+  try {
+    const saved = JSON.parse(localStorage.getItem(key) || '{}');
+    for (const view of ['decision', 'history'])
+      for (const field of ['added', 'removed']) {
+        if (
+          saved[view] &&
+          !(
+            Array.isArray(saved[view][field]) &&
+            saved[view][field].every((k: unknown) => typeof k === 'string' && Object.hasOwn(moduleLabels, k))
+          )
+        )
+          return {};
+      }
+    return saved || {};
+  } catch {
+    return {};
   }
-  return <div className="workspace"><header><span className="wordmark">loom</span><span className="context">Loom</span>
-    <button className="chatToggle" aria-expanded={chat} onClick={()=>showChat(v=>!v)}>Conversation</button></header>
-    <main><nav aria-label="Open views">{(['decision','history'] as const).map(key=><a key={key} aria-current={intent===key?'page':undefined} href={'#'+key}>{labels[key]}</a>)}</nav>
-    <div className="subject"><small>{ticket.id.toUpperCase()} <span>·</span> {ticket.status.replace('_',' ')}</small><h1>{ticket.title}</h1></div>
-    <div className="layout"><div className="viewStack">{(['decision','history'] as const).map(view=><div key={view} hidden={view!==intent}><div className="modules">
-    {view==='decision'?<Decision ticket={ticket}/>:<>
-      <Module core title="Ticket history"><Timeline notes={notes}/>{!notes.length && <p>No notes yet.</p>}</Module>
-      <Brief ticket={ticket}/>
-      {notes[0] && <Module title="Latest recorded finding"><p>{notes[0].text}</p><small>{notes[0].actor} · {date(notes[0].at)}</small></Module>}
-    </>}
-    {extras[view] && <Module title={view==='decision'?'Ticket history':'Decision criteria'}>{view==='decision'?<Timeline notes={notes}/>:<p>{ticket.doneWhen}</p>}
-      <button onClick={()=>setExtras(current=>({...current,[intent]:false}))}>Remove from view</button></Module>}
-    {miss && view===intent && <Module title="Which view did you mean?"><button onClick={()=>run(labels.history)}>{labels.history}</button> <button onClick={()=>run(labels.decision)}>{labels.decision}</button> <button onClick={()=>setMiss(false)}>Dismiss</button></Module>}
-    </div></div>)}</div>{chat && <aside><h2>Conversation</h2>{turns.length?turns.map((t,i)=><p key={i}>{t}</p>):<p>Your view requests appear here.</p>}</aside>}</div></main>
-    <div className="dock">{bar && <form onSubmit={e=>{e.preventDefault();run(command);}} onKeyDown={e=>{if(e.key==='Escape')closeBar();}}>
-      <label htmlFor="intent">What would you like to see?</label><input ref={input} id="intent" value={command} onChange={e=>setCommand(e.target.value)} autoComplete="off"/>
-      <div className="suggestions">{[labels.history,labels.decision,intent==='decision'?'Add history':'Add decision criteria'].map(s=><button type="button" key={s} onClick={()=>run(s)}>{s}</button>)}</div>
-    </form>}<button className="art" ref={dock} aria-expanded={bar} onClick={()=>openBar(v=>!v)}><img src={face} alt=""/><strong>Art</strong><span>Adjust view</span><kbd>⌘ / Ctrl K</kbd></button></div>
-    </div>;
 }
-function App(){
-  const read=useDataQuery<{ticket:Ticket|null}>(query,{id:ticketId});
-  if(read.status!=='live'||!read.data?.ticket)return <main role="status">{read.status==='loading'?'Opening ticket…':read.status==='live'?'Ticket unavailable.':'Connection unavailable. Reconnecting…'}</main>;
-  return <Workspace ticket={read.data.ticket}/>;
+function BlueprintTicket({
+  words,
+  ticket,
+  member,
+  filed,
+}: {
+  words: string;
+  ticket: Ticket;
+  member: string;
+  filed(): void;
+}) {
+  const submit = useTaskCommandSubmitter(),
+    lock = useRef(false);
+  const [state, setState] = useState<'idle' | 'filing' | 'failed'>('idle');
+  async function file() {
+    if (lock.current) return;
+    lock.current = true;
+    setState('filing');
+    try {
+      await submit({
+        action: 'create',
+        input: {
+          type: 'feature',
+          title: ('Blueprint request: ' + words).slice(0, 180),
+          goal: words,
+          why: 'No matching view for ' + ticket.id,
+          doneWhen: 'A matching view can be opened from the context.',
+          description: 'Requested from ' + ticket.id,
+          priority: 2,
+          project: ticket.projectRow?.id ?? null,
+          owner: { kind: 'member', id: member },
+        },
+      });
+      filed();
+    } catch {
+      setState('failed');
+    } finally {
+      lock.current = false;
+    }
+  }
+  return (
+    <>
+      <button disabled={state === 'filing'} onClick={() => void file()}>
+        {state === 'filing' ? 'Filing…' : 'File blueprint ticket'}
+      </button>
+      {state === 'failed' && <p role="alert">Could not confirm filing. Retry to check the same ticket.</p>}
+    </>
+  );
 }
-createRoot(document.getElementById('root')!).render(<Signin><App/></Signin>);
+function Workspace({ ticket, member }: { ticket: Ticket; member: string }) {
+  const project = ticket.projectRow,
+    projectId = project?.id || '';
+  const storage = JSON.stringify(['loom-context-v2', member, projectId, ticket.id]);
+  const audience = useDataQuery<{ workDiscussionAgent: string | null }>(
+    'query ContextAgent($id:String!){workDiscussionAgent(kind:"project",id:$id)}',
+    { id: projectId },
+    { pause: !projectId },
+  );
+  const agent = audience.status === 'live' ? audience.data?.workDiscussionAgent || null : null;
+  const discussion = useDiscussion(
+    projectId,
+    agent,
+    member,
+    JSON.stringify(['loom-context-thread', member, projectId]),
+  );
+  const [intent, focus] = useState(intentFromAddress),
+    [bar, openBar] = useState(false),
+    [chat, showChat] = useState(false);
+  const views: Intent[] = ['decision', 'history'];
+  const [opened, setOpened] = useState<Intent[]>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(storage + 'views') || 'null');
+      if (Array.isArray(stored)) {
+        const kept = views.filter((v) => stored.includes(v));
+        if (views.includes(location.hash.slice(1) as Intent) && !kept.includes(intent)) kept.push(intent);
+        return kept;
+      }
+    } catch {
+      /* Fresh context. */
+    }
+    return views;
+  });
+  const current = opened.includes(intent) ? intent : opened[0];
+  function rememberViews(next: Intent[]) {
+    setOpened(next);
+    try {
+      localStorage.setItem(storage + 'views', JSON.stringify(next));
+    } catch {
+      /* Session only */
+    }
+  }
+  function closeView(view: Intent) {
+    const next = opened.filter((v) => v !== view);
+    rememberViews(next);
+    if (current === view) {
+      const target = next[0];
+      location.hash = target || 'context';
+      if (target) focus(target);
+    }
+    record('Closed ' + labels[view]);
+  }
+  const [command, setCommand] = useState(''),
+    [miss, setMiss] = useState<{ view: Intent; words: string } | null>(null);
+  const [edits, setEdits] = useState<Edits>(() => readEdits(storage)),
+    [peek, showPeek] = useState(false);
+  const input = useRef<HTMLInputElement>(null),
+    dock = useRef<HTMLButtonElement>(null);
+  const notes = ticket.taskCommentsByTask,
+    lead = evidence(notes);
+  const changes = ticket.changeTasksByTask.flatMap((link) => (link.changeRow ? [link.changeRow] : []));
+  const reviewWords = reviewRequest(ticket.id, notes[0]?.seq ?? 0);
+  const reviewMarker = '[Loom context · ' + ticket.id + ' · ' + labels.decision + ']\n' + reviewWords;
+  const latestRequest = discussion.messages.findLast((m) => m.kind === 'message' && m.words === reviewMarker);
+  const latestReview =
+    latestRequest &&
+    discussion.messages
+      .filter((m) => m.kind === 'reply' && m.sender === agent && m.seq > latestRequest.seq)
+      .map((m) => readReview(m.words || '', ticket.id, notes))
+      .findLast(Boolean);
+  const [confirmed, setConfirmed] = useState<Record<string, Intent>>({});
+  const [receipts, setReceipts] = useState<string[]>([]);
+  function record(words: string) {
+    setReceipts((previous) => [...previous.slice(-49), words]);
+  }
+  async function phraseKey(words: string) {
+    const normalized = words
+      .trim()
+      .toLowerCase()
+      .replace(/[?.!]$/, '');
+    if (!crypto.subtle) return normalized;
+    const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
+    return Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  async function confirmRoute(words: string, view: Intent) {
+    const key = await phraseKey(words);
+    setConfirmed((previous) => ({ ...previous, [key]: view }));
+    if (crypto.subtle) {
+      try {
+        localStorage.setItem(storage + 'route:' + key, view);
+      } catch {
+        /* Session only */
+      }
+    }
+    record('Confirmed “' + labels[view] + '” for this request.');
+    navigate(view);
+  }
+  const [dismissed, setDismissed] = useState(0);
+  const [result, setResult] = useState<{ view: Intent; seq: number; notify: boolean } | null>(null);
+  const awaiting = useRef<{ view: Intent; clientId: string } | null>(null);
+  const [waiting, setWaiting] = useState<Intent | null>(null);
+  useEffect(() => {
+    const change = () => {
+      if (location.hash === '#context') return;
+      const view = intentFromAddress();
+      focus(view);
+      setOpened((previous) => (previous.includes(view) ? previous : [...previous, view]));
+    };
+    const key = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        openBar((v) => !v);
+      }
+      if (event.altKey && event.code === 'Backquote') {
+        event.preventDefault();
+        if (opened.length > 1) location.hash = current === 'history' ? 'decision' : 'history';
+      }
+      if (event.key === 'Escape') {
+        openBar(false);
+        showPeek(false);
+      }
+    };
+    window.addEventListener('hashchange', change);
+    window.addEventListener('keydown', key);
+    return () => {
+      window.removeEventListener('hashchange', change);
+      window.removeEventListener('keydown', key);
+    };
+  }, [opened, current]);
+  useEffect(() => {
+    if (bar) input.current?.focus();
+  }, [bar]);
+  useEffect(() => {
+    const pending = awaiting.current;
+    if (!pending) return;
+    const sent = discussion.messages.findLast((m) => m.kind === 'message' && m.clientId === pending.clientId);
+    const subsequent =
+      sent &&
+      discussion.messages.filter((m) => m.seq > sent.seq && (m.kind === 'message' || m.kind === 'reply'));
+    const reply = subsequent?.some((m) => m.kind === 'message')
+      ? undefined
+      : subsequent?.findLast((m) => m.kind === 'reply');
+    if (sent?.delivery === 'failed' || subsequent?.some((m) => m.kind === 'message')) {
+      awaiting.current = null;
+      setWaiting(null);
+    }
+    if (reply && !discussion.working) {
+      setResult({ view: pending.view, seq: reply.seq, notify: current !== pending.view });
+      awaiting.current = null;
+      setWaiting(null);
+    }
+  }, [discussion.messages]);
+  const visible = (view: Intent) => {
+    const edit = edits[view];
+    return [...new Set([...defaults[view], ...(edit?.added || [])])].filter(
+      (k) => !edit?.removed.includes(k) && available(k),
+    );
+  };
+  function available(k: Kind) {
+    if (k === 'sample') return !!lead.measurement;
+    if (k === 'finding') return !!lead.finding;
+    if (k === 'latest') return !!notes.length;
+    if (k === 'project') return !!project;
+    if (k === 'changes') return !!changes.length;
+    return true;
+  }
+  function adjust(view: Intent, k: Kind, add: boolean) {
+    if (k === defaults[view][0]) return;
+    record((add ? 'Added ' : 'Removed ') + moduleLabels[k] + ' · ' + labels[view]);
+    setEdits((previous) => {
+      const prev = previous[view] || { added: [], removed: [] };
+      const added = prev.added.filter((x) => x !== k),
+        removed = prev.removed.filter((x) => x !== k);
+      if (add) added.push(k);
+      else removed.push(k);
+      const next = { ...previous, [view]: { added, removed } };
+      try {
+        localStorage.setItem(storage, JSON.stringify(next));
+      } catch {
+        /* Still applies in this window. */
+      }
+      return next;
+    });
+    setMiss(null);
+  }
+  function closeBar() {
+    openBar(false);
+    setCommand('');
+    dock.current?.focus();
+  }
+  function navigate(view: Intent) {
+    if (!opened.includes(view)) rememberViews([...opened, view]);
+    focus(view);
+    location.hash = view;
+    setMiss(null);
+    closeBar();
+  }
+  async function route(words: string) {
+    const text = words
+      .trim()
+      .toLowerCase()
+      .replace(/[?.!]$/, '');
+    if (!text) return;
+    for (const view of ['history', 'decision'] as const)
+      if ([labels[view].slice(0, -1).toLowerCase(), 'open ' + view, view].includes(text)) {
+        navigate(view);
+        return;
+      }
+    const match = /^(add|include|remove|hide) (?:the )?(.+?)(?: (?:here|to this view))?$/.exec(text);
+    if (match) {
+      const aliases: Record<string, Kind> = {
+        history: 'history',
+        'decision criteria': 'criteria',
+        measurement: 'sample',
+        finding: 'finding',
+        brief: 'brief',
+      };
+      const k =
+        aliases[match[2]] ||
+        (Object.keys(moduleLabels).find((key) => moduleLabels[key as Kind].toLowerCase() === match[2]) as
+          Kind | undefined);
+      if (k && available(k) && current && k !== defaults[current][0]) {
+        adjust(current, k, ['add', 'include'].includes(match[1]));
+        closeBar();
+        return;
+      }
+    }
+    const key = await phraseKey(words);
+    let choice = confirmed[key];
+    if (crypto.subtle) {
+      try {
+        choice = (localStorage.getItem(storage + 'route:' + key) as Intent) || choice;
+      } catch {
+        /* Session only */
+      }
+    }
+    if (choice === 'history' || choice === 'decision') {
+      navigate(choice);
+      return;
+    }
+    if (!current) navigate(intent);
+    setMiss({ view: current || intent, words: words.trim() });
+    closeBar();
+  }
+  async function ask(words: string, view: Intent) {
+    if (!words.trim() || discussion.busy) return;
+    if (!opened.includes(view)) navigate(view);
+    const origin = { ticket: ticket.id, view: labels[view] };
+    setWaiting(view);
+    setResult(null);
+    setMiss(null);
+    closeBar();
+    if (
+      !(await discussion.send(words.trim(), origin, (id) => {
+        awaiting.current = { view, clientId: id };
+      }))
+    ) {
+      awaiting.current = null;
+      setWaiting(null);
+      setCommand(words);
+      openBar(true);
+    }
+  }
+  function arrange(words: string, view: Intent) {
+    const options = (Object.keys(moduleLabels) as Kind[]).filter((k) => available(k));
+    return ask(
+      'Interpret this workspace request: ' +
+        JSON.stringify(words) +
+        '. Current modules: ' +
+        visible(view).join(', ') +
+        '. Available modules: ' +
+        options.join(', ') +
+        '. Return JSON only: {"view":"' +
+        view +
+        '","add":[],"remove":[]} using those module IDs. ' +
+        'Preserve the core module. If the request instead needs an explanation, answer in ordinary text. Do not change the underlying ticket.',
+      view,
+    );
+  }
+  function proposal(words: string, view: Intent) {
+    try {
+      const data = JSON.parse(
+        words
+          .trim()
+          .replace(/^```(?:json)?\s*/i, '')
+          .replace(/\s*```$/, ''),
+      );
+      if (data.view !== view || !Array.isArray(data.add) || !Array.isArray(data.remove)) return;
+      const valid = (k: unknown): k is Kind =>
+        typeof k === 'string' &&
+        Object.hasOwn(moduleLabels, k) &&
+        k !== defaults[view][0] &&
+        available(k as Kind);
+      if (![...data.add, ...data.remove].every(valid) || data.add.some((k: Kind) => data.remove.includes(k)))
+        return;
+      const add: Kind[] = data.add.filter((k: Kind) => !visible(view).includes(k));
+      const remove: Kind[] = data.remove.filter((k: Kind) => visible(view).includes(k));
+      return { add, remove };
+    } catch {
+      return;
+    }
+  }
+  function body(k: Kind): ReactNode {
+    switch (k) {
+      case 'decision':
+        return (
+          <>
+            <h3>
+              {ticket.status === 'closed'
+                ? ticket.closeReason || 'Ticket closed'
+                : ticket.ask || latestReview?.question || lead.decision?.text || ticket.goal}
+            </h3>
+            {latestReview && (
+              <div>
+                <small>{agent}’s evidence review</small>
+                {latestReview.findings.map((f, i) => (
+                  <div className="citation" key={i}>
+                    <p>{f.quote}</p>
+                    <Source note={f.note} />
+                  </div>
+                ))}
+              </div>
+            )}
+            {ticket.status !== 'closed' && !latestReview && !ticket.ask && lead.decision && (
+              <Source note={lead.decision.note} />
+            )}
+            {agent && ticket.status !== 'closed' && (
+              <button
+                disabled={!!waiting || discussion.busy}
+                onClick={() => void ask(reviewWords, 'decision')}
+              >
+                {latestReview ? 'Refresh evidence review' : 'Review evidence with ' + agent}
+              </button>
+            )}
+            {ticket.doneWhen && (
+              <details className="source">
+                <summary>Completion criterion</summary>
+                <p>{ticket.doneWhen}</p>
+              </details>
+            )}
+          </>
+        );
+      case 'sample':
+        return (
+          lead.measurement && (
+            <>
+              <div className="measure">
+                {lead.measurement.numerator} <span>/ {lead.measurement.denominator}</span>
+              </div>
+              <p>{lead.measurement.text}</p>
+              <Source note={lead.measurement.note} />
+            </>
+          )
+        );
+      case 'finding':
+        return (
+          lead.finding && (
+            <>
+              <p>{lead.finding.text}</p>
+              <Source note={lead.finding.note} />
+            </>
+          )
+        );
+      case 'history':
+        return notes.length ? <Timeline notes={notes} /> : <p>No notes yet.</p>;
+      case 'brief':
+        return (
+          <>
+            <p>{ticket.goal}</p>
+            {ticket.createdAt && (
+              <small>
+                Opened {date(ticket.createdAt)} by {ticket.createdBy}
+              </small>
+            )}
+          </>
+        );
+      case 'criteria':
+        return <p>{ticket.doneWhen || 'No completion criterion recorded.'}</p>;
+      case 'latest':
+        return (
+          <>
+            <p>{noteLead(notes[0])}</p>
+            <Source note={notes[0]} />
+          </>
+        );
+      case 'project':
+        return <a href={'/p/work/project/' + encodeURIComponent(projectId)}>{project?.name}</a>;
+      case 'changes':
+        return changes.map((c) => (
+          <p key={c.id}>
+            #{c.number} {c.title}
+            <br />
+            <small>
+              {c.state} · {c.checks}
+            </small>
+          </p>
+        ));
+    }
+  }
+  const response = discussion.messages.find((m) => m.seq === result?.seq);
+  useEffect(() => {
+    if (!result || current === result.view || result.seq === dismissed) return;
+    const timer = setTimeout(() => setDismissed(result.seq), 6500);
+    return () => clearTimeout(timer);
+  }, [result, current, dismissed]);
+  const proposed = result && response && proposal(response.words || '', result.view);
+  const openChat = () => {
+    showChat((v) => !v);
+  };
+  function renderModules(view: Intent) {
+    const list = visible(view),
+      core = defaults[view][0];
+    const isFar = (k: Kind) =>
+      k === 'project' || k === 'brief' || (k === 'changes' && changes.every((c) => c.state !== 'open'));
+    const render = (k: Kind) => {
+      const core = k === defaults[view][0],
+        far = isFar(k);
+      const panel = (
+        <>
+          <Head
+            actions={
+              !core && (
+                <button
+                  className="remove"
+                  aria-label={'Remove ' + moduleLabels[k]}
+                  onClick={() => adjust(view, k, false)}
+                >
+                  ×
+                </button>
+              )
+            }
+          >
+            <h2>{k === 'decision' && ticket.status === 'closed' ? 'Outcome' : moduleLabels[k]}</h2>
+          </Head>
+          {core && (
+            <>
+              <small>
+                <a href={taskPath(ticket.id)}>{ticket.id.toUpperCase()}</a> ·{' '}
+                {ticket.status.replace('_', ' ')}
+              </small>
+              <h1>{ticket.title}</h1>
+            </>
+          )}
+          {body(k)}
+        </>
+      );
+      return far ? (
+        <details className="module far" key={k}>
+          <summary>{moduleLabels[k]}</summary>
+          {panel}
+        </details>
+      ) : (
+        <section className={'module ' + (core ? 'core' : 'near')} key={k}>
+          {panel}
+        </section>
+      );
+    };
+    return (
+      <>
+        {render(core)}
+        <div className="nearStrip">{list.filter((k) => k !== core && !isFar(k)).map(render)}</div>
+        {list.filter(isFar).map(render)}
+      </>
+    );
+  }
+  function sendForm() {
+    return (
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          route(command);
+        }}
+      >
+        <label htmlFor="intent">What would you like to see?</label>
+        <input
+          ref={input}
+          id="intent"
+          value={command}
+          onChange={(e) => setCommand(e.target.value)}
+          autoComplete="off"
+        />
+        <div className="suggestions">
+          {[
+            labels.history,
+            labels.decision,
+            ...(Object.keys(moduleLabels) as Kind[])
+              .filter((k) => available(k) && !!current && !visible(current).includes(k))
+              .map((k) => 'Add ' + moduleLabels[k]),
+          ].map((s) => (
+            <button type="button" key={s} onClick={() => route(s)}>
+              {s}
+            </button>
+          ))}
+        </div>
+        {command.trim() && (
+          <div>
+            <button type="submit">Adjust view</button>{' '}
+            {agent && (
+              <button
+                type="button"
+                disabled={!!waiting || discussion.busy}
+                onClick={() => void ask(command, current || intent)}
+              >
+                Ask {agent}
+              </button>
+            )}
+          </div>
+        )}
+        {discussion.error && <p role="alert">{discussion.error}</p>}
+      </form>
+    );
+  }
+  return (
+    <div className="workspace">
+      <header>
+        <span className="wordmark">loom</span>
+        <button className="context" aria-expanded={peek} onClick={() => showPeek(!peek)}>
+          {project?.name || 'Ticket'}
+        </button>
+        <button className="chatToggle" aria-expanded={chat} onClick={openChat}>
+          Conversation
+        </button>
+      </header>
+      {peek && (
+        <div className="peek">
+          <strong>{project?.name}</strong>
+          <small>Open views · {ticket.id.toUpperCase()}</small>
+          {opened.map((v) => (
+            <button
+              key={v}
+              onClick={() => {
+                navigate(v);
+                showPeek(false);
+              }}
+            >
+              {labels[v]}
+            </button>
+          ))}
+        </div>
+      )}
+      <main>
+        <nav aria-label="Open views">
+          {opened.map((v) => (
+            <span className="viewTab" key={v}>
+              <a href={'#' + v} aria-current={v === current ? 'page' : undefined}>
+                {labels[v]}
+              </a>
+              <button className="remove" aria-label={'Close ' + labels[v]} onClick={() => closeView(v)}>
+                ×
+              </button>
+            </span>
+          ))}
+          {opened.length < 2 && <button onClick={() => openBar(true)}>Open view</button>}
+        </nav>
+        <div className="layout">
+          <div className="viewStack">
+            {opened.map((view) => (
+              <div key={view} hidden={view !== current}>
+                <div className="modules">
+                  {renderModules(view)}
+                  {miss?.view === view && (
+                    <section className="module">
+                      <h2>Which view did you mean?</h2>
+                      <p>{miss.words}</p>
+                      {(['history', 'decision'] as const).map((v) => (
+                        <button key={v} onClick={() => void confirmRoute(miss.words, v)}>
+                          {v === view ? 'This view is right' : labels[v]}
+                        </button>
+                      ))}
+                      {agent && (
+                        <button disabled={!!waiting} onClick={() => void arrange(miss.words, view)}>
+                          Ask {agent} to arrange this view
+                        </button>
+                      )}
+                      <BlueprintTicket
+                        words={miss.words}
+                        ticket={ticket}
+                        member={member}
+                        filed={() => {
+                          record('Filed blueprint ticket · ' + labels[view]);
+                          setMiss(null);
+                        }}
+                      />
+                      <button onClick={() => setMiss(null)}>Dismiss</button>
+                    </section>
+                  )}
+                  {waiting === view && (
+                    <section className="module" role="status">
+                      <h2>
+                        {agent} ·{' '}
+                        {discussion.busy ? 'Sending' : discussion.working ? 'Working' : 'Awaiting reply'}
+                      </h2>
+                      <button onClick={() => showChat(true)}>Open conversation</button>
+                      <button
+                        onClick={() => {
+                          awaiting.current = null;
+                          setWaiting(null);
+                        }}
+                      >
+                        Dismiss status
+                      </button>
+                      {discussion.href && <a href={discussion.href}>View delivery in Comms</a>}
+                    </section>
+                  )}
+                  {result?.view === view &&
+                    response &&
+                    !readReview(response.words || '', ticket.id, notes) && (
+                      <section className="module">
+                        <h2>{response.sender}</h2>
+                        {proposed ? (
+                          <>
+                            {proposed.add.map((k) => (
+                              <p key={k}>Add {moduleLabels[k]}</p>
+                            ))}
+                            {proposed.remove.map((k) => (
+                              <p key={k}>Remove {moduleLabels[k]}</p>
+                            ))}
+                            {proposed.add.length + proposed.remove.length > 0 ? (
+                              <button
+                                onClick={() => {
+                                  proposed.add.forEach((k) => adjust(view, k, true));
+                                  proposed.remove.forEach((k) => adjust(view, k, false));
+                                }}
+                              >
+                                Apply to this view
+                              </button>
+                            ) : (
+                              <p>View matches the proposal.</p>
+                            )}
+                          </>
+                        ) : (
+                          <p>{response.words}</p>
+                        )}
+                      </section>
+                    )}
+                </div>
+              </div>
+            ))}
+          </div>
+          {chat && (
+            <aside>
+              <Head
+                actions={
+                  <button aria-label="Close conversation" onClick={openChat}>
+                    ×
+                  </button>
+                }
+              >
+                <h2>Context conversation</h2>
+              </Head>
+              {receipts.map((line, i) => (
+                <p key={'local' + i}>
+                  <small>View adjustment</small>
+                  <br />
+                  {line}
+                </p>
+              ))}
+              {discussion.messages.map((m) =>
+                m.kind === 'ask' && m.inboxItem ? (
+                  <Suspense key={m.seq} fallback={<p>Opening question…</p>}>
+                    <Question id={m.inboxItem} go={(path) => location.assign(path)} writable readVisible />
+                  </Suspense>
+                ) : (
+                  <p key={m.seq}>
+                    <small>
+                      {m.sender} · {date(m.at)}
+                    </small>
+                    <br />
+                    {m.words === reviewMarker ? 'Review decision evidence' : m.words}
+                  </p>
+                ),
+              )}
+              {discussion.unavailable && <p>Conversation unavailable.</p>}
+              {discussion.href && (
+                <p>
+                  <a href={discussion.href}>Full conversation in Comms</a>
+                </p>
+              )}
+              <button onClick={() => openBar(true)}>Write a message</button>
+            </aside>
+          )}
+        </div>
+      </main>
+      <div className="dock">
+        {result?.notify && result.seq !== dismissed && response && current !== result.view && (
+          <div className="ding" role="status">
+            Reply from {response.sender}{' '}
+            <button
+              onClick={() => {
+                setDismissed(result.seq);
+                navigate(result.view);
+              }}
+            >
+              Show me
+            </button>
+            <button aria-label="Dismiss notification" onClick={() => setDismissed(result.seq)}>
+              ×
+            </button>
+          </div>
+        )}
+        {bar && sendForm()}
+        <button className="art" ref={dock} aria-expanded={bar} onClick={() => openBar((v) => !v)}>
+          <img src={face} alt="" />
+          <strong>{agent || 'Loom'}</strong>
+          <span>{discussion.working ? 'Working' : 'Adjust view'}</span>
+          <kbd>⌘ / Ctrl K</kbd>
+        </button>
+      </div>
+    </div>
+  );
+}
+function App() {
+  const member = useContext(DeskMember);
+  const read = useDataQuery<{ ticket: Ticket | null }>(query, { id: ticketId });
+  if (read.status !== 'live' || !read.data?.ticket || !member)
+    return (
+      <main role="status">
+        {read.status === 'loading'
+          ? 'Opening ticket…'
+          : read.status === 'live'
+            ? 'Ticket unavailable.'
+            : 'Connection unavailable. Reconnecting…'}
+      </main>
+    );
+  return <Workspace ticket={read.data.ticket} member={member} key={member} />;
+}
+createRoot(document.getElementById('root')!).render(
+  <Signin>
+    <App />
+  </Signin>,
+);

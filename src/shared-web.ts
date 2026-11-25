@@ -24,7 +24,7 @@ export function sharedWeb(webRoot:string){
   const file=realpathSync(candidate);
   if(!file.startsWith(base+sep)||!statSync(file).isFile())return c.notFound();
   return new Response(readFileSync(file),{headers:{
-   'content-type':getMimeType(file)??'application/octet-stream','cache-control':asset?'public, max-age=31536000, immutable':'no-store','x-content-type-options':'nosniff',
+   'content-type':getMimeType(file)??'application/octet-stream','cache-control':asset && extname(path)!=='.html'?'public, max-age=31536000, immutable':'no-store','x-content-type-options':'nosniff',
    'content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'",
   }});
  });
