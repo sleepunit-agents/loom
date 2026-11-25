@@ -1,11 +1,13 @@
-import { lazy, Suspense, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import Signin from '../shell/signin';
 import { useDataQuery } from '../data/graphql';
 import type { SharedTask, SharedTaskComment } from '../pieces/tasks/shared-view';
 import '../looks/looks.css';
 import './style.css';
-import face from './art.png';
+import { Portrait } from './portrait';
+import { Chat } from './chat';
+import { Ring, keep, kept, type Place, type Visit, type Details } from './ring';
 
 import { useTaskCommandSubmitter } from '../data/task-command';
 import { Head } from '../kit/reader';
@@ -14,9 +16,6 @@ import { evidence, reviewRequest, readReview } from './evidence';
 import { useDiscussion } from './discussion';
 import { taskPath } from '../../../src/task-route';
 
-const Question = lazy(async () => ({
-  default: (await import('../pieces/comms/inline-question')).InlineQuestion,
-}));
 const ticketId = 't-9';
 const query = `query ContextTicket($id:String!) {
   ticket:tasksSingle(where:{id:{eq:$id}}) {
@@ -162,38 +161,53 @@ function BlueprintTicket({
     </>
   );
 }
-function Workspace({ ticket, member }: { ticket: Ticket; member: string }) {
+function Workspace({
+  ticket,
+  member,
+  place,
+  active,
+  visit,
+  report,
+}: {
+  ticket: Ticket;
+  member: string;
+  place: Place;
+  active: boolean;
+  visit: Visit | null;
+  report: (id: string, d: Details) => void;
+}) {
   const project = ticket.projectRow,
-    projectId = project?.id || '';
-  const storage = JSON.stringify(['loom-context-v2', member, projectId, ticket.id]);
-  const audience = useDataQuery<{ workDiscussionAgent: string | null }>(
-    'query ContextAgent($id:String!){workDiscussionAgent(kind:"project",id:$id)}',
-    { id: projectId },
-    { pause: !projectId },
-  );
-  const agent = audience.status === 'live' ? audience.data?.workDiscussionAgent || null : null;
+    projectId = project?.id || '',
+    home = place.id === 'loom',
+    agent = place.agent;
+  const storage = JSON.stringify(['loom-context-v2', member, home ? projectId : place.id, ticket.id]);
   const discussion = useDiscussion(
     projectId,
     agent,
     member,
-    JSON.stringify(['loom-context-thread', member, projectId]),
+    JSON.stringify(['loom-context-thread', member, home ? projectId : place.id]),
+    home ? undefined : place.id,
   );
-  const [intent, focus] = useState(intentFromAddress),
-    [bar, openBar] = useState(false),
-    [chat, showChat] = useState(false);
+  const lastFocus = 'context-focus:' + member + ':' + place.id;
+  const [intent, focus] = useState<Intent>(() =>
+    ((active ? location.hash.slice(1) : '') || kept(lastFocus)) === 'history' ? 'history' : 'decision',
+  );
+  const [bar, openBar] = useState(false),
+    [chat, showChat] = useState(!home);
   const views: Intent[] = ['decision', 'history'];
   const [opened, setOpened] = useState<Intent[]>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem(storage + 'views') || 'null');
       if (Array.isArray(stored)) {
         const kept = views.filter((v) => stored.includes(v));
-        if (views.includes(location.hash.slice(1) as Intent) && !kept.includes(intent)) kept.push(intent);
+        if (active && views.includes(location.hash.slice(1) as Intent) && !kept.includes(intent))
+          kept.push(intent);
         return kept;
       }
     } catch {
       /* Fresh context. */
     }
-    return views;
+    return home ? views : active && ['#decision', '#history'].includes(location.hash) ? [intent] : [];
   });
   const current = opened.includes(intent) ? intent : opened[0];
   function rememberViews(next: Intent[]) {
@@ -216,8 +230,7 @@ function Workspace({ ticket, member }: { ticket: Ticket; member: string }) {
   }
   const [command, setCommand] = useState(''),
     [miss, setMiss] = useState<{ view: Intent; words: string } | null>(null);
-  const [edits, setEdits] = useState<Edits>(() => readEdits(storage)),
-    [peek, showPeek] = useState(false);
+  const [edits, setEdits] = useState<Edits>(() => readEdits(storage));
   const input = useRef<HTMLInputElement>(null),
     dock = useRef<HTMLButtonElement>(null);
   const notes = ticket.taskCommentsByTask,
@@ -265,15 +278,16 @@ function Workspace({ ticket, member }: { ticket: Ticket; member: string }) {
   const [waiting, setWaiting] = useState<Intent | null>(null);
   useEffect(() => {
     const change = () => {
-      if (location.hash === '#context') return;
+      if (!active || location.hash === '#context') return;
       const view = intentFromAddress();
       focus(view);
       setOpened((previous) => (previous.includes(view) ? previous : [...previous, view]));
     };
     const key = (event: KeyboardEvent) => {
+      if (!active) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
-        openBar((v) => !v);
+        showChat((v) => !v);
       }
       if (event.altKey && event.code === 'Backquote') {
         event.preventDefault();
@@ -281,7 +295,6 @@ function Workspace({ ticket, member }: { ticket: Ticket; member: string }) {
       }
       if (event.key === 'Escape') {
         openBar(false);
-        showPeek(false);
       }
     };
     window.addEventListener('hashchange', change);
@@ -290,7 +303,7 @@ function Workspace({ ticket, member }: { ticket: Ticket; member: string }) {
       window.removeEventListener('hashchange', change);
       window.removeEventListener('keydown', key);
     };
-  }, [opened, current]);
+  }, [opened, current, active]);
   useEffect(() => {
     if (bar) input.current?.focus();
   }, [bar]);
@@ -489,10 +502,7 @@ function Workspace({ ticket, member }: { ticket: Ticket; member: string }) {
               <Source note={lead.decision.note} />
             )}
             {agent && ticket.status !== 'closed' && (
-              <button
-                disabled={!!waiting || discussion.busy}
-                onClick={() => void ask(reviewWords, 'decision')}
-              >
+              <button disabled={discussion.busy} onClick={() => void ask(reviewWords, 'decision')}>
                 {latestReview ? 'Refresh evidence review' : 'Review evidence with ' + agent}
               </button>
             )}
@@ -568,9 +578,7 @@ function Workspace({ ticket, member }: { ticket: Ticket; member: string }) {
     return () => clearTimeout(timer);
   }, [result, current, dismissed]);
   const proposed = result && response && proposal(response.words || '', result.view);
-  const openChat = () => {
-    showChat((v) => !v);
-  };
+
   function renderModules(view: Intent) {
     const list = visible(view),
       core = defaults[view][0];
@@ -627,6 +635,56 @@ function Workspace({ ticket, member }: { ticket: Ticket; member: string }) {
       </>
     );
   }
+  useEffect(() => {
+    if (!visit || !active) return;
+    if (visit.chat) showChat(true);
+    if (visit.focus === 'history' || visit.focus === 'decision') {
+      const v = visit.focus;
+      focus(v);
+      setOpened((prev) => (prev.includes(v) ? prev : [...prev, v]));
+    }
+  }, [visit?.serial, active]);
+  const reply = discussion.messages.findLast((m) => m.kind === 'reply'),
+    unread = reply && reply.seq > discussion.readSeq;
+  const failed = discussion.messages.at(-1)?.delivery === 'failed';
+  const reason = discussion.questions.length
+    ? 'Question for you'
+    : failed
+      ? 'Delivery failed'
+      : unread
+        ? 'Reply from ' + (agent === 'art' ? 'Art' : agent)
+        : '';
+  const attentionMessage = discussion.questions[0]
+    ? discussion.messages.find((m) => m.inboxItem === discussion.questions[0])
+    : reply;
+  const preceding = discussion.messages.findLast(
+    (m) => m.kind === 'message' && m.seq <= (attentionMessage?.seq ?? Infinity),
+  );
+  const origin = preceding?.words?.split('\n')[0].includes(labels.history)
+    ? 'history'
+    : preceding?.words?.split('\n')[0].includes(labels.decision)
+      ? 'decision'
+      : 'context';
+  const focusKey = current || 'context';
+  useEffect(() => {
+    keep(lastFocus, focusKey);
+    report(place.id, {
+      views: opened.map((v) => labels[v]),
+      focus: focusKey,
+      reason,
+      origin,
+      event: reply?.seq || 0,
+      question: discussion.questions[0],
+    });
+  }, [lastFocus, focusKey, opened, reason, origin, reply?.seq, discussion.questions[0], place.id, report]);
+  async function sendChat(words: string) {
+    const view = current;
+    return discussion.send(
+      words,
+      { ticket: view ? ticket.id : place.name, view: view ? labels[view] : 'Conversation' },
+      () => {},
+    );
+  }
   function sendForm() {
     return (
       <form
@@ -635,10 +693,10 @@ function Workspace({ ticket, member }: { ticket: Ticket; member: string }) {
           route(command);
         }}
       >
-        <label htmlFor="intent">What would you like to see?</label>
+        <label htmlFor={'intent-' + place.id}>What would you like to see?</label>
         <input
           ref={input}
-          id="intent"
+          id={'intent-' + place.id}
           value={command}
           onChange={(e) => setCommand(e.target.value)}
           autoComplete="off"
@@ -658,11 +716,11 @@ function Workspace({ ticket, member }: { ticket: Ticket; member: string }) {
         </div>
         {command.trim() && (
           <div>
-            <button type="submit">Adjust view</button>{' '}
+            <button type="submit">Change this view</button>{' '}
             {agent && (
               <button
                 type="button"
-                disabled={!!waiting || discussion.busy}
+                disabled={discussion.busy}
                 onClick={() => void ask(command, current || intent)}
               >
                 Ask {agent}
@@ -676,32 +734,6 @@ function Workspace({ ticket, member }: { ticket: Ticket; member: string }) {
   }
   return (
     <div className="workspace">
-      <header>
-        <span className="wordmark">loom</span>
-        <button className="context" aria-expanded={peek} onClick={() => showPeek(!peek)}>
-          {project?.name || 'Ticket'}
-        </button>
-        <button className="chatToggle" aria-expanded={chat} onClick={openChat}>
-          Conversation
-        </button>
-      </header>
-      {peek && (
-        <div className="peek">
-          <strong>{project?.name}</strong>
-          <small>Open views · {ticket.id.toUpperCase()}</small>
-          {opened.map((v) => (
-            <button
-              key={v}
-              onClick={() => {
-                navigate(v);
-                showPeek(false);
-              }}
-            >
-              {labels[v]}
-            </button>
-          ))}
-        </div>
-      )}
       <main>
         <nav aria-label="Open views">
           {opened.map((v) => (
@@ -714,10 +746,17 @@ function Workspace({ ticket, member }: { ticket: Ticket; member: string }) {
               </button>
             </span>
           ))}
+          {opened.length === 2 && <button onClick={() => openBar(true)}>View options</button>}
           {opened.length < 2 && <button onClick={() => openBar(true)}>Open view</button>}
         </nav>
         <div className="layout">
           <div className="viewStack">
+            {!opened.length && (
+              <section className="module core">
+                <h1>{place.name}</h1>
+                <button onClick={() => showChat(true)}>Talk to Art</button>
+              </section>
+            )}
             {opened.map((view) => (
               <div key={view} hidden={view !== current}>
                 <div className="modules">
@@ -802,46 +841,15 @@ function Workspace({ ticket, member }: { ticket: Ticket; member: string }) {
             ))}
           </div>
           {chat && (
-            <aside>
-              <Head
-                actions={
-                  <button aria-label="Close conversation" onClick={openChat}>
-                    ×
-                  </button>
-                }
-              >
-                <h2>Context conversation</h2>
-              </Head>
-              {receipts.map((line, i) => (
-                <p key={'local' + i}>
-                  <small>View adjustment</small>
-                  <br />
-                  {line}
-                </p>
-              ))}
-              {discussion.messages.map((m) =>
-                m.kind === 'ask' && m.inboxItem ? (
-                  <Suspense key={m.seq} fallback={<p>Opening question…</p>}>
-                    <Question id={m.inboxItem} go={(path) => location.assign(path)} writable readVisible />
-                  </Suspense>
-                ) : (
-                  <p key={m.seq}>
-                    <small>
-                      {m.sender} · {date(m.at)}
-                    </small>
-                    <br />
-                    {m.words === reviewMarker ? 'Review decision evidence' : m.words}
-                  </p>
-                ),
-              )}
-              {discussion.unavailable && <p>Conversation unavailable.</p>}
-              {discussion.href && (
-                <p>
-                  <a href={discussion.href}>Full conversation in Comms</a>
-                </p>
-              )}
-              <button onClick={() => openBar(true)}>Write a message</button>
-            </aside>
+            <Chat
+              name={place.name}
+              agent={agent || 'Art'}
+              discussion={discussion}
+              visible={active}
+              onClose={() => showChat(false)}
+              onSend={sendChat}
+              receipts={receipts}
+            />
           )}
         </div>
       </main>
@@ -863,10 +871,32 @@ function Workspace({ ticket, member }: { ticket: Ticket; member: string }) {
           </div>
         )}
         {bar && sendForm()}
-        <button className="art" ref={dock} aria-expanded={bar} onClick={() => openBar((v) => !v)}>
-          <img src={face} alt="" />
-          <strong>{agent || 'Loom'}</strong>
-          <span>{discussion.working ? 'Working' : 'Adjust view'}</span>
+        <button className="art" ref={dock} aria-expanded={chat} onClick={() => showChat((v) => !v)}>
+          <Portrait
+            state={
+              failed || discussion.error
+                ? 'error'
+                : discussion.questions.length
+                  ? 'needs-input'
+                  : discussion.busy
+                    ? 'thinking'
+                    : discussion.working || waiting
+                      ? 'working'
+                      : result || unread
+                        ? 'complete'
+                        : 'idle'
+            }
+          />
+          <span className="artWords">
+            <strong>Art</strong>
+            <span>
+              {discussion.working
+                ? 'Working'
+                : discussion.questions.length
+                  ? 'Has a question for you'
+                  : 'Talk to Art'}
+            </span>
+          </span>
           <kbd>⌘ / Ctrl K</kbd>
         </button>
       </div>
@@ -876,6 +906,12 @@ function Workspace({ ticket, member }: { ticket: Ticket; member: string }) {
 function App() {
   const member = useContext(DeskMember);
   const read = useDataQuery<{ ticket: Ticket | null }>(query, { id: ticketId });
+  const project = read.data?.ticket?.projectRow;
+  const audience = useDataQuery<{ workDiscussionAgent: string | null }>(
+    'query ContextAgent($id:String!){workDiscussionAgent(kind:"project",id:$id)}',
+    { id: project?.id || '' },
+    { pause: !project },
+  );
   if (read.status !== 'live' || !read.data?.ticket || !member)
     return (
       <main role="status">
@@ -886,7 +922,26 @@ function App() {
             : 'Connection unavailable. Reconnecting…'}
       </main>
     );
-  return <Workspace ticket={read.data.ticket} member={member} key={member} />;
+  const ticket = read.data.ticket;
+  return (
+    <Ring
+      key={member}
+      member={member}
+      agent={audience.data?.workDiscussionAgent ?? null}
+      project={project?.name || 'Loom'}
+    >
+      {(place, active, visit, report) => (
+        <Workspace
+          ticket={ticket}
+          member={member}
+          place={place}
+          active={active}
+          visit={visit}
+          report={report}
+        />
+      )}
+    </Ring>
+  );
 }
 createRoot(document.getElementById('root')!).render(
   <Signin>

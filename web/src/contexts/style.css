@@ -446,3 +446,279 @@ aside a {
   padding-right: 9px;
   background: transparent;
 }
+.contextChrome {
+  position: relative;
+  z-index: 5;
+}
+.contextChrome header {
+  display: flex;
+  align-items: stretch;
+  background: #e3e5e8;
+  border-bottom: 1px solid #d2d4d6;
+  min-height: 38px;
+}
+.contextChrome nav {
+  display: flex;
+  overflow-x: auto;
+}
+.contextChrome nav button,
+.ringChat {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  white-space: nowrap;
+  padding: 7px 18px;
+  font-size: 14px;
+}
+.contextChrome nav button[aria-current='page'] {
+  background: #fff;
+  box-shadow: inset 0 -2px #292b30;
+}
+.plus {
+  background: transparent;
+  border-style: dashed;
+  padding: 0 15px;
+  margin: 4px;
+}
+.ringChat {
+  margin-left: auto;
+}
+.attentionDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 7px;
+  border-radius: 50%;
+  background: #bf551d;
+}
+.contextPreviews,
+.newContext,
+.crossDing {
+  position: absolute;
+  background: white;
+  box-shadow: 0 6px 20px #2222;
+  border: 1px solid #d8dadd;
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  max-width: calc(100vw - 20px);
+  left: 10px;
+  top: 100%;
+  overflow: auto;
+}
+.contextPreviews button {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  min-width: 170px;
+}
+.contextPreviews span,
+.contextPreviews small {
+  font-size: 12px;
+}
+.newContext {
+  flex-wrap: wrap;
+}
+.newContext label {
+  display: grid;
+  font-size: 13px;
+}
+.newContext input {
+  width: 180px;
+  padding: 7px;
+}
+.crossDing {
+  position: fixed;
+  z-index: 6;
+  bottom: 115px;
+  top: auto;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  font-size: 14px;
+  flex-wrap: wrap;
+}
+.dock .art {
+  min-width: 240px;
+  padding: 2px 12px 2px 2px;
+}
+.art .artWords {
+  display: grid;
+  text-align: left;
+  gap: 4px;
+}
+.art .artWords strong {
+  font-size: 16px;
+  color: white;
+}
+.art .portrait {
+  width: 84px;
+  height: 88px;
+  border-radius: 12px;
+  background: #090a11;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.portrait > span {
+  display: block;
+  width: 56px;
+  height: 84px;
+  image-rendering: pixelated;
+  background-repeat: no-repeat;
+}
+.layout .chatWindow {
+  display: flex;
+  flex-direction: column;
+  width: min(385px, 35vw);
+  height: 65dvh;
+  max-height: 680px;
+  overflow: hidden;
+  padding: 0;
+  flex-shrink: 0;
+}
+.chatTitle,
+.chatComposer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+}
+.chatTitle {
+  border-bottom: 1px solid #e3e4e6;
+  justify-content: space-between;
+}
+.chatTitle button {
+  border: 0;
+}
+.transcript {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overscroll-behavior: contain;
+}
+.transcript article {
+  max-width: 92%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: #f1f2f3;
+  align-self: flex-start;
+  overflow-wrap: anywhere;
+}
+.transcript article.mine {
+  background: #e7edfa;
+  align-self: flex-end;
+}
+.transcript small {
+  font-size: 11px;
+}
+.transcript article p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+}
+.transcript details {
+  font-size: 12px;
+}
+.chatComposer {
+  border-top: 1px solid #e3e4e6;
+  flex-wrap: wrap;
+}
+.chatComposer textarea {
+  font: inherit;
+  min-width: 0;
+  flex: 1;
+  width: 100%;
+  resize: vertical;
+  border: 1px solid #c8cbd0;
+  border-radius: 8px;
+  padding: 8px;
+}
+.chatComposer button {
+  background: #25262b;
+  color: white;
+}
+.chatComposer button:disabled {
+  opacity: 0.45;
+}
+@media (max-width: 740px) {
+  .layout .chatWindow {
+    position: fixed;
+    inset: auto 8px max(68px, env(safe-area-inset-bottom));
+    height: min(60dvh, 520px);
+    width: auto;
+    z-index: 3;
+  }
+  .chatComposer textarea {
+    font-size: 16px;
+  }
+  .art .portrait {
+    height: 44px;
+    width: 44px;
+  }
+  .portrait > span {
+    zoom: 0.56;
+  }
+  .dock .art {
+    min-width: 200px;
+  }
+  .contextChrome nav button {
+    padding: 7px 10px;
+  }
+  .crossDing {
+    bottom: 80px;
+  }
+  .dock {
+    bottom: max(6px, env(safe-area-inset-bottom));
+  }
+}
+.portrait > span {
+  scale: 1.6;
+}
+.miniSpace {
+  height: 38px;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  background: #eff0f1;
+  border-radius: 6px;
+  padding: 6px;
+}
+.miniSpace i {
+  width: 25%;
+  height: 14px;
+  border-radius: 3px;
+  background: white;
+  border: 1px solid #d4d7dc;
+}
+.miniSpace i:first-child {
+  width: 40%;
+  height: 23px;
+}
+.crossDing:has(section) {
+  width: min(96vw, 440px);
+  max-height: 65dvh;
+  overflow: auto;
+}
+@media (max-width: 740px) {
+  .contextChrome nav {
+    min-width: 0;
+  }
+  .contextChrome nav button {
+    flex: none;
+  }
+}
+@media (max-width: 740px) {
+  .layout .chatWindow {
+    bottom: calc(68px + var(--keyboard-inset, 0px));
+    max-height: calc(100dvh - 120px - var(--keyboard-inset, 0px));
+  }
+  .workspace:has(.chatWindow) .dock {
+    bottom: calc(6px + var(--keyboard-inset, 0px));
+  }
+}

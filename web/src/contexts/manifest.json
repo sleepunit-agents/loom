@@ -1,0 +1,215 @@
+{
+  "cell": [
+    56,
+    84
+  ],
+  "states": {
+    "idle": {
+      "south": [
+        {
+          "row": 10,
+          "frames": 17,
+          "weight": 84
+        },
+        {
+          "row": 29,
+          "frames": 17,
+          "weight": 8,
+          "rare": true
+        },
+        {
+          "row": 25,
+          "frames": 17,
+          "weight": 8,
+          "rare": true
+        }
+      ],
+      "south-east": [
+        {
+          "row": 11,
+          "frames": 17,
+          "weight": 90
+        },
+        {
+          "row": 30,
+          "frames": 17,
+          "weight": 10,
+          "rare": true
+        }
+      ],
+      "south-west": [
+        {
+          "row": 12,
+          "frames": 17,
+          "weight": 90
+        },
+        {
+          "row": 31,
+          "frames": 17,
+          "weight": 10,
+          "rare": true
+        }
+      ]
+    },
+    "working": {
+      "south": [
+        {
+          "row": 4,
+          "frames": 17,
+          "weight": 100
+        }
+      ],
+      "south-east": [
+        {
+          "row": 5,
+          "frames": 17,
+          "weight": 100
+        }
+      ],
+      "south-west": [
+        {
+          "row": 6,
+          "frames": 17,
+          "weight": 100
+        }
+      ]
+    },
+    "thinking": {
+      "south": [
+        {
+          "row": 13,
+          "frames": 17,
+          "weight": 100
+        }
+      ],
+      "south-east": [
+        {
+          "row": 14,
+          "frames": 17,
+          "weight": 100
+        }
+      ],
+      "south-west": [
+        {
+          "row": 15,
+          "frames": 17,
+          "weight": 100
+        }
+      ]
+    },
+    "waiting": {
+      "south": [
+        {
+          "row": 26,
+          "frames": 17,
+          "weight": 100
+        }
+      ]
+    },
+    "done": {
+      "south": [
+        {
+          "row": 19,
+          "frames": 17,
+          "weight": 100
+        }
+      ],
+      "south-east": [
+        {
+          "row": 20,
+          "frames": 17,
+          "weight": 100
+        }
+      ],
+      "south-west": [
+        {
+          "row": 21,
+          "frames": 17,
+          "weight": 100
+        }
+      ]
+    },
+    "error": {
+      "south": [
+        {
+          "row": 1,
+          "frames": 17,
+          "weight": 100
+        }
+      ],
+      "south-east": [
+        {
+          "row": 2,
+          "frames": 17,
+          "weight": 100
+        }
+      ],
+      "south-west": [
+        {
+          "row": 3,
+          "frames": 17,
+          "weight": 100
+        }
+      ]
+    },
+    "talking": {
+      "south": [
+        {
+          "row": 7,
+          "frames": 17,
+          "weight": 60
+        },
+        {
+          "row": 16,
+          "frames": 17,
+          "weight": 25
+        },
+        {
+          "row": 22,
+          "frames": 17,
+          "weight": 15
+        }
+      ],
+      "south-east": [
+        {
+          "row": 8,
+          "frames": 17,
+          "weight": 60
+        },
+        {
+          "row": 17,
+          "frames": 17,
+          "weight": 25
+        },
+        {
+          "row": 23,
+          "frames": 17,
+          "weight": 15
+        }
+      ],
+      "south-west": [
+        {
+          "row": 9,
+          "frames": 17,
+          "weight": 60
+        },
+        {
+          "row": 18,
+          "frames": 17,
+          "weight": 25
+        },
+        {
+          "row": 24,
+          "frames": 17,
+          "weight": 15
+        }
+      ]
+    }
+  },
+  "avatar": {
+    "x": 10,
+    "y": 24,
+    "w": 36,
+    "h": 36
+  }
+}
