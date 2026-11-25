@@ -1,7 +1,7 @@
 import {useAgentNames} from '../../data/names';
 import {displayName} from '../../kit/words';
 import { useEffect, useState } from 'react';
-import { taskPath } from '../../../../src/task-route';
+import { workTicketPath } from '../../../../src/task-route';
 import { useDataQuery } from '../../data/graphql';
 import { Body, Error, LinkButton, Loading, Row, Section } from '../../kit';
 
@@ -57,7 +57,7 @@ export function ProjectPosts({project,go}:{project:string;go:(path:string)=>void
   const posts=feed.data?.projectActivityHighlights ?? [];
   if(!posts.length)return null;
   return <Section label="Latest agent updates">{posts.map(p=><Row key={p.task} title={p.title}
-    meta={displayName(p.agent,names)+' · '+excerpt(p.words)} onClick={()=>go(taskPath(p.task))}/>)}</Section>;
+    meta={displayName(p.agent,names)+' · '+excerpt(p.words)} onClick={()=>go(workTicketPath(p.task,project))}/>)}</Section>;
 }
 
 export function CatchUp({member,go}:{member:string;go:(path:string)=>void}) {
@@ -105,7 +105,7 @@ export function CatchUp({member,go}:{member:string;go:(path:string)=>void}) {
     {projects.map(project=><section key={project.id} aria-label={project.name+' updates'}>
       <LinkButton onClick={()=>go('/p/work/project/'+project.id)}>{project.name}</LinkButton>
       {project.items.slice(0,3).map(t=><Row key={t.id} layout="stack" title={t.title}
-        meta={t.words} onClick={()=>go(taskPath(t.id))}/>)}
+        meta={t.words} onClick={()=>go(workTicketPath(t.id,project.id))}/>)}
       {project.items.length>3 && <LinkButton onClick={()=>go('/p/work/project/'+project.id)}>More in {project.name}</LinkButton>}
     </section>)}
     {!postsLive && <Body quiet>Agent updates unavailable.</Body>}
