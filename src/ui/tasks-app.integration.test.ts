@@ -252,7 +252,14 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     await page.goto(app.url+'/p/work');
     const project = page.locator('[data-split-row]').filter({hasText:'pond'});
     await project.click({timeout:15000});
+    await page.getByText('Open board',{exact:true}).click();
     const ticket = page.locator('[data-split-row]').filter({hasText:title});
+    await expect.poll(()=>ticket.textContent({timeout:3000})).toContain('PR #3');
+    app.data.writes.run(()=>app.db.insert(s.taskLinks).values([
+      {task:'t-1',dependsOn:'t-2',type:'blocks'}, {task:'t-1',dependsOn:'t-90',type:'blocks'},
+    ]).run());
+    await expect.poll(()=>ticket.textContent({timeout:3000})).toContain('Waiting for Order pump parts');
+    expect(await page.getByText(hiddenTitle,{exact:false}).count()).toBe(0);
     await ticket.click({timeout:10000});
     await expect.poll(()=>page.getByRole('group',{name:'Pull request acme/app#3',exact:true}).count()).toBe(1);
     expect(await page.getByText(hiddenTitle,{exact:true}).count()).toBe(0);

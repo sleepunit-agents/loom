@@ -1,4 +1,5 @@
 import { ProjectNeeds } from './project-needs';
+import { ProjectBoard } from './board';
 import { taskPath } from '../../../../src/task-route';
 import { AppFrame, Body, Empty, Error, LinkButton, List, Loading, Row, Section } from '../../kit';
 import { useDataQuery } from '../../data/graphql';
@@ -19,6 +20,8 @@ export default function Work({path=base,go=(href:string)=>location.assign(href)}
   if (projectId) {
     const project = detail.data?.project;
     if (!project || project.id !== projectId || project.lifecycle==='removed') return <Empty title="Project unavailable"><LinkButton onClick={()=>go(base)}>All projects</LinkButton></Empty>;
+    if (path.endsWith('/board')) return <div className="p-4"><AppFrame title={project.name+' board'} where={path} go={go}
+      crumb={{label:project.name,href:base+'/project/'+project.id}}><ProjectBoard key={project.id} project={project.id} go={go}/></AppFrame></div>;
     const tickets = (label:string, rows:Ticket[]) => <Section label={label}><List label={label}>{rows.map(ticket=>
       <Row key={ticket.id} title={ticket.title} status={statusWords[ticket.status]} onClick={()=>go(taskPath(ticket.id))}/>
     )}</List></Section>;
@@ -27,9 +30,10 @@ export default function Work({path=base,go=(href:string)=>location.assign(href)}
     return <div className="p-4"><AppFrame title={project.name} where={path} go={go} crumb={{label:'Work',href:base}}>
       <ProjectNeeds key={project.id} project={project.id} go={go}/>
       {project.lifecycle==='retired' && <Body quiet>Retired project</Body>}
-      {project.lifecycle==='active' && working.length>0 && tickets('In flight',working)}
+      {project.lifecycle==='active' && working.length>0 && tickets('Claimed tickets',working)}
       {(project.lifecycle==='retired' ? recentTickets : recent).length>0 && tickets('Recent tickets',project.lifecycle==='retired' ? recentTickets : recent)}
       {!recentTickets.length && <Empty title="No tickets here yet"/>}
+      <LinkButton onClick={()=>go(base+'/project/'+project.id+'/board')}>Open board</LinkButton>
       <LinkButton onClick={()=>go('/p/tasks-preview/?folder='+encodeURIComponent('project:'+project.id))}>Browse project backlog</LinkButton>
     </AppFrame></div>;
   }
@@ -43,7 +47,7 @@ export default function Work({path=base,go=(href:string)=>location.assign(href)}
     </div>
   )}</div>;
   const retired = projects.filter(project=>project.lifecycle==='retired');
-  return <div className="p-4"><AppFrame title="Work" where={base} go={go} context={active.length ? `${active.length} active project${active.length===1 ? '' : 's'} · ${activeCount} with work in flight` : undefined}>
+  return <div className="p-4"><AppFrame title="Work" where={base} go={go} context={active.length ? `${active.length} active project${active.length===1 ? '' : 's'} · ${activeCount} with claimed tickets` : undefined}>
     {grid(active)}
     {retired.length>0 && <details><summary>Retired projects ({retired.length})</summary>{grid(retired)}</details>}
     {!projects.length && <Empty title="No projects yet"/>}
