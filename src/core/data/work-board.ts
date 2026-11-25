@@ -1,5 +1,5 @@
 import {and, asc, desc, eq, getTableColumns, inArray, isNotNull, ne, or, sql} from 'drizzle-orm';
-import {GraphQLInt,GraphQLList,GraphQLNonNull,GraphQLObjectType,GraphQLString,type GraphQLFieldConfigMap} from 'graphql/index.js';
+import {GraphQLBoolean,GraphQLInt,GraphQLList,GraphQLNonNull,GraphQLObjectType,GraphQLString,type GraphQLFieldConfigMap} from 'graphql/index.js';
 import type {Viewer} from '../../policy.js';
 import {sqlVisibility} from '../../policy-sql.js';
 import type {DataDatabase} from './database.js';
@@ -27,18 +27,31 @@ export function workBoardFields(db:DataDatabase):GraphQLFieldConfigMap<unknown,{
     id:{type:text},project:{type:text},title:{type:text},assignee:{type:GraphQLString},lane:{type:text},reason:{type:GraphQLString},
   }});
   return {projectBoardTickets:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(card))),
-    args:{project:{type:text},offset:{type:GraphQLInt,defaultValue:0},limit:{type:GraphQLInt,defaultValue:51}},
-    resolve:(_row,{project,offset,limit},{viewer})=>{
+    args:{project:{type:text},epic:{type:GraphQLString},finished:{type:GraphQLBoolean,defaultValue:false},offset:{type:GraphQLInt,defaultValue:0},limit:{type:GraphQLInt,defaultValue:51}},
+    resolve:(_row,{project,epic,finished,offset,limit},{viewer})=>{
       if (limit<1 || limit>100 || offset<0) throw Error('Invalid board page');
       const scope=sqlVisibility(viewer,['tasks','changeTasks','taskLinks','projects']);
       const visibleProject = db.select({id:projects.id}).from(projects)
         .where(and(eq(projects.id,project),scope.projects(getTableColumns(projects)))).get();
       if (!visibleProject) return [];
+      const visibleTasks = scope.tasks(getTableColumns(tasks));
+      const children = epic == null ? undefined : db.select({id:taskLinks.task}).from(taskLinks)
+        .innerJoin(tasks,eq(tasks.id,taskLinks.dependsOn))
+        .where(and(eq(tasks.id,epic),eq(tasks.type,'epic'),eq(tasks.project,project),
+          eq(taskLinks.type,'parent-child'),scope.taskLinks(getTableColumns(taskLinks)),visibleTasks));
+      const tickets = and(eq(tasks.project,project),visibleTasks,ne(tasks.type,'epic'),
+        children && inArray(tasks.id,children));
+      if (finished) {
+        return db.select({id:tasks.id,title:tasks.title,project:tasks.project,assignee:tasks.assignee,closeReason:tasks.closeReason})
+          .from(tasks).where(and(tickets,eq(tasks.status,'closed')))
+          .orderBy(desc(tasks.closedAt),asc(tasks.id)).limit(limit).offset(offset).all()
+          .map(({closeReason,...row})=>({...row,lane:'Finished',reason:closeReason==='cancelled' ? 'Cancelled' : 'Ticket closed'}));
+      }
       const allowedLinks=scope.changeTasks(getTableColumns(changeTasks));
       const activeChanges=db.select({task:changeTasks.task}).from(changeTasks).innerJoin(changes,eq(changes.id,changeTasks.change))
         .where(and(allowedLinks,eq(changes.state,'open')));
       const page=db.select({id:tasks.id,title:tasks.title,project:tasks.project,assignee:tasks.assignee,ask:tasks.ask}).from(tasks)
-        .where(and(eq(tasks.project,project),scope.tasks(getTableColumns(tasks)),ne(tasks.type,'epic'),ne(tasks.status,'closed'),
+        .where(and(tickets,ne(tasks.status,'closed'),
           sql`not ${taskShelved(tasks)}`,or(eq(tasks.status,'in_progress'),isNotNull(tasks.ask),inArray(tasks.id,activeChanges))))
         .orderBy(asc(tasks.priority),asc(tasks.position),asc(tasks.id)).limit(limit).offset(offset).all();
       if (!page.length) return [];

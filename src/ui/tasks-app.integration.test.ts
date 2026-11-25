@@ -596,3 +596,46 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     await page.waitForURL(url=>url.pathname.endsWith('/project/pond/history'));
   }finally{await browser.close();await app.close();}
 });
+
+it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html')))('keeps the epic and page on Back and filters finished work before limiting', async()=>{
+  const app=await fixture(true), browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  try {
+    const service=app.data.services.tasks, actor={kind:'agent' as const,id:'art'};
+    const create=(title:string,parent?:string,type:'task'|'epic'='task')=>service.create({
+      title,project:'pond',goal:'Inspect the pump',why:'Maintenance',owner:actor,type,parent,
+    },actor);
+    const epic=app.data.writes.run(()=>{
+      const epic=create('Spring inspections',undefined,'epic');
+      const finished=create('Finished spring inspection',epic.id);
+      service.close(finished.id,'Verified');
+      for(let i=0;i<51;i++) service.claim(create('Spring work '+i,epic.id).id,actor);
+      app.clock.advance(1000);
+      for(let i=0;i<6;i++) service.close(create('Unrelated finished '+i).id,'Verified');
+      return epic;
+    }).value;
+    const context=await browser.newContext({serviceWorkers:'block',reducedMotion:'reduce'});
+    await context.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
+    const page=await context.newPage();page.setDefaultTimeout(10000);
+    await page.goto(app.url+'/p/work/project/pond/board');
+    await page.getByRole('combobox',{name:'Epic'}).selectOption(epic.id);
+    const working=page.getByRole('region',{name:'Working',exact:true});
+    await page.getByRole('region',{name:'Recently finished'}).getByText('Finished spring inspection',{exact:true}).waitFor();
+    expect(await page.getByText(/Unrelated finished/).count()).toBe(0);
+    await page.getByRole('button',{name:'Next page'}).click();
+    const last=working.getByText(/^Spring work /);
+    await last.waitFor();
+    const title=await last.textContent();
+    await last.click();
+    await page.getByRole('article',{name:'Task'}).getByText(title!,{exact:true}).waitFor();
+    await page.goBack();
+    await last.waitFor();
+    expect(await last.textContent()).toBe(title);
+    expect(await page.getByRole('combobox',{name:'Epic'}).inputValue()).toBe(epic.id);
+    const query=new URL(page.url()).searchParams;
+    expect(query.get('page')).toBe('2');
+    expect(query.get('epic')).toBe(epic.id);
+    await page.goto(app.url+'/p/work/project/pond/board?epic=t-90');
+    await page.getByText('Epic unavailable',{exact:true}).waitFor();
+    expect(await page.getByText(hiddenTitle,{exact:true}).count()).toBe(0);
+  } finally {await browser.close();await app.close();}
+});
