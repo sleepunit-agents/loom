@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import './home.css';
+import './project.css';
 import {ProjectNotes} from './project-notes';
 import {ProjectChanges} from './project-changes';
 import {BacklogWindow} from './backlog-window';
@@ -17,6 +18,7 @@ import { unfiledBase, unfiledPage, workHomeQuery, workProjectQuery } from './que
 
 type Ticket = {id:string; title:string; status:'open'|'in_progress'|'closed'; changedAt:string};
 type Project = {id:string; name:string; goal:string|null; lifecycle:'active'|'retired'|'removed'};
+const workMark = <span className="work-mark" aria-hidden="true"><i/><i/><i/></span>;
 const base = '/p/work';
 const statusWords = {open:'Open', in_progress:'In progress', closed:'Closed'};
 
@@ -45,28 +47,36 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
       crumb={{label:project.name,href:base+'/project/'+project.id}}><ProjectChanges project={project.id} path={path} go={go}/></AppFrame></div>;
     if (path.split('?')[0].endsWith('/history')) return <div className="p-4"><AppFrame title={project.name+' backlog history'} where={path} go={go}
       crumb={{label:project.name,href:base+'/project/'+project.id}}><BacklogWindow key={path} project={project.id} path={path} detail go={go}/></AppFrame></div>;
-    if (path.split('?')[0].endsWith('/board')) return <div className="p-4"><AppFrame title={project.name+' board'} where={path} go={go}
+    if (path.split('?')[0].endsWith('/board')) return <div className="work-desk work-project work-board"><AppFrame lead={workMark} title={project.name+' board'} where={path} go={go}
       crumb={{label:project.name,href:base+'/project/'+project.id}}><ProjectBoard key={project.id} project={project.id} path={path} go={go}/></AppFrame></div>;
     const tickets = (label:string, rows:Ticket[]) => <Section label={label}><List label={label}>{rows.map(ticket=>
       <Row key={ticket.id} title={ticket.title} status={statusWords[ticket.status]} onClick={()=>go(taskPath(ticket.id))}/>
     )}</List></Section>;
     const {working,recent:recentTickets} = detail.data!;
     const recent = recentTickets.filter(ticket=>!working.some(active=>active.id===ticket.id));
-    return <div className="p-4"><AppFrame title={project.name} where={path} go={go} crumb={{label:'Work',href:base}}>
+    return <div className="work-desk work-project"><AppFrame lead={workMark} title={project.name} where={path} go={go} crumb={{label:'Work',href:base}}>
       {project.goal && <Body>{project.goal}</Body>}
-      <ProjectNeeds key={'needs-'+project.id} project={project.id} go={go}/>
       {project.lifecycle==='retired' && <Body quiet>Retired project</Body>}
-      {project.lifecycle==='active' && working.length>0 && tickets('Claimed tickets',working)}
-      {(project.lifecycle==='retired' ? recentTickets : recent).length>0 && tickets('Recent tickets',project.lifecycle==='retired' ? recentTickets : recent)}
-      {!recentTickets.length && <Empty title="No tickets here yet"/>}
-      {project.lifecycle==='active' && <ClaimControls key={'claims-'+project.id} project={project.id}/>}
-      <ProjectPosts project={project.id} go={go}/>
-      <ProjectNotes project={project.id} go={go}/>
-      <BacklogWindow key={'history-'+project.id} project={project.id} path={path} go={go}/>
-      <WorkDiscussion key={'discuss-'+project.id} kind="project" id={project.id} go={go}/>
-      <LinkButton onClick={()=>go(base+'/project/'+project.id+'/changes')}>Open pull requests</LinkButton>
-      <LinkButton onClick={()=>go(base+'/project/'+project.id+'/board')}>Open board</LinkButton>
-      <LinkButton onClick={()=>go('/p/tasks-preview/?folder='+encodeURIComponent('project:'+project.id))}>Browse project backlog</LinkButton>
+      <nav className="work-project-tools" aria-label="Project views">
+        <LinkButton onClick={()=>go(base+'/project/'+project.id+'/board')}>Open board</LinkButton>
+        <LinkButton onClick={()=>go('/p/tasks-preview/?folder='+encodeURIComponent('project:'+project.id))}>Browse project backlog</LinkButton>
+        <LinkButton onClick={()=>go(base+'/project/'+project.id+'/changes')}>Open pull requests</LinkButton>
+      </nav>
+      <div className="work-project-panes">
+        <div className="work-project-stream">
+          <ProjectNeeds key={'needs-'+project.id} project={project.id} go={go}/>
+          {project.lifecycle==='active' && working.length>0 && tickets('Claimed tickets',working)}
+          <ProjectPosts project={project.id} go={go}/>
+          {(project.lifecycle==='retired' ? recentTickets : recent).length>0 && tickets('Recent tickets',project.lifecycle==='retired' ? recentTickets : recent)}
+          {!recentTickets.length && <Empty title="No tickets here yet"/>}
+        </div>
+        <aside className="work-project-side" aria-label="Project tools">
+          <WorkDiscussion key={'discuss-'+project.id} kind="project" id={project.id} go={go}/>
+          {project.lifecycle==='active' && <ClaimControls key={'claims-'+project.id} project={project.id}/>}
+          <ProjectNotes project={project.id} go={go}/>
+          <BacklogWindow key={'history-'+project.id} project={project.id} path={path} go={go}/>
+        </aside>
+      </div>
     </AppFrame></div>;
   }
   const projects = home.data?.projects.filter(project=>project.lifecycle!=='removed') ?? [];
@@ -85,9 +95,11 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
       <button type="button" data-split-row="" className="work-file-target" onClick={()=>go(base+'/project/'+project.id)}>
         <span className="work-file-name"><i aria-hidden="true" className="work-folder"/>{project.name}</span>
         {project.goal && <span className="work-file-goal">{project.goal}</span>}
-        <span className="work-file-latest">{latest?.title ?? 'No tickets'}</span>
+        <span className="work-file-latest">
+          {latest && <span className="work-ticket-caption">Latest ticket · {statusWords[latest.status]}</span>}
+          {latest?.title ?? 'No tickets'}
+        </span>
         <span className="work-file-foot">
-          {latest && <span>{statusWords[latest.status]}</span>}
           {waiting>0 && <strong>Needs you · {waiting}</strong>}
           <span aria-hidden="true" className="work-arrow">↗</span>
         </span>
@@ -97,7 +109,7 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
   const retired = projects.filter(project=>project.lifecycle==='retired' && matches(project));
   const latestUnfiled = home.data?.unfiled?.[0];
   return <div className="work-desk"><AppFrame title="Work" where={base} go={go}
-    lead={<span className="work-mark" aria-hidden="true"><i/><i/><i/></span>}>
+    lead={workMark}>
     <dl className="work-counters" aria-label="Project overview">
       <div><dt>Active projects</dt><dd>{active.length}</dd></div>
       <div><dt>With claimed tickets</dt><dd>{activeCount}</dd></div>
