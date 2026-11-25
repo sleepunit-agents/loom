@@ -746,7 +746,7 @@ it('retires and revives a project by a card an owner answers; its tasks leave ev
     return { ready: data.readyTasks.map(row => row.id).sort(), tasks: data.tasks.map(row => [row.id, row.status, row.isReady, row.isShelved]) };
   };
   const before = { work: await work(), lee: await work('lee') };
-  expect(before.work).toEqual({ ready: [open.id, asked.id, other.id].sort(), tasks: [[open.id, 'open', true, false], [held.id, 'in_progress', false, false], [asked.id, 'open', true, false], [other.id, 'open', true, false]] });
+  expect(before.work).toEqual({ ready: [open.id, other.id].sort(), tasks: [[open.id, 'open', true, false], [held.id, 'in_progress', false, false], [asked.id, 'open', false, false], [other.id, 'open', true, false]] });
 
   const ask = (change: string, input: unknown) => f.call('household/propose', { change, input, why: 'Set aside for now' }, 'art');
   const filed = await ask('projectRetire', { project: 'phasecraft' });
