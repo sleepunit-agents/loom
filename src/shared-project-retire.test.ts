@@ -55,7 +55,7 @@ it('retires and revives a project by one column of its own row, and changes noth
   expect(f.projects.setRetired({ project: 'phasecraft' }, true)).toEqual({ id: 'phasecraft' });
   // Who reads the task and the project is exactly who did, for every one of these viewers.
   expect(readers()).toEqual(readBefore);
-  expect(f.db.select().from(projects).all()).toEqual([{ id: 'phasecraft', name: 'phasecraft', removedAt: null, retiredAt: later }, { id: 'pond', name: 'pond', removedAt: null, retiredAt: null }, { id: 'shut', name: 'shut', removedAt: at, retiredAt: null }]);
+  expect(f.db.select().from(projects).all()).toEqual([{ id: 'phasecraft', name: 'phasecraft', goal: null, removedAt: null, retiredAt: later }, { id: 'pond', name: 'pond', goal: null, removedAt: null, retiredAt: null }, { id: 'shut', name: 'shut', goal: null, removedAt: at, retiredAt: null }]);
   // No task, comment, link, question, member, agent or repository is touched: not deleted, closed or rewritten.
   expect(f.everything()).toEqual(before);
   expect(f.projects.describe('phasecraft')).toMatchObject({ retired: true, removed: false, members: ['lee', 'sam'], agents: ['art'], repositories: ['github:fixture/phasecraft'] });
@@ -65,7 +65,7 @@ it('retires and revives a project by one column of its own row, and changes noth
   expect(holds(tableRules.projects, sam, { id: 'phasecraft' }, sharedSharing(f.db))).toBe(true);
   // Revived: the column is empty again, and still nothing else has changed. The claim, the question and the link are as they were.
   f.projects.setRetired({ project: 'phasecraft' }, false);
-  expect(f.db.select().from(projects).where(eq(projects.id, 'phasecraft')).get()).toEqual({ id: 'phasecraft', name: 'phasecraft', removedAt: null, retiredAt: null });
+  expect(f.db.select().from(projects).where(eq(projects.id, 'phasecraft')).get()).toEqual({ id: 'phasecraft', name: 'phasecraft', goal: null, removedAt: null, retiredAt: null });
   expect(f.everything()).toEqual(before);
   expect(f.service.get(held.id)).toMatchObject({ status: 'in_progress', assignee: 'art' });
   expect(f.service.get(asked.id)).toMatchObject({ ask: 'Spend?', assignee: 'sam' });

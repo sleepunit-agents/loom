@@ -452,6 +452,8 @@ const upgrades: readonly (readonly string[])[] = [
   ["CREATE TABLE `task_backlog_events` (\n\t`seq` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`task` text NOT NULL,\n\t`project` text,\n\t`open` integer NOT NULL,\n\t`at` text NOT NULL,\n\tFOREIGN KEY (`task`) REFERENCES `tasks`(`id`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,\n\tCONSTRAINT \"task_backlog_at_utc\" CHECK(\"task_backlog_events\".\"at\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"task_backlog_events\".\"at\") = \"task_backlog_events\".\"at\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"task_backlog_events\".\"at\") = \"task_backlog_events\".\"at\", 0))\n);",
    "CREATE INDEX `task_backlog_project_task` ON `task_backlog_events` (`project`,`task`);",
    "CREATE INDEX `task_backlog_ticket_seq` ON `task_backlog_events` (`task`,`seq`);", ...backlogCheckpointTriggers],
+  // 45: existing projects have no shared goal until the household supplies one.
+  ["ALTER TABLE projects ADD COLUMN goal text"],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

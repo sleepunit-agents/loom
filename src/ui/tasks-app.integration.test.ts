@@ -504,3 +504,21 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     await notes.getByText('Cold starts need a second reading.').waitFor();
   }finally{await browser.close();await app.close();rmSync(directory,{recursive:true,force:true});}
 });
+
+it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html')))('reads the same shared goal on the project card and overview',async()=>{
+  const app=await fixture(),browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  try {
+    const goal='Bring the well online before winter.';
+    app.data.writes.run(()=>app.db.update(s.projects).set({goal}).where(eq(s.projects.id,'pond')).run());
+    const ctx=await browser.newContext({serviceWorkers:'block',reducedMotion:'reduce'});
+    await ctx.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
+    const page=await ctx.newPage();page.setDefaultTimeout(7000);
+    await page.goto(app.url+'/p/work');
+    await page.getByText(goal,{exact:true}).waitFor();
+    await page.getByRole('button',{name:/pond.*fix pond pump/i}).click();
+    await page.getByRole('button',{name:'Open board'}).waitFor();
+    await page.getByText(goal,{exact:true}).waitFor();
+    app.data.writes.run(()=>app.db.update(s.projects).set({goal:null}).where(eq(s.projects.id,'pond')).run());
+    await page.getByText(goal,{exact:true}).waitFor({state:'detached'});
+  }finally{await browser.close();await app.close();}
+});

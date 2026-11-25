@@ -389,12 +389,12 @@ describe('upgrading a household database', () => {
     const before = rows();
     expect(old.prepare("SELECT name FROM pragma_table_info('projects')").all()).not.toContainEqual({ name: 'retired_at' });
     upgradeDataSchema(old, () => '2026-11-18T00:00:00.000Z');
-    // The one new column, empty: no project is retired by upgrading, a removed one included.
-    expect(old.prepare("SELECT name FROM pragma_table_info('projects') ORDER BY name").all().map(row => (row as { name: string }).name)).toEqual(['id', 'name', 'removed_at', 'retired_at']);
+    // Existing projects gain neither a goal nor a retirement date.
+    expect(old.prepare("SELECT name FROM pragma_table_info('projects') ORDER BY name").all().map(row => (row as { name: string }).name)).toEqual(['goal', 'id', 'name', 'removed_at', 'retired_at']);
     expect(old.prepare('SELECT id, name, removed_at, retired_at FROM projects ORDER BY id').all()).toEqual([{ id: 'pond', name: 'Pond', removed_at: null, retired_at: null }, { id: 'shut', name: 'Shut', removed_at: at, retired_at: null }]);
     // Every row that was there is as it was: the projects without the new column, and what hangs off them whole.
     const after = rows();
-    expect(after[0].map(row => { const { retired_at: _new, ...rest } = row as Record<string, unknown>; return rest; })).toEqual(before[0]);
+    expect(after[0].map(row => { const { retired_at, goal, ...rest } = row as Record<string, unknown>; expect([retired_at,goal]).toEqual([null,null]); return rest; })).toEqual(before[0]);
     expect(after.slice(1)).toEqual(before.slice(1));
     // It takes a UTC time or nothing, like removed_at; a project can be both retired and removed.
     expect(() => old.prepare("UPDATE projects SET retired_at = 'yesterday' WHERE id = 'pond'").run()).toThrow('CHECK');

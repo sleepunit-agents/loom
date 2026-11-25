@@ -14,7 +14,7 @@ import { useDataQuery } from '../../data/graphql';
 import { unfiledBase, unfiledPage, workHomeQuery, workProjectQuery } from './query';
 
 type Ticket = {id:string; title:string; status:'open'|'in_progress'|'closed'; changedAt:string};
-type Project = {id:string; name:string; lifecycle:'active'|'retired'|'removed'};
+type Project = {id:string; name:string; goal:string|null; lifecycle:'active'|'retired'|'removed'};
 const base = '/p/work';
 const statusWords = {open:'Open', in_progress:'In progress', closed:'Closed'};
 
@@ -50,6 +50,7 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
     const {working,recent:recentTickets} = detail.data!;
     const recent = recentTickets.filter(ticket=>!working.some(active=>active.id===ticket.id));
     return <div className="p-4"><AppFrame title={project.name} where={path} go={go} crumb={{label:'Work',href:base}}>
+      {project.goal && <Body>{project.goal}</Body>}
       <ProjectNeeds key={project.id} project={project.id} go={go}/>
       {project.lifecycle==='retired' && <Body quiet>Retired project</Body>}
       {project.lifecycle==='active' && working.length>0 && tickets('Claimed tickets',working)}
@@ -76,6 +77,7 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
     <div key={project.id} className="overflow-hidden rounded-lg border border-[var(--v-border)]">
       <Row layout="stack" title={project.name} meta={project.tasksByProject[0]?.title} status={[project.tasksByProject[0] ? statusWords[project.tasksByProject[0].status] : 'No tickets',
         needs.has(project.id) && `Needs you · ${needs.get(project.id)}`].filter(Boolean).join(' · ')} onClick={()=>go(base+'/project/'+project.id)}/>
+      {project.goal && <p className="px-3 pb-3 text-sm">{project.goal}</p>}
     </div>
   )}</div>;
   const retired = projects.filter(project=>project.lifecycle==='retired');

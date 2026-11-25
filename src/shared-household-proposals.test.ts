@@ -1672,3 +1672,21 @@ it('reads Slack disconnect titles in one connection lookup without reading the c
   expect(statements.filter(sql=>/\bfrom\s+"bridge_channel_filters"/i.test(sql))).toHaveLength(0);
  }
 });
+
+it('reviews goal edits against the current goal and keeps earlier roster-only proposals usable',async()=>{
+ const f=fixture();
+ f.root.services.projects.save(pond);
+ const file=async(input:unknown)=>{const result=await f.call('household/propose',{change:'project',input,why:'Set the common aim'},'art');expect(result.body).toMatchObject({ok:true});return result.body.value!.id;};
+ const allow=(id:string)=>f.call('approvals/answer',{id,answer:'allow'},'sam');
+ const first=await file({...pond,goal:'Bring the well online'});
+ expect((await look(f,first)).summary).toContain('Bring the well online');
+ expect((await allow(first)).body.ok).toBe(true);
+ const earlier=await file({...pond,name:'Waterworks'});
+ f.root.services.projects.save({...pond,goal:'Keep the well running'});
+ expect((await allow(earlier)).body.ok).toBe(true);
+ expect(f.db.select().from(projects).get()).toMatchObject({name:'Waterworks',goal:'Keep the well running'});
+ const competing=await file({...pond,goal:'Replace the pump'});
+ f.root.services.projects.save({...pond,name:'Waterworks',goal:'Repair the well'});
+ expect((await allow(competing)).body.ok).toBe(false);
+ expect(f.db.select().from(projects).get()?.goal).toBe('Repair the well');
+});

@@ -63,6 +63,7 @@ export const projects = sqliteTable('projects', {
   removedAt: text('removed_at'),
   /** When the project was retired, if it is: kept whole and readable, with its unfinished tasks shelved. */
   retiredAt: text('retired_at'),
+  goal: text('goal'),
 }, t => [
   check('projects_removed_at_utc', utc(t.removedAt)),
   check('projects_retired_at_utc', utc(t.retiredAt)),
