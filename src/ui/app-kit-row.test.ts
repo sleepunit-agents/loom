@@ -19,10 +19,10 @@ describe('kit row and app structure', () => {
     expect(tree.root.findByProps({ 'aria-label': 'Unread' })).toBeTruthy();
     await act(async () => tree.unmount());
   });
-  it('renders frame breadcrumbs, filters, menu context and accessible states', () => {
+  it('renders frame navigation, filters, menu context and accessible states', () => {
     const html = renderToStaticMarkup(h(AppFrame, { title: 'Changes', where: '/changes', go: () => {}, crumb: { label: 'Home', href: '/' },
       filters: h('input', { 'aria-label': 'Filter' }), about: { label: 'A change', ref: 't-2153' }, children: h(List, { label: 'Changes', children: h(Empty, { title: 'No changes yet', text: 'They land here.' }) }) }));
-    expect(html).toContain('data-about='); expect(html).toContain('You are here'); expect(html).toContain('aria-label="Filter"'); expect(html).toContain('No changes yet'); expect(html).toContain('They land here.');
+    expect(html).toContain('data-about='); expect(html).toContain('aria-label="Changes toolbar"'); expect(html).toContain('Home</button>'); expect(html).toContain('aria-label="Filter"'); expect(html).toContain('No changes yet'); expect(html).toContain('They land here.');
     expect(renderToStaticMarkup(h(Loading, {}))).toContain('role="status"');
     expect(renderToStaticMarkup(h(ErrorState, { retry: () => {} }))).toContain('Try again');
     expect(renderToStaticMarkup(h(ErrorState, {}))).toContain('role="alert"');
