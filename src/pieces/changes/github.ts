@@ -1,8 +1,18 @@
 /** The only forge boundary. A fixed query and URL: no caller can supply a mutation or destination. */
-import { changeSchema, repoId, active, type Change } from './model.js';
+import { z } from 'zod';
+import { submittedReviewSchema, type SubmittedReview, changeSchema, repoId, active, type Change } from './model.js';
 import { parseRedactedJSON } from './redact.js';
 import { withGitHub, type Secrets } from './roles.js';
+const reviewFields = 'id url submittedAt state bodyText author{login} commit{oid}';
+const reviewConnection = 'nodes{'+reviewFields+'} pageInfo{hasNextPage endCursor}';
+const reviewPageQuery = 'query($owner:String!,$name:String!,$number:Int!,$after:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviews(first:50,after:$after){'+reviewConnection+'}}}}';
+const reviewPage = z.object({
+  nodes:z.array(z.object({id:z.string(),url:z.string(),state:z.string(),submittedAt:z.string().nullable(),
+    bodyText:z.string(),author:z.object({login:z.string()}).nullable(),commit:z.object({oid:z.string()}).nullable()}).nullable()),
+  pageInfo:z.object({hasNextPage:z.boolean(),endCursor:z.string().nullable()}),
+});
 const fields=`number title url state isDraft createdAt updatedAt closedAt mergedAt author { login ... on User { name } } headRefName headRefOid baseRefName bodyText mergeable reviewDecision
+ reviews(first:10){${reviewConnection}}
  reviewRequests(first:10){nodes{requestedReviewer{... on User{login name} ... on Team{slug name}}}}
  latestReviews(first:10){nodes{state author{login ... on User{name}}}} assignees(first:5){nodes{login name}} participants(first:15){nodes{login name}}
  commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}}`;
@@ -32,20 +42,49 @@ export function githubReader(secrets:Secrets, request:typeof fetch=fetch) {
   repo=repoId(repo);const [owner,name]=repo.slice(7).split('/');
   try {return await withGitHub(secrets,owner,async token=>{
    if(!token) throw new Error('Missing credential');
+   async function read(document:string,variables:Record<string,unknown>) {
+    const response=await request('https://api.github.com/graphql',{method:'POST',redirect:'error',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({query:document,variables}),signal:AbortSignal.timeout(20000)});
+    if(!response.ok)throw new Error('GitHub read failed');
+    const result=parseRedactedJSON(await response.text(),token!) as {data?:{repository?:{pullRequests?:{nodes:unknown[];pageInfo?:{hasNextPage?:unknown;endCursor?:unknown}},pullRequest?:{reviews?:unknown}}};errors?:unknown[]};
+    if(result.errors?.length||!result.data?.repository)throw new Error('GitHub read failed');
+    return result.data.repository;
+   }
+   async function reviewsFor(change:Change,first:unknown) {
+    const reviews=new Map<string,SubmittedReview>(), cursors=new Set<string>();
+    let page=reviewPage.parse(first);
+    for(;;){
+     for(const review of page.nodes){
+      if(!review || review.state==='PENDING') continue;
+      if(!review.submittedAt)throw new Error('Missing review submission time');
+      const url=new URL(review.url);
+      if(url.origin!=='https://github.com'||url.pathname.toLowerCase()!=='/'+owner+'/'+name+'/pull/'+change.number||!/^#pullrequestreview-\d+$/.test(url.hash))throw new Error('Invalid review source');
+      reviews.set(review.id,submittedReviewSchema.parse({id:review.id,login:review.author?.login??null,state:review.state,submittedAt:new Date(review.submittedAt).toISOString(),headCommit:review.commit?.oid??null,body:review.bodyText,url:url.origin+url.pathname+url.hash}));
+     }
+     if(!page.pageInfo.hasNextPage)return [...reviews.values()];
+     const after=page.pageInfo.endCursor;
+     if(!after||cursors.has(after))throw new Error('Invalid review pagination');
+     cursors.add(after);
+     page=reviewPage.parse((await read(reviewPageQuery,{owner,name,number:change.number,after})).pullRequest?.reviews);
+    }
+   }
    const out:Change[]=[];
    for(const states of [['OPEN'],['MERGED','CLOSED']]) {
     let after:string|null=null;const seen=new Set<string>();
     for(;;) {
-     const response=await request('https://api.github.com/graphql',{method:'POST',redirect:'error',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({query,variables:{owner,name,states,after}}),signal:AbortSignal.timeout(20000)});
-     if(!response.ok) throw new Error('GitHub read failed');
-     // Even an upstream error or malicious PR text cannot smuggle the supplied token into app data.
-     const data=parseRedactedJSON(await response.text(),token) as {data?:{repository?:{pullRequests?:{nodes:unknown[];pageInfo?:{hasNextPage?:unknown;endCursor?:unknown}}}};errors?:unknown[]};const page=data.data?.repository?.pullRequests;
-     if(data.errors?.length||!page||!Array.isArray(page.nodes)) throw new Error('GitHub read failed');
-     const rows=page.nodes.filter(Boolean).map((n:unknown)=>normalize(repo,n));out.push(...rows.filter((c:Change)=>active(c,now)));
+     const page=(await read(query,{owner,name,states,after})).pullRequests;
+     if(!page||!Array.isArray(page.nodes))throw new Error('GitHub read failed');
+     for(const node of page.nodes){
+      if(!node)continue;
+      const change=normalize(repo,node);
+      if(!active(change,now))continue;
+      const first=(node as {reviews?:unknown}).reviews;
+      change.submittedReviews=await reviewsFor(change,first);
+      out.push(change);
+     }
      const info=page.pageInfo;
      if(!info||typeof info.hasNextPage!=='boolean'||!(info.endCursor===null||typeof info.endCursor==='string')) throw new Error('Invalid GitHub pagination');
      if(!info.hasNextPage) break;
-     const cursor=info.endCursor;if(typeof cursor!=='string'||!cursor||seen.has(cursor)) throw new Error('Invalid GitHub pagination');seen.add(cursor);after=cursor;
+     const cursor:unknown=info.endCursor;if(typeof cursor!=='string'||!cursor||seen.has(cursor)) throw new Error('Invalid GitHub pagination');seen.add(cursor);after=cursor;
     }
    }
    return [...new Map(out.map(c=>[c.id,c])).values()];

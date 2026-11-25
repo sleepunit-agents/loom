@@ -522,3 +522,29 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     await page.getByText(goal,{exact:true}).waitFor({state:'detached'});
   }finally{await browser.close();await app.close();}
 });
+
+it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html')))('reads two GitHub review revisions and withdraws findings when project access ends',async()=>{
+  const app=await fixture(),browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  try {
+    const at=new Date(app.clock.now()).toISOString();
+    const visible='github:acme/app#3',hidden='github:secret/app#9';
+    app.data.writes.run(()=>app.db.insert(s.githubReviews).values([
+      {change:visible,id:'r1',login:'reviewer',state:'CHANGES_REQUESTED',body:'Back loses page two.',headCommit:'a'.repeat(40),submittedAt:at,url:'https://github.com/acme/app/pull/3#pullrequestreview-1'},
+      {change:visible,id:'r2',login:'reviewer',state:'APPROVED',body:'Back now restores page two.',headCommit:'b'.repeat(40),submittedAt:at,url:'https://github.com/acme/app/pull/3#pullrequestreview-2'},
+      {change:hidden,id:'r3',login:'private',state:'COMMENTED',body:'Private report',headCommit:null,submittedAt:at,url:'https://github.com/secret/app/pull/9#pullrequestreview-3'},
+    ]).run());
+    const ctx=await browser.newContext({serviceWorkers:'block',reducedMotion:'reduce'});
+    await ctx.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
+    const page=await ctx.newPage();page.setDefaultTimeout(8000);
+    await page.goto(app.url+'/p/tasks-preview/task/t-1');
+    const story=page.getByRole('region',{name:'Ticket story'});
+    await story.getByText('Back loses page two.').waitFor();
+    await story.getByText('Back now restores page two.').waitFor();
+    expect(await story.getByRole('link',{name:/GitHub review/}).allTextContents()).toEqual(['GitHub review · aaaaaaaa','GitHub review · bbbbbbbb']);
+    const link=story.getByRole('link',{name:'GitHub review · bbbbbbbb'});
+    if(await link.getAttribute('href')!=='https://github.com/acme/app/pull/3#pullrequestreview-2')throw Error('Wrong review source');
+    if(await page.getByText('Private report').count())throw Error('Private review exposed');
+    app.data.writes.run(()=>app.db.delete(s.projectMembers).where(eq(s.projectMembers.member,'sam')).run());
+    await page.getByText('Back loses page two.').waitFor({state:'detached'});
+  } finally {await browser.close();await app.close();}
+});

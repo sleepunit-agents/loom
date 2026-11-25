@@ -1,7 +1,7 @@
 import { mergeTargetFor } from './merge-target.js';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentAccounts, changes, changeChecks, changePeople, changeTasks, changeSync, projectRepositories, tasks, approvals } from '../core/data/schema.js';
+import { agentAccounts, changes, githubReviews, changeChecks, changePeople, changeTasks, changeSync, projectRepositories, tasks, approvals } from '../core/data/schema.js';
 import { lastApprovalAnswer } from './approval-answer.js';
 import { changeSchema, repoId, repositoryKey, tasksCited, waitsOn, type Change, type Rule } from '../pieces/changes/model.js';
 
@@ -68,6 +68,12 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
       openedAt: new Date(c.created).toISOString(), updatedAt: new Date(c.updated).toISOString(), closedAt: c.closed ? new Date(c.closed).toISOString() : null,
     };
     db.insert(changes).values(row).onConflictDoUpdate({ target: changes.id, set: row }).run();
+    if (c.submittedReviews !== undefined) {
+      db.delete(githubReviews).where(eq(githubReviews.change, id)).run();
+      for (const review of c.submittedReviews) {
+        db.insert(githubReviews).values({...review,change:id}).run();
+      }
+    }
     db.delete(changeChecks).where(eq(changeChecks.change, id)).run();
     // A failing check wins if GitHub names it in both lists.
     const checks = new Map<string, 'running' | 'failing'>();

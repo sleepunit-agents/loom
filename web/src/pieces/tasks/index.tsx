@@ -4,7 +4,7 @@ import { agentPath } from '../attention/home-model';
 import { talkPath } from '../comms/shared-query';
 import { useEffect, useRef, useState } from 'react';
 import { useDataQuery } from '../../data/graphql';
-import { SharedTasks, type SharedTask, type TaskAction, type TicketReview, type TicketPost } from './shared-view';
+import { SharedTasks, type GithubReview, type SharedTask, type TaskAction, type TicketReview, type TicketPost } from './shared-view';
 import { SharedTaskForm, type TaskFormProps } from './shared-form';
 import { taskId, taskSegment } from '../../../../src/task-route';
 import { taskCommentsQuery, taskSourceQuery, tasksQuery, type TasksSelection } from './query';
@@ -51,9 +51,15 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
     ? readerFeed.data?.selectedTask : undefined;
   const visibleDetail = selectedTask && detail?.id === selectedTask.id ? detail : undefined;
   const reader = selectedTask && visibleDetail ? { ...selectedTask, ...visibleDetail } : undefined;
-  const reviewFeed = useDataQuery<{taskReviewHistory: TicketReview[]}>(
-    'query TaskReviewHistory($task: String!) { taskReviewHistory(task: $task) { change job headCommit tier round requestedAt completedAt verdict findings } }',
-    {task:selected ?? ''}, {pause: !visibleDetail?.changeTasksByTask?.some(link => link.changeRow)});
+  const [reviewPage,setReviewPage]=useState<{task?:string;cursors:Pick<GithubReview,'submittedAt'|'id'>[]}>({cursors:[]});
+  const reviewCursors=reviewPage.task===selected?reviewPage.cursors:[];
+  const before=reviewCursors.at(-1);
+  const reviewFeed = useDataQuery<{taskReviewHistory: TicketReview[];taskGithubReviews:GithubReview[]}>(
+    `query TaskReviewHistory($task:String!,$at:String,$id:String){
+      taskReviewHistory(task:$task){ change job headCommit tier round requestedAt completedAt verdict findings }
+      taskGithubReviews(task:$task,beforeAt:$at,beforeId:$id){ id change login submittedAt state headCommit body url }
+    }`,{task:selected??'',at:before?.submittedAt??null,id:before?.id??null},{pause:!visibleDetail?.changeTasksByTask?.some(link=>link.changeRow)});
+  const github=visibleDetail && reviewFeed.status==='live' && !reviewFeed.settling ? reviewFeed.data?.taskGithubReviews ?? [] : [];
   const [postPage,setPostPage] = useState<{task?:string;cursors:string[]}>({cursors:[]});
   const cursors = postPage.task === selected ? postPage.cursors : [];
   const postFeed = useDataQuery<{ticketActivityPosts:TicketPost[]}>(
@@ -107,6 +113,10 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
     openPost={go ? post=>go(agentPath(post.agent)+'?activity='+encodeURIComponent(post.thread)) : undefined}
     postNavigation={cursors.length || posts.length>30 ? <Pager label="Activity post history" hasPrevious={cursors.length>0} hasNext={posts.length>30}
       previous={()=>setPostPage({task:selected,cursors:cursors.slice(0,-1)})} next={()=>setPostPage({task:selected,cursors:[...cursors,posts[29].id]})}/> : undefined}
+    githubReviews={github.slice(0,30).reverse()}
+    githubNavigation={reviewCursors.length || github.length>30 ? <Pager label="GitHub review history" hasPrevious={reviewCursors.length>0} hasNext={github.length>30}
+      previous={()=>setReviewPage({task:selected,cursors:reviewCursors.slice(0,-1)})}
+      next={()=>setReviewPage({task:selected,cursors:[...reviewCursors,{id:github[29].id,submittedAt:github[29].submittedAt}]})}/> : undefined}
     reviewsUnavailable={!!visibleDetail?.changeTasksByTask?.some(link => link.changeRow) && (reviewFeed.status === 'offline' || reviewFeed.status === 'denied')}
     reviews={visibleDetail && reviewFeed.status === 'live' && !reviewFeed.settling ? reviewFeed.data?.taskReviewHistory : undefined}
     changes={visibleDetail?.changeTasksByTask.flatMap(link => link.changeRow ? [{ ...link.changeRow, task: visibleDetail.id }] : [])}
