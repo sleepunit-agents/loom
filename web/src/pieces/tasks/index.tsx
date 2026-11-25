@@ -1,3 +1,4 @@
+import { WorkDiscussion } from '../work/discuss';
 import { Pager } from '../../kit';
 import { agentPath } from '../attention/home-model';
 import { talkPath } from '../comms/shared-query';
@@ -101,6 +102,7 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
   const open = !!submit && !!action && status === 'live' && (action.action === 'create' || !!target);
   const links = tasks.flatMap(task => task.taskLinksByTask);
   return <SharedTasks status={status} tasks={tasks} selected={selected} reader={reader} select={navigate} questionFor={questionFor} startFolder={startFolder} startAssignee={startAssignee} liveAgentIds={liveAgentIds}
+    discussion={reader && go ? <WorkDiscussion key={reader.id} kind="ticket" id={reader.id} go={go}/> : undefined}
     posts={posts.slice(0,30)}
     openPost={go ? post=>go(agentPath(post.agent)+'?activity='+encodeURIComponent(post.thread)) : undefined}
     postNavigation={cursors.length || posts.length>30 ? <Pager label="Activity post history" hasPrevious={cursors.length>0} hasNext={posts.length>30}

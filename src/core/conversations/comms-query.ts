@@ -1,3 +1,4 @@
+import {workNotice,readableWorkNotice} from './work-discussion.js';
 import { agentPostFields } from './agent-post-query.js';
 import { noticeInfo } from './legacy-notice.js';
 import { legacyStepWords, legacyToolCard } from './legacy-tool-card.js';
@@ -99,6 +100,10 @@ export class CommsQueries {
     }));
     const after=readCommsSet(this.db,thread,seqs,this.allowed(viewer),words,details);
     if(before.fingerprint!==after.fingerprint||deadlines.some(at=>at<=Date.parse(this.now())))throw Error('Comms changed; retry the query');
+    for(const message of result) {
+      const words=message[projected].words;
+      if(workNotice(message) && typeof words==='string' && !readableWorkNotice(this.db,viewer,words)) message[projected].words=null;
+    }
     for(const at of deadlines)retain(at);
     return result;
   }
@@ -125,6 +130,7 @@ export class CommsQueries {
     if (!retained(after, days()) || days() !== keep || !after?.message.words || !same(after.message) || !scope(after)
       || after.agent !== before.agent || after.project !== before.project || after.member !== before.member || after.conversation !== before.conversation
       || !after.message.words.equals(before.message.words) || !after.message[column]?.equals(envelope)) return null;
+    if(workNotice(after.message) && !readableWorkNotice(this.db,viewer,words)) return null;
     retainedUntil?.(wordsDeadline(after.message, keep));
     return words;
   }

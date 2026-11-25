@@ -43,6 +43,7 @@ export interface SharedTasksProps {
   reviews?: readonly TicketReview[];
   reviewsUnavailable?: boolean;
   posts?: TicketPost[];
+  discussion?: ReactNode;
   postNavigation?: ReactNode;
   openPost?(post:TicketPost): void;
   /** IDs returned by the authorized ready query, never inferred from partial visible links. */
@@ -216,6 +217,7 @@ export function SharedTasks(props: SharedTasksProps) {
         <Fact label="Assigned to">{name(selected.assignee)}</Fact>
         <Fact label="Closed because">{selected.closeReason}</Fact>
       </Facts>
+      {props.discussion}
       {selected.sourceKind === 'conversation' && selected.sourceId && (props.conversation
         ? <LinkButton onClick={() => props.conversation!(selected.sourceId!)}>From a conversation</LinkButton> : <Body quiet>From a conversation</Body>)}
       {selected.sourceKind === 'old-conversation' && selected.sourceId && <Body quiet>From an archived conversation</Body>}

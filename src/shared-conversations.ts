@@ -1,3 +1,4 @@
+import {workDiscussions} from './core/conversations/work-discussion.js';
 import {inboxDiscussions} from './core/conversations/inbox-discussion.js';
 import type {inbox as inboxTable} from './core/data/schema.js';
 import {privateInboxDeadline} from './core/conversations/private-inbox-words.js';
@@ -41,6 +42,7 @@ export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKe
     return holds(rules.answers, viewer, item, sharing);
   }; };
   const queries = new CommsQueries(db, key, policy, now), inbox = new InboxQueries(db, key, questionPolicy.visibility, now, (viewer, item) => tempoCommandAllowed(db, viewer, { action: 'volume', item }), (viewer,items)=>readInboxVolume(db,viewer,items,f=>questionPolicy.sourceVisibility(viewer,f)), answers, questionAsker, proposalTitles);
+  const work = workDiscussions(service);
   const discussions = inboxDiscussions(service, (viewer, id) => inbox.item(viewer,id));
   const summaries = new ConversationSummaries(db, key, now);
   const scope = (row: { member?: string | null; project?: string | null; agent?: string | null }): RecordScope => ({
@@ -48,8 +50,9 @@ export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKe
   });
   return {
     service, queries, inbox, summaries, authorizeQuestion:questionPolicy.ask,
-    fields: { ...commsQueryFields(queries), ...inboxQueryFields(inbox, discussions.agent), ...conversationSummaryFields(summaries) },
+    fields: { ...work.fields, ...commsQueryFields(queries), ...inboxQueryFields(inbox, discussions.agent), ...conversationSummaryFields(summaries) },
     install(operations: Operations) {
+      work.install(operations);
       discussions.install(operations);
       registerConversationOperations(operations, service, { authorize(viewer, access) {
         if (viewer.kind !== 'member') return false;

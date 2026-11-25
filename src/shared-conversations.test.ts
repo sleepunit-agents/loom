@@ -450,3 +450,38 @@ it('refuses questions, missing words and FYIs that change while the member opens
   expect(f.db.select().from(threads).all()).toEqual([]);
   expect(f.db.select().from(messages).all()).toEqual([]);
 });
+
+it('opens Work discussions privately, attaches their subject to delivery, and respects later withdrawal',async()=>{
+  const f=await fixture();
+  const {projects,projectMembers,projectAgents,tasks}=await import('./core/data/schema.js');
+  f.db.insert(projects).values({id:'pond',name:'Pond'}).run();
+  f.db.insert(projectMembers).values({project:'pond',member:'alice'}).run();
+  f.db.insert(projectAgents).values({project:'pond',agent:'art'}).run();
+  const at=new Date(f.clock.now()).toISOString();
+  f.db.insert(tasks).values({id:'t-27',title:'Repair the pump',project:'pond',ownerKind:'household',
+    createdByKind:'member',createdBy:'alice',createdAt:at,changedAt:at}).run();
+  const ticket={kind:'ticket',id:'t-27',agent:'art'};
+  const agent=()=>f.query('{workDiscussionAgent(kind:"ticket",id:"t-27")}');
+  expect((await agent()).body.data).toEqual({workDiscussionAgent:'art'});
+  expect((await f.post('work.discuss',ticket,'foreign','bob')).status).toBe(403);
+  const [first,again]=await Promise.all(['one','two'].map(id=>f.post('work.discuss',ticket,id).then(r=>r.json())));
+  expect(first).toMatchObject({ok:true}); expect(again).toEqual(first);
+  const thread=first.value.thread, cv=f.root.services.comms!.threads.thread(thread).conversation;
+  const project=await (await f.post('work.discuss',{kind:'project',id:'pond',agent:'art'},'project')).json();
+  expect(project.ok).toBe(true);expect(project.value.thread).not.toBe(thread);
+  expect(f.db.select().from(inbox).all()).toHaveLength(0);
+  const subject=()=>f.query('query($id:String!){commsMessages(thread:$id){words}}','alice',{id:thread});
+  expect((await subject()).body.data?.commsMessages).toEqual([{words:'Ticket t-27'}]);
+  const history=await prepareHistoryContext(f.root.services.comms!,cv,2);
+  expect(history()).toMatchObject([{kind:'notice',words:'Ticket t-27'}]);
+  expect((await f.post('comms.send',{thread,clientId:'direction',words:'Please do this next'},'send')).status).toBe(200);
+  expect(f.db.select().from(inbox).all()).toHaveLength(1);
+  f.db.insert(messages).values(Array.from({length:105},(_,i)=>({thread,seq:i+3,at,kind:'card' as const,sender:'art'}))).run();
+  const later=await prepareHistoryContext(f.root.services.comms!,cv,108);
+  expect(later()).toMatchObject([{kind:'notice',words:'Ticket t-27'}]);
+  f.root.writes.run(()=>f.db.delete(projectMembers).where(eq(projectMembers.project,'pond')).run());
+  expect(history()).toEqual([]);
+  expect((await f.query('query($id:String!){commsMessages(thread:$id,beforeSeq:3){words}}','alice',{id:thread})).body.data?.commsMessages).toEqual([{words:null},{words:'Please do this next'}]);
+  expect((await agent()).body.data).toEqual({workDiscussionAgent:null});
+  expect((await f.post('work.discuss',ticket,'one')).status).toBe(403);
+});

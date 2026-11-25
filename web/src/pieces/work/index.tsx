@@ -1,3 +1,4 @@
+import { WorkDiscussion } from './discuss';
 import { useReadingVisible } from '../../data/visibility';
 import { CatchUp } from './catch-up';
 import { ProjectNeeds } from './project-needs';
@@ -38,6 +39,7 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
       {project.lifecycle==='active' && working.length>0 && tickets('Claimed tickets',working)}
       {(project.lifecycle==='retired' ? recentTickets : recent).length>0 && tickets('Recent tickets',project.lifecycle==='retired' ? recentTickets : recent)}
       {!recentTickets.length && <Empty title="No tickets here yet"/>}
+      <WorkDiscussion key={project.id} kind="project" id={project.id} go={go}/>
       <LinkButton onClick={()=>go(base+'/project/'+project.id+'/board')}>Open board</LinkButton>
       <LinkButton onClick={()=>go('/p/tasks-preview/?folder='+encodeURIComponent('project:'+project.id))}>Browse project backlog</LinkButton>
     </AppFrame></div>;

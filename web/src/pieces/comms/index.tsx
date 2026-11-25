@@ -1,3 +1,4 @@
+import { WorkSubjectLink } from '../work/subject-link';
 import { ArchivedQuestions } from './archived-questions';
 import {Empty} from '../../kit';
 import {ConversationActivity} from './conversation';
@@ -90,7 +91,7 @@ function SharedCommsApp({ path: shellPath, go, visible = true }: { path?: string
     navigation={{ archived, search, offset, hasNext: (data?.threads.length ?? 0) > 50,
       folder(value) { setArchived(value); setOffset(0); }, query(value) { setSearch(value); setOffset(0); },
       previous() { setOffset(value => Math.max(0,value-50)); }, next() { setOffset(value => value+50); } }}
-    cards={{ history: open?.archivedQuestions.length && thread ? <ArchivedQuestions key={thread.id} thread={thread.id} first={open.archivedQuestions} name={named} zone={zone}/> : undefined, screen: waiting=><CompanionDestination needs={waiting} publish={setCompanionHead}/>,
+    cards={{ workSubject:(kind,id)=><WorkSubjectLink key={kind+id} kind={kind} id={id} go={navigate}/>, history: open?.archivedQuestions.length && thread ? <ArchivedQuestions key={thread.id} thread={thread.id} first={open.archivedQuestions} name={named} zone={zone}/> : undefined, screen: waiting=><CompanionDestination needs={waiting} publish={setCompanionHead}/>,
       question: (id, note) => <InlineQuestion key={id} id={id} go={navigate} readVisible={readingVisible} writable={own} onWaiting={note} />,
       waiting: own ? (conversation, placed, note) => <ConversationQuestions key={conversation} conversation={conversation} go={navigate} readVisible={readingVisible} placed={placed} onWaiting={note} /> : undefined,
       work: (refs, conversation) => <SharedWork key={conversation} refs={refs} conversation={conversation} go={navigate} />,
