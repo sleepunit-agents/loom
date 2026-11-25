@@ -2,7 +2,7 @@ import {conversationTitle} from '../../data/conversation-title';
 import {useState} from 'react';
 import {useDataQuery} from '../../data/graphql';
 import {Button,Empty,Error,Loading} from '../../kit';
-import {conversationActivityQuery,type ConversationActivityData,type ConversationTurn} from './conversation-query';
+import {bridgeReceiptQuery,type BridgeReceiptData,conversationActivityQuery,type ConversationActivityData,type ConversationTurn} from './conversation-query';
 import {briefTime,fullTime} from '../../kit/time';
 
 /** A step's stored kind, who it was from and how it ended, in plain words (the schema's own values: turns.kind,
@@ -23,7 +23,9 @@ export function ConversationActivity({conversation}:{conversation:string}){
  // so kept steps are never another conversation's.
  const result=useDataQuery<ConversationActivityData>(conversationActivityQuery,{id:conversation,before},{keep:true});
  const activity=result.status==='live'?result.data?.activity:undefined;
- const receipt=activity&&result.data?.latestBridgeReceipt;
+ const bridged=activity?.venue==='slack'||activity?.venue==='discord';
+ const receipts=useDataQuery<BridgeReceiptData>(bridgeReceiptQuery,{id:conversation},{pause:!bridged});
+ const receipt=bridged&&receipts.status==='live'&&receipts.data?.latestBridgeReceipt;
  const steps=activity?.turnsByConversation??[];
  const timezone=result.status==='live'?result.data?.deskTime?.timezone:undefined;
  return <article className="flex h-full min-h-0 flex-col">
