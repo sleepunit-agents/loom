@@ -2,7 +2,9 @@ import React,{act,createElement as h} from 'react';
 import {afterEach,expect,it,vi} from 'vitest';
 import {create,type ReactTestRenderer} from 'react-test-renderer';
 const feed=vi.hoisted(()=>({result:{status:'live',data:undefined} as {status:string;data?:unknown;settling?:boolean},variables:{} as Record<string,unknown>}));
-vi.mock('../../data/graphql',()=>({useDataQuery:(_query:unknown,variables:Record<string,unknown>,options?:{keep?:boolean})=>{feed.variables=variables;return feed.result.settling&&!options?.keep?{status:'loading'}:feed.result;}}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(query:string,variables:Record<string,unknown>,options?:{keep?:boolean;pause?:boolean})=>{
+ if(query.includes('ConversationBridgeReceipt'))return options?.pause?{status:'loading'}:{status:'live',data:{latestBridgeReceipt:{agent:'art',receivedAt:'2026-11-15T12:00:00Z',acceptedAt:null,replied:true}}};
+ feed.variables=variables;return feed.result.settling&&!options?.keep?{status:'loading'}:feed.result;}}));
 vi.mock('../../data',async original=>({...await original<object>(),useRecords:()=>{throw Error('Legacy reader mounted');}}));
 vi.mock('../../kit',async original=>({...await original<object>(),Button:(props:object)=>h('button',props),Empty:({title}:{title:string})=>h('p',null,title),Error:({text}:{text:string})=>h('p',null,text),Loading:({label}:{label:string})=>h('p',null,label)}));
 import CommsApp from './index';
@@ -57,4 +59,10 @@ it('keeps the steps and the label on screen while an earlier page loads, and dro
  feed.result={status:'offline'};
  await act(async()=>tree!.update(h(CommsApp,props)));
  expect(JSON.stringify(tree!.toJSON())).not.toContain('PRIVATE CONVERSATION LABEL');expect(tree!.root.findAllByType('li')).toHaveLength(0);
+});
+
+it('keeps bridge delivery receipts on Slack conversation history',async()=>{
+ feed.result={status:'live',data:{activity:{...activity,venue:'slack',place:'channel'}}};
+ await act(async()=>{tree=create(h(CommsApp,{path:'/p/comms-preview/conversation/cv-fixture',go:vi.fn()}));});
+ expect(JSON.stringify(tree!.toJSON())).toContain('Reply sent');
 });
