@@ -217,6 +217,21 @@ it('writes, reads and lists person and project cards, and keeps them from anothe
  }finally{await art.client.close();await mark.client.close();await p.close();}
 });
 
+it('promotes a ticket through the agent tool and keeps its identity and earlier updates',async()=>{
+ const {p,connect}=await program(),art=await connect('art');
+ try{
+  const filed=await art.call('task_create',{title:'Repair the pump',goal:'Water flows',why:'Restore circulation'});
+  const id=/^Filed (t-\d+):/.exec(filed.text)?.[1];expect(id).toBeTruthy();
+  await art.call('task_comment',{id,text:'Measured the flow'});
+  expect((await art.call('task_edit',{id,type:'epic'})).error).toBe(false);
+  expect((await art.call('task_edit',{id,type:'epic'})).error).toBe(false);
+  const story=(await art.call('task',{id})).text;
+  expect(story).toContain(id+' · epic');
+  expect(story).toContain('Measured the flow');
+  expect(story.match(/Promoted this ticket to an epic\./g)).toHaveLength(1);
+ }finally{await art.client.close();await p.close();}
+});
+
 it('files, reads, claims, comments on and closes a task through the named tools',async()=>{
  const {p,connect}=await program(),art=await connect('art');
  try{
