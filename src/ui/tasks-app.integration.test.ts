@@ -244,14 +244,21 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
 });
 
 it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.html')))('opens a shared project in Work and follows its ticket into the existing reader', async () => {
-  const app = await fixture();
+  const app = await fixture(true);
+  const mail = app.data.services.conversations;
+  const ask = app.data.writes.run(()=>mail.send({toKind:'person',to:'sam',member:'sam',project:'pond',
+    source:'notice',fromKind:'agent',words:'Order the pump?',answers:'yes-no'})).value;
   const browser = await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try {
     const context = await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},reducedMotion:'reduce'});
     await context.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
     const page = await context.newPage();
     await page.goto(app.url+'/p/work');
-    const project = page.locator('[data-split-row]').filter({hasText:'pond'});
+    const project = page.locator('[data-split-row]').filter({has:page.getByText('pond',{exact:true})});
+    await expect.poll(()=>project.textContent({timeout:5000})).toContain('Needs you · 1');
+    await page.getByText(/1 project question waiting for you/).waitFor();
+    app.data.writes.run(()=>mail.answer(ask.id,'sam','yes'));
+    await expect.poll(()=>project.textContent({timeout:5000})).not.toContain('Needs you');
     await project.click({timeout:15000});
     await page.getByText('Open board',{exact:true}).click();
     const ticket = page.locator('[data-split-row]').filter({hasText:title});

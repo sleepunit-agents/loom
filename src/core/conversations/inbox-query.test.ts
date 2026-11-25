@@ -636,3 +636,22 @@ it('scopes Needs you to the project and recipient before limiting its cards',asy
   mail.answer(mine.id,'alice','yes');
   expect((await read()).data).toEqual({inboxFolders:{needs:0},inboxItems:[]});
 });
+
+it('counts only actionable mail addressed to the reader under projects still visible to them', async () => {
+  const f = await fixture(), {projects, projectMembers} = await import('../data/schema.js');
+  f.db.insert(projects).values([{id:'pond', name:'Pond'}, {id:'shed', name:'Shed'}]).run();
+  f.db.insert(projectMembers).values({project:'pond', member:'alice'}).run();
+  const mail = f.comms.threads.conversations;
+  const send = (project:string, to:string, answers?:'words') => mail.send({
+    project, toKind:'person', to, member:to, source:'notice', fromKind:'agent', words:'Question', answers,
+  });
+  const mine = send('pond','alice','words');
+  send('pond','alice'); send('pond','bob','words'); send('shed','alice','words');
+  const read = () => f.service.projectNeeds(alice);
+  expect(read()).toEqual([{project:'pond',needs:1}]);
+  f.db.delete(projectMembers).run();
+  expect(read()).toEqual([]);
+  f.db.insert(projectMembers).values({project:'pond',member:'alice'}).run();
+  mail.answer(mine.id,'alice','words','Yes');
+  expect(read()).toEqual([]);
+});
