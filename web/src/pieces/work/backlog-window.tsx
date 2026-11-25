@@ -1,4 +1,4 @@
-import {WorkControls} from './toolbar';
+import {ToolbarControls} from '../../kit/toolbar';
 import {useState} from 'react';
 import {taskPath} from '../../../../src/task-route';
 import {useDataQuery} from '../../data/graphql';
@@ -48,13 +48,13 @@ export function BacklogWindow({project,path,detail,go}:{project:string;path:stri
   const choose=(key?:Group,n=0)=>go(route(project,since,until,key,n));
   const count=(key:Group)=>counts.get(key) ?? 0;
   return <Section label="Backlog history">
-    {detail && <WorkControls><form onSubmit={e=>{
+    {detail && <ToolbarControls><form onSubmit={e=>{
       e.preventDefault();
       const a=iso(first),b=iso(last);
       if(a&&b&&a<=b)go(route(project,a,b));
     }}><Fields><Field label="From"><Input type="datetime-local" value={first} max={last} required onChange={e=>setFirst(e.target.value)}/></Field>
       <Field label="Through"><Input type="datetime-local" value={last} min={first} required onChange={e=>setLast(e.target.value)}/></Field></Fields>
-      <Button type="submit">Compare</Button></form></WorkControls>}
+      <Button type="submit">Compare</Button></form></ToolbarControls>}
     <Body quiet>{display(since)} – {display(until)} · Tickets you can open today</Body>
     {since<report.coverage && <Body quiet>History starts {display(report.coverage)}.</Body>}
     {counts.size>0 && <Body>{count('start')} open at the start · {count('end')} open at the end</Body>}

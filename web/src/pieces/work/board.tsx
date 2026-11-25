@@ -1,4 +1,4 @@
-import {WorkControls} from './toolbar';
+import {ToolbarControls} from '../../kit/toolbar';
 import {NativeSelect} from '../../kit/native-select';
 import {taskPath} from '../../../../src/task-route';
 import {useDataQuery} from '../../data/graphql';
@@ -36,9 +36,9 @@ export function ProjectBoard({project,path,go}:{project:string;path:string;go:(p
   const rows=feed.data.projectBoardTickets.filter(row=>row.project===project);
   const cards=rows.slice(0,pageSize);
   return <>
-    {feed.data.epics.length>0 && <WorkControls><label className="work-board-filter">Epic <NativeSelect value={epic ?? ''} onChange={event=>openPage(event.target.value || null,0)}>
+    {feed.data.epics.length>0 && <ToolbarControls><label className="work-board-filter">Epic <NativeSelect value={epic ?? ''} onChange={event=>openPage(event.target.value || null,0)}>
       <option value="">All epics</option>{feed.data.epics.map(row=><option key={row.id} value={row.id}>{row.title}</option>)}
-    </NativeSelect></label></WorkControls>}
+    </NativeSelect></label></ToolbarControls>}
     <div className="work-lanes">
       {['Working','Waiting','Verifying'].map(lane=><Section key={lane} label={lane} className="work-lane" data-stage={lane}>
         {cards.filter(card=>card.lane===lane).map(card=><Row key={card.id} layout="stack" title={card.title}

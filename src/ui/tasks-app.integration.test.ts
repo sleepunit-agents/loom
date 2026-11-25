@@ -644,7 +644,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     await context.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
     const page=await context.newPage();page.setDefaultTimeout(10000);
     await page.goto(app.url+'/p/work/project/pond/board');
-    await page.locator('.work-toolbar').getByRole('combobox',{name:'Epic'}).selectOption(epic.id);
+    await page.locator('.loom-toolbar').getByRole('combobox',{name:'Epic'}).selectOption(epic.id);
     const working=page.getByRole('region',{name:'Working',exact:true});
     await page.getByRole('region',{name:'Recently finished'}).getByText('Finished spring inspection',{exact:true}).waitFor();
     expect(await page.getByText(/Unrelated finished/).count()).toBe(0);
