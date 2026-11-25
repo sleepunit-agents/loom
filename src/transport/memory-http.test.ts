@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDataSchema } from '../core/data/database.js';
 import { dataHttp } from '../core/data/http.js';
-import { agents, members, tasks, conversationPeople } from '../core/data/schema.js';
+import { agents, members, tasks, conversationPeople, projects as householdProjects, projectMembers, projectRepositories } from '../core/data/schema.js';
 import { FakeClock, type Sharing } from '../core/index.js';
 import { Conversations } from '../core/conversations/index.js';
 import { KnowledgePages } from '../../test/fixtures/knowledge-pages.js';
@@ -18,7 +18,7 @@ import { sharedActivityConversations } from '../pieces/mind/activity-conversatio
 import { memoryQueryFields } from './memory-queries.js';
 const cleanup: Array<() => unknown> = [];
 afterEach(() => { for (const close of cleanup.splice(0).reverse()) close(); });
-async function fixture() {
+async function fixture(withSecondAgent=false) {
   const home = mkdtempSync(join(tmpdir(), 'memory-door-')); cleanup.push(() => rmSync(home, {recursive: true, force: true}));
   const now = Date.parse('2026-11-14T18:00:00Z'), clock = new FakeClock(now);
   const client = new Database(':memory:'); cleanup.push(() => client.close()); const db = createDataSchema(client);
@@ -33,7 +33,14 @@ async function fixture() {
   projects.write({slug:'pond',name:'Fictional pond'});
   const sharing: Sharing = {members:{owner:{owner:true,agents:[]},peer:{owner:false,agents:[]}},projects:{team:{members:['peer'],agents:['fiction']}}};
   const source = {agent:'fiction',directory:home,memories:join(home,'memories.db')};
-  const projectReader = createProjectsReader(clock,{agents:[source],sharing:()=>sharing}); cleanup.push(projectReader.close);
+  const sources = [source];
+  if(withSecondAgent){
+    const memories=join(home,'second-agent.db');
+    const second=new ProjectsStore({dbPath:memories});cleanup.push(()=>second.close());
+    second.write({slug:'inspection',name:'Inspection',links:{repos:['example/pond']}});
+    sources.push({agent:'inspector',directory:home,memories});
+  }
+  const projectReader = createProjectsReader(clock,{agents:sources,sharing:()=>sharing}); cleanup.push(projectReader.close);
   const conversationHref = (id:string) => `/p/comms-preview/conversation/${encodeURIComponent(id)}`;
   const conversations = new Conversations(db, () => new Date(clock.now()).toISOString());
   const thread = conversations.open({agent:'fiction',venue:'loom',place:'Fictional terminal',label:'Fictional conversation'});
@@ -47,7 +54,7 @@ async function fixture() {
     return id === 'owner' || id === 'peer' ? {viewer:{kind:'member',id},valid:()=>valid} : undefined;
   }, undefined, queries.fields, {}, undefined, () => clock.now());
   const read = (query:string, token='owner', extra={}) => http.request('http://loom/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:token},body:JSON.stringify({query,...extra})});
-  return {db,http,read,sharing,thread,knowledge,client,admitted:()=>admitted,end:()=>{valid=false;}};
+  return {db,http,read,sharing,thread,knowledge,projects,client,admitted:()=>admitted,end:()=>{valid=false;}};
 }
 const selection = `{ tasks { id } memoryKnowledgePage(slug:"pump") { title body } memoryPerson(id:"fiction:friend") { name conversations { available rows { id title href } } } memoryProjects { id name } memoryActivity { entries { id title } conversations } }`;
 it('reads Tasks and all four real Memory projections through the authenticated HTTP door', async () => {
@@ -84,4 +91,32 @@ it('withholds Memory words when the authenticated session ends during parsing', 
   const response = await f.http.fetch(new Request('http://loom/graphql',{method:'POST',headers:{'content-type':'application/json','content-length':String(bytes.length),authorization:'owner'},body:stream,duplex:'half'} as RequestInit));
   expect(response.status).toBe(401);
   expect(await response.text()).not.toContain('Fictional');
+});
+
+it('attaches readable project notes only when their explicit references identify a single project', async () => {
+  const f = await fixture(true);
+  f.db.insert(householdProjects).values([{id:'pond',name:'Pond'},{id:'lab',name:'Lab'}]).run();
+  f.db.insert(projectMembers).values({project:'pond',member:'peer'}).run();
+  f.db.insert(projectRepositories).values([{project:'pond',repository:'example/pond'},{project:'lab',repository:'example/lab'}]).run();
+  f.db.update(tasks).set({type:'epic',project:'pond'}).where(eq(tasks.id,'work')).run();
+  f.projects.write({slug:'research',name:'Field notes',goal:'Find the pump',links:{epic:'work'}});
+  f.projects.write({slug:'repository',name:'Repo notes',links:{repos:['github:Example/Pond.git']}});
+  f.projects.write({slug:'conflict',name:'Conflicting anchors',links:{epic:'work',repos:['example/lab']}});
+  f.projects.write({slug:'unknown',name:'Unresolved epic',links:{epic:'missing',repos:['example/pond']}});
+  const read = async (viewer:string) => (await (await f.read('{workProjectContributions(project:"pond"){id goal}}', viewer)).json());
+  expect(await read('owner')).toEqual({data:{workProjectContributions:[
+    {id:'fiction:repository',goal:null},{id:'fiction:research',goal:'Find the pump'},{id:'inspector:inspection',goal:null},
+  ]}});
+  expect(await read('peer')).toEqual({data:{workProjectContributions:[]}});
+  f.sharing.members.peer.agents=['fiction'];
+  expect(await read('peer')).toEqual({data:{workProjectContributions:[
+    {id:'fiction:repository',goal:null},{id:'fiction:research',goal:'Find the pump'},
+  ]}});
+  f.sharing.members.peer.agents=[];
+  expect(await read('peer')).toEqual({data:{workProjectContributions:[]}});
+  f.sharing.members.peer.agents=['fiction'];
+  f.db.delete(projectMembers).where(eq(projectMembers.member,'peer')).run();
+  expect(await read('peer')).toEqual({data:{workProjectContributions:[]}});
+  f.projects.archive({slug:'research',actor:'fiction',reason:'Finished'});
+  expect(await read('owner')).toEqual({data:{workProjectContributions:[{id:'fiction:repository',goal:null},{id:'inspector:inspection',goal:null}]}});
 });

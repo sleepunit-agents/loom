@@ -118,6 +118,14 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   const activity=latest([row.updated,...sections.filter(s=>['memories','notes'].includes(s.key)&&s.available&&!s.error&&s.activity).map(s=>s.activity!)]);
   return {id:`${agent}:${row.slug}`,agent,agents:[...agents],now,slug:row.slug,name:card.name,card,updated:row.updated,activity,archived:!!row.archived_at,sections,waiting,unknown:sections.some(s=>!!s.error||(!s.available&&['tasks','conversations','changes'].includes(s.key))),lately:dated.filter(i=>!i.waiting).slice(0,3),people:[...people.values()],spark,...(changes?{changes}:{}),fields:Object.entries(card.where).map(([key,f])=>({key,value:f.value,state:!f.verified_at?'not checked':fieldState(f,now).kind==='stale'?`stale for ${days(now-Date.parse(f.verified_at))}`:`checked ${days(now-Date.parse(f.verified_at))} ago`}))};
  }
+ // A project contribution needs only the original card. Avoid running the hub's task and activity readers.
+ function cardRows(db:Database) {
+  return db.prepare('SELECT slug,card_json,updated,archived_at FROM projects WHERE archived_at IS NULL ORDER BY slug').all() as ProjectRow[];
+ }
+ const cards=(viewer:Viewer)=>once(viewer,()=>[...sources].flatMap(([agent,db])=>
+  allowed(viewer,agent) && has(db,'projects') ? cardRows(db).map(row=>({
+   agent,id:agent+':'+row.slug,updated:row.updated,card:JSON.parse(row.card_json) as ProjectCard,
+  })) : []));
  // Keep separate index/hub projections so paused cards never invoke roles just to list them.
  const list = (viewer:Viewer) => once(viewer, () => {
   const projects:ProjectRecord[] = [];
@@ -127,7 +135,7 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
 
   for (const [agent, db] of sources) {
    if (!allowed(viewer, agent) || !has(db, 'projects')) continue;
-   const rows = db.prepare('SELECT slug,card_json,updated,archived_at FROM projects WHERE archived_at IS NULL ORDER BY slug').all() as ProjectRow[];
+   const rows = cardRows(db);
    if (!rows.length) continue;
 
    const queries=rows.map(row=>projectQuery(agent,row,now));
@@ -201,6 +209,6 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
  };
  const access=(v:Viewer)=>once(v,()=>({id:'projects',allowed:options.agents.some(a=>allowed(v,a.agent)),agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent)}));
  let closed=false;
- const reader={access,ids,allowed,expires,readIndex:(id:string,v:Viewer)=>once(v,()=>read(id,v)),read:hub,memoryRead,memoryHistory,retained,memoryList,list,close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}};
+ const reader={access,ids,allowed,cards,expires,readIndex:(id:string,v:Viewer)=>once(v,()=>read(id,v)),read:hub,memoryRead,memoryHistory,retained,memoryList,list,close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}};
  return reader;
 }
