@@ -661,3 +661,33 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     expect(await page.getByText(hiddenTitle,{exact:true}).count()).toBe(0);
   } finally {await browser.close();await app.close();}
 });
+
+it.runIf(process.env.CI==='true' && chrome && existsSync(join(root,'index.html')))('pages ticket notes without shifting older pages on a live update',async()=>{
+  const app=await fixture(true),browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  try {
+    const add=(text:string)=>app.data.services.tasks.comment('t-1',text,{kind:'agent',id:'art'});
+    app.data.writes.run(()=>{for(let i=1;i<=65;i++)add('Inspection note '+i);});
+    const ctx=await browser.newContext({serviceWorkers:'block',reducedMotion:'reduce'});
+    await ctx.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
+    const page=await ctx.newPage();page.setDefaultTimeout(8000);
+    await page.goto(app.url+'/p/tasks-preview/task/t-1');
+    const story=page.getByRole('region',{name:'Ticket story'});
+    const words=()=>story.getByText(/^Inspection note \d+$/).allTextContents();
+    const range=(from:number,to:number)=>Array.from({length:to-from+1},(_,i)=>'Inspection note '+(from+i));
+    await expect.poll(words).toEqual(range(36,65));
+    await story.getByRole('button',{name:'Earlier notes'}).click();
+    await expect.poll(words).toEqual(range(6,35));
+    app.data.writes.run(()=>add('Inspection note 66'));
+    await story.getByRole('button',{name:'Earlier notes'}).click();
+    await expect.poll(words).toEqual(range(1,5));
+    await story.getByRole('button',{name:'Newer notes'}).click();
+    await expect.poll(words).toEqual(range(6,35));
+    await story.getByRole('button',{name:'Newer notes'}).click();
+    await expect.poll(words).toEqual(range(37,66));
+    await story.getByRole('button',{name:'Earlier notes'}).click();
+    await expect.poll(words).toEqual(range(7,36));
+    app.data.writes.run(()=>app.db.delete(s.projectMembers).where(and(eq(s.projectMembers.project,'pond'),eq(s.projectMembers.member,'sam'))).run());
+    await story.waitFor({state:'hidden'});
+    expect(await page.getByText(/^Inspection note \d+$/).count()).toBe(0);
+  }finally{await browser.close();await app.close();}
+});

@@ -1,13 +1,13 @@
 import { WorkDiscussion } from '../work/discuss';
-import { Pager } from '../../kit';
+import { Actions, Body, LinkButton, Pager } from '../../kit';
 import { agentPath } from '../attention/home-model';
 import { talkPath } from '../comms/shared-query';
 import { useEffect, useRef, useState } from 'react';
 import { useDataQuery } from '../../data/graphql';
-import { SharedTasks, type GithubReview, type SharedTask, type TaskAction, type TicketReview, type TicketPost } from './shared-view';
+import { SharedTasks, type GithubReview, type SharedTask, type SharedTaskComment, type TaskAction, type TicketReview, type TicketPost } from './shared-view';
 import { SharedTaskForm, type TaskFormProps } from './shared-form';
 import { taskId, taskSegment } from '../../../../src/task-route';
-import { taskCommentsQuery, taskSourceQuery, tasksQuery, type TasksSelection } from './query';
+import { earlierNotesQuery, notePageSize, taskCommentsQuery, taskSourceQuery, tasksQuery, type TasksSelection } from './query';
 
 export interface TasksAppProps {
   path?: string;
@@ -51,6 +51,14 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
     ? readerFeed.data?.selectedTask : undefined;
   const visibleDetail = selectedTask && detail?.id === selectedTask.id ? detail : undefined;
   const projectRow = visibleDetail?.projectRow;
+  const [notePage,setNotePage] = useState<{task?:string;cursors:number[]}>({cursors:[]});
+  const noteCursors = notePage.task===selected ? notePage.cursors : [];
+  const beforeNote = noteCursors.at(-1);
+  const older = useDataQuery<{notes:SharedTaskComment[]}>(earlierNotesQuery,
+    {selected:selected ?? '',before:beforeNote ?? 0},{pause:!visibleDetail || beforeNote===undefined});
+  const notes = beforeNote===undefined ? visibleDetail?.taskCommentsByTask ?? []
+    : visibleDetail && older.status==='live' && !older.settling
+      ? older.data?.notes.filter(note=>note.task===selected && note.seq<beforeNote) ?? [] : [];
   const reader = selectedTask && visibleDetail ? { ...selectedTask, ...visibleDetail } : undefined;
   const [reviewPage,setReviewPage]=useState<{task?:string;cursors:Pick<GithubReview,'submittedAt'|'id'>[]}>({cursors:[]});
   const reviewCursors=reviewPage.task===selected?reviewPage.cursors:[];
@@ -121,7 +129,15 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
     reviewsUnavailable={!!visibleDetail?.changeTasksByTask?.some(link => link.changeRow) && (reviewFeed.status === 'offline' || reviewFeed.status === 'denied')}
     reviews={visibleDetail && reviewFeed.status === 'live' && !reviewFeed.settling ? reviewFeed.data?.taskReviewHistory : undefined}
     changes={visibleDetail?.changeTasksByTask.flatMap(link => link.changeRow ? [{ ...link.changeRow, task: visibleDetail.id }] : [])}
-    links={links} comments={visibleDetail?.taskCommentsByTask ?? []}
+    links={links} comments={notes.slice(0,notePageSize)}
+    noteNavigation={visibleDetail && (beforeNote!==undefined || notes.length>notePageSize) ? <>
+      {beforeNote!==undefined && (older.status==='loading' || older.settling) && <Body quiet>Reading earlier notes…</Body>}
+      {beforeNote!==undefined && (older.status==='offline' || older.status==='denied') && <Body quiet>Earlier notes are unavailable.</Body>}
+      <Actions label="Ticket notes">
+        {beforeNote!==undefined && <LinkButton onClick={()=>setNotePage({task:selected,cursors:noteCursors.slice(0,-1)})}>Newer notes</LinkButton>}
+        {notes.length>notePageSize && <LinkButton onClick={()=>setNotePage({task:selected,cursors:[...noteCursors,notes[notePageSize-1].seq]})}>Earlier notes</LinkButton>}
+      </Actions>
+    </> : undefined}
     loadingReader={(combined || readDetail) && (readerFeed.status === 'loading' || readerFeed.settling)}
     readerUnavailable={readDetail && (detailFeed.status === 'offline' || detailFeed.status === 'denied')}
     ready={tasks.filter(task => task.isReady).map(task => task.id)} conversation={openSource}
