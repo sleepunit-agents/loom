@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "node ../scripts/check-app-kit.mjs && tsc -b && vite build",
+    "build:contexts": "tsc -b && vite build --config vite.contexts.config.ts",
     "lint": "oxlint && node ../scripts/check-app-kit.mjs",
     "preview": "vite preview"
   },
