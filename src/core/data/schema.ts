@@ -2100,6 +2100,19 @@ export const secretChangesRelations = relations(secretChanges, ({ one }) => ({
 }));
 
 /** Internal bookkeeping has named columns too. Opaque bytes are never queried as facts. */
+export const githubReviews = sqliteTable('github_reviews', {
+  change: text('change').notNull().references(() => changes.id, {onDelete:'cascade'}),
+  id: text('id').notNull(),
+  login: text('login'),
+  submittedAt: text('submitted_at').notNull(),
+  state: text('state', {enum:['APPROVED','CHANGES_REQUESTED','COMMENTED','DISMISSED']}).notNull(),
+  headCommit: text('head_commit'),
+  body: text('body').notNull(),
+  url: text('url').notNull(),
+}, t => [
+  primaryKey({columns:[t.change,t.id]}),
+  index('github_reviews_timeline').on(t.change,t.submittedAt,t.id),
+]);
 export const changeReviewRounds = sqliteTable('change_review_rounds', {
   job: text('job').primaryKey().notNull().references(() => jobs.id),
   change: text('change').notNull().references(() => changes.id),
@@ -2481,6 +2494,7 @@ export const plumbing = {
   archivedQuestions,
   accountWeekReadings,
   accountCalendarReadings,
+  githubReviews,
   changeReviewRounds,
   importedTaskSequence,
   triggerAcceptances,

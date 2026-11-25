@@ -22,6 +22,13 @@ export const repoId = (raw: string): string => {
   return `github:${value.toLowerCase()}`;
 };
 const stamp = z.string().nullable();
+export const submittedReviewSchema = z.object({
+  id: z.string().min(1), login: z.string().nullable(), submittedAt: z.iso.datetime({offset:true}),
+  state: z.enum(['APPROVED','CHANGES_REQUESTED','COMMENTED','DISMISSED']),
+  headCommit: z.string().regex(/^[0-9a-f]{40}$/).nullable(),
+  body: z.string(), url: z.string().regex(/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+#pullrequestreview-\d+$/),
+});
+export type SubmittedReview = z.infer<typeof submittedReviewSchema>;
 export const changeSchema = z.object({
   id: z.string(), repo: z.string(), number: z.number().int().positive(), page: z.string(), title: z.string(), url: z.string(),
   state: z.enum(changes.state.enumValues), draft: z.boolean(), author: z.object({ login: z.string(), name: z.string().optional() }),
@@ -29,6 +36,7 @@ export const changeSchema = z.object({
   head: z.object({ ref: z.string(), id: z.string() }), base: z.object({ ref: z.string() }), body: z.string(),
   checks: z.object({ state: z.enum(changes.checks.enumValues), failing: z.array(z.string()), running: z.array(z.string()), total: z.number().int().nonnegative() }),
   review: z.object({ state: z.enum(changes.review.enumValues), by: z.array(z.string()) }),
+  submittedReviews: z.array(submittedReviewSchema).optional(),
   mergeable: z.enum(changes.mergeable.enumValues), conflicts: z.boolean(),
   people: z.array(z.object({ login: z.string(), name: z.string().optional(), role: z.string() })),
 });

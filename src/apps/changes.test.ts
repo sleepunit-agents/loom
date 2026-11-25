@@ -83,3 +83,16 @@ it('refuses ambiguous account attribution instead of assigning a copy to the wro
   expect(() => service.put(change())).toThrow('more than one agent');
   expect(service.list()).toEqual([]);
 });
+
+it('replaces only complete batches of submitted forge reviews, preserving distinct revisions on retry',()=>{
+ const input=change(), report={id:'R1',login:'fixture',submittedAt:at,state:'CHANGES_REQUESTED' as const,headCommit:'a'.repeat(40),body:'First report',url:input.url+'#pullrequestreview-1'};
+ const next={...report,id:'R2',state:'APPROVED' as const,headCommit:'b'.repeat(40),body:'Fixed',url:input.url+'#pullrequestreview-2'};
+ const read=()=>client.prepare('select id,body from github_reviews order by id').all();
+ for(let i=0;i<2;i++)service.put({...input,submittedReviews:[report,next]});
+ expect(read()).toEqual([{id:'R1',body:'First report'},{id:'R2',body:'Fixed'}]);
+ service.put(input);expect(read()).toHaveLength(2);
+ expect(()=>service.put({...input,submittedReviews:[next,next]})).toThrow();
+ expect(read()).toHaveLength(2);
+ service.put({...input,submittedReviews:[]});
+ expect(read()).toEqual([]);
+});

@@ -454,6 +454,9 @@ const upgrades: readonly (readonly string[])[] = [
    "CREATE INDEX `task_backlog_ticket_seq` ON `task_backlog_events` (`task`,`seq`);", ...backlogCheckpointTriggers],
   // 45: existing projects have no shared goal until the household supplies one.
   ["ALTER TABLE projects ADD COLUMN goal text"],
+  // 46: submitted forge reviews are independent of household review jobs.
+  ["CREATE TABLE `github_reviews` (\n\t`change` text NOT NULL,\n\t`id` text NOT NULL,\n\t`login` text,\n\t`submitted_at` text NOT NULL,\n\t`state` text NOT NULL,\n\t`head_commit` text,\n\t`body` text NOT NULL,\n\t`url` text NOT NULL,\n\tPRIMARY KEY(`change`, `id`),\n\tFOREIGN KEY (`change`) REFERENCES `changes`(`id`) ON UPDATE no action ON DELETE cascade\n);",
+   "CREATE INDEX `github_reviews_timeline` ON `github_reviews` (`change`,`submitted_at`,`id`);"],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

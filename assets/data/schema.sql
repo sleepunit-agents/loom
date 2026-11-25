@@ -1559,6 +1559,20 @@ CREATE TABLE `account_calendar_readings` (
 	CONSTRAINT "account_calendar_readings_utc" CHECK("account_calendar_readings"."read_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "account_calendar_readings"."read_at") = "account_calendar_readings"."read_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "account_calendar_readings"."read_at") = "account_calendar_readings"."read_at", 0))
 );
 
+CREATE TABLE `github_reviews` (
+	`change` text NOT NULL,
+	`id` text NOT NULL,
+	`login` text,
+	`submitted_at` text NOT NULL,
+	`state` text NOT NULL,
+	`head_commit` text,
+	`body` text NOT NULL,
+	`url` text NOT NULL,
+	PRIMARY KEY(`change`, `id`),
+	FOREIGN KEY (`change`) REFERENCES `changes`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX `github_reviews_timeline` ON `github_reviews` (`change`,`submitted_at`,`id`);
 CREATE TABLE `change_review_rounds` (
 	`job` text PRIMARY KEY NOT NULL,
 	`change` text NOT NULL,

@@ -24,6 +24,9 @@ export interface SharedTaskLink { task: string; dependsOn: string; type: 'blocks
 export interface SharedTaskComment { task: string; seq: number; actorKind: 'member' | 'agent'; actor: string; at: string; text: string }
 export type SharedTaskChange = Pick<typeof changes.$inferSelect, 'id' | 'repository' | 'number' | 'title' | 'state' | 'draft' | 'checks' | 'review' | 'waitingOn'> & { task: string; openedAt?: string; closedAt?: string | null };
 export interface TicketPost { task:string; id:string; at:string; agent:string; thread:string; words:string }
+export type GithubReview = {id:string;change:string;login:string|null;submittedAt:string;headCommit:string|null;
+  state:'COMMENTED'|'CHANGES_REQUESTED'|'DISMISSED'|'APPROVED';body:string;url:string};
+const githubVerdicts = {COMMENTED:'commented',CHANGES_REQUESTED:'requested changes',DISMISSED:'review dismissed',APPROVED:'approved'};
 export type TicketReview = ReviewRound & {requestedAt: string; completedAt: string | null};
 export type TaskReaderFields = Pick<SharedTask, 'createdAt' | 'createdBy' | 'closedAt' | 'doneWhen' | 'ifYes' | 'ifNo' | 'sourceKind' | 'sourceId'>;
 export type TaskListRow = Omit<SharedTask, keyof TaskReaderFields>;
@@ -40,6 +43,8 @@ export interface SharedTasksProps {
   loadingReader?: boolean;
   readerUnavailable?: boolean;
   changes?: readonly SharedTaskChange[];
+  githubReviews?: readonly GithubReview[];
+  githubNavigation?: React.ReactNode;
   reviews?: readonly TicketReview[];
   reviewsUnavailable?: boolean;
   posts?: TicketPost[];
@@ -153,7 +158,7 @@ export function SharedTasks(props: SharedTasksProps) {
   })}</div></Fact>;
   const comments = selected ? props.comments.filter(c => c.task === selected.id).toSorted((a,b) => a.seq-b.seq) : [];
   const changes = selected ? props.changes?.filter(change => change.task === selected.id) ?? [] : [];
-  const story: {key: string; at: string; label: string; detail?: string; change?: string; revision?: string; post?:TicketPost}[] = [];
+  const story: {key: string; at: string; label: string; detail?: string; change?: string; revision?: string; reviewUrl?:string; post?:TicketPost}[] = [];
   if (selected?.createdAt) story.push({key:'filed', at:selected.createdAt, label:'Ticket filed', detail:name(selected.createdBy ?? null)});
   for (const comment of comments) story.push({key:'comment-'+comment.seq, at:comment.at, label:name(comment.actor), detail:comment.text});
   for (const change of changes) {
@@ -173,6 +178,11 @@ export function SharedTasks(props: SharedTasksProps) {
       story.push({key:'report-'+review.job, at:review.completedAt, label:round+' · '+verdict, detail:review.findings ?? undefined, change:review.change, revision:review.headCommit});
     }
   }
+  for (const review of props.githubReviews ?? []) story.push({
+    key:'github-review-'+review.id, at:review.submittedAt,
+    label:(review.login ?? 'GitHub reviewer')+' · '+githubVerdicts[review.state],
+    detail:review.body, revision:review.headCommit ?? undefined, reviewUrl:review.url,
+  });
   if (selected?.status === 'closed' && selected.closedAt) story.push({key:'closed', at:selected.closedAt, label:'Ticket closed', detail:selected.closeReason ?? undefined});
   story.sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
   const mine = !!selected && selected.assigneeKind === 'member' && !!props.questionFor && selected.assignee === props.questionFor;
@@ -204,8 +214,9 @@ export function SharedTasks(props: SharedTasksProps) {
       {story.length > 0 && <Section label="Ticket story"><ol className="grid gap-2.5">{story.map(event => <li key={event.key} className="grid gap-0.5">
         <Body><strong title={event.revision}>{event.label}</strong> <time className="loom-reader__meta" dateTime={event.at} title={fullTime(event.at,props.zone)}>{briefTime(event.at,props.zone)}</time></Body>
         {event.change && props.openChange ? <LinkButton onClick={() => props.openChange!(event.change!)}>{event.detail}</LinkButton> : event.detail && <Body>{event.detail}</Body>}
+        {event.reviewUrl && <a href={event.reviewUrl} target="_blank" rel="noreferrer">GitHub review{event.revision && ' · '+event.revision.slice(0,8)}</a>}
         {event.post && props.openPost && <LinkButton onClick={()=>props.openPost!(event.post!)}>Activity thread</LinkButton>}
-      </li>)}</ol>{props.postNavigation}{props.reviewsUnavailable && <Body quiet>Review history is unavailable.</Body>}</Section>}
+      </li>)}</ol>{props.githubNavigation}{props.postNavigation}{props.reviewsUnavailable && <Body quiet>Review history is unavailable.</Body>}</Section>}
       <Facts>
         <Fact label="Why">{selected.why}</Fact>
         <Fact label="Done when">{selected.doneWhen}</Fact>

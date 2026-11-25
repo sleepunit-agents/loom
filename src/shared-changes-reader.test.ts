@@ -41,3 +41,26 @@ it('never exposes holder failures, invalid bytes, missing binding or an upstream
 it('validates configured bindings at startup',()=>{
  expect(()=>sharedChangesReader({source:{read:vi.fn()},bindings:{'bad/owner':'forge'}})).toThrow();
 });
+it('keeps distinct submitted reviews by one reviewer, follows their cursor and excludes drafts', async()=>{
+ const info=(after:string|null)=>({hasNextPage:!!after,endCursor:after});
+ const token='SYNTHETIC_REVIEW_TOKEN';
+ const review=(n:number,state:string,commit:string)=>({
+   id:'review'+n,state,submittedAt:'2026-11-05T10:00:00Z',bodyText:'Report '+n+' '+token,author:{login:'reviewer'},
+   commit:{oid:commit.repeat(40)},url:'https://github.com/acme/app/pull/1#pullrequestreview-'+n,
+ });
+ const first=review(1,'CHANGES_REQUESTED','a'),second=review(2,'APPROVED','b'),pending=review(3,'PENDING','c');
+ const request=vi.fn<typeof fetch>(async(_url,init)=>{
+   const {variables,query}=JSON.parse(String(init?.body));
+   if(variables.number){
+     expect(variables).toMatchObject({number:1,after:'more'});
+     return Response.json({data:{repository:{pullRequest:{reviews:{nodes:[first,second,pending],pageInfo:info(null)}}}}});
+   }
+   expect(query).toContain('reviews(first:10)');
+   const nodes=variables.states.includes('OPEN')?[{...raw,reviews:{nodes:[first],pageInfo:info('more')}}]:[];
+   return Response.json({data:{repository:{pullRequests:{nodes,pageInfo:info(null)}}}});
+ });
+ const read=sharedChangesReader({source:{read:async()=>Buffer.from(token)},bindings:{acme:'fixture'},request});
+ const [change]=await read('acme/app',Date.parse('2026-11-05T10:00:00Z'));
+ expect(change.submittedReviews).toEqual([first,second].map(r=>({id:r.id,state:r.state,login:'reviewer',headCommit:r.commit.oid,
+   submittedAt:new Date(r.submittedAt).toISOString(),url:r.url,body:r.bodyText.replace(token,'[redacted]')})));
+});
