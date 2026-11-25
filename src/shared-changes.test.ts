@@ -9,7 +9,7 @@ import { WebSocket } from 'ws';
 import { GraphQLObjectType, GraphQLString } from 'graphql/index.js';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { members, tokens, sessions, projects, projectRepositories, agents, jobs, projectMembers } from './core/data/schema.js';
+import { members, tokens, sessions, projects, projectRepositories, agents, jobs, projectMembers, changeTasks } from './core/data/schema.js';
 import { changeReviewStore } from './apps/change-reviews.js';
 import { sharedRoot } from './shared-root.js';
 import type { PullRequestReader } from './apps/changes.js';
@@ -193,20 +193,26 @@ it('requires access to the change and the job for each review returned by the HT
     store.assign({ ...identity, tier: 'high', round: 1 });
     store.finish({ ...identity, verdict: 'CLEAR', findings: 'Review for ' + member });
   }
+  const task = f.root.services.tasks.create({title:'Review the pump',goal:'Pump works',why:'Broken',owner:{kind:'member',id:'sam'}},{kind:'member',id:'sam'});
+  f.db.insert(changeTasks).values({change:f.row.id,task:task.id}).run();
   const read = async () => {
     const response = await f.root.http.request('http://loom/graphql', { method: 'POST',
       headers: { 'content-type': 'application/json', cookie: 'loom_ui=' + cookie },
-      body: JSON.stringify({ query: 'query($change:String!) { changeReviewHistory(change:$change) { job findings } }', variables: { change: f.row.id } }) });
+      body: JSON.stringify({ query: 'query($change:String!, $task:String!) { changeReviewHistory(change:$change) { job findings } taskReviewHistory(task:$task) { job findings } }', variables: { change: f.row.id, task: task.id } }) });
     return response.json();
   };
   const schema = await f.root.http.request('http://loom/graphql', { method: 'POST',
     headers: { 'content-type': 'application/json', cookie: 'loom_ui=' + cookie },
     body: JSON.stringify({ query: '{ __schema { mutationType { name } } }' }) });
   expect(await schema.json()).toEqual({ data: { __schema: { mutationType: null } } });
-  const visible = { data: { changeReviewHistory: [{ job: 'review-sam-' + f.row.id, findings: 'Review for sam' }] } };
+  const allowed = [{ job: 'review-sam-' + f.row.id, findings: 'Review for sam' }];
+  const visible = { data: { changeReviewHistory: allowed, taskReviewHistory: allowed } };
   expect(await read()).toEqual(visible);
   f.db.update(members).set({ role: 'member' }).where(eq(members.id, 'sam')).run();
-  expect(await read()).toEqual({ data: { changeReviewHistory: [] } });
+  expect(await read()).toEqual({ data: { changeReviewHistory: [], taskReviewHistory: [] } });
   f.db.insert(projectMembers).values({ member: 'sam', project: 'pond' }).run();
   expect(await read()).toEqual(visible);
+  f.db.delete(changeTasks).where(eq(changeTasks.task,task.id)).run();
+  expect(await read()).toEqual({data:{changeReviewHistory:allowed, taskReviewHistory:[]}});
+
 });

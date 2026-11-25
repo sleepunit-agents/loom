@@ -1,8 +1,8 @@
 import type { TaskListRow, TaskReaderFields, SharedTaskComment, SharedTaskLink, SharedTaskChange } from './shared-view';
 
 const detailFields = `
-  id doneWhen ifYes ifNo sourceKind sourceId
-  changeTasksByTask { changeRow { id repository number title state draft checks review waitingOn } }
+  id createdAt createdBy closedAt doneWhen ifYes ifNo sourceKind sourceId
+  changeTasksByTask { changeRow { id repository number title openedAt closedAt state draft checks review waitingOn } }
   taskCommentsByTask(orderBy: {seq: {direction: asc, priority: 0}}) { task seq actorKind actor at text }
 `;
 

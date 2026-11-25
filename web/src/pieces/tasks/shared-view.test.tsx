@@ -190,3 +190,31 @@ it('counts project folders in one pass and reads searchable prose only for a sea
   expect(rows()).toHaveLength(1);
   expect(descriptionReads).toBe(3);
 });
+
+it('orders PR events between filing and verified closure without inferring a review or deployment', async () => {
+  const at = (minute: string) => '2026-11-24T17:' + minute + ':00Z';
+  const ticket = task('t-1', {createdAt:at('42'),createdBy:'art',status:'closed',closedAt:at('59')});
+  await draw(props({tasks:[ticket],selected:ticket.id,comments:[
+    {task:ticket.id,seq:1,actorKind:'agent',actor:'art',at:at('57'),text:'Verified both installations.'},
+  ],changes:[{task:ticket.id,id:'pr-3',repository:'acme/app',number:3,title:'Rail fix',
+    state:'merged',draft:false,checks:'passing',review:'not_required',waitingOn:'done',openedAt:at('50'),closedAt:at('52')}] }));
+  const story = tree.root.findByProps({label:'Ticket story'});
+  expect(story.findAllByType('li').map((row: Parameters<typeof visibleText>[0]) => visibleText(row)))
+    .toEqual(['Ticket filed','Pull request opened','Pull request merged','Verified both installations.','Ticket closed'].map(label => expect.stringContaining(label)));
+});
+
+it('keeps the blocking report and later clearance on their own revisions in the ticket story', async () => {
+  const ticket = task('t-1'), at = (minute: number) => new Date(Date.UTC(2026,10,24,17,minute)).toISOString();
+  const change = {task:ticket.id,id:'pr-1',repository:'acme/app',number:1,title:'Color',state:'open',draft:false,checks:'passing',review:'approved',waitingOn:'you'} as const;
+  const first = {change:change.id,job:'first',headCommit:'a'.repeat(40),tier:'high',round:1,requestedAt:at(1),completedAt:at(2),verdict:'BLOCKING',findings:'The label is green.'} as const;
+  const second = {...first,job:'second',headCommit:'b'.repeat(40),round:2,requestedAt:at(4),completedAt:at(5),verdict:'CLEAR',findings:'Red verified.'} as const;
+  await draw(props({tasks:[ticket],selected:ticket.id,changes:[change],reviews:[second,first],comments:[
+    {task:ticket.id,seq:1,actorKind:'agent',actor:'art',at:at(3),text:'Corrected the color.'},
+  ]}));
+  const rows = tree.root.findByProps({label:'Ticket story'}).findAllByType('li');
+  expect(rows.map((r: Parameters<typeof visibleText>[0]) => visibleText(r))).toEqual([
+    'Review requested','The label is green.','Corrected the color.','Review requested','Red verified.',
+  ].map(label => expect.stringContaining(label)));
+  expect(rows[1].findByType('strong').props.title).toBe(first.headCommit);
+  expect(rows[4].findByType('strong').props.title).toBe(second.headCommit);
+});
