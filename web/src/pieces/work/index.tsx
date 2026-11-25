@@ -4,7 +4,7 @@ import { useDataQuery } from '../../data/graphql';
 import { workHomeQuery, workProjectQuery } from './query';
 
 type Ticket = {id:string; title:string; status:'open'|'in_progress'|'closed'; changedAt:string};
-type Project = {id:string; name:string; removedAt:string|null; retiredAt:string|null};
+type Project = {id:string; name:string; lifecycle:'active'|'retired'|'removed'};
 const base = '/p/work';
 const statusWords = {open:'Open', in_progress:'In progress', closed:'Closed'};
 
@@ -17,22 +17,22 @@ export default function Work({path=base,go=(href:string)=>location.assign(href)}
   if (feed.status !== 'live') return <Error text="Project information is unavailable."/>;
   if (projectId) {
     const project = detail.data?.project;
-    if (!project || project.id !== projectId || project.removedAt) return <Empty title="Project unavailable"><LinkButton onClick={()=>go(base)}>All projects</LinkButton></Empty>;
+    if (!project || project.id !== projectId || project.lifecycle==='removed') return <Empty title="Project unavailable"><LinkButton onClick={()=>go(base)}>All projects</LinkButton></Empty>;
     const tickets = (label:string, rows:Ticket[]) => <Section label={label}><List label={label}>{rows.map(ticket=>
       <Row key={ticket.id} title={ticket.title} status={statusWords[ticket.status]} onClick={()=>go(taskPath(ticket.id))}/>
     )}</List></Section>;
     const {working,recent:recentTickets} = detail.data!;
     const recent = recentTickets.filter(ticket=>!working.some(active=>active.id===ticket.id));
     return <div className="p-4"><AppFrame title={project.name} where={path} go={go} crumb={{label:'Work',href:base}}>
-      {project.retiredAt && <Body quiet>Retired project</Body>}
-      {!project.retiredAt && working.length>0 && tickets('In flight',working)}
-      {(project.retiredAt ? recentTickets : recent).length>0 && tickets('Recent tickets',project.retiredAt ? recentTickets : recent)}
+      {project.lifecycle==='retired' && <Body quiet>Retired project</Body>}
+      {project.lifecycle==='active' && working.length>0 && tickets('In flight',working)}
+      {(project.lifecycle==='retired' ? recentTickets : recent).length>0 && tickets('Recent tickets',project.lifecycle==='retired' ? recentTickets : recent)}
       {!recentTickets.length && <Empty title="No tickets here yet"/>}
       <LinkButton onClick={()=>go('/p/tasks-preview/?folder='+encodeURIComponent('project:'+project.id))}>Browse project backlog</LinkButton>
     </AppFrame></div>;
   }
-  const projects = home.data?.projects.filter(project=>!project.removedAt) ?? [];
-  const active = projects.filter(project=>!project.retiredAt);
+  const projects = home.data?.projects.filter(project=>project.lifecycle!=='removed') ?? [];
+  const active = projects.filter(project=>project.lifecycle==='active');
   const workingIds = new Set(home.data?.inFlight.filter(row=>row.tasksByProject.length).map(row=>row.id));
   const activeCount = active.filter(project=>workingIds.has(project.id)).length;
   const grid = (rows:typeof projects) => <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,15rem),1fr))]">{rows.map(project=>
@@ -40,7 +40,7 @@ export default function Work({path=base,go=(href:string)=>location.assign(href)}
       <Row layout="stack" title={project.name} meta={project.tasksByProject[0]?.title} status={project.tasksByProject[0] ? statusWords[project.tasksByProject[0].status] : 'No tickets'} onClick={()=>go(base+'/project/'+project.id)}/>
     </div>
   )}</div>;
-  const retired = projects.filter(project=>project.retiredAt);
+  const retired = projects.filter(project=>project.lifecycle==='retired');
   return <div className="p-4"><AppFrame title="Work" where={base} go={go} context={active.length ? `${active.length} active project${active.length===1 ? '' : 's'} · ${activeCount} with work in flight` : undefined}>
     {grid(active)}
     {retired.length>0 && <details><summary>Retired projects ({retired.length})</summary>{grid(retired)}</details>}

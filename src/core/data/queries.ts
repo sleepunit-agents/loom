@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import { taskReadiness } from './task-readiness.js';
-import { taskShelved } from './project-in-use.js';
+import { projectLifecycle, taskShelved } from './project-in-use.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { and, createTableRelationsHelpers, getOperators, getTableColumns, getTableName, is, Relations, type AnyColumn, SQL, sql } from 'drizzle-orm';
 import { type AnySQLiteTable } from 'drizzle-orm/sqlite-core';
@@ -80,6 +80,9 @@ export function dataQueries(client: Database.Database, options: {
     const fieldsSelected = selectedFields(sets, querySelection.getStore()!);
     return {
       ...config,
+      ...(name === 'projects' && fieldsSelected.has('lifecycle') ? {
+        extras: (fields:Fields) => ({lifecycle:projectLifecycle(fields).as('project_lifecycle')}),
+      } : {}),
       ...(name === 'triggers' && fieldsSelected.has('hasProgram') ? {
         extras: (fields:Fields) => ({hasProgram:sql`${fields.program} is not null`.mapWith(Boolean).as('data_has_program')}),
       } : {}),
@@ -171,6 +174,11 @@ export function dataQueries(client: Database.Database, options: {
       // drizzle-graphql may stringify SQLite JSON objects before field resolution.
       fields.lastLines.resolve = row => typeof row.lastLines === 'string' ? JSON.parse(row.lastLines) : row.lastLines;
     }
+    if (name === 'projects') fields.lifecycle = {
+      name:'lifecycle', type:new GraphQLNonNull(GraphQLString), args:[],
+      description:'Whether the project is active, retired or removed.',
+      resolve:row=>row.lifecycle, extensions:{},astNode:undefined,deprecationReason:undefined,
+    };
     if (name === 'triggers') fields.hasProgram = {
       name:'hasProgram',type:new GraphQLNonNull(GraphQLBoolean),args:[],
       description:'Whether this trigger runs a household program.',
