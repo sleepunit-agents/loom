@@ -2,7 +2,8 @@
 import { DAY_MS } from '../../core/day.js';
 import { z } from 'zod';
 import { TASK_ID, taskId } from '../../slug.js';
-import { changes } from '../../core/data/schema.js';
+import { COMMIT } from '../../apps/merge-target.js';
+import { changes, githubReviews } from '../../core/data/schema.js';
 export const week = 7 * DAY_MS;
 /** One repository, one identity. GitHub reads `Acme/App`, `acme/app` and `acme/app.git` as the same
  * repository, so loom must too, or another spelling of a repository it reads would pass for one it does not.
@@ -24,8 +25,8 @@ export const repoId = (raw: string): string => {
 const stamp = z.string().nullable();
 export const submittedReviewSchema = z.object({
   id: z.string().min(1), login: z.string().nullable(), submittedAt: z.iso.datetime({offset:true}),
-  state: z.enum(['APPROVED','CHANGES_REQUESTED','COMMENTED','DISMISSED']),
-  headCommit: z.string().regex(/^[0-9a-f]{40}$/).nullable(),
+  state: z.enum(githubReviews.state.enumValues),
+  headCommit: z.string().refine(value => COMMIT.test(value)).nullable(),
   body: z.string(), url: z.string().regex(/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+#pullrequestreview-\d+$/),
 });
 export type SubmittedReview = z.infer<typeof submittedReviewSchema>;
