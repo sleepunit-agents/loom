@@ -1,3 +1,4 @@
+import {ToolbarFrame} from '../../kit/toolbar';
 import { Suspense, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { NativeSelect } from '../../kit/native-select';
 import type { ReactNode } from 'react';
@@ -128,8 +129,8 @@ export default function KnowledgeApp({ path: shellPath, go }: { path?: string; g
     </fieldset>
     {addAnswer.pending ? <Loading label="Saving fact…" /> : addAnswer.result && (!addAnswer.result.ok ? <div><Error text={`${addAnswer.result.code}: ${addAnswer.result.message}`} />{addAnswer.result.code==='unavailable'&&<Button type="button" disabled={!permission.canAdd} onClick={()=>addRequest?.retry?.()}>Retry this save</Button>}</div> : <p role="status">Added to Knowledge<Button type="button" onClick={() => { const result = addAnswer.result; if (result?.ok) { setAdding(false); navigate((result.value as {slug:string}).slug); } }}>Open fact</Button><Button type="button" onClick={resetSavedDraft}>Add another</Button></p>)}
   </form>;
-  return <Split className="h-full" label="Knowledge" folders={folders} folder={query.trim() ? '' : folder} onFolder={id => { setFolder(id); setQuery(''); }}
-    search={<Search label="Search knowledge" value={query} onChange={setQuery} />}
+  return <ToolbarFrame title="Knowledge" controls={<Search label="Search knowledge" value={query} onChange={setQuery} />}>
+    <Split className="h-full" label="Knowledge" folders={folders} folder={query.trim() ? '' : folder} onFolder={id => { setFolder(id); setQuery(''); }}
     listAction={<Button disabled={!permission.canAdd} onClick={() => {
       if (!adding && addAnswer.result?.ok) resetSavedDraft();
       setAdding(true);
@@ -148,5 +149,6 @@ export default function KnowledgeApp({ path: shellPath, go }: { path?: string; g
       const request = call(`mind.${verb}`, { slug: current.slug });
       setRequests(previous => new Map(previous).set(current.slug, request));
     }} /> : selected ? <Empty title="This page is no longer available" text="It may have been archived or moved." /> : null}
-    open={!!selected || adding} onBack={() => { setAdding(false); navigate(); }} backLabel="Knowledge" blank={<Empty title="Open a page" text="Choose a fact to read its sources and check it." />} />;
+    open={!!selected || adding} onBack={() => { setAdding(false); navigate(); }} backLabel="Knowledge" blank={<Empty title="Open a page" text="Choose a fact to read its sources and check it." />} />
+  </ToolbarFrame>;
 }

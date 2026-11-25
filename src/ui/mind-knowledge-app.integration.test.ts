@@ -11,8 +11,8 @@ import Database from 'better-sqlite3';
 import {migrateMindReceipts} from '../pieces/mind/receipt-schema.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser',chromium.executablePath()].find(p=>p&&existsSync(p));
-if(process.env.CI && (!chrome || !existsSync(join(root,'next.html')))) throw new Error('Knowledge browser evidence requires Chrome and the built next app in CI');
-it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks in two windows, follows citations, ages and removes pages',async()=>{
+if(process.env.CI && (!chrome || !existsSync(join(root,'index.html')))) throw new Error('Knowledge browser evidence requires Chrome and the built next app in CI');
+it.runIf(chrome&&existsSync(join(root,'index.html')))('Knowledge reads and checks in two windows, follows citations, ages and removes pages',async()=>{
   const home=mkdtempSync(join(tmpdir(),'knowledge-app-'));
 
   const source=new KnowledgePages({dbPath:join(home,'commons/knowledge.db')});
@@ -156,11 +156,15 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     }
     await b.setViewportSize({width:390,height:900});await b.getByRole('button',{name:'Knowledge',exact:true}).last().click();
     await expect.poll(()=>row(b,'Clock tempo').isVisible()).toBe(true);
-    await b.getByRole('searchbox',{name:'Search knowledge',exact:true}).fill('backup');
+    await b.locator('header[aria-label="Knowledge toolbar"]').getByRole('searchbox',{name:'Search knowledge',exact:true}).fill('backup');
     await expect.poll(()=>row(b,'Six voices').count()).toBe(0);expect(await row(b,'Nightly backup').count()).toBe(1);
+    await row(b,'Nightly backup').press('Enter');
+    await b.getByRole('button',{name:'Knowledge',exact:true}).and(b.locator('.loom-split__back')).click();
+    await expect.poll(()=>row(b,'Nightly backup').evaluate(button=>button===document.activeElement)).toBe(true);
+
     await source.archivePage({slug:'six-voices'});app.changed();
     await expect.poll(()=>a.getByText('This page is no longer available',{exact:true}).count()).toBe(1);
-    await b.getByRole('searchbox',{name:'Search knowledge',exact:true}).fill('');
+    await b.locator('header[aria-label="Knowledge toolbar"]').getByRole('searchbox',{name:'Search knowledge',exact:true}).fill('');
     await b.getByRole('button',{name:/Due a check/}).first().click();
     await expect.poll(()=>row(b,'Clock tempo').count()).toBe(0);
     // Age this fictional source record through the same backend notification
