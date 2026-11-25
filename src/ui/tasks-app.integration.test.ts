@@ -258,3 +258,19 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     expect(await page.getByText(hiddenTitle,{exact:true}).count()).toBe(0);
   } finally {await browser.close();await app.close();}
 });
+
+it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html')))('promotes a ticket from its reader and keeps its pull request and history', async () => {
+  const app=await fixture(), browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  try {
+    const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},reducedMotion:'reduce'});
+    await context.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
+    const page=await context.newPage();
+    await page.goto(app.url+'/p/tasks-preview/task/t-1');
+    await page.getByRole('button',{name:'More for this task',exact:true}).click({timeout:10000});
+    await page.getByText('Promote to epic',{exact:true}).click();
+    await page.getByText('Promoted this ticket to an epic.',{exact:true}).waitFor();
+    expect(new URL(page.url()).pathname).toBe('/p/tasks-preview/task/t-1');
+    expect(await page.getByRole('group',{name:'Pull request acme/app#3',exact:true}).count()).toBe(1);
+    expect(app.data.services.tasks.get('t-1').type).toBe('epic');
+  } finally { await browser.close(); await app.close(); }
+});

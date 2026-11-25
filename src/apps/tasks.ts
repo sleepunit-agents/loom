@@ -33,7 +33,7 @@ export const taskCreateSchema = z.object({
   // The line of a spec this task implements. One task per line.
   spec: z.object({ item: z.string().trim().min(1).max(500), criterion: z.string().trim().min(1).max(2000) }).strict().optional(),
 });
-export const taskEditSchema = z.object(summary).partial().strict();
+export const taskEditSchema = z.object({...summary,type:z.literal('epic')}).partial().strict();
 export const taskAskSchema = z.object({ to: person.extend({ kind: z.literal('member') }), ask: z.string().trim().min(1), ifYes: z.string().trim().min(1), ifNo: z.string().trim().min(1), answers: z.enum(['yes-no', 'words']).default('yes-no') });
 /** How one task may depend on another. */
 export const taskLinkType = z.enum(['blocks', 'parent-child']);
@@ -47,7 +47,7 @@ export interface TaskService {
   ready(): TaskRow[];
   list(status?: TaskRow['status']): TaskRow[];
   /** `actor` is who is making the edit. A change of project is a move (moveToProject) and needs one. */
-  edit(id: string, input: Partial<Pick<TaskRow, keyof typeof summary>>, actor?: TaskActor): TaskRow;
+  edit(id: string, input: z.input<typeof taskEditSchema>, actor?: TaskActor): TaskRow;
   claim(id: string, actor: TaskActor): TaskRow;
   unclaim(id: string): TaskRow;
   close(id: string, reason: string): TaskRow;
@@ -189,6 +189,10 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
         if (project !== undefined && project !== row(id).project) {
           if (!actor) throw new Error('A change of project needs to say who made it');
           requireUsable(project); moveOne(id, project, person.parse(actor));
+        }
+        if (patch.type === 'epic' && row(id).type !== 'epic') {
+          if (!actor) throw new Error('Promoting a ticket needs an actor');
+          addComment(id, 'Promoted this ticket to an epic.', actor);
         }
         return touch(id, patch);
       });

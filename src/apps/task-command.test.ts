@@ -106,3 +106,16 @@ it('takes a move as a place in the order, and a move to a project under its own 
   expect(send({ action: 'moveToProject', ids: [a.id, b.id], project: null })).toEqual({ moved: [] });
   expect(send({ action: 'move', id: b.id, before: a.id })).toMatchObject({ id: b.id });
 });
+
+it('promotes in place and records the decision once across retries', () => {
+  const parent = create('Move the data layer'), child = create('Speed up Jobs');
+  send({action:'link',id:child.id,type:'parent-child',dependsOn:parent.id});
+  send({action:'comment',id:parent.id,text:'Original plan'});
+  const promotion = taskCommandSchema.parse({action:'edit',id:parent.id,input:{type:'epic'}});
+  send(promotion); send(promotion);
+  expect(service.get(parent.id)).toMatchObject({id:parent.id,type:'epic',status:'open',comments:[
+    {text:'Original plan'}, {text:'Promoted this ticket to an epic.',actor:actor.id},
+  ]});
+  expect(service.get(child.id).links).toContainEqual({task:child.id,type:'parent-child',dependsOn:parent.id});
+  expect(service.ready().map(row=>row.id)).toEqual([child.id]);
+});
