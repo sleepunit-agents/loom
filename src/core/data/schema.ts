@@ -846,6 +846,19 @@ export const triggerEdits = sqliteTable('trigger_edits', {
   index('trigger_edits_trigger_idx').on(t.trigger),
 ]);
 
+/** The latest direction for each project and agent controls admission of new ticket claims. */
+export const projectClaimDirections = sqliteTable('project_claim_directions', {
+  seq: integer('seq').primaryKey({autoIncrement:true}),
+  project: text('project').notNull().references(() => projects.id),
+  agent: text('agent').notNull().references(() => agents.id),
+  member: text('member').notNull().references(() => members.id),
+  paused: integer('paused',{mode:'boolean'}).notNull(),
+  at: text('at').notNull(),
+}, t=>[
+  index('project_claim_directions_latest').on(t.project,t.agent,t.seq),
+  check('project_claim_directions_at_utc',utc(t.at)),
+]);
+
 /** Agents whose triggers are being held. */
 export const agentPauses = sqliteTable('agent_pauses', {
   agent: text('agent').primaryKey().notNull().references((): AnySQLiteColumn => agents.id),
@@ -2434,6 +2447,7 @@ export const bridgePersonSightings = sqliteTable('bridge_person_sightings', {
 });
 
 export const plumbing = {
+  projectClaimDirections,
   bridgePersonSightings,
   agentPostThreads, agentPosts, agentPostNames, agentPostWorkRefs, agentPostWorkPending,
   guestIoReadings,

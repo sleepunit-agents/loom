@@ -1,3 +1,4 @@
+import {projectClaimDirection} from '../core/data/project-claim-direction.js';
 import { randomUUID } from 'node:crypto';
 import { Conversations, lateMailWaits } from '../core/conversations/index.js';
 import { and, asc, eq, inArray, like, ne, or, sql } from 'drizzle-orm';
@@ -206,6 +207,8 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
       return db.transaction(() => {
         const task = row(id);
         if (projectRetired(db, task.project)) throw new Error(`Project ${task.project} is retired: its tasks are shelved until it is revived`);
+        if (actor.kind==='agent' && task.project && projectClaimDirection(db,task.project,actor.id)?.paused)
+          throw new Error('New claims for this agent are paused in this project');
         if (task.ask) throw new Error('Answer the outstanding question first');
         if (task.status !== 'open') throw new Error('Only open work can be claimed');
         return touch(id, { status: 'in_progress', assigneeKind: actor.kind, assignee: actor.id, startedAt: now() });

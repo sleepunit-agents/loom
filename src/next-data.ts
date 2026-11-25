@@ -86,7 +86,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     const previous = reusable && memberSchemas.get(viewer);
     if (previous) return previous;
     const result = selected.length ? dataQueries(db.$client, {
-      tables:selected,
+      tables:selected,readyForAgent:viewer.kind==='agent' ? viewer.id : undefined,
       // Every rule is stated in policy.ts.
       visibility: { ...boxVisibility(viewer), ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer),
         ...measuringVisibility(viewer), ...tempoVisibility(viewer),

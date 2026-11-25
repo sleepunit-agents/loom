@@ -8,7 +8,7 @@ import { WebSocket } from 'ws';
 import { eq, getTableColumns } from 'drizzle-orm';
 import { talkVisibility } from './core/data/conversation-visibility.js';
 import { FakeClock } from './core/clock.js';
-import { createDataSchema } from './core/data/database.js';
+import { createDataSchema,dataDatabase } from './core/data/database.js';
 import { agents, members, memberAgents, projects, projectMembers, projectAgents, tokens, tasks, taskComments, taskLinks, inbox } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 const cleanup: (() => void | Promise<void>)[] = [];
@@ -299,4 +299,36 @@ it('refuses a move that would leave a waiting question with someone who could no
   expect((await f.call({ action: 'moveToProject', ids: [asked.id], project: 'pond' }, 'owner', 'back')).status).toBe(200);
   // And nobody is asked about a task they could not read: lee is not on other.
   expect((await f.call({ action: 'ask', id: plain.id, input: { to: { kind: 'member', id: 'lee' }, ask: 'Spend?', ifYes: 'Buy', ifNo: 'Wait' } }, 'sam', 'ask-outside')).status).toBe(403);
+});
+
+
+it('finishes active work and preserves a scoped claim pause for a restarted program',async()=>{
+  const f=fixture(), actor={kind:'agent' as const,id:'art'};
+  f.db.insert(projectAgents).values({project:'other',agent:'art'}).run();
+  const make=(project:string)=>f.root.services.tasks.create({...f.input,project,owner:actor},actor);
+  const active=make('pond'),next=make('pond'),elsewhere=make('other');
+  expect((await f.call({action:'claim',id:active.id},'art','first')).status).toBe(200);
+  const pause={project:'pond',agent:'art',paused:true,expectedRevision:0};
+  const write=(root:typeof f.root,path:string,input:object,id:string,who:keyof typeof raw)=>root.http.request('/api/'+path,{
+    method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+raw[who]},body:JSON.stringify({id,input})});
+  expect((await write(f.root,'work/setProjectClaims',pause,'from-lee','lee')).status).toBe(403);
+  expect((await write(f.root,'work/setProjectClaims',pause,'from-terminal','art')).status).toBe(403);
+  const applied=await(await write(f.root,'work/setProjectClaims',pause,'pause','sam')).json();
+  expect(applied).toMatchObject({ok:true,value:{paused:true,revision:1}});
+  expect(await(await write(f.root,'work/setProjectClaims',pause,'pause','sam')).json()).toEqual(applied);
+  const restarted=new Database(f.client.serialize());cleanup.push(()=>restarted.close());
+  const second=sharedRoot({db:dataDatabase(restarted),clock:f.clock,originAllowed:()=>true,reportError:()=>{}});
+  cleanup.push(()=>second.close());await second.ready;
+  const ready=async(who:keyof typeof raw)=>(await(await second.http.request('/graphql',{method:'POST',headers:{
+    'content-type':'application/json',authorization:'Bearer '+raw[who]},body:JSON.stringify({query:'{readyTasks{ id }}'})})).json()).data.readyTasks;
+  expect(await ready('art')).toEqual([{id:elsewhere.id}]);
+  expect(await ready('sam')).toEqual([{id:next.id}]);
+  const command=(input:object,id:string)=>write(second,'tasks/command',input,id,'art');
+  expect((await command({action:'close',id:active.id,reason:'Verified'},'finish')).status).toBe(200);
+  expect(await(await command({action:'claim',id:next.id},'held')).json()).toMatchObject({ok:false});
+  expect(second.services.tasks.get(next.id).status).toBe('open');
+  expect((await command({action:'claim',id:elsewhere.id},'other')).status).toBe(200);
+  expect((await write(second,'work/setProjectClaims',{...pause,paused:false},'stale','sam')).status).toBe(409);
+  expect(await(await write(second,'work/setProjectClaims',{...pause,paused:false,expectedRevision:1},'resume','sam')).json()).toMatchObject({ok:true,value:{paused:false,revision:2}});
+  expect((await command({action:'claim',id:next.id},'next')).status).toBe(200);
 });
