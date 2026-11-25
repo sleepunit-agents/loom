@@ -1,11 +1,12 @@
 import {projectClaimDirection} from '../core/data/project-claim-direction.js';
 import { randomUUID } from 'node:crypto';
 import { Conversations, lateMailWaits } from '../core/conversations/index.js';
-import { and, asc, eq, inArray, like, ne, or, sql } from 'drizzle-orm';
+import { and, asc, eq, getTableColumns, inArray, like, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
 import { tasks, taskComments, taskLinks, inbox, importedTaskSequence } from '../core/data/schema.js';
-import { projectRefusal, projectRetired, taskShelved, type ProjectUse } from '../core/data/project-in-use.js';
+import { projectRefusal, projectRetired, type ProjectUse } from '../core/data/project-in-use.js';
+import { taskReadiness } from '../core/data/task-readiness.js';
 import { taskId } from '../slug.js';
 
 // Offline importers call this within the same transaction as the archived tasks.
@@ -176,10 +177,7 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
     },
     get(id) { return { ...row(id), comments: db.select().from(taskComments).where(eq(taskComments.task, id)).orderBy(asc(taskComments.seq)).all(), links: db.select().from(taskLinks).where(eq(taskLinks.task, id)).all() }; },
     ready() {
-      const blocked = db.select({ id: taskLinks.task }).from(taskLinks).innerJoin(tasks, eq(tasks.id, taskLinks.dependsOn))
-        .where(and(eq(taskLinks.type, 'blocks'), ne(tasks.status, 'closed')));
-      // A shelved task is not work (core/data/project-in-use.ts).
-      return db.select().from(tasks).where(and(eq(tasks.status, 'open'), ne(tasks.type, 'epic'), sql`${tasks.id} not in (${blocked})`, sql`not ${taskShelved(tasks)}`))
+      return db.select().from(tasks).where(taskReadiness(getTableColumns(tasks)))
         .orderBy(asc(tasks.priority), asc(tasks.position), asc(tasks.id)).all();
     },
     list(status) { return db.select().from(tasks).where(status ? eq(tasks.status, status) : undefined).orderBy(asc(tasks.priority), asc(tasks.position), asc(tasks.id)).all(); },
