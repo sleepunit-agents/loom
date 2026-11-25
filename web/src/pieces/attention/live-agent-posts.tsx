@@ -9,7 +9,7 @@ export const agentFeedQuery = `query AgentActivityFeed($agent:String!,$limit:Int
 }`;
 export const agentHistoryQuery = `query AgentActivityHistory($agent:String!,$thread:String!,$after:String!,$limit:Int!){
   selected:agentActivityFeed(agent:$agent,thread:$thread,limit:1){title}
-  agentActivityHistory(agent:$agent,thread:$thread,after:$after,limit:$limit,newestFirst:true){id at words source work{id title state href}}
+  agentActivityHistory(agent:$agent,thread:$thread,after:$after,limit:$limit,newestFirst:true){id at words source sourceTask work{id title state href}}
 }`;
 const pageSize = 25;
 const previewCount = 5;

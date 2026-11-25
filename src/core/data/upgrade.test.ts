@@ -70,6 +70,26 @@ describe('upgrading a household database', () => {
     expect(dataSchemaShape(old)).toEqual(dataSchemaShape(fresh()));
   });
 
+  it('keeps authored words, original private sources and deleted sequence high water from schema 42', async () => {
+    const old = household(42), db = dataDatabase(old, () => at);
+    old.prepare("insert into members(id,role,joined_at) values ('sam','member',?)").run(at);
+    old.exec("insert into agents(id,about,mark_bg,mark_fg,face_shape,face_eyes) values ('art','','','','pebble','dot')");
+    const { Threads } = await import('../conversations/threads.js');
+    const source = new Threads(db, () => at).open({agent:'art', member:'sam', title:'Terminal', venue:'terminal'}).id;
+    old.prepare("insert into agent_post_threads(id,source,title) values ('activity',?,x'61')").run(source);
+    const insert = old.prepare("insert into agent_posts(thread,source,at,words) values ('activity',?,?,x'62')");
+    insert.run(source,at);
+    insert.run(source,at);
+    old.exec('delete from agent_posts where seq=2');
+    old.prepare("insert into agent_post_names(thread,source,title) values ('activity',?,x'63')").run(source);
+    upgradeDataSchema(old, () => at);
+    expect(old.prepare('select * from agent_post_sources').all()).toEqual([{id:source,conversation_thread:source,agent:null,task:null,project:null}]);
+    expect(old.prepare('select seq,hex(words) as words from agent_posts').all()).toEqual([{seq:1,words:'62'}]);
+    expect(old.prepare('select hex(title) from agent_post_names').pluck().get()).toBe('63');
+    expect(insert.run(source,at).lastInsertRowid).toBe(3);
+    expect(old.pragma('foreign_key_check')).toEqual([]);
+  });
+
   it('posts to an existing terminal conversation after schema 36 upgrades', async () => {
     const old = household(36);
     const db = dataDatabase(old, () => at);

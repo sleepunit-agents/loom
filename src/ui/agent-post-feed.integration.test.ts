@@ -15,7 +15,7 @@ it.runIf(process.env.LOOM_TEST_CHROME)('keeps live updates, their linked work an
   let app: Awaited<ReturnType<typeof startSharedHome>> | undefined;
   try {
     const home=join(dir,'fixture');
-    await exampleHome(home);
+    const manifest = await exampleHome(home);
     const house = app = await startSharedHome({home,port:0,webRoot:resolve('dist/web'),stdout(){}});
     const service = house.services.comms!, db = service.db;
     const source = house.writes.run(()=>service.threads.open({member:'alex',agent:'fern',title:'Feed walkthrough'})).value;
@@ -72,6 +72,16 @@ it.runIf(process.env.LOOM_TEST_CHROME)('keeps live updates, their linked work an
     await selected.getByRole('button',{name:/Boot console restored/}).click();
     await page.getByRole('button',{name:'Source conversation'}).click();
     await page.getByText('Start the boot console walkthrough here.',{exact:true}).filter({visible:true}).first().waitFor();
+    const task = manifest.tasks[0];
+    const update = await prepareAgentPost(db, service.key, 'work-source:pump',
+      {action:'open',words:'Pressure checked at the pump.',refs:[task]}, {task,agent:'fern',project:'garden'});
+    house.writes.run(()=>update(new Date().toISOString()));
+    await expect.poll(()=>rail.textContent()).toContain('Pressure checked at the pump.');
+    await rail.click();
+    await page.getByRole('button',{name:'Source ticket'}).click();
+    await page.getByText('Compare garden pumps',{exact:true}).filter({visible:true}).first().waitFor();
+    await page.getByText('Pressure checked at the pump.',{exact:true}).filter({visible:true}).last().waitFor();
+
   } finally {
     try { await browser?.close(); await app?.close(); } finally { await rm(dir,{recursive:true,force:true}); }
   }

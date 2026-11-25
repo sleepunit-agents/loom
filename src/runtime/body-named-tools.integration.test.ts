@@ -391,3 +391,52 @@ it('carries a journal between actual trigger deliveries and confines body comman
  await expect(late.text()).rejects.toThrow('Data access ended');
  expect((await save()).text).toMatch(/denied|refused|unavailable/i);
 });
+
+it('publishes a claimed ticket update from an accepted wake and keeps its source on the original project', async () => {
+ const b=await body(), {db,root,clock}=b.fixture;
+ const at=new Date(clock.now()).toISOString();
+ db.insert(schema.tasks).values({id:'t-901',title:'Inspect pump',project:'pond',ownerKind:'agent',owner:'art',
+   assigneeKind:'agent',assignee:'art',status:'in_progress',startedAt:at,goal:'Report pressure',why:'Maintenance',
+   createdByKind:'member',createdBy:'alice',createdAt:at,changedAt:at}).run();
+ const input={task:'t-901',post:{action:'open',words:'Checking pump pressure.'}};
+ const post=(data:unknown,id:string,token=bodyCredentials.body)=>root.http.request('/api/work/postUpdate',{method:'POST',
+   headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input:data,id})});
+ const feed=async(query:string)=>(await root.http.request('/graphql',{method:'POST',
+   headers:{cookie:'loom_ui='+bodyCredentials.memberCookie,'content-type':'application/json'},body:JSON.stringify({query})})).json();
+ expect((await post(input,'private-body')).status).toBe(403);
+ db.insert(schema.household).values({timezone:'UTC'}).onConflictDoUpdate({target:schema.household.singleton,set:{timezone:'UTC'}}).run();
+ root.services.tempo.triggers.set({id:'inspect',ownerKind:'agent',owner:'art',project:'pond',sourceKind:'time',times:'18:01',
+   lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',note:'Check pump',instructions:'Inspect pressure'});
+ clock.advance(60_000);
+ const item=db.select().from(schema.inbox).where(eq(schema.inbox.sourceId,'inspect:time:'+new Date(clock.now()).toISOString())).get()!;
+ db.update(schema.jobs).set({conversation:item.conversation,member:null}).where(eq(schema.jobs.id,'job')).run();
+ db.update(schema.inbox).set({state:'taken',job:'job',takenVolume:'full'}).where(eq(schema.inbox.id,item.id)).run();
+ expect((await post(input,'before-accept')).status).toBe(403);
+ expect((await b.fixture.call('accept',{items:[item.id]},'accept-ticket')).status).toBe(200);
+ const result=await (await post(input,'open-ticket')).json();
+ expect(result).toMatchObject({ok:true,value:{thread:expect.any(String)}});
+ expect(await (await post(input,'open-ticket')).json()).toEqual(result);
+ const thread=result.value.thread;
+ const reply=await post({task:'t-901',post:{action:'reply',thread,words:'Pressure verified.'}},'reply-ticket');
+ expect(reply.status).toBe(200);
+ const query='{agentActivityFeed(agent:"art"){thread latest{words sourceTask}} ticketActivityPosts(task:"t-901"){words agent}}';
+ expect(await feed(query)).toEqual({data:{agentActivityFeed:[{thread,latest:{words:'Pressure verified.',sourceTask:'t-901'}}],
+   ticketActivityPosts:[{words:'Pressure verified.',agent:'art'},{words:'Checking pump pressure.',agent:'art'}]}});
+ const prior=db.select().from(schema.jobs).where(eq(schema.jobs.id,'job')).get()!;
+ db.update(schema.jobs).set({state:'lost',endedAt:new Date(clock.now()).toISOString()}).where(eq(schema.jobs.id,'job')).run();
+ const token='e'.repeat(64);
+ root.services.tempo.triggers.set({id:'resume-inspect',ownerKind:'agent',owner:'art',project:'pond',sourceKind:'time',times:'18:02',
+   lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',note:'Resume work',instructions:'Follow up'});
+ clock.advance(60_000);
+ const next=db.select().from(schema.inbox).where(eq(schema.inbox.sourceId,'resume-inspect:time:'+new Date(clock.now()).toISOString())).get()!;
+ db.insert(schema.jobs).values({...prior,id:'replacement',conversation:next.conversation,state:'running',endedAt:null}).run();
+ db.insert(schema.tokens).values({fingerprint:credentialHash(token),kind:'agent',label:'Replacement',agent:'art',job:'replacement',createdAt:at}).run();
+ db.update(schema.inbox).set({state:'taken',job:'replacement',takenVolume:'full'}).where(eq(schema.inbox.id,next.id)).run();
+ expect((await b.fixture.call('accept',{items:[next.id]},'accept-resumed',token)).status).toBe(200);
+ expect(await (await post(input,'open-ticket',token)).json()).toEqual(result);
+ expect((await post({task:'t-901',post:{action:'reply',thread,words:'Replacement verified the result.'}},'replacement-update',token)).status).toBe(200);
+ expect(db.select().from(schema.agentPosts).all()).toHaveLength(3);
+ db.update(schema.tasks).set({project:null}).where(eq(schema.tasks.id,'t-901')).run();
+ expect(await feed(query)).toEqual({data:{agentActivityFeed:[],ticketActivityPosts:[]}});
+ expect((await post(input,'after-move',token)).status).toBe(403);
+});

@@ -1,3 +1,4 @@
+import { taskPath } from '../../../../src/task-route';
 import { useLayoutEffect, useRef } from 'react';
 import { reducedMotion } from '../../access';
 import { threadPath } from './home-comms-data';
@@ -10,6 +11,7 @@ export interface AgentPost {
   at: string;
   words: string;
   source?: string;
+  sourceTask?: string | null;
   work?: readonly { id: string; title: string; state: string; href: string }[];
 }
 
@@ -95,7 +97,7 @@ export function AgentPostHistory({ title, posts, now, go, openerId = posts[0]?.i
       <p>{post.words}</p>
       <PostWork post={post} go={go}/>
       {post.source && go && posts[index+1]?.source!==post.source &&
-        <Button variant="ghost" onClick={()=>go(threadPath(post.source!))}>Source conversation</Button>}
+        <Button variant="ghost" onClick={()=>go(post.sourceTask ? taskPath(post.sourceTask) : threadPath(post.source!))}>{post.sourceTask ? 'Source ticket' : 'Source conversation'}</Button>}
     </li>)}
   </ol>;
 }
