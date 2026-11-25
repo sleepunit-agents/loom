@@ -548,3 +548,33 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     await page.getByText('Back loses page two.').waitFor({state:'detached'});
   } finally {await browser.close();await app.close();}
 });
+
+it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html')))('opens a finished ticket on its commitment and recorded outcome with expandable receipts',async()=>{
+  const app=await fixture(),browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  try {
+    const at=new Date(app.clock.now()).toISOString();
+    const receipt='The first restart failed.\n'+('Pressure and flow recorded. '.repeat(27))+'The second restart held.';
+    app.data.writes.run(()=>{
+      app.db.update(s.tasks).set({status:'closed',closedAt:at,doneWhen:'Water reaches the upper pond.',closeReason:'Water reached the upper pond after two restarts.'}).where(eq(s.tasks.id,'t-1')).run();
+      app.db.insert(s.taskComments).values({task:'t-1',seq:1,at,actorKind:'agent',actor:'art',text:receipt}).run();
+    });
+    const ctx=await browser.newContext({serviceWorkers:'block',reducedMotion:'reduce'});
+    await ctx.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
+    const page=await ctx.newPage();page.setDefaultTimeout(8000);
+    await page.goto(app.url+'/p/tasks-preview/task/t-1');
+    const reader=page.getByRole('article',{name:'Task'});
+    const commitment=reader.getByRole('region',{name:'Commitment'}),outcome=reader.getByRole('region',{name:'Recorded outcome'});
+    await commitment.getByText('Water reaches the upper pond.').waitFor();
+    await outcome.getByText('Water reached the upper pond after two restarts.').waitFor();
+    const names=await reader.locator('section[aria-label]').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label')));
+    expect(names.indexOf('Commitment')).toBeLessThan(names.indexOf('Recorded outcome'));
+    expect(names.indexOf('Recorded outcome')).toBeLessThan(names.indexOf('Ticket story'));
+    const entry=reader.getByRole('region',{name:'Ticket story'}).locator('details').filter({hasText:receipt.slice(-24)});
+    const full=entry.locator('p');
+    expect(await full.isVisible()).toBe(false);
+    await entry.locator('summary').click();
+    await full.waitFor();expect(await full.textContent()).toBe(receipt);
+    app.data.writes.run(()=>app.db.update(s.tasks).set({closeReason:'done'}).where(eq(s.tasks.id,'t-1')).run());
+    await outcome.waitFor({state:'detached'});
+  }finally{await browser.close();await app.close();}
+});

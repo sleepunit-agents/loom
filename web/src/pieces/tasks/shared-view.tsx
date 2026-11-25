@@ -7,6 +7,17 @@ import type { ReviewRound } from '../change-view/model';
 import { ChangeCard } from '../change-view';
 import { taskFormTitles } from './shared-form';
 
+function StoryDetail({words}:{words:string}) {
+  if(words.length<=360 && words.split('\n').length<=5) return <Body>{words}</Body>;
+  const first=words.trim().split('\n',1)[0];
+  const cut=first.slice(0,160);
+  const preview=first.length<=160 ? first : (cut.replace(/\s+\S*$/u,'') || cut)+'…';
+  return <details className="min-w-0">
+    <summary className="cursor-pointer">{preview || 'Read full entry'}</summary>
+    <Body>{words}</Body>
+  </details>;
+}
+
 /** Field projection accepted from the shared query client; no runtime schema or record adapter. */
 export interface SharedTask {
   id: string; title: string; type: 'task' | 'bug' | 'feature' | 'epic';
@@ -210,23 +221,30 @@ export function SharedTasks(props: SharedTasksProps) {
       </Actions>}
       {props.problem && <Error text={props.problem}/>}
       {props.form && props.form.action !== 'create' && <Section data-form="" label={taskFormTitles[props.form.action] ?? labels[props.form.action]}>{props.form.node}</Section>}
-      {selected.goal && <Body>{selected.goal}</Body>}
+      {(selected.goal || selected.doneWhen) && <Section label="Commitment">
+        {selected.goal && <Body>{selected.goal}</Body>}
+        {selected.doneWhen && <Facts><Fact label="Done when">{selected.doneWhen}</Fact></Facts>}
+      </Section>}
+      {selected.status==='closed' && selected.closeReason && !['done','cancelled'].includes(selected.closeReason) &&
+        <Section label="Recorded outcome"><StoryDetail words={selected.closeReason}/></Section>}
       {story.length > 0 && <Section label="Ticket story"><ol className="grid gap-2.5">{story.map(event => <li key={event.key} className="grid gap-0.5">
         <Body><strong title={event.revision}>{event.label}</strong> <time className="loom-reader__meta" dateTime={event.at} title={fullTime(event.at,props.zone)}>{briefTime(event.at,props.zone)}</time></Body>
-        {event.change && props.openChange ? <LinkButton onClick={() => props.openChange!(event.change!)}>{event.detail}</LinkButton> : event.detail && <Body>{event.detail}</Body>}
+        {event.detail && (event.change && props.openChange && event.detail.length<=360
+          ? <LinkButton onClick={()=>props.openChange!(event.change!)}>{event.detail}</LinkButton>
+          : <StoryDetail words={event.detail}/>)}
+        {event.change && props.openChange && (event.detail?.length ?? 0)>360 &&
+          <LinkButton onClick={()=>props.openChange!(event.change!)}>Open pull request</LinkButton>}
         {event.reviewUrl && <a href={event.reviewUrl} target="_blank" rel="noreferrer">GitHub review{event.revision && ' · '+event.revision.slice(0,8)}</a>}
         {event.post && props.openPost && <LinkButton onClick={()=>props.openPost!(event.post!)}>Activity thread</LinkButton>}
       </li>)}</ol>{props.githubNavigation}{props.postNavigation}{props.reviewsUnavailable && <Body quiet>Review history is unavailable.</Body>}</Section>}
       <Facts>
         <Fact label="Why">{selected.why}</Fact>
-        <Fact label="Done when">{selected.doneWhen}</Fact>
         {relations('Parent',links.filter(l => l.task === selected.id && l.type === 'parent-child').map(l => l.dependsOn))}
         {relations('Children',links.filter(l => l.dependsOn === selected.id && l.type === 'parent-child').map(l => l.task))}
         {relations('Blocked by',links.filter(l => l.task === selected.id && l.type === 'blocks').map(l => l.dependsOn))}
         {relations('Blocks',links.filter(l => l.dependsOn === selected.id && l.type === 'blocks').map(l => l.task))}
         <Fact label="Owner">{selected.ownerKind === 'household' ? 'Household' : name(selected.owner)}</Fact>
         <Fact label="Assigned to">{name(selected.assignee)}</Fact>
-        <Fact label="Closed because">{selected.closeReason}</Fact>
       </Facts>
       {props.discussion}
       {selected.sourceKind === 'conversation' && selected.sourceId && (props.conversation
