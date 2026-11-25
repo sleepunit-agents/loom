@@ -13,6 +13,7 @@ vi.mock('../../data/graphql',()=>({useDataQuery:(query:string,variables?:Record<
   if(query.includes('WorkHome')) return {status:'live',data:{projects:[],inFlight:[],unfiled:f.home}};
   return {status:'live',data:{homeComms:null}};
 }}));
+vi.mock('../../data/tasks-app',()=>({default:()=>null}));
 vi.mock('../../data/visibility',()=>({useReadingVisible:()=>true}));
 vi.mock('../../kit',()=>Object.fromEntries(['AppFrame','Body','Empty','Error','LinkButton','List','Loading','Pager','Row','Section'].map(name=>
   [name,({children,lead,trailing,...props}:{children?:ReactNode;lead?:ReactNode;trailing?:ReactNode})=>h(name,props,lead,children,trailing)])));
@@ -49,9 +50,9 @@ it('opens unfiled tickets from the Work home, pages by route, opens a story and 
   expect(find('Row').map(row=>row.props.title)).toEqual(['Unfiled 52','Unfiled 53','Unfiled 54']);
   expect(find('Pager')[0].props).toMatchObject({hasPrevious:true,hasNext:false});
   find('Row')[1].props.onClick();
-  expect(go).toHaveBeenLastCalledWith('/p/tasks-preview/task/t-53');
+  expect(go).toHaveBeenLastCalledWith('/p/work/backlog/task/t-53');
   // Back from the story: the shell hands Work the route it left, and the same page reads again.
-  await act(async()=>tree.update(h(Work,{path:'/p/tasks-preview/task/t-53',go})));
+  await act(async()=>tree.update(h(Work,{path:'/p/work/backlog/task/t-53',go})));
   await act(async()=>tree.update(h(Work,{path:'/p/work/unfiled/2',go})));
   expect(find('Row').map(row=>row.props.title)).toContain('Unfiled 53');
   find('Pager')[0].props.previous();
@@ -101,8 +102,8 @@ it('keeps a reader whose only unfiled ticket is closed able to open its story fr
   expect(row.props.status).toBe('Closed');
   expect(find('Pager')[0].props).toMatchObject({hasPrevious:false,hasNext:false});
   row.props.onClick();
-  expect(go).toHaveBeenLastCalledWith('/p/tasks-preview/task/t-9');
-  await act(async()=>tree.update(h(Work,{path:'/p/tasks-preview/task/t-9',go})));
+  expect(go).toHaveBeenLastCalledWith('/p/work/backlog/task/t-9');
+  await act(async()=>tree.update(h(Work,{path:'/p/work/backlog/task/t-9',go})));
   await act(async()=>tree.update(h(Work,{path:'/p/work/unfiled',go})));
   expect(find('Row').map(row=>row.props.title)).toEqual(['Finished note']);
   expect(words()).not.toContain('No unfiled tickets');

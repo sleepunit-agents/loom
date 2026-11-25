@@ -112,7 +112,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
       await browser.close();
     });
     for (const page of [a,b]) page.on('pageerror', error => errors.push(error.message));
-    await Promise.all([a.goto(`${app.url}/p/tasks-preview`), b.goto(`${app.url}/p/tasks-preview`)]);
+    await Promise.all([a.goto(`${app.url}/p/work/backlog`), b.goto(`${app.url}/p/tasks-preview`)]);
     const row = (page: typeof a, name = title) => page.locator('[data-split-row]').filter({ hasText: name });
     for (const page of [a,b]) { await expect.poll(() => row(page).count()).toBe(1); expect(await page.getByText(hiddenTitle, { exact: true }).count()).toBe(0); await row(page).click(); }
     for (const page of [a,b]) { await expect.poll(() => page.getByRole('group', { name:'Pull request acme/app#3', exact:true }).textContent()).toContain('Checks passing · Approved'); expect(await page.getByRole('link', { name:'secret/app#9', exact:true }).count()).toBe(0); }
@@ -188,7 +188,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     for (const page of [a,b]) await expect.poll(() => page.getByText('open · P0 · pond', {exact:true}).count()).toBe(1);
     step('create at390');
     await a.setViewportSize({ width: 390, height: 900 });
-    await a.goto(`${app.url}/p/tasks-preview`);
+    await a.goto(`${app.url}/p/work/backlog`);
     await a.getByRole('button', { name: 'Create task', exact: true }).click();
     form = a.getByRole('form', { name: 'Create task', exact: true });
     for (const [label,text] of [['Title','Browser planted task'],['Goal','Water moves'],['Why','Pond needs it']]) await form.getByLabel(label, { exact: true }).fill(text);
@@ -285,7 +285,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},reducedMotion:'reduce'});
     await context.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
     const page=await context.newPage();
-    await page.goto(app.url+'/p/tasks-preview/task/t-1');
+    await page.goto(app.url+'/p/work/backlog/task/t-1');
     await page.getByRole('button',{name:'More for this task',exact:true}).click({timeout:10000});
     const menu = page.getByRole('group',{name:'More for this task'});
     for (const width of [1280,1440]) {
@@ -298,7 +298,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     }
     await page.getByText('Promote to epic',{exact:true}).click();
     await page.getByText('Promoted this ticket to an epic.',{exact:true}).waitFor();
-    expect(new URL(page.url()).pathname).toBe('/p/tasks-preview/task/t-1');
+    expect(new URL(page.url()).pathname).toBe('/p/work/backlog/task/t-1');
     expect(await page.getByRole('group',{name:'Pull request acme/app#3',exact:true}).count()).toBe(1);
     expect(app.data.services.tasks.get('t-1').type).toBe('epic');
   } finally { await browser.close(); await app.close(); }
@@ -326,7 +326,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     expect(await updates.getByText(hiddenTitle,{exact:true}).count()).toBe(0);
     await updates.getByText(title,{exact:true}).click();
     await page.getByRole('region',{name:'Ticket story'}).getByText('Found a worn bearing.',{exact:true}).waitFor();
-    expect(new URL(page.url()).pathname).toBe('/p/tasks-preview/task/t-1');
+    expect(new URL(page.url()).pathname).toBe('/p/work/project/pond/backlog/task/t-1');
   } finally { await browser.close(); await app.close(); }
 });
 
@@ -339,7 +339,7 @@ it.runIf(process.env.CI==='true' && chrome && existsSync(join(root,'index.html')
     await ctx.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
     const page=await ctx.newPage();
     page.setDefaultTimeout(7000);
-    await page.goto(app.url+'/p/tasks-preview/task/t-1');
+    await page.goto(app.url+'/p/work/backlog/task/t-1');
     await page.getByRole('button',{name:/Discuss privately with Art/i}).click();
     const composer=page.getByRole('textbox',{name:'Message Art',exact:true});
     await composer.waitFor();
@@ -350,7 +350,7 @@ it.runIf(process.env.CI==='true' && chrome && existsSync(join(root,'index.html')
     await page.getByRole('button',{name:'Send',exact:true}).click();
     await expect.poll(()=>app.db.select().from(s.inbox).all().length).toBe(1);
     const href=page.url();
-    await page.goto(app.url+'/p/tasks-preview/task/t-1');
+    await page.goto(app.url+'/p/work/backlog/task/t-1');
     await page.getByRole('button',{name:/Discuss privately with Art/i}).click();
     await composer.waitFor();
     expect(page.url()).toBe(href);
@@ -563,7 +563,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     const ctx=await browser.newContext({serviceWorkers:'block',reducedMotion:'reduce'});
     await ctx.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
     const page=await ctx.newPage();page.setDefaultTimeout(8000);
-    await page.goto(app.url+'/p/tasks-preview/task/t-1');
+    await page.goto(app.url+'/p/work/backlog/task/t-1');
     const story=page.getByRole('region',{name:'Ticket story'});
     await story.getByText('Back loses page two.').waitFor();
     await story.getByText('Back now restores page two.').waitFor();
@@ -588,7 +588,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     const ctx=await browser.newContext({serviceWorkers:'block',reducedMotion:'reduce'});
     await ctx.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
     const page=await ctx.newPage();page.setDefaultTimeout(8000);
-    await page.goto(app.url+'/p/tasks-preview/task/t-1');
+    await page.goto(app.url+'/p/work/backlog/task/t-1');
     const reader=page.getByRole('article',{name:'Task'});
     const commitment=reader.getByRole('region',{name:'Commitment'}),outcome=reader.getByRole('region',{name:'Recorded outcome'});
     await commitment.getByText('Water reaches the upper pond.').waitFor();
@@ -654,6 +654,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     const title=await last.textContent();
     await last.click();
     await page.getByRole('article',{name:'Task'}).getByText(title!,{exact:true}).waitFor();
+    expect(new URL(page.url()).pathname).toMatch(/^\/p\/work\/project\/pond\/backlog\/task\//);
     await page.goBack();
     await last.waitFor();
     expect(await last.textContent()).toBe(title);
@@ -675,7 +676,7 @@ it.runIf(process.env.CI==='true' && chrome && existsSync(join(root,'index.html')
     const ctx=await browser.newContext({serviceWorkers:'block',reducedMotion:'reduce'});
     await ctx.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
     const page=await ctx.newPage();page.setDefaultTimeout(8000);
-    await page.goto(app.url+'/p/tasks-preview/task/t-1');
+    await page.goto(app.url+'/p/work/backlog/task/t-1');
     const story=page.getByRole('region',{name:'Ticket story'});
     const words=()=>story.getByText(/^Inspection note \d+$/).allTextContents();
     const range=(from:number,to:number)=>Array.from({length:to-from+1},(_,i)=>'Inspection note '+(from+i));
