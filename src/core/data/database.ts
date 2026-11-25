@@ -1,3 +1,4 @@
+import { backlogCheckpointTriggers } from './backlog-checkpoints.js';
 import { DAY_MS } from '../day.js';
 import Database from 'better-sqlite3';
 import { readFileSync } from 'node:fs';
@@ -447,6 +448,10 @@ const upgrades: readonly (readonly string[])[] = [
    "DROP TABLE saved_agent_post_names",
    "UPDATE sqlite_sequence SET seq=max(seq,coalesce((SELECT seq FROM saved_agent_post_sequence),0)) WHERE name='agent_posts'",
    "DROP TABLE saved_agent_post_sequence"],
+  // 44: record backlog membership from the migration receipt onward.
+  ["CREATE TABLE `task_backlog_events` (\n\t`seq` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`task` text NOT NULL,\n\t`project` text,\n\t`open` integer NOT NULL,\n\t`at` text NOT NULL,\n\tFOREIGN KEY (`task`) REFERENCES `tasks`(`id`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,\n\tCONSTRAINT \"task_backlog_at_utc\" CHECK(\"task_backlog_events\".\"at\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"task_backlog_events\".\"at\") = \"task_backlog_events\".\"at\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"task_backlog_events\".\"at\") = \"task_backlog_events\".\"at\", 0))\n);",
+   "CREATE INDEX `task_backlog_project_task` ON `task_backlog_events` (`project`,`task`);",
+   "CREATE INDEX `task_backlog_ticket_seq` ON `task_backlog_events` (`task`,`seq`);", ...backlogCheckpointTriggers],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

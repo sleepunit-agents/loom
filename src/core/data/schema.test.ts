@@ -6,6 +6,7 @@ import { generateSQLiteDrizzleJson, generateSQLiteMigration } from 'drizzle-kit/
 import { buildSchema } from 'drizzle-graphql';
 import { graphql } from 'graphql/index.js';
 import { createDataSchema } from './database.js';
+import { backlogCheckpointTriggers } from './backlog-checkpoints.js';
 import { referenceStatements } from './references.js';
 import { clockScheduleNameIndex, schema, tables, plumbing, tasks, taskComments, members, projects, projectMembers, measuringSettings, timingDays, agents, conversations, threads, messages, threadRefs, inbox, tokens, triggers, approvals, approvalRules, taskLinks, jobs, modelAccounts, modelAccountWindows, digests, migrations, operationResults, household as householdSettings, secrets, secretRules, secretRuleAgents, deletedThreads, approvalRecord, agentAccounts, boxes } from './schema.js';
 
@@ -51,7 +52,7 @@ describe('the approved data model', () => {
     actual.deleted_threads=actual.deleted_threads.slice(0,-3);
     expect(actual).toEqual(expected);
     const names = [...model.matchAll(/^ \("([a-z_]+)", /gm)].map(m => m[1]);
-    expect(Object.values(plumbing).filter(table => !described.includes(table)).map(getTableName).sort()).toEqual([...names,'project_claim_directions','bridge_person_sightings','agent_post_sources','agent_post_names','agent_post_work_refs','agent_post_work_pending','agent_post_threads','agent_posts','guest_io_readings','worker_join_requests','archived_questions','account_week_readings','account_calendar_readings','change_review_rounds','imported_task_sequence','bridge_send_jobs','agent_kits','agent_kit_projects','agent_kit_members','agent_kit_outside_people','project_outside_people','kit_uses','program_tokens','program_record_grants','program_operation_grants'].sort());
+    expect(Object.values(plumbing).filter(table => !described.includes(table)).map(getTableName).sort()).toEqual([...names,'task_backlog_events','project_claim_directions','bridge_person_sightings','agent_post_sources','agent_post_names','agent_post_work_refs','agent_post_work_pending','agent_post_threads','agent_posts','guest_io_readings','worker_join_requests','archived_questions','account_week_readings','account_calendar_readings','change_review_rounds','imported_task_sequence','bridge_send_jobs','agent_kits','agent_kit_projects','agent_kit_members','agent_kit_outside_people','project_outside_people','kit_uses','program_tokens','program_record_grants','program_operation_grants'].sort());
     const { client } = fresh();
     for (const table of [...Object.values(tables), ...Object.values(plumbing)]) {
       const columns = client.prepare(`PRAGMA table_info("${getTableName(table)}")`).all() as { name: string }[];
@@ -63,7 +64,7 @@ describe('the approved data model', () => {
   it('keeps generated installation SQL exactly in step with the sole Drizzle definition', async () => {
     const statements = await generateSQLiteMigration(await generateSQLiteDrizzleJson({}), await generateSQLiteDrizzleJson(schema));
     const checkedIn = readFileSync(new URL('../../../assets/data/schema.sql', import.meta.url), 'utf8');
-    expect(checkedIn.slice(checkedIn.indexOf('\n') + 1)).toBe([...statements, clockScheduleNameIndex, ...referenceStatements(), 'INSERT INTO box_alert_settings (singleton) VALUES (1);'].join('\n') + '\n');
+    expect(checkedIn.slice(checkedIn.indexOf('\n') + 1)).toBe([...statements, clockScheduleNameIndex, ...referenceStatements(), ...backlogCheckpointTriggers, 'INSERT INTO box_alert_settings (singleton) VALUES (1);'].join('\n') + '\n');
   });
 
   it('refuses an existing database and leaves its records intact', () => {

@@ -1393,6 +1393,19 @@ CREATE TABLE `project_claim_directions` (
 );
 
 CREATE INDEX `project_claim_directions_latest` ON `project_claim_directions` (`project`,`agent`,`seq`);
+CREATE TABLE `task_backlog_events` (
+	`seq` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`task` text NOT NULL,
+	`project` text,
+	`open` integer NOT NULL,
+	`at` text NOT NULL,
+	FOREIGN KEY (`task`) REFERENCES `tasks`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "task_backlog_at_utc" CHECK("task_backlog_events"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "task_backlog_events"."at") = "task_backlog_events"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "task_backlog_events"."at") = "task_backlog_events"."at", 0))
+);
+
+CREATE INDEX `task_backlog_project_task` ON `task_backlog_events` (`project`,`task`);
+CREATE INDEX `task_backlog_ticket_seq` ON `task_backlog_events` (`task`,`seq`);
 CREATE TABLE `bridge_person_sightings` (
 	`incoming` text PRIMARY KEY NOT NULL,
 	`seen_at` text NOT NULL,
@@ -2034,4 +2047,14 @@ CREATE TRIGGER "tokens_live_key_update" BEFORE UPDATE ON "tokens" WHEN NEW."revo
 CREATE TRIGGER "threads_no_reuse" BEFORE INSERT ON "threads" WHEN EXISTS (SELECT 1 FROM "deleted_threads" WHERE "id" = NEW."id") BEGIN SELECT RAISE(ABORT, 'deleted id cannot be reused'); END;
 CREATE TRIGGER "threads_fixed_id" BEFORE UPDATE OF "id" ON "threads" WHEN NEW."id" <> OLD."id" BEGIN SELECT RAISE(ABORT, 'id cannot be changed'); END;
 CREATE TRIGGER "threads_mark_deleted" AFTER DELETE ON "threads" BEGIN INSERT OR IGNORE INTO "deleted_threads" ("id", "conversation", "at") VALUES (OLD."id", OLD."conversation", loom_now()); END;
+CREATE TRIGGER task_backlog_baseline AFTER INSERT ON migrations WHEN NEW.number = 44 BEGIN
+    INSERT INTO task_backlog_events(task,project,open,at) SELECT id,project,status <> 'closed',NEW.applied_at FROM tasks;
+  END;
+CREATE TRIGGER task_backlog_created AFTER INSERT ON tasks BEGIN
+    INSERT INTO task_backlog_events(task,project,open,at) VALUES(NEW.id,NEW.project,NEW.status <> 'closed',loom_now());
+  END;
+CREATE TRIGGER task_backlog_changed AFTER UPDATE OF project,status ON tasks
+    WHEN OLD.project IS NOT NEW.project OR (OLD.status = 'closed') <> (NEW.status = 'closed') BEGIN
+    INSERT INTO task_backlog_events(task,project,open,at) VALUES(NEW.id,NEW.project,NEW.status <> 'closed',loom_now());
+  END;
 INSERT INTO box_alert_settings (singleton) VALUES (1);

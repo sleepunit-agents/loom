@@ -38,6 +38,8 @@ export const projectLabelled:Readonly<Record<string,(db:DataDatabase,from:string
  // A merge never copies owner grants or outside identities onto a different project.
  agent_kit_projects(){},project_outside_people(){},
  // A direction applies only to the project named by the member.
+ // The move itself writes a checkpoint. Earlier checkpoints keep their project.
+ task_backlog_events(){},
  project_claim_directions(){},
  // Work posts retain their original project audience after a ticket moves.
  agent_post_sources(){},
