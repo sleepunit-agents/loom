@@ -6,6 +6,7 @@ import type {DataQuerySnapshot} from '../../data/graphql';
 import type {RuntimeAccount,AgentModel} from './model-accounts';
 const f=vi.hoisted(()=>({snapshot:{} as DataQuerySnapshot<{modelAccounts:RuntimeAccount[];agentModels?:AgentModel[];agents?:{id:string;removedAt:string|null}[];deskTime?:{timezone:string}}>,query:vi.fn()}));
 vi.mock('../../kit',async importOriginal=>({...await importOriginal<typeof import('../../kit')>(),Button:'button'}));
+vi.mock('../../kit/toolbar',()=>({ToolbarControls:'toolbar-controls'}));
 vi.mock('../../data/graphql',()=>({useDataQuery:(query:string,variables?:unknown)=>{if(variables)f.query(query,variables);else f.query(query);return f.snapshot;}}));
 import {RuntimeAccounts,runtimeAccountsQuery} from './model-accounts';
 (globalThis as typeof globalThis&{IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
