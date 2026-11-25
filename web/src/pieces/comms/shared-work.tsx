@@ -24,7 +24,7 @@ function MentionedTask({ id, go, conversation }: { id: string; go(path: string):
 function MentionedChange({ id, go, conversation }: { id: string; go(path: string): void;conversation:string }) {
   const reading = useSelection(useMemo<QuerySelection<{changes:Pick<Change,'id'|'title'|'state'|'checks'|'review'|'waitingOn'|'draft'>[];made:{id:string}[]}>>(() => ({ query: changeQuery, variables: { id,conversation },
     decode(data) { if (!Array.isArray(data.changes)||!Array.isArray(data.conversationMadeChanges)) throw Error('Invalid change selection'); return {changes:data.changes as Pick<Change,'id'|'title'|'state'|'checks'|'review'|'waitingOn'|'draft'>[],made:data.conversationMadeChanges as {id:string}[]}; } }), [id,conversation]));
-  return <WorkCard label={`Conversation change ${id}`} made={reading.status==='live' && reading.data?.made.some(row=>row.id===id)}><ChangeCard id={id} snapshot={{status:reading.status,changes:reading.data?.changes ?? []}} open={id => go(`/p/changes-preview/change/${encodeURIComponent(id)}`)} /></WorkCard>;
+  return <WorkCard label={`Conversation change ${id}`} made={reading.status==='live' && reading.data?.made.some(row=>row.id===id)}><ChangeCard id={id} snapshot={{status:reading.status,changes:reading.data?.changes ?? []}} open={id => go(`/p/work/changes/change/${encodeURIComponent(id)}`)} /></WorkCard>;
 }
 export function SharedWork({ conversation, refs, go }: { conversation: string; refs: readonly { ref: string }[]; go(path: string): void }) {
   const [offset, setOffset] = useState(0);

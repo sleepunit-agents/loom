@@ -61,7 +61,7 @@ it('holds everything about one agent in full: what it is doing, its jobs, its la
  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-22T12:00:00Z'));
  f.extra.DeskTime={status:'live',data:{deskTime:{at:Date.now(),timezone:'Asia/Tokyo'}}};
  const item=(id:string,fields:object)=>({id,title:null,with:null,place:null,direct:null,ref:null,machine:null,since:'2026-11-14T18:00:00Z',state:'running',href:null,...fields});
- f.extra.DeskDoingAll={status:'live',data:{agentDoing:{more:0,items:[...Array.from({length:10},(_,n)=>item(`j-${n}`,{kind:'job',title:`Job ${n}`})),item('t-7',{kind:'task',title:'Order the pump',ref:'t-7',href:'/p/tasks-preview/task/t-7'})]}}};
+ f.extra.DeskDoingAll={status:'live',data:{agentDoing:{more:0,items:[...Array.from({length:10},(_,n)=>item(`j-${n}`,{kind:'job',title:`Job ${n}`})),item('t-7',{kind:'task',title:'Order the pump',ref:'t-7',href:'/p/work/backlog/task/t-7'})]}}};
  f.extra.DeskAgentJobs={status:'live',data:{boxes:[{id:'box-one',name:'one'}],jobHistory:[
   {id:'j-now',agent:'art',title:'Compare pumps',state:'running',box:'box-one',queuedAt:'2026-11-14T18:00:00Z',claimedAt:'2026-11-14T18:01:00Z',endedAt:null},
   {id:'j-wait',agent:'art',title:'Order hose',state:'queued',box:null,queuedAt:'2026-11-14T18:05:00Z',claimedAt:null,endedAt:null},
@@ -74,7 +74,7 @@ it('holds everything about one agent in full: what it is doing, its jobs, its la
  const go=await draw(),section=(label:string)=>tree!.root.findByProps({'aria-label':label});
  // The page asks for the whole list, not Home's first eight.
  expect(section('What Art E Fish is doing').findAllByProps({className:'desk-doing-phrase'}).map(words)).toHaveLength(11);expect(words(section('Doing now'))).not.toContain(' more');
- await act(async()=>section('What Art E Fish is doing').findByType('a').props.onClick({button:0,preventDefault(){}}));expect(go).toHaveBeenLastCalledWith('/p/tasks-preview/task/t-7');
+ await act(async()=>section('What Art E Fish is doing').findByType('a').props.onClick({button:0,preventDefault(){}}));expect(go).toHaveBeenLastCalledWith('/p/work/backlog/task/t-7');
  expect(words(tree!.root.findByProps({'aria-label':'Art E Fish agent window'}).findAllByProps({className:'loom-reader__meta '})[0])).toBe('Working · 1 needs you');
  // Jobs: one name, the ones running now first with their machine and times, then the earlier ones.
  expect(section('Art E Fish jobs now').findAllByProps({className:'loom-kit-title'}).map(words)).toEqual(['Compare pumps']);

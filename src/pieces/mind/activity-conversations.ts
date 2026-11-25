@@ -77,7 +77,7 @@ export function sharedActivityConversations(db: DataDatabase, options: {
       const work = readActivityWork(db, viewer, row.id);
       return { ...detail, linkedWork: {
         tasks: work.map(task => ({ label: task.title, href: taskPath(task.id) })),
-        prs: work.flatMap(task => task.changeTasksByTask.map(({ changeRow }) => ({ label: changeRow.title, href: changeRow.url || `/p/changes-preview/change/${encodeURIComponent(changeRow.id)}` }))),
+        prs: work.flatMap(task => task.changeTasksByTask.map(({ changeRow }) => ({ label: changeRow.title, href: changeRow.url || `/p/work/changes/change/${encodeURIComponent(changeRow.id)}` }))),
       } };
     },
     conversations:episodeConversations,

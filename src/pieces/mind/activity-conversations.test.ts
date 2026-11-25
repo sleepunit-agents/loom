@@ -145,7 +145,7 @@ it('opens tasks sourced from this conversation and only their visible pull reque
   f.db.insert(changeTasks).values({change:id,task:task.id}).run();
  }
  const read=()=>f.reader.read(teammate,'fiction','conversation',cv.id)?.linkedWork;
- expect(read()).toEqual({tasks:[{label:task.title,href:'/p/tasks-preview/task/'+task.id}],
+ expect(read()).toEqual({tasks:[{label:task.title,href:'/p/work/backlog/task/'+task.id}],
   prs:[{label:'github:garden/pump#1',href:'https://github.com/garden/pump/pull/1'}]});
  service.edit(task.id,{project:null},{kind:'member',id:'owner'});
  expect(read()).toEqual({tasks:[],prs:[]});

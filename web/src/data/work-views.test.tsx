@@ -86,7 +86,7 @@ it('opens the linked imported task even when its ID begins with the route marker
   ] };
   await draw(h(ChangesApp, { path: '/p/changes-preview/change/c-one', go }));
   await act(async () => tree.root.findByProps({ label: 'Open Imported tray, ~t-1' }).props.onClick());
-  expect(go).toHaveBeenCalledExactlyOnceWith('/p/tasks-preview/task/~~t-1');
+  expect(go).toHaveBeenCalledExactlyOnceWith('/p/work/backlog/task/~~t-1');
 });
 
 it('opens the exact change from a Comms deep link and follows shell navigation and back', async () => {
@@ -124,7 +124,7 @@ it('linked work opens the Tasks reader route and unavailability withdraws the de
   expect(words()).toContain('Linked task');
   const linked = tree.root.findAllByType('Chip').find((chip: { props: { children: string } }) => chip.props.children === 't-42');
   await act(async () => linked.props.onClick());
-  expect(go).toHaveBeenLastCalledWith('/p/tasks-preview/task/t-42');
+  expect(go).toHaveBeenLastCalledWith('/p/work/backlog/task/t-42');
   for (const status of ['offline', 'denied', 'loading']) {
     feed.status = status;
     await act(async () => tree.update(h(ChangesApp, { path: '/p/changes-preview/change/c-one', go })));

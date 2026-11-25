@@ -1,7 +1,7 @@
 /** The address and its browser history are the sole owner of app paths and tile state. */
 import { admit, promote, underMinimum, capFor, swap, type AppTile, type Rect } from '../tiling/layout';
 import type { Fit } from '../tiling/fit';
-export interface AppRegistration { id: string; title: string; path: string; fit: Fit }
+export interface AppRegistration { id: string; title: string; path: string; fit: Fit; aliases?: readonly {id:string;path:string;destination:string}[] }
 export interface Tile { id: string; trail: string[]; at: number; minimized?: boolean; pinned?: boolean; used: number }
 export interface DeskRoute { tiles: Tile[]; focused?: string; maximized?: string; home?: string[] }
 /** One-window presentation preserves the other tiles and their navigation trails. */
@@ -11,26 +11,53 @@ export function presentedTiles(route: DeskRoute, oneWindow: boolean): Tile[] {
   return oneWindow || (focused && route.maximized === focused.id) ? visible.filter(t => t.id === focused?.id) : visible;
 }
 export const currentPath = (tile: Tile) => tile.trail[tile.at];
+const ownsPath = (root:string,path:string) => path===root || path.startsWith(root+'/') || path.startsWith(root+'?');
+
+export function resolveAppPath<T extends AppRegistration>(path:string,apps:readonly T[]) {
+  for (const app of apps) {
+    if (ownsPath(app.path,path)) return {app,path};
+    const alias=app.aliases?.find(entry=>ownsPath(entry.path,path));
+    if (alias) return {app,path:alias.destination+path.slice(alias.path.length)};
+  }
+}
+
+function migrateTiles(route:DeskRoute, apps:readonly AppRegistration[]):DeskRoute {
+  const owner=(id:string)=>apps.find(app=>app.aliases?.some(alias=>alias.id===id))?.id ?? id;
+  if (!route.tiles.some(tile=>owner(tile.id)!==tile.id)) return route;
+  const tiles:Tile[]=[];
+  for (const id of new Set(route.tiles.map(tile=>owner(tile.id)))) {
+    const group=route.tiles.filter(tile=>owner(tile.id)===id);
+    const active=group.find(tile=>tile.id===route.focused) ?? group.find(tile=>!tile.minimized) ?? group[0];
+    const ordered=[...group.filter(tile=>tile!==active),active];
+    const trail=ordered.flatMap(tile=>tile.trail.map(path=>resolveAppPath(path,apps)?.path ?? path));
+    tiles.push({...active,id,trail,at:trail.length-active.trail.length+active.at,
+      pinned:group.some(tile=>tile.pinned),minimized:group.every(tile=>tile.minimized)});
+  }
+  return {tiles,focused:route.focused && owner(route.focused),maximized:route.maximized && owner(route.maximized),
+    home:route.home && [...new Set(route.home.map(owner))]};
+}
+
 export function readRoute(href: string, apps: readonly AppRegistration[]): DeskRoute {
+  const registrations=apps.flatMap(app=>[app,...(app.aliases ?? []).map(alias=>({...app,id:alias.id,path:alias.path}))]);
   const url = new URL(href, 'http://loom');
   let paths: Record<string,string> = {};
   try { paths = JSON.parse(url.searchParams.get('paths') ?? '{}'); } catch { /* malformed address */ }
   const entries = (url.searchParams.get('t') ?? '').split(',');
   const minimized = (url.searchParams.get('m') ?? '').split(',');
   if (!url.searchParams.has('t') && !url.searchParams.has('m')) {
-    const app = apps.find(a => url.pathname === a.path || url.pathname.startsWith(a.path + '/'));
-    return app ? { tiles: [{ id: app.id, trail: [url.pathname + url.search], at: 0, used: 0 }], focused: app.id } : { tiles: [] };
+    const destination=resolveAppPath(url.pathname+url.search,apps);
+    return destination ? { tiles: [{ id: destination.app.id, trail: [destination.path], at: 0, used: 0 }], focused: destination.app.id } : { tiles: [] };
   }
   const tiles: Tile[] = []; let focused: string | undefined;
   for (const [raw, min] of [...entries.map(x => [x,false] as const), ...minimized.map(x => [x,true] as const)]) {
     const id = raw.replace(/^\*/, '').replace(/!$/, '');
-    const app = apps.find(a => a.id === id); if (!app || tiles.some(t => t.id === id)) continue;
+    const app = registrations.find(a => a.id === id); if (!app || tiles.some(t => t.id === id)) continue;
     const path = paths && typeof paths[id] === 'string' && (paths[id] === app.path || paths[id].startsWith(app.path + '/') || paths[id].startsWith(app.path + '?')) ? paths[id] : app.path;
     if (!min && raw.startsWith('*') && !focused) focused = id;
     tiles.push({ id, trail: [path], at: 0, used: 0, minimized: min, pinned: !min && tiles.length === 0 && raw.endsWith('!') });
   }
   focused ??= tiles.find(t => !t.minimized)?.id;
-  return { tiles, focused, ...(focused && url.searchParams.get('maxTile') === focused ? {maximized:focused} : {}), ...(url.searchParams.has('h') ? {home:(url.searchParams.get('h')??'').split(',').filter(id=>tiles.some(t=>t.id===id))}: {}) };
+  return migrateTiles({ tiles, focused, ...(focused && url.searchParams.get('maxTile') === focused ? {maximized:focused} : {}), ...(url.searchParams.has('h') ? {home:(url.searchParams.get('h')??'').split(',').filter(id=>tiles.some(t=>t.id===id))}: {}) },apps);
 }
 export function writeRoute(route: DeskRoute): string {
   const focused = route.tiles.find(t => t.id === route.focused && !t.minimized);
@@ -58,7 +85,10 @@ export class DeskRouter {
   private read(): DeskRoute {
     const address = readRoute(this.browser.location.href,this.apps);
     const saved = this.browser.history.state?.loomNext as DeskRoute | undefined;
-    if (saved && Array.isArray(saved.tiles) && saved.tiles.every(t => this.apps.some(a => a.id===t.id) && Array.isArray(t.trail) && t.trail.every(p => typeof p==='string') && Number.isInteger(t.at) && t.at>=0 && t.at<t.trail.length) && writeRoute(saved)===writeRoute(address)) return saved;
+    if (saved && Array.isArray(saved.tiles) && saved.tiles.every(t => this.apps.some(a => a.id===t.id || a.aliases?.some(alias=>alias.id===t.id)) && Array.isArray(t.trail) && t.trail.every(p => typeof p==='string') && Number.isInteger(t.at) && t.at>=0 && t.at<t.trail.length)) {
+      const migrated=migrateTiles(saved,this.apps);
+      if(writeRoute(migrated)===writeRoute(address)) return migrated;
+    }
     return address;
   }
   private pop = () => { this.route = this.read(); this.emit(); };
@@ -95,6 +125,7 @@ export class DeskRouter {
   }
   focus(id: string) { if (this.route.tiles.some(t => t.id === id && !t.minimized)) this.save({ ...this.route, maximized:this.route.maximized===id?id:undefined, focused: id, tiles: this.route.tiles.map(t => t.id === id ? { ...t, used: ++this.serial } : t) },true); }
   go(id: string, path: string) {
+    path=resolveAppPath(path,this.apps)?.path ?? path;
     const app = this.apps.find(a => a.id === id);
     if (!app || !(path === app.path || path.startsWith(app.path + '/') || path.startsWith(app.path + '?'))) {
       const other = this.apps.find(a => path === a.path || path.startsWith(a.path + '/') || path.startsWith(a.path + '?'));

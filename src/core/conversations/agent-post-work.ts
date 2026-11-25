@@ -50,7 +50,7 @@ function visibleWork(db: DataDatabase, viewer: Viewer, ids: string[]) {
     const rows = db.select({id:changes.id,title:changes.title,state:changes.state,draft:changes.draft})
       .from(changes).where(and(visible,inArray(changes.id,sql`(select value from json_each(${JSON.stringify(changeIds)}))`))).all();
     for (const row of rows) links.set(row.id,{id:row.id,title:row.title,
-      state:row.state==='open' && row.draft?'draft':row.state,href:'/p/changes-preview/change/'+encodeURIComponent(row.id)});
+      state:row.state==='open' && row.draft?'draft':row.state,href:'/p/work/changes/change/'+encodeURIComponent(row.id)});
   }
   return links;
 }

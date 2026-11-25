@@ -65,13 +65,13 @@ it('shows one quiet line with nothing to show, and no heading or count', async (
 });
 
 it('opens what a pill names through go, and leaves a pill with nowhere to go as plain text', async () => {
-  const go = await draw(live([item('task', { title: 'Order the pump', ref: 't-2190', href: '/p/tasks-preview/task/t-2190' }), item('private'), item('job', { title: 'Rebuild' })], 3));
+  const go = await draw(live([item('task', { title: 'Order the pump', ref: 't-2190', href: '/p/work/backlog/task/t-2190' }), item('private'), item('job', { title: 'Rebuild' })], 3));
   const rows = tree!.root.findAllByType('li');
   expect(rows.map((row: Node) => row.props['data-kind'])).toEqual(['task', 'private', 'job', undefined]);
   expect(words(rows[3])).toBe('+3 more');
-  const link = rows[0].findByType('a'); expect(link.props.href).toBe('/p/tasks-preview/task/t-2190');
+  const link = rows[0].findByType('a'); expect(link.props.href).toBe('/p/work/backlog/task/t-2190');
   const preventDefault = vi.fn(); await act(async () => link.props.onClick({ button: 0, preventDefault }));
-  expect(preventDefault).toHaveBeenCalled(); expect(go).toHaveBeenCalledWith('/p/tasks-preview/task/t-2190');
+  expect(preventDefault).toHaveBeenCalled(); expect(go).toHaveBeenCalledWith('/p/work/backlog/task/t-2190');
   // A modified click is the browser's.
   go.mockClear(); await act(async () => link.props.onClick({ button: 0, metaKey: true, preventDefault })); expect(go).not.toHaveBeenCalled();
   for (const row of rows.slice(1, 3)) { expect(row.findAllByType('a')).toHaveLength(0); expect(row.findAllByType('button')).toHaveLength(0); }
@@ -88,10 +88,10 @@ it('reads nothing from a selection that is not live or not whole', () => {
 it('says the tasks an agent has only claimed in one quiet line under the pills, opening Tasks on them, and never counts them as more', async () => {
   const go = await draw(live([item('job', { title: 'Rebuild' })], 0, 54), { agent: 'art/1' });
   const line = tree!.root.findByProps({ className: 'desk-doing-claimed' });
-  expect(words(line)).toBe('54 tasks in progress ›'); expect(line.props.href).toBe('/p/tasks-preview/?folder=progress&assignee=art%2F1');
-  expect(claimedPath('art')).toBe('/p/tasks-preview/?folder=progress&assignee=art');
+  expect(words(line)).toBe('54 tasks in progress ›'); expect(line.props.href).toBe('/p/work/backlog?folder=progress&assignee=art%2F1');
+  expect(claimedPath('art')).toBe('/p/work/backlog?folder=progress&assignee=art');
   const preventDefault = vi.fn(); await act(async () => line.props.onClick({ button: 0, preventDefault }));
-  expect(preventDefault).toHaveBeenCalled(); expect(go).toHaveBeenCalledWith('/p/tasks-preview/?folder=progress&assignee=art%2F1');
+  expect(preventDefault).toHaveBeenCalled(); expect(go).toHaveBeenCalledWith('/p/work/backlog?folder=progress&assignee=art%2F1');
   expect(JSON.stringify(tree!.toJSON())).not.toContain(' more');
   // With no pill at all the line still stands, under "Nothing right now."; one task is singular.
   await act(async () => tree!.update(h(Doing, { doing: live([], 0, 1), name: 'Art', agent: 'art', go })));

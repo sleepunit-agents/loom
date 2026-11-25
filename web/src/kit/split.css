@@ -23,18 +23,18 @@
    a set height, so 100% is the tile's body; with a Split filling it the page itself has nothing to scroll and keeps
    no gutter. Every Split gets this without its app asking (no h-full). */
 .next-page:has(> .loom-split) { overflow: hidden; scrollbar-gutter: auto; }
-.next-page > .loom-split { height: 100%; grid-template-rows: minmax(0, 1fr); }
-.next-page > .loom-split > * { min-height: 0; }
-.next-page > .loom-split > .loom-split__nav { overflow-y: auto; overscroll-behavior: contain; }
+:is(.next-page, .work-desk) > .loom-split { height: 100%; grid-template-rows: minmax(0, 1fr); }
+:is(.next-page, .work-desk) > .loom-split > * { min-height: 0; }
+:is(.next-page, .work-desk) > .loom-split > .loom-split__nav { overflow-y: auto; overscroll-behavior: contain; }
 /* (The list pane scrolls as a whole only when its head and filters leave the rows less than their least height.) */
-.next-page > .loom-split > .loom-split__list { overflow-y: auto; overscroll-behavior: contain; }
-.next-page > .loom-split > .loom-split__list > .loom-split__rows { flex: 1 1 0; min-height: 96px; overflow-y: auto; overscroll-behavior: contain; }
-.next-page > .loom-split > .loom-split__list > .loom-split__rows > .loom-kit-empty { flex: 1; height: auto; }
-.next-page > .loom-split > .loom-split__reader { overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
-.next-page > .loom-split[data-mode="one"] > .loom-split__reader { position: absolute; inset: 0; }
+:is(.next-page, .work-desk) > .loom-split > .loom-split__list { overflow-y: auto; overscroll-behavior: contain; }
+:is(.next-page, .work-desk) > .loom-split > .loom-split__list > .loom-split__rows { flex: 1 1 0; min-height: 96px; overflow-y: auto; overscroll-behavior: contain; }
+:is(.next-page, .work-desk) > .loom-split > .loom-split__list > .loom-split__rows > .loom-kit-empty { flex: 1; height: auto; }
+:is(.next-page, .work-desk) > .loom-split > .loom-split__reader { overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+:is(.next-page, .work-desk) > .loom-split[data-mode="one"] > .loom-split__reader { position: absolute; inset: 0; }
 /* Anywhere else (a page of its own) it's the page's height: the list scrolls with the page, the reader replaces it. */
 .loom-split[data-mode="one"][data-open] > .loom-split__list { visibility: hidden; }
-.loom-split[data-mode="one"][data-open]:not(.next-page > .loom-split) > .loom-split__list { display: none; }
+.loom-split[data-mode="one"][data-open]:not(:is(.next-page, .work-desk) > .loom-split) > .loom-split__list { display: none; }
 
 /* ---- folders ---- */
 .loom-split__nav { padding: 10px 8px; border-right: 1px solid var(--sp-line); display: flex; flex-direction: column; gap: 10px; }

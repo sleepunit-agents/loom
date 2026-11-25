@@ -209,7 +209,7 @@ it('shows a current mentioned pull request card, updates it and withdraws denied
   setup(); const id='github:house/loom#7'; f.data.commsRefs=[{ref:id,messageSeq:1}];
   f.data.mentionedChanges = {[id]:[{id,title:'CURRENT PR TITLE',state:'open',checks:'running',review:'required',waitingOn:'ci',draft:false}]};
   const go=await draw(); expect(text()).toContain('CURRENT PR TITLE'); expect(text()).toContain('Checks running');
-  await act(async()=>{named('Open').props.onClick();}); expect(go).toHaveBeenCalledWith('/p/changes-preview/change/github%3Ahouse%2Floom%237');
+  await act(async()=>{named('Open').props.onClick();}); expect(go).toHaveBeenCalledWith('/p/work/changes/change/github%3Ahouse%2Floom%237');
   f.data.mentionedChanges = {[id]:[{id,title:'UPDATED PR TITLE',state:'merged',checks:'passing',review:'approved',waitingOn:'done',draft:false}]};
   await act(async()=>{tree.update(h(CommsApp,{path:'/p/comms-preview/thread/pump',go}));});
   expect(text()).toContain('UPDATED PR TITLE'); expect(text()).toContain('Merged'); expect(text()).not.toContain('CURRENT PR TITLE');
@@ -292,7 +292,7 @@ it('opens both a source task and a mentioned task in the Tasks tile',async()=>{
  setup();f.data.sourceTasks=[{id:'t-90',title:'SOURCE TO OPEN',status:'open'}];f.data.commsRefs=[{ref:'t-91',messageSeq:1}];f.data.mentionedTasks={'t-91':[{id:'t-91',title:'MENTION TO OPEN',status:'open'}]};
  const go=await draw();
  for(const [label,id] of [['SOURCE TO OPEN','t-90'],['MENTION TO OPEN','t-91']]){
-  await act(async()=>{work(label).props.onClick();});expect(go).toHaveBeenLastCalledWith('/p/tasks-preview/task/'+id);
+  await act(async()=>{work(label).props.onClick();});expect(go).toHaveBeenLastCalledWith('/p/work/backlog/task/'+id);
  }
 });
 

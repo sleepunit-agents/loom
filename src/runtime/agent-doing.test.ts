@@ -114,7 +114,7 @@ it('says each thing by its kind, from the rows alone, to the person who may read
   expect(all.get('j-program')).toEqual({ id: 'j-program', kind: 'trigger', title: 'Tidy the logs', since: hour(6), state: 'running', href: '/p/tempo' });
   expect(all.get('j-sweep')).toEqual({ id: 'j-sweep', kind: 'wake', title: 'The sweep', since: hour(5), state: 'running', href: '/p/comms-preview/conversation/cv-sweep' });
   expect(all.get('j-hand')).toEqual({ id: 'j-hand', kind: 'handoff', title: 'Check the pump', since: hour(4), state: 'running', href: '/p/comms-preview/conversation/cv-hand' });
-  expect(all.get('t-2190')).toEqual({ id: 't-2190', kind: 'task', title: 'Order the pump', ref: 't-2190', since: at, state: 'in_progress', href: '/p/tasks-preview/task/t-2190' });
+  expect(all.get('t-2190')).toEqual({ id: 't-2190', kind: 'task', title: 'Order the pump', ref: 't-2190', since: at, state: 'in_progress', href: '/p/work/backlog/task/t-2190' });
   expect(all.get('j-plain')).toEqual({ id: 'j-plain', kind: 'job', title: 'Rebuild the index', since: hour(2), state: 'running' });
   expect([...all.keys()].sort()).toEqual(['j-dm', 'j-group', 'j-guest', 'j-hand', 'j-loom', 'j-night', 'j-plain', 'j-pond', 'j-program', 'j-slack', 'j-slack-dm', 'j-sweep', 'j-term', 't-2190']);
 });
@@ -193,11 +193,11 @@ it('names a trigger, a task and a machine each under its own rule', () => {
   h.task('t-7', 'Order the pump'); h.task('t-8', 'Drain the pond', { ownerKind: 'household', owner: null, project: 'pond' });
   expect(h.as(bo).doing('art').items.map(said)).toEqual([
     { id: 'j-bo', kind: 'wake', title: 'Morning reminder', since: at, state: 'running', href: '/p/comms-preview/conversation/cv-bo' },
-    { id: 't-8', kind: 'task', title: 'Drain the pond', ref: 't-8', since: at, state: 'in_progress', href: '/p/tasks-preview/task/t-8' },
+    { id: 't-8', kind: 'task', title: 'Drain the pond', ref: 't-8', since: at, state: 'in_progress', href: '/p/work/backlog/task/t-8' },
   ]);
   expect(JSON.stringify(h.as(bo).doing('art'))).not.toMatch(/Remind Bo|tempo|t-7|Order the pump|"one"/);
   // Alex reads the trigger and Art's own task, and not Bo's conversation or the project's task.
-  expect(h.as(alex).doing('art').items.map(said)).toEqual([{ id: 't-7', kind: 'task', title: 'Order the pump', ref: 't-7', since: at, state: 'in_progress', href: '/p/tasks-preview/task/t-7' }]);
+  expect(h.as(alex).doing('art').items.map(said)).toEqual([{ id: 't-7', kind: 'task', title: 'Order the pump', ref: 't-7', since: at, state: 'in_progress', href: '/p/work/backlog/task/t-7' }]);
   // With a wider jobs filter Alex is told of a private job, and still not which trigger, though Alex may read that trigger.
   expect(h.as(alex, { jobs: () => sql`true` }).doing('art').items[0]).toMatchObject({ id: 'j-bo', kind: 'private', title: null, href: null, machine: 'one' });
   expect(h.as(house).doing('art').items.map(item => item.id)).toEqual(['t-7', 't-8']);
@@ -236,8 +236,8 @@ it('makes a pill only of a task touched in the last eight hours, three at most, 
   h.task('t-2', 'Claimed just now', { changedAt: ago(60_000) });
   const read = h.as(alex).doing('art');
   expect(read.items.map(said)).toEqual([
-    { id: 't-2', kind: 'task', title: 'Claimed just now', ref: 't-2', since: ago(60_000), state: 'in_progress', href: '/p/tasks-preview/task/t-2' },
-    { id: 't-1', kind: 'task', title: 'Commented an hour ago', ref: 't-1', since: ago(3_600_000), state: 'in_progress', href: '/p/tasks-preview/task/t-1' },
+    { id: 't-2', kind: 'task', title: 'Claimed just now', ref: 't-2', since: ago(60_000), state: 'in_progress', href: '/p/work/backlog/task/t-2' },
+    { id: 't-1', kind: 'task', title: 'Commented an hour ago', ref: 't-1', since: ago(3_600_000), state: 'in_progress', href: '/p/work/backlog/task/t-1' },
   ]);
   expect(read).toMatchObject({ more: 0, claimed: 52 });
   expect(JSON.stringify(read)).not.toContain('Claimed long ago');

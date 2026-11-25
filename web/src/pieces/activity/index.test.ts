@@ -23,7 +23,7 @@ afterEach(async()=>{if(tree)await act(async()=>tree!.unmount());tree=undefined;a
 it('matches any within each filter group and all across groups, with stable address and safe links',()=>{
  const e=entry();expect(passes(e,{who:['other','owner'],where:['terminal'],what:['work']})).toBe(true);expect(passes(e,{who:['art'],where:['slack'],what:[]})).toBe(false);
  const filters={who:['art','owner'],where:['terminal'],what:['work']};expect(filtersOf(new URL(address(filters,e.id,e.day),'http://loom').searchParams)).toEqual(filters);
- expect(safeHref('javascript:alert(1)')).toBeUndefined();expect(safeHref('//evil.test')).toBeUndefined();expect(safeHref('/\\evil.test')).toBeUndefined();expect(safeHref('/p/tasks-preview/task/t-12')).toBe('/p/tasks-preview/task/t-12');
+ expect(safeHref('javascript:alert(1)')).toBeUndefined();expect(safeHref('//evil.test')).toBeUndefined();expect(safeHref('/\\evil.test')).toBeUndefined();expect(safeHref('/p/work/backlog/task/t-12')).toBe('/p/work/backlog/task/t-12');
 });
 it('distinguishes loading, offline, denial, unavailable sources and empty feed without making calls',async()=>{
  f.access={records:[],status:'loading'};await act(async()=>{tree=create(h(Activity,props));});expect(text()).toContain('Opening activity');
@@ -39,9 +39,9 @@ it('uses address filters and handler navigation, preserves Earlier subscriptions
  await act(async()=>tree!.unmount());await act(async()=>{tree=create(h(Activity,props));});expect(f.scopes).toContain('activity.window:2026-11-10');expect(f.call).not.toHaveBeenCalled();
 });
 it('renders the full reader and original internal destinations; hides reader data when offline',async()=>{
- f.window=feed();f.detail={records:[{...entry(),asked:['Build it'],decided:['Use live records'],story:'The complete story',tasks:[{label:'t-12',href:'/p/tasks-preview/task/t-12'}],prs:[{label:'loom#941',href:'https://github.com/sleepunit-agents/loom/pull/941'}],links:[],needs:'Ship?',steps:[{label:'Read files',state:'done',tool:'Read'}],more:[{id:'d~art~dg-two',at:entry().at,title:'Earlier run'}]}],status:'live'};
+ f.window=feed();f.detail={records:[{...entry(),asked:['Build it'],decided:['Use live records'],story:'The complete story',tasks:[{label:'t-12',href:'/p/work/backlog/task/t-12'}],prs:[{label:'loom#941',href:'https://github.com/sleepunit-agents/loom/pull/941'}],links:[],needs:'Ship?',steps:[{label:'Read files',state:'done',tool:'Read'}],more:[{id:'d~art~dg-two',at:entry().at,title:'Earlier run'}]}],status:'live'};
  await act(async()=>{tree=create(h(Activity,{...props,path:'/p/activity-preview/?e=d~art~dg-one'}));});expect(text()).toContain('The complete story');expect(text()).toContain('with you');expect(text()).toContain('Use live records');expect(text()).toContain('Read files');expect(text()).toContain('Ship?');
- const link=tree!.root.findAllByType('a').find(a=>a.props.children==='t-12')!,preventDefault=vi.fn();await act(async()=>link.props.onClick({preventDefault}));expect(preventDefault).toHaveBeenCalledOnce();expect(props.go).toHaveBeenCalledWith('/p/tasks-preview/task/t-12');
+ const link=tree!.root.findAllByType('a').find(a=>a.props.children==='t-12')!,preventDefault=vi.fn();await act(async()=>link.props.onClick({preventDefault}));expect(preventDefault).toHaveBeenCalledOnce();expect(props.go).toHaveBeenCalledWith('/p/work/backlog/task/t-12');
  f.detail={records:[],status:'offline'};await act(async()=>tree!.update(h(Activity,{...props,path:'/p/activity-preview/?e=d~art~dg-one'})));expect(text()).not.toContain('The complete story');expect(text()).toContain('Connection lost');
 });
 

@@ -12,7 +12,7 @@ import { CatchUp, ProjectPosts } from './catch-up';
 import { ProjectNeeds } from './project-needs';
 import { ProjectBoard } from './board';
 import { UnfiledTickets } from './unfiled';
-import { workTicketPath } from '../../../../src/task-route';
+import { taskPath } from '../../../../src/task-route';
 import { Body, Empty, Error, List, Loading, Row, Section } from '../../kit';
 import { useDataQuery } from '../../data/graphql';
 import { unfiledBase, unfiledPage, workHomeQuery, workProjectQuery } from './query';
@@ -68,7 +68,7 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
     if (view==='history') return <WorkFrame {...frame}><BacklogWindow key={path} project={project.id} path={path} detail go={go}/></WorkFrame>;
     if (view==='board') return <WorkFrame {...frame}><ProjectBoard key={project.id} project={project.id} path={path} go={go}/></WorkFrame>;
     const tickets = (label:string, rows:Ticket[]) => <Section label={label}><List label={label}>{rows.map(ticket=>
-      <Row key={ticket.id} title={ticket.title} status={statusWords[ticket.status]} onClick={()=>go(workTicketPath(ticket.id,project.id))}/>
+      <Row key={ticket.id} title={ticket.title} status={statusWords[ticket.status]} onClick={()=>go(taskPath(ticket.id,project.id))}/>
     )}</List></Section>;
     const {working,recent:recentTickets} = detail.data!;
     const recent = recentTickets.filter(ticket=>!working.some(active=>active.id===ticket.id));

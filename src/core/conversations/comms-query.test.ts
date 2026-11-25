@@ -498,8 +498,8 @@ it('attaches current work states to a post without requiring the IDs in its word
     expect(result.errors).toBeUndefined();
     return (result.data!.agentActivityFeed as {latest:{work:unknown[];words:string}}[])[0].latest;
   };
-  const task={id:'t-17',title:'Fix disk cleanup',state:'open',href:'/p/tasks-preview/task/t-17'};
-  const change={id,title:'Remove test homes',state:'open',href:'/p/changes-preview/change/github%3Ahouse%2Floom%237'};
+  const task={id:'t-17',title:'Fix disk cleanup',state:'open',href:'/p/work/backlog/task/t-17'};
+  const change={id,title:'Remove test homes',state:'open',href:'/p/work/changes/change/github%3Ahouse%2Floom%237'};
   expect(await read()).toEqual({words:'Oh right, it was me. Fixed.',work:[task,change]});
   f.db.update(changes).set({state:'merged'}).where(eq(changes.id,id)).run();
   expect((await read()).work).toEqual([task,{...change,state:'merged'}]);

@@ -1,6 +1,6 @@
 import {ToolbarControls} from '../../kit/toolbar';
 import {NativeSelect} from '../../kit/native-select';
-import {workTicketPath} from '../../../../src/task-route';
+import {taskPath} from '../../../../src/task-route';
 import {useDataQuery} from '../../data/graphql';
 import {useAgentNames} from '../../data/names';
 import {Body,Empty,Error,LinkButton,Loading,Pager,Row,Section} from '../../kit';
@@ -42,11 +42,11 @@ export function ProjectBoard({project,path,go}:{project:string;path:string;go:(p
     <div className="work-lanes">
       {['Working','Waiting','Verifying'].map(lane=><Section key={lane} label={lane} className="work-lane" data-stage={lane}>
         {cards.filter(card=>card.lane===lane).map(card=><Row key={card.id} layout="stack" title={card.title}
-          meta={card.reason} status={card.assignee ? displayName(card.assignee,names) : undefined} onClick={()=>go(workTicketPath(card.id,project))}/>)}
+          meta={card.reason} status={card.assignee ? displayName(card.assignee,names) : undefined} onClick={()=>go(taskPath(card.id,project))}/>)}
         {!cards.some(card=>card.lane===lane) && <Body quiet>No tickets</Body>}
       </Section>)}
       <Section label="Recently finished" className="work-lane" data-stage="Finished">{feed.data.finished.map(card=><Row key={card.id} layout="stack" title={card.title}
-        status={card.reason ?? undefined} onClick={()=>go(workTicketPath(card.id,project))}/>)}
+        status={card.reason ?? undefined} onClick={()=>go(taskPath(card.id,project))}/>)}
         {!feed.data.finished.length && <Body quiet>No closed tickets</Body>}
       </Section>
     </div>

@@ -1,5 +1,5 @@
 import { Component, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react';
-import { DeskRouter, currentPath, presentedTiles, type AppRegistration, type Tile } from './router';
+import { resolveAppPath, DeskRouter, currentPath, presentedTiles, type AppRegistration, type Tile } from './router';
 import { ContextMenu, type MenuAt } from '../tiling/menu';
 import { layout, railWidth, type Rect } from '../tiling/layout';
 import { Loading, Error, Button, Empty } from '../kit';
@@ -123,15 +123,15 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   },[visible,route.focused,router,boxes,phone]);
   const go = useCallback((path:string) => {
     if(path === '/') {router.home();return;}
-    const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));
-    if(app){open(app.id);router.go(app.id,path);}
+    const target=resolveAppPath(path,apps);
+    if(target){open(target.app.id);router.go(target.app.id,target.path);}
   },[apps,open,router]);
   const railSurface = useMemo(()=>Rail ? <Rail go={go}/> : null,[Rail,go]);
   return <RailContext.Provider value={phone?null:companion}><div className="next-shell" data-shell={phone ? 'phone' : 'desk'} data-dock-mode={phone?'always':hiding.modes.dock}>
     {Bar ? <Bar title={apps.find(a => a.id === focused?.id)?.title ?? 'Home'} go={go} /> : <header className="next-bar"><strong>LOOM<span aria-hidden="true">//</span>OS</strong><span>{apps.find(a => a.id === focused?.id)?.title ?? 'Home'}</span><Button variant="ghost" size="sm" onClick={() => setLauncher(!launcher)}>All apps</Button></header>}
     <div ref={ground} className="next-ground">
       <AgentCardMotion ground={ground} home={!visible.length} phone={phone}>
-      {!visible.length && (Home ? <Home go={path => { const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/')); if(app){open(app.id);router.go(app.id,path);} }} /> : <Empty title="Your desk" text="Open an app from the dock." />)}
+      {!visible.length && (Home ? <Home go={go} /> : <Empty title="Your desk" text="Open an app from the dock." />)}
       {!phone && Rail && visible.length>0 && <>
         {visible.length>0&&railAs!=='always'&&<button type="button" data-hide-part="rail" className="next-rail-edge" data-mode={railAs} data-attention={attention||undefined} aria-label="Show agents rail" aria-expanded={hiding.peek.rail}
           onClick={()=>hiding.show('rail',true)} onPointerEnter={()=>{if(railAs==='auto')hiding.show('rail',true);}} onPointerDown={e=>{if(e.pointerType==='touch')hiding.show('rail',true);}} onContextMenu={e=>setMenu(hiding.menu('rail',e))}><span aria-hidden="true">‹</span></button>}
@@ -162,7 +162,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
       })}
     </div>
     {Notice && <Notice go={go} />}
-    {!phone&&Signals&&<Signals onAttention={setAttention} go={path=>{const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}}/>}
+    {!phone&&Signals&&<Signals onAttention={setAttention} go={go}/>}
     <Launcher apps={apps} open={launcher&&!keys.switching} onOpenChange={setLauncher} launch={open} />
     <Switcher apps={apps} switching={keys.switching} pick={keys.pick} />
     {!phone&&hiding.modes.dock!=='always'&&<button type="button" data-hide-part="dock" className="next-dock-edge" data-mode={hiding.modes.dock} data-attention={attention||undefined} aria-label="Show dock" aria-expanded={hiding.peek.dock}

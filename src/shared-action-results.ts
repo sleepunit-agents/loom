@@ -11,8 +11,8 @@ import type { DataDatabase } from './core/data/database.js';
 import type { DataWrites } from './core/data/writes.js';
 import { actionResults } from './core/data/schema.js';
 const areas: Record<string,readonly [string,string]>={
- comms:['Conversations','/p/comms-preview'],inbox:['Inbox','/p/inbox-preview'],tasks:['Tasks','/p/tasks-preview'],
- approvals:['Approvals','/p/approvals-preview'],changes:['Changes','/p/changes-preview'],
+ comms:['Conversations','/p/comms-preview'],inbox:['Inbox','/p/inbox-preview'],tasks:['Work','/p/work/backlog'],
+ approvals:['Approvals','/p/approvals-preview'],changes:['Work','/p/work/changes'],
  tempo:['Tempo','/p/tempo'],
  secrets:['Secrets','/p/settings-preview/requests'],settings:['Settings','/p/settings-preview'],
  household:['Appearance','/p/settings-preview'],runtime:['Machines and jobs',''],

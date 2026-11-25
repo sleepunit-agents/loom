@@ -149,7 +149,7 @@ it('leads each card with what its agent is doing, directly under its name, in se
   expect(words(doingList())).toContain('+2 more');expect(words(doingList())).toContain('Queued · since ');expect(words(doingList())).toContain('Queued · since ');
   // The tasks it has only claimed are one quiet line under the pills, to Tasks; they are never part of "+N more".
   const claimed=tree!.root.findByProps({'aria-label':'Art card'}).findByProps({className:'desk-doing-claimed'});
-  expect(words(claimed)).toBe('54 tasks in progress ›');expect(claimed.props.href).toBe('/p/tasks-preview/?folder=progress&assignee=art');
+  expect(words(claimed)).toBe('54 tasks in progress ›');expect(claimed.props.href).toBe('/p/work/backlog?folder=progress&assignee=art');
   expect(tree!.root.findByProps({'aria-label':'Mark card'}).findAllByProps({className:'desk-doing-claimed'})).toHaveLength(0);
   const card=tree!.root.findByProps({'aria-label':'Art card'});
   const drawn=(node:any):any=>!node||typeof node==='string'?undefined:Array.isArray(node)?node.map(drawn).find(Boolean):node.props?.['aria-label']==='Art card'?node:drawn(node.children??[]);

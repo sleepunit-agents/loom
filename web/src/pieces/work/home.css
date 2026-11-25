@@ -69,3 +69,11 @@
   font: 600 11px/1.4 var(--loom-font-data, monospace); letter-spacing: .045em; text-transform: uppercase;
 }
 .loom-toolbar .work-mark { width: 34px; height: 30px; }
+
+/* Backlogs and PRs use the full tile so each pane keeps its own scroll position. */
+.next-page:has(> .work-desk > .loom-split) { overflow: hidden; scrollbar-gutter: auto; }
+.work-desk:has(> .loom-split) {
+  height: 100%; padding: 0;
+  display: grid; grid-template-rows: auto minmax(0,1fr);
+}
+.work-desk:has(> .loom-split) > .loom-toolbar { margin: 0; }

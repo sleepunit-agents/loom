@@ -76,7 +76,7 @@ export function doingMeta(item: DoingItem, zone?: string, now = Date.now()): str
     quiet ? `no word since ${quiet}` : !since ? '' : item.kind === 'task' ? `touched ${since}` : `since ${since}`].filter(Boolean).join(' · ');
 }
 /** The Tasks app on one agent's tasks in progress. */
-export const claimedPath = (agent: string) => `/p/tasks-preview/?folder=progress&assignee=${encodeURIComponent(agent)}`;
+export const claimedPath = (agent: string) => `/p/work/backlog?folder=progress&assignee=${encodeURIComponent(agent)}`;
 
 /** The lead of an agent's card: one pill per thing it is doing, each opening what it names. Compact (the rail,
  * a folded card) leaves the quiet line to the pill's title. */

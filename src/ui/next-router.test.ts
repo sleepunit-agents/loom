@@ -76,3 +76,27 @@ it('resize docks the least recently used tile even after it was made big, and na
   expect(currentPath(r.getSnapshot().tiles.find(t=>t.id==='example')!)).toBe('/_dev/live-example/detail');
   r.close();
 });
+
+it('restores absorbed windows into Work and keeps each destination in its navigation history',()=>{
+  const work={...apps[0],id:'work',title:'Work',path:'/p/work',aliases:[
+    {id:'tasks',path:'/p/tasks-preview',destination:'/p/work/backlog'},
+    {id:'changes',path:'/p/changes-preview',destination:'/p/work/changes'},
+  ]};
+  const installed=[work,apps[1]];
+  const ticket='/p/tasks-preview/task/~old%2Fid?folder=progress&assignee=art';
+  const pr='/p/changes-preview/change/github%3Aacme%2Fapp%233';
+  expect(currentPath(readRoute(ticket,installed).tiles[0])).toBe('/p/work/backlog/task/~old%2Fid?folder=progress&assignee=art');
+  const params=new URLSearchParams({t:'work!,*changes',m:'tasks,example',maxTile:'changes',
+    paths:JSON.stringify({work:'/p/work/project/pond',changes:pr,tasks:ticket})});
+  const restored=readRoute('/?'+params,installed);
+  expect(restored.focused).toBe('work');
+  expect(restored.maximized).toBe('work');
+  expect(restored.tiles.map(tile=>tile.id)).toEqual(['work','example']);
+  expect(restored.tiles[0].pinned).toBe(true);
+  expect(restored.tiles[0].trail).toEqual(['/p/work/project/pond','/p/work/backlog/task/~old%2Fid?folder=progress&assignee=art','/p/work/changes/change/github%3Aacme%2Fapp%233']);
+  expect(currentPath(restored.tiles[0])).toBe(restored.tiles[0].trail[2]);
+  const router=new DeskRouter(installed,browser() as never);
+  router.open('example');router.go('example',ticket);
+  expect(router.getSnapshot().focused).toBe('work');
+  expect(currentPath(router.getSnapshot().tiles.find(tile=>tile.id==='work')!)).toContain('~old%2Fid?folder=progress');
+});
