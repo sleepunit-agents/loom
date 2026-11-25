@@ -276,16 +276,16 @@ it('says a status on a row only when it says something, and marks an unread one'
 });
 it('heads the thread with its title, who it is with, its project as a chip and a state only when there is one', async () => {
   await draw();
-  const head = tree.root.findByType('header');
+  const head = tree.root.findByProps({label:'Comms'}).findByType('header');
   expect(head.findByType('Title').props.children).toBe('Private pump');
   expect(words(head.findByType('Meta'))).toBe('with Art pond · Working');
   expect(head.findByType('Chip').props.children).toBe('pond');
   await act(async () => { tree.update(h(CommsView, { snapshot, detail: { ...detail, thread: { ...thread, working: false } }, selected: thread.id, select: vi.fn(), actions: actions() })); });
-  expect(words(tree.root.findByType('header').findByType('Meta'))).toBe('with Art pond');
+  expect(words(tree.root.findByProps({label:'Comms'}).findByType('header').findByType('Meta'))).toBe('with Art pond');
   // A question that waits on this person says so in the head, for as long as its card says it is waiting.
   const question = (id: string, note: (id: string, waiting: boolean) => void) => h(Waiter, { id, note });
   await act(async () => { tree.update(h(CommsView, { snapshot, detail: { ...detail, thread: { ...thread, working: false } }, selected: thread.id, select: vi.fn(), actions: actions(), cards: { question } })); });
-  expect(words(tree.root.findByType('header').findByType('Meta'))).toBe('with Art pond · Waiting on you');
+  expect(words(tree.root.findByProps({label:'Comms'}).findByType('header').findByType('Meta'))).toBe('with Art pond · Waiting on you');
 });
 function Waiter({ id, note }: { id: string; note(id: string, waiting: boolean): void }) { useEffect(() => { note(id, true); return () => note(id, false); }, [id]); return h('p', null, `Question ${id}`); }
 it('keeps the message bar under the messages: one line named for the agent, Send as the one filled button', async () => {
