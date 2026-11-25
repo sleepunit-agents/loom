@@ -94,6 +94,7 @@ export async function prepareAgentPost(db: DataDatabase, key: WordsKey, source: 
     edit.action !== 'rename' && edit.refs?.length ? key.seal(JSON.stringify(edit.refs)) : null,
   ]);
   return (at: string) => db.transaction(() => {
+    if (!ticket && !audience(source)?.member) throw new Error('Activity source unavailable');
     db.insert(agentPostSources).values(ticket ? {id:source,...ticket} : {id:source,conversationThread:source})
       .onConflictDoNothing().run();
     const origin = db.select().from(agentPostSources).where(eq(agentPostSources.id,source)).get();

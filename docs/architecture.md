@@ -175,7 +175,7 @@ before it runs any step, and refuses one it does not recognise without writing t
 | Project claim directions | `project_claim_directions` |
 | Tempo | `triggers`, `trigger_log`, `trigger_journals`, `trigger_acceptances`, `program_firings`, `trigger_edits`, `agent_pauses`, `tempo_settings` |
 | Changes | `changes`, `change_checks`, `change_people`, `change_tasks`, `change_sync`, `change_review_rounds` |
-| Agent activity feed | `agent_post_threads`, `agent_posts`, `agent_post_names`, `agent_post_work_refs`, `agent_post_work_pending` |
+| Agent activity feed | `agent_post_sources`, `agent_post_threads`, `agent_posts`, `agent_post_names`, `agent_post_work_refs`, `agent_post_work_pending` |
 | Observed terminals | `terminal_credentials`, `terminal_sessions`, `terminal_runs` |
 | Kits | `agent_kits`, `agent_kit_projects`, `agent_kit_members`, `agent_kit_outside_people`, `project_outside_people`, `kit_uses` |
 | Runtime | `model_account_logins`, `machine_reads`, `boxes`, `box_agents`, `box_facts`, `box_readings`, `guest_io_readings`, `box_alert_settings`, `jobs`, `job_usage`, `job_needs`, `agent_run_settings`, `agent_boxes`, `agent_house_secrets`, `agent_house_ports`, `agent_people`, `agent_denied_tools`, `model_accounts`, `model_account_windows`, `account_week_readings`, `account_calendar_readings`, `model_account_boxes`, `agent_models`, `account_signins` |

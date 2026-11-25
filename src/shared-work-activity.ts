@@ -5,6 +5,7 @@ import { bodyOperationDefaults, type conversationBodyScope } from './core/conver
 import type { WordsKey } from './core/conversations/words.js';
 import type { DataDatabase } from './core/data/database.js';
 import { inbox, inboxRefs, projects, tasks, triggerAcceptances, triggers } from './core/data/schema.js';
+import { projectRefusal } from './core/data/project-in-use.js';
 import { taskVisibility } from './core/data/visibility.js';
 import { operation, OperationError, type Operations } from './core/operations/index.js';
 import type { Viewer } from './policy.js';
@@ -30,11 +31,10 @@ export function registerWorkActivity(operations: Operations, db: DataDatabase,
         eq(inbox.source,'trigger'), eq(inbox.fromKind,'schedule'), eq(inbox.fromId,job.agent),
         eq(inbox.toKind,'agent'), eq(inbox.to,job.agent), eq(inbox.takenVolume,'full'),
         isNull(inbox.onWordKind), isNull(inbox.member))).get();
-    if (!receipt) return;
+    if (!receipt || projectRefusal(db,cv.project)) return;
     const assigned = db.select({id:tasks.id}).from(tasks).innerJoin(projects,eq(projects.id,tasks.project))
       .where(and(eq(tasks.id,task), eq(tasks.project,cv.project), eq(tasks.status,'in_progress'),
-        eq(tasks.assigneeKind,'agent'), eq(tasks.assignee,viewer.id), isNull(projects.retiredAt),
-        isNull(projects.removedAt), taskVisibility(viewer).projects!(getTableColumns(projects)),
+        eq(tasks.assigneeKind,'agent'), eq(tasks.assignee,viewer.id), taskVisibility(viewer).projects!(getTableColumns(projects)),
         taskVisibility(viewer).tasks!(getTableColumns(tasks)))).get();
     if (assigned) return {project:cv.project, agent:viewer.id, task, job:job.id};
   }
