@@ -12,8 +12,8 @@ const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser',chromium.executablePath()].find(p=>p&&existsSync(p));
 const enabled=!!process.env.CI&&process.env.LOOM_PEOPLE_EVIDENCE==='1';
 if(enabled&&process.env.RUNNER_ENVIRONMENT==='self-hosted')throw new Error('People browser evidence requires a hosted runner');
-if(enabled&&(!chrome||!existsSync(join(root,'next.html'))))throw new Error('People browser evidence requires Chrome and built next app in CI');
-it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, authorized relationships, outside updates and add in two windows',async()=>{
+if(enabled&&(!chrome||!existsSync(join(root,'index.html'))))throw new Error('People browser evidence requires Chrome and built next app in CI');
+it.runIf(enabled&&chrome&&existsSync(join(root,'index.html')))('People filters, authorized relationships, outside updates and add in two windows',async()=>{
   const home=mkdtempSync(join(tmpdir(),'people-app-'));const clock=new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
 
   for(const directory of ['commons','agents/art','agents/other'])mkdirSync(join(home,directory),{recursive:true});
@@ -108,9 +108,13 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
     });
     await b.getByRole('button',{name:'Contacts',exact:true}).last().click();
     await expect.poll(()=>b.locator('.loom-split').getAttribute('data-open')).toBe(null);
-    await b.getByRole('searchbox',{name:'Search people',exact:true}).fill('Casey');
+    await b.locator('header[aria-label="People toolbar"]').getByRole('searchbox',{name:'Search people',exact:true}).fill('Casey');
     await expect.poll(()=>row(b,'Jonathan Barket').count()).toBe(0);expect(await row(b,'Casey Smith').count()).toBe(1);
-    await b.getByRole('searchbox',{name:'Search people',exact:true}).fill('');
+    await row(b,'Casey Smith').press('Enter');
+    await b.getByRole('button',{name:'Contacts',exact:true}).and(b.locator('.loom-split__back')).click();
+    await expect.poll(()=>row(b,'Casey Smith').evaluate(button=>button===document.activeElement)).toBe(true);
+
+    await b.locator('header[aria-label="People toolbar"]').getByRole('searchbox',{name:'Search people',exact:true}).fill('');
     await b.getByRole('button',{name:'Add a person',exact:true}).click();
     await b.getByRole('textbox',{name:'Name',exact:true}).fill('Robin New');
     await b.getByRole('textbox',{name:'Who they are',exact:true}).fill('Helps with the workshop');
