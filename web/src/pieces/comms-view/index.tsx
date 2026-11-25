@@ -27,6 +27,7 @@ type Cards = {
   /** The agent's small face, beside the title. */
   screen?(waitingOnMember:boolean): ReactNode;
   history?: ReactNode;
+  workSubject?(kind:'ticket'|'project',id:string):ReactNode;
   /** A question where it was asked. */
   question?(id: string, note: Note): ReactNode;
   /** The conversation's questions that no message in the stream carries (`placed` are the ones that one does). */
@@ -106,6 +107,12 @@ function Entries({ messages, refs, drawing }: { messages: readonly CommsMessage[
     if (first.kind === 'card') return <li key={first.seq} className="comms-step" data-state={first.cardState ?? 'running'}>
       {said}<span>{first.words ?? first.tool ?? 'Working'} · {stepWords[first.cardState ?? 'running']}</span>
       <ArchivedStep message={first} zone={drawing.zone}/></li>;
+    if (first.kind==='notice' && first.seq===1 && first.sender==='loom' && first.clientId==='work.subject') {
+      const match=/^(Ticket|Project) (.+)$/.exec(first.words ?? '');
+      return <li key={first.seq} className="comms-notice">{said}{match
+        ? drawing.cards?.workSubject?.(match[1]==='Ticket' ? 'ticket' : 'project',match[2]) ?? first.words
+        : 'Work item unavailable'}</li>;
+    }
     if (first.kind === 'notice') return <li key={first.seq} className="comms-notice">{said}<ArchivedNotice message={first} zone={drawing.zone}/></li>;
     return <li key={first.seq} className="comms-group" data-side={mine(first) ? 'me' : 'them'}>
       <p className="comms-group__who" aria-hidden="true"><span>{who}</span><time dateTime={first.at} title={fullTime(first.at, drawing.zone)}>{briefTime(first.at, drawing.zone)}</time></p>

@@ -308,3 +308,31 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     expect(new URL(page.url()).pathname).toBe('/p/tasks-preview/task/t-1');
   } finally { await browser.close(); await app.close(); }
 });
+
+it.runIf(process.env.CI==='true' && chrome && existsSync(join(root,'index.html')))('discusses a Work ticket in Comms and sends only the typed direction',async()=>{
+  const app=await fixture(true);
+  app.data.writes.run(()=>app.db.insert(s.memberAgents).values({member:'sam',agent:'art'}).run());
+  const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  try {
+    const ctx=await browser.newContext({serviceWorkers:'block',reducedMotion:'reduce'});
+    await ctx.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
+    const page=await ctx.newPage();
+    page.setDefaultTimeout(7000);
+    await page.goto(app.url+'/p/tasks-preview/task/t-1');
+    await page.getByRole('button',{name:/Discuss privately with Art/i}).click();
+    const composer=page.getByRole('textbox',{name:'Message Art',exact:true});
+    await composer.waitFor();
+    expect(await composer.inputValue()).toBe('');
+    await page.locator('.comms-notice').getByRole('button',{name:title,exact:true}).waitFor();
+    expect(app.db.select().from(s.inbox).all()).toHaveLength(0);
+    await composer.fill('Please do this one next');
+    await page.getByRole('button',{name:'Send',exact:true}).click();
+    await expect.poll(()=>app.db.select().from(s.inbox).all().length).toBe(1);
+    const href=page.url();
+    await page.goto(app.url+'/p/tasks-preview/task/t-1');
+    await page.getByRole('button',{name:/Discuss privately with Art/i}).click();
+    await composer.waitFor();
+    expect(page.url()).toBe(href);
+    expect(app.db.select().from(s.inbox).all()).toHaveLength(1);
+  } finally {await browser.close();await app.close();}
+});

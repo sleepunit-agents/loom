@@ -1,3 +1,4 @@
+import {workNotice,readableWorkNotice} from './work-discussion.js';
 /** Retained ordinary dialogue, never a second store or a way around delivery volume. */
 import {standaloneFyi} from './inbox-discussion.js';
 import {and,desc,eq,lt} from 'drizzle-orm';
@@ -17,6 +18,7 @@ export async function prepareHistoryContext(comms:CommsMessages,conversation:str
  // Questions and answers belong exclusively to the validated answer-context path.
  // Person words may recur only after an earlier body accepted their Full delivery.
  const deliveryFingerprint=(row:typeof messages.$inferSelect)=>{
+  if(workNotice(row) && cv.venue==='loom' && cv.member && !row.inboxItem)return 'work.subject';
   if(row.kind==='notice' && row.sender==='loom' && row.seq===1 && row.inboxItem) {
    const source=db.select().from(inbox).where(eq(inbox.id,row.inboxItem)).get();
    return cv.venue==='loom' && !cv.project && source && standaloneFyi(source,cv.member) ? source.id : null;
@@ -29,6 +31,13 @@ export async function prepareHistoryContext(comms:CommsMessages,conversation:str
    &&item.state==='done'&&item.volume==='full'&&item.takenVolume==='full'?JSON.stringify(item):null;
  };
  const rows=db.select().from(messages).where(and(eq(messages.thread,thread.id),lt(messages.seq,beforeSeq))).orderBy(desc(messages.seq)).limit(HISTORY_LINES).all();
+ // Keep the original work reference available in a busy discussion while its words are retained.
+ if(thread.id.startsWith('th:work-') && rows.length===HISTORY_LINES && rows.at(-1)?.seq!==1) {
+   const first=db.select().from(messages).where(and(eq(messages.thread,thread.id),eq(messages.seq,1))).get();
+   if(first && workNotice(first) && first.words && deadline(first)>Date.parse(comms.now())) {
+     rows.pop(); rows.unshift(first);
+   }
+ }
  const prepared:{snapshot:typeof messages.$inferSelect;delivery:string;words:string}[]=[];let bytes=2;
  for(const row of rows){
   const acceptedFingerprint=deliveryFingerprint(row);
@@ -48,8 +57,10 @@ export async function prepareHistoryContext(comms:CommsMessages,conversation:str
    // Optional old context that moved during preparation is omitted; the independently
    // retained current input can still proceed. Never publish the stale snapshot.
    if(!current?.words||!(deadline(current)>Date.parse(comms.now()))||JSON.stringify(current)!==JSON.stringify(snapshot)||deliveryFingerprint(current)!==acceptedFingerprint)return[];
+   if(workNotice(current) && (!cv.member || !readableWorkNotice(db,{kind:'member',id:cv.member},words)
+     || !readableWorkNotice(db,{kind:'agent',id:cv.agent,workingFor:cv.member},words)))return[];
    if(current.kind!=='message'&&current.kind!=='reply'&&current.kind!=='notice')return[];
    return[{seq:current.seq,kind:current.kind,sender:current.sender,at:current.at,words,keepUntil:new Date(deadline(current)).toISOString()}];
-  }).reverse();
+  }).sort((a,b)=>a.seq-b.seq);
  };
 }
