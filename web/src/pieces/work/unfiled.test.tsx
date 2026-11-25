@@ -56,7 +56,8 @@ it('opens unfiled tickets from the Work home, pages by route, opens a story and 
   expect(find('Row').map(row=>row.props.title)).toContain('Unfiled 53');
   find('Pager')[0].props.previous();
   expect(go).toHaveBeenLastCalledWith('/p/work/unfiled');
-  expect(find('AppFrame')[0].props.crumb).toEqual({label:'Work',href:'/p/work'});
+  find('button').find(button=>button.props.className==='work-return')!.props.onClick();
+  expect(go).toHaveBeenLastCalledWith('/p/work');
 });
 
 it('shows no entry and an honest empty state when the reader sees no unfiled tickets',async()=>{

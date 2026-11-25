@@ -261,7 +261,11 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     app.data.writes.run(()=>mail.answer(ask.id,'sam','yes'));
     await expect.poll(()=>project.textContent({timeout:5000})).not.toContain('Needs you');
     await project.click({timeout:15000});
-    await page.getByText('Open board',{exact:true}).click();
+    const views=page.getByRole('navigation',{name:'Project views'});
+    await views.getByRole('button',{name:'Overview',current:'page'}).waitFor();
+    expect(await views.getByRole('button',{name:'Board'}).getAttribute('aria-current')).toBeNull();
+    await views.getByRole('button',{name:'Board'}).click();
+    await views.getByRole('button',{name:'Board',current:'page'}).waitFor();
     const ticket = page.locator('[data-split-row]').filter({hasText:title});
     await expect.poll(()=>ticket.textContent({timeout:3000})).toContain('PR #3');
     app.data.writes.run(()=>app.db.insert(s.taskLinks).values([
@@ -442,7 +446,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     await context.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
     const page=await context.newPage();page.setDefaultTimeout(7000);
     await page.goto(app.url+'/p/work/project/pond');
-    await page.getByRole('button',{name:'Open pull requests'}).click();
+    await page.getByRole('button',{name:'Pull requests'}).click();
     const url=page.url(),rows=page.getByRole('group',{name:'Project pull requests'});
     await rows.getByText('acme/app #3 · Linked ticket',{exact:true}).waitFor();
     await rows.getByText('acme/second #8 · No visible ticket link',{exact:true}).waitFor();
@@ -539,7 +543,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     await page.goto(app.url+'/p/work');
     await page.getByText(goal,{exact:true}).waitFor();
     await page.getByRole('button',{name:/pond.*fix pond pump/i}).click();
-    await page.getByRole('button',{name:'Open board'}).waitFor();
+    await page.getByRole('button',{name:'Board'}).waitFor();
     await page.getByText(goal,{exact:true}).waitFor();
     app.data.writes.run(()=>app.db.update(s.projects).set({goal:null}).where(eq(s.projects.id,'pond')).run());
     await page.getByText(goal,{exact:true}).waitFor({state:'detached'});
@@ -640,7 +644,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     await context.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
     const page=await context.newPage();page.setDefaultTimeout(10000);
     await page.goto(app.url+'/p/work/project/pond/board');
-    await page.getByRole('combobox',{name:'Epic'}).selectOption(epic.id);
+    await page.locator('.work-toolbar').getByRole('combobox',{name:'Epic'}).selectOption(epic.id);
     const working=page.getByRole('region',{name:'Working',exact:true});
     await page.getByRole('region',{name:'Recently finished'}).getByText('Finished spring inspection',{exact:true}).waitFor();
     expect(await page.getByText(/Unrelated finished/).count()).toBe(0);
