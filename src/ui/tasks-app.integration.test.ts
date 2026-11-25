@@ -55,7 +55,7 @@ async function fixture(withComms=false) {
   const detach = data.attach(http);
   await new Promise<void>(ok => http.listen(0, '127.0.0.1', ok));
   const address = http.address(); if (!address || typeof address === 'string') throw new Error('No fixture listener');
-  return { db, data, cookie, session, url: `http://127.0.0.1:${address.port}`,
+  return { db, data, clock, cookie, session, url: `http://127.0.0.1:${address.port}`,
     async close() { detach(); await data.close(); await new Promise<void>(ok => http.close(() => ok())); client.close(); } };
 }
 
@@ -387,4 +387,35 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     expect(await page.getByText(hiddenTitle,{exact:true}).count()).toBe(0);
     expect(await page.getByRole('button',{name:'Next page'}).isDisabled()).toBe(true);
   } finally {await browser.close();await app.close();}
+});
+
+it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html')))('explains a 64 to 43 backlog change and preserves the comparison on Back',async()=>{
+  const app=await fixture(),browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  try {
+    const stamp=()=>new Date(app.clock.now()).toISOString();
+    const seed=(first:number,n:number)=>app.data.writes.run(()=>app.db.insert(s.tasks).values(Array.from({length:n},(_,i)=>({
+      id:'t-'+(first+i),title:'Inspection '+(first+i),project:'bank',ownerKind:'member' as const,owner:'sam',
+      goal:'Verify pumps',why:'Maintenance',createdByKind:'member' as const,createdBy:'sam',createdAt:stamp(),changedAt:stamp(),
+    }))).run());
+    app.clock.advance(60_000);seed(300,64);const since=stamp();
+    app.clock.advance(60_000);seed(400,12);
+    app.data.writes.run(()=>{
+      for(const first of [300,400])for(let i=0;i<(first===300?30:3);i++)
+        app.db.update(s.tasks).set({status:'closed',closedAt:stamp(),changedAt:stamp(),closeReason:'Inspected'}).where(eq(s.tasks.id,'t-'+(first+i))).run();
+    });
+    const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},reducedMotion:'reduce'});
+    await context.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
+    const page=await context.newPage();page.setDefaultTimeout(8000);
+    await page.goto(app.url+'/p/work/project/bank/history?'+new URLSearchParams({since,until:stamp()}));
+    await page.getByText('64 open at the start · 43 open at the end',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'Original tickets that closed · 30',exact:true}).waitFor();
+    await page.getByRole('button',{name:'Tickets created here · 12',exact:true}).waitFor();
+    await page.getByRole('button',{name:'New tickets that also closed · 3',exact:true}).click();
+    const selection=page.url();
+    await page.getByText('Inspection 401',{exact:true}).click();
+    await page.getByRole('region',{name:'Ticket story'}).getByText('Ticket closed',{exact:true}).waitFor();
+    await page.goBack();
+    await page.getByText('Inspection 401',{exact:true}).waitFor();
+    expect(page.url()).toBe(selection);
+  }finally{await browser.close();await app.close();}
 });

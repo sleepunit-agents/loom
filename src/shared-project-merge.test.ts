@@ -67,13 +67,13 @@ const filedUnder = (db: DataDatabase, table: SQLiteTable, column: string, projec
 it('says what a merge does with every table that names a project, and no table is left out', () => {
   // A new table with a project on it fails here until shared-projects.ts lists it in `projectLabelled`.
   expect([...tablesNamingAProject().keys()].sort()).toEqual(Object.keys(projectLabelled).sort());
-  expect(Object.keys(projectLabelled).sort()).toEqual(['agent_kit_projects', 'agent_post_sources', 'approvals', 'changes', 'conversations', 'inbox', 'jobs', 'project_agents', 'project_claim_directions', 'project_members', 'project_outside_people', 'project_repositories', 'tasks', 'triggers']);
+  expect(Object.keys(projectLabelled).sort()).toEqual(['agent_kit_projects', 'agent_post_sources', 'approvals', 'changes', 'conversations', 'inbox', 'jobs', 'project_agents', 'project_claim_directions', 'project_members', 'project_outside_people', 'project_repositories', 'task_backlog_events', 'tasks', 'triggers']);
 });
 
 it('files every record of the merged project under the other, in every table that names a project', () => {
   const f = fixture(), named = tablesNamingAProject();
   // Kit grants and outside identities stay bound to the exact project the owner named.
-  named.delete('agent_post_sources'); named.delete('project_claim_directions'); named.delete('agent_kit_projects'); named.delete('project_outside_people');
+  named.delete('task_backlog_events'); named.delete('agent_post_sources'); named.delete('project_claim_directions'); named.delete('agent_kit_projects'); named.delete('project_outside_people');
   const pond = fileEverything(f.db, f.client, 'pond'), garden = fileEverything(f.db, f.client, 'garden');
   // The fixture puts a pond record in every one of the tables, so none is passed over for being empty.
   for (const [name, { table, column }] of named) expect(filedUnder(f.db, table, column, 'pond'), name).toBeGreaterThan(0);

@@ -319,6 +319,17 @@ export const tasks = sqliteTable('tasks', {
   index('tasks_assignee_kind_assignee_idx').on(t.assigneeKind, t.assignee),
 ]);
 
+/** A checkpoint of backlog membership when a ticket is created, moves or changes open/closed state.
+ * The first checkpoint for an existing ticket is taken when schema 44 is installed. */
+export const taskBacklogEvents = sqliteTable('task_backlog_events', {
+  seq: integer('seq').primaryKey({autoIncrement:true}),
+  task: text('task').notNull().references(()=>tasks.id,{onDelete:'cascade'}),
+  project: text('project').references(()=>projects.id),
+  open: integer('open',{mode:'boolean'}).notNull(),
+  at: text('at').notNull(),
+}, t=>[check('task_backlog_at_utc',utc(t.at)),
+  index('task_backlog_project_task').on(t.project,t.task), index('task_backlog_ticket_seq').on(t.task,t.seq)]);
+
 /** How tasks depend on each other. */
 export const taskLinks = sqliteTable('task_links', {
   task: text('task').notNull().references((): AnySQLiteColumn => tasks.id),
@@ -2461,7 +2472,7 @@ export const bridgePersonSightings = sqliteTable('bridge_person_sightings', {
 });
 
 export const plumbing = {
-  projectClaimDirections,
+  projectClaimDirections, taskBacklogEvents,
   bridgePersonSightings,
   agentPostSources, agentPostThreads, agentPosts, agentPostNames, agentPostWorkRefs, agentPostWorkPending,
   guestIoReadings,

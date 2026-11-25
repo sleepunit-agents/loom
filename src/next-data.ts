@@ -5,6 +5,7 @@ import { getTableColumns } from 'drizzle-orm';
 import { bridgeConnections, bridgeIncoming } from './core/data/schema.js';
 import { bridgeSecretsTables, bridgeSecretsVisibility } from './core/data/bridge-secrets-visibility.js';
 import { changeReviewFields } from './pieces/changes/review-query.js';
+import { backlogWindowFields } from './core/data/backlog-window.js';
 import { workBoardFields } from './core/data/work-board.js';
 import { BridgeQueries, bridgeQueryFields } from './pieces/bridges/queries.js';
 import { bridgeSecretsReaderFields } from './pieces/bridges/readers.js';
@@ -61,7 +62,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   const live = new DataLive(measure);
   const bridges = new BridgeQueries(db, () => clock.now());
   let activityRead = false, currentJobsRead = false;
-  const ownFields = { ...workBoardFields(db), ...changeReviewFields(db), ...bridgeSecretsReaderFields(db), ...bridgeQueryFields(bridges, viewer => {
+  const ownFields = { ...backlogWindowFields(db), ...workBoardFields(db), ...changeReviewFields(db), ...bridgeSecretsReaderFields(db), ...bridgeQueryFields(bridges, viewer => {
     const visibility = bridgeSecretsVisibility(viewer);
     return { connections: visibility.bridgeConnections!(getTableColumns(bridgeConnections)), incoming: visibility.bridgeIncoming!(getTableColumns(bridgeIncoming)) };
   }, () => { activityRead = true; schedule(); }) };

@@ -1,3 +1,4 @@
+import {BacklogWindow} from './backlog-window';
 import { ClaimControls } from './claim-controls';
 import { WorkDiscussion } from './discuss';
 import { useReadingVisible } from '../../data/visibility';
@@ -35,6 +36,8 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
   if (projectId) {
     const project = detail.data?.project;
     if (!project || project.id !== projectId || project.lifecycle==='removed') return <Empty title="Project unavailable"><LinkButton onClick={()=>go(base)}>All projects</LinkButton></Empty>;
+    if (path.split('?')[0].endsWith('/history')) return <div className="p-4"><AppFrame title={project.name+' backlog history'} where={path} go={go}
+      crumb={{label:project.name,href:base+'/project/'+project.id}}><BacklogWindow key={path} project={project.id} path={path} detail go={go}/></AppFrame></div>;
     if (path.endsWith('/board')) return <div className="p-4"><AppFrame title={project.name+' board'} where={path} go={go}
       crumb={{label:project.name,href:base+'/project/'+project.id}}><ProjectBoard key={project.id} project={project.id} go={go}/></AppFrame></div>;
     const tickets = (label:string, rows:Ticket[]) => <Section label={label}><List label={label}>{rows.map(ticket=>
@@ -49,6 +52,7 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
       {(project.lifecycle==='retired' ? recentTickets : recent).length>0 && tickets('Recent tickets',project.lifecycle==='retired' ? recentTickets : recent)}
       {!recentTickets.length && <Empty title="No tickets here yet"/>}
       {project.lifecycle==='active' && <ClaimControls key={'claims-'+project.id} project={project.id}/>}
+      <BacklogWindow key={project.id} project={project.id} path={path} go={go}/>
       <WorkDiscussion key={'discuss-'+project.id} kind="project" id={project.id} go={go}/>
       <LinkButton onClick={()=>go(base+'/project/'+project.id+'/board')}>Open board</LinkButton>
       <LinkButton onClick={()=>go('/p/tasks-preview/?folder='+encodeURIComponent('project:'+project.id))}>Browse project backlog</LinkButton>
