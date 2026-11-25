@@ -78,7 +78,7 @@ export function githubReader(secrets:Secrets, request:typeof fetch=fetch) {
       const change=normalize(repo,node);
       if(!active(change,now))continue;
       const first=(node as {reviews?:unknown}).reviews;
-      if(first!==undefined)change.submittedReviews=await reviewsFor(change,first);
+      change.submittedReviews=await reviewsFor(change,first);
       out.push(change);
      }
      const info=page.pageInfo;

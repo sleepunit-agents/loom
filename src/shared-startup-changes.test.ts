@@ -23,7 +23,7 @@ function files(){
 }
 async function signin(link:string){const response=await fetch(link,{method:'POST',redirect:'manual'});expect(response.status).toBe(303);return response.headers.get('set-cookie')!.split(';')[0];}
 async function command(app:Awaited<ReturnType<typeof startSharedHome>>,cookie:string,path:string,input:unknown){const response=await fetch(app.url+'/api/'+path,{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input})});return response.json();}
-const raw=JSON.parse(readFileSync(new URL('./pieces/changes/github.fixture.json',import.meta.url),'utf8')).data.repository.open.nodes[0];
+const raw={...JSON.parse(readFileSync(new URL('./pieces/changes/github.fixture.json',import.meta.url),'utf8')).data.repository.open.nodes[0],reviews:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}}};
 it('reads Owner-written credentials on normal restart, rotates tokens, retains cache on failure and joins shutdown',async()=>{
  const {home,webRoot,clock}=files();let link='';
  let app=await startSharedHome({home,webRoot,clock,port:0,stdout:()=>{}});link=app.signinLink();clean.push(()=>app.close());let cookie=await signin(link);

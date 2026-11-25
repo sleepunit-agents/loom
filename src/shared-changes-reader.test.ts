@@ -8,7 +8,7 @@ import {sharedRoot} from './shared-root.js';
 import {sharedChangesReader} from './shared-changes-reader.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
-const raw=JSON.parse(readFileSync(new URL('./pieces/changes/github.fixture.json',import.meta.url),'utf8')).data.repository.open.nodes[0];
+const raw={...JSON.parse(readFileSync(new URL('./pieces/changes/github.fixture.json',import.meta.url),'utf8')).data.repository.open.nodes[0],reviews:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}}};
 function request(token:string){return vi.fn<typeof fetch>(async(url,init)=>{
  expect(url).toBe('https://api.github.com/graphql');expect(init?.redirect).toBe('error');expect(init?.headers).toMatchObject({authorization:`Bearer ${token}`});
  const states=JSON.parse(String(init?.body)).variables.states;
