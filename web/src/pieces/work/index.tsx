@@ -42,8 +42,8 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
       crumb={{label:project.name,href:base+'/project/'+project.id}}><ProjectChanges project={project.id} path={path} go={go}/></AppFrame></div>;
     if (path.split('?')[0].endsWith('/history')) return <div className="p-4"><AppFrame title={project.name+' backlog history'} where={path} go={go}
       crumb={{label:project.name,href:base+'/project/'+project.id}}><BacklogWindow key={path} project={project.id} path={path} detail go={go}/></AppFrame></div>;
-    if (path.endsWith('/board')) return <div className="p-4"><AppFrame title={project.name+' board'} where={path} go={go}
-      crumb={{label:project.name,href:base+'/project/'+project.id}}><ProjectBoard key={project.id} project={project.id} go={go}/></AppFrame></div>;
+    if (path.split('?')[0].endsWith('/board')) return <div className="p-4"><AppFrame title={project.name+' board'} where={path} go={go}
+      crumb={{label:project.name,href:base+'/project/'+project.id}}><ProjectBoard key={project.id} project={project.id} path={path} go={go}/></AppFrame></div>;
     const tickets = (label:string, rows:Ticket[]) => <Section label={label}><List label={label}>{rows.map(ticket=>
       <Row key={ticket.id} title={ticket.title} status={statusWords[ticket.status]} onClick={()=>go(taskPath(ticket.id))}/>
     )}</List></Section>;
