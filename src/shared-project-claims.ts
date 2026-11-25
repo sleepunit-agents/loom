@@ -1,8 +1,9 @@
-import { asc, and, eq, inArray, isNull, max } from 'drizzle-orm';
+import { asc, and, eq, getTableColumns, inArray, isNull, max } from 'drizzle-orm';
 import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
 import { z } from 'zod';
 import type {DataDatabase} from './core/data/database.js';
 import {agents, projectClaimDirections, projects} from './core/data/schema.js';
+import {projectLifecycle} from './core/data/project-in-use.js';
 import {projectClaimDirection} from './core/data/project-claim-direction.js';
 import {OperationError,type Operations} from './core/operations/index.js';
 import {holds,rules,type Viewer} from './policy.js';
@@ -12,9 +13,9 @@ export function projectClaimControls(db:DataDatabase,chatMember:(v:Viewer,projec
   function eligible(viewer:Viewer,project:string) {
     const member=viewer.kind==='member' ? viewer.id : viewer.kind==='agent' && viewer.workingFor && chatMember(viewer,project)===viewer.workingFor ? viewer.workingFor : undefined;
     if (!member) return [];
-    const record=db.select().from(projects).where(eq(projects.id,project)).get();
+    const record=db.select().from(projects).where(and(eq(projects.id,project),eq(projectLifecycle(getTableColumns(projects)),'active'))).get();
     const sharing=sharedSharing(db), who={kind:'member' as const,id:member};
-    if (!record || record.removedAt || record.retiredAt || !holds(rules.project,who,record,sharing)) return [];
+    if (!record || !holds(rules.project,who,record,sharing)) return [];
     return db.select({id:agents.id}).from(agents).where(isNull(agents.removedAt)).orderBy(asc(agents.id)).all()
       .filter(agent=>(viewer.kind==='member' || viewer.id===agent.id)
         && holds(rules.recipient,who,{toKind:'agent',to:agent.id},sharing)
