@@ -25,9 +25,3 @@ export function taskPath(id: string, project?: string): string {
   const scope = project ? '/project/' + encodeURIComponent(project) : '';
   return '/p/work' + scope + '/backlog/task/' + taskSegment(id);
 }
-
-/** Keep the project toolbar when opening a ticket from a scoped view. */
-export function workTicketPath(id: string, project?: string): string {
-  const scope = project ? '/project/' + encodeURIComponent(project) : '';
-  return '/p/work' + scope + '/backlog/task/' + taskSegment(id);
-}
