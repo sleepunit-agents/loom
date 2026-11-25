@@ -1,3 +1,4 @@
+import { ToolbarFrame } from '../../kit/toolbar';
 import { NativeSelect } from '../../kit/native-select';
 import { InboxNotice, currentNotices, type InboxResultsSnapshot } from './outcomes';
 import { AnswerSection } from './answer';
@@ -147,13 +148,15 @@ export function InboxView({ snapshot, selected, select, detail, actions, results
       .map(agent => ({ id: `agent:${agent.id}`, label: agent.id, count: agent.count })),
   ];
   const current = folders.find((entry): entry is Extract<SplitFolder, { id: string }> => 'id' in entry && entry.id === folder);
-  return <Split label="Inbox" folders={folders} folder={folder} onFolder={id => navigation ? navigation.onFolder(id) : setFolder(id)}
+  return <ToolbarFrame title="Inbox" controls={<Search label="Search asks" value={live ? query : ''} disabled={!live} onChange={value => navigation ? navigation.onQuery(value) : setQuery(value)} />}>
+    <Split label="Inbox" folders={folders} folder={folder} onFolder={id => navigation ? navigation.onFolder(id) : setFolder(id)}
     listTitle={current?.label ?? 'Inbox'} listCount={live ? current?.count : undefined} listBusy={snapshot.settling} listKey={JSON.stringify([folder, navigation?.query, navigation?.offset])}
     listTop={navigation && folder !== 'errors' && <Pager label="Inbox pages" disabled={!live} hasPrevious={navigation.offset > 0} hasNext={navigation.hasNext} previous={navigation.previous} next={navigation.next} />}
-    search={<Search label="Search asks" value={live ? query : ''} disabled={!live} onChange={value => navigation ? navigation.onQuery(value) : setQuery(value)} />}
+
     list={!live ? snapshot.status === 'loading' ? <Loading /> : <Empty title="Inbox is unavailable" /> : entries.length ? entries.map(({ id, row, notice }) => notice ? <InboxNotice key={id} result={notice} dismiss={dismissResult} zone={zone} />
       : <Row key={id} title={rowTitle(row)} meta={row.volume === 'dim' ? undefined : row.body?.why ?? undefined}
         status={row.volume === 'dim' ? undefined : `${from(row)} · ${stateWord(row)} · ${row.read ? 'Read' : 'Unread'}`} selected={row.id === selected} onClick={() => select(row.id)} />) : <Empty title="No items here" />}
     reader={item ? <InboxQuestionCard key={item.id} id={item.id} snapshot={{ status: 'live', items: [item] }} actions={actions} sourceCard={sourceCard?.(item)} zone={zone} words={words?.(item)} whole={!!approvalRequestId(item) && !!sourceCard?.(item)} /> : selected && live && detail?.status === 'loading' ? <Loading /> : null}
-    open={!!selected} onBack={() => select(undefined)} backLabel="Back to Inbox" blank={<Empty title="Choose an item" />} />;
+    open={!!selected} onBack={() => select(undefined)} backLabel="Back to Inbox" blank={<Empty title="Choose an item" />} />
+  </ToolbarFrame>;
 }
