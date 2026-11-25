@@ -50,6 +50,7 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
   const detail = status === 'live' && readerFeed.status === 'live' && !readerFeed.settling
     ? readerFeed.data?.selectedTask : undefined;
   const visibleDetail = selectedTask && detail?.id === selectedTask.id ? detail : undefined;
+  const projectRow = visibleDetail?.projectRow;
   const reader = selectedTask && visibleDetail ? { ...selectedTask, ...visibleDetail } : undefined;
   const [reviewPage,setReviewPage]=useState<{task?:string;cursors:Pick<GithubReview,'submittedAt'|'id'>[]}>({cursors:[]});
   const reviewCursors=reviewPage.task===selected?reviewPage.cursors:[];
@@ -124,6 +125,7 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
     loadingReader={(combined || readDetail) && (readerFeed.status === 'loading' || readerFeed.settling)}
     readerUnavailable={readDetail && (detailFeed.status === 'offline' || detailFeed.status === 'denied')}
     ready={tasks.filter(task => task.isReady).map(task => task.id)} conversation={openSource}
+    projectLink={projectRow && go ? { ...projectRow, open: () => go(`/p/work/project/${encodeURIComponent(projectRow.id)}`) } : undefined}
     openChange={go ? id => go(`/p/changes-preview/change/${encodeURIComponent(id)}`) : undefined}
     names={names} zone={zone} busy={sending} problem={problem || undefined} act={act}
     form={open ? { action: action.action, node: <SharedTaskForm status={status} action={action.action} task={target} tasks={tasks} links={links}
