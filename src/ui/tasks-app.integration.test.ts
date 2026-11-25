@@ -256,7 +256,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     await page.goto(app.url+'/p/work');
     const project = page.locator('[data-split-row]').filter({has:page.getByText('pond',{exact:true})});
     await expect.poll(()=>project.textContent({timeout:5000})).toContain('Needs you · 1');
-    await page.getByText(/1 project question waiting for you/).waitFor();
+    await expect.poll(()=>page.locator('dl[aria-label="Project overview"] div').filter({has:page.getByText('Questions for you',{exact:true})}).locator('dd').textContent()).toBe('1');
     app.data.writes.run(()=>mail.answer(ask.id,'sam','yes'));
     await expect.poll(()=>project.textContent({timeout:5000})).not.toContain('Needs you');
     await project.click({timeout:15000});
