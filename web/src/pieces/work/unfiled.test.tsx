@@ -83,3 +83,25 @@ it('refuses a malformed page without querying and withholds rows when the feed i
   expect(find('Row')).toHaveLength(0);
   expect(words()).toContain('Unfiled tickets are unavailable.');
 });
+
+it('keeps a reader whose only unfiled ticket is closed able to open its story from Work and return',async()=>{
+  const go=vi.fn();
+  const done={id:'t-9',title:'Finished note',status:'closed',changedAt:'2026-11-24T00:00:00Z'};
+  f.home=[done];
+  f.pages=new Map([[0,[done]]]);
+  await draw('/p/work',go);
+  const entry=find('Row').find(row=>row.props.title==='Unfiled tickets')!;
+  expect(entry.props.meta).toBe('Finished note');
+  entry.props.onClick();
+  expect(go).toHaveBeenLastCalledWith('/p/work/unfiled');
+  await act(async()=>tree.update(h(Work,{path:'/p/work/unfiled',go})));
+  const row=find('Row').find(row=>row.props.title==='Finished note')!;
+  expect(row.props.status).toBe('Closed');
+  expect(find('Pager')[0].props).toMatchObject({hasPrevious:false,hasNext:false});
+  row.props.onClick();
+  expect(go).toHaveBeenLastCalledWith('/p/tasks-preview/task/t-9');
+  await act(async()=>tree.update(h(Work,{path:'/p/tasks-preview/task/t-9',go})));
+  await act(async()=>tree.update(h(Work,{path:'/p/work/unfiled',go})));
+  expect(find('Row').map(row=>row.props.title)).toEqual(['Finished note']);
+  expect(words()).not.toContain('No unfiled tickets');
+});

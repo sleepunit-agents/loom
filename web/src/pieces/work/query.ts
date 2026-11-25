@@ -1,8 +1,9 @@
 const recentOrder = 'orderBy:{changedAt:{direction:desc,priority:1},id:{direction:asc,priority:0}}';
 const fields = 'id title status changedAt';
-/** Open tickets filed under no project. The tasks rule decides who reads each one (its owner and household
- * owners), so the home entry, the rows, the next-page probe and the empty state all come from what this reader may see. */
-const unfiledWhere = 'where:{project:{isNull:true},status:{ne:closed}}';
+/** Tickets filed under no project, closed ones included so a completed ticket's story stays reachable from Work.
+ * The tasks rule decides who reads each one (its owner and household owners), so the home entry, the rows, the
+ * next-page probe and the empty state all come from what this reader may see. */
+const unfiledWhere = 'where:{project:{isNull:true}}';
 export const unfiledPageSize = 50;
 export const workHomeQuery = `query WorkHome {
   inFlight:projects { id tasksByProject(where:{status:{eq:in_progress}},limit:1){id} }

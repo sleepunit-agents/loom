@@ -13,7 +13,7 @@ export function UnfiledTickets({page,go}:{page:number;go:(path:string)=>void}) {
   const rows = feed.data.unfiled.slice(0,unfiledPageSize);
   if (!rows.length) return page>0
     ? <Empty title="No more unfiled tickets"><LinkButton onClick={()=>go(unfiledBase)}>First page</LinkButton></Empty>
-    : <Empty title="No unfiled tickets" text="Every open ticket you can see belongs to a project."/>;
+    : <Empty title="No unfiled tickets" text="Every ticket you can see belongs to a project."/>;
   return <>
     <Section label="Tickets with no project"><List label="Unfiled tickets">{rows.map(ticket=>
       <Row key={ticket.id} title={ticket.title} status={statusWords[ticket.status]} onClick={()=>go(taskPath(ticket.id))}/>

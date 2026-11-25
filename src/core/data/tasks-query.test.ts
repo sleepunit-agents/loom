@@ -69,23 +69,26 @@ it('runs the mounted Tasks selection in one SQL statement and respects hidden bl
   } finally { db.close(); }
 });
 
-it('pages each reader through only the unfiled tickets they may see, from the Work home and its unfiled view', async () => {
+it('pages each reader through only the unfiled tickets they may see, closed ones included, from the Work home and its unfiled view', async () => {
   const db = new Database(':memory:');
   createDataSchema(db);
   try {
-    db.exec(`INSERT INTO members (id,role,joined_at) VALUES ('sam','member','2026-11-14T00:00:00Z'),('lee','member','2026-11-14T00:00:00Z');
+    db.exec(`INSERT INTO members (id,role,joined_at) VALUES ('sam','member','2026-11-14T00:00:00Z'),('lee','member','2026-11-14T00:00:00Z'),
+        ('kim','member','2026-11-14T00:00:00Z'),('ann','member','2026-11-14T00:00:00Z');
       INSERT INTO projects (id,name) VALUES ('pond','Pond');
-      INSERT INTO project_members (project,member) VALUES ('pond','sam'),('pond','lee');`);
+      INSERT INTO project_members (project,member) VALUES ('pond','sam'),('pond','lee'),('pond','kim'),('pond','ann');`);
     const insert = db.prepare(`INSERT INTO tasks (id,title,type,status,owner_kind,owner,project,created_by_kind,created_by,created_at,changed_at)
       VALUES (?,?,'task',?,'member',?,?,'member',?,'2026-11-14T00:00:00Z',?)`);
-    // Sam owns 52 open unfiled tickets, one more than a page and its probe; Lee owns one private one.
+    // Sam owns 52 open unfiled tickets and one closed one: 53 rows, a page and its probe plus two more.
     for (let n = 0; n < 52; n++) {
       const at = new Date(Date.UTC(2026,10,14,0,n)).toISOString();
       insert.run(`u-${String(n).padStart(2,'0')}`,`Sam unfiled ${n}`,'open','sam',null,'sam',at);
     }
-    insert.run('lee-private','Lee private note','in_progress','lee',null,'lee','2026-11-15T00:00:00Z');
     insert.run('sam-closed','Sam closed unfiled','closed','sam',null,'sam','2026-11-16T00:00:00Z');
-    insert.run('filed','Filed in pond','open','sam','pond','sam','2026-11-16T00:00:00Z');
+    insert.run('lee-private','Lee private note','in_progress','lee',null,'lee','2026-11-15T00:00:00Z');
+    // Kim's only unfiled ticket is already closed; Ann has none, only a filed one.
+    insert.run('kim-done','Kim finished note','closed','kim',null,'kim','2026-11-15T00:00:00Z');
+    insert.run('filed','Filed in pond','open','ann','pond','ann','2026-11-16T00:00:00Z');
     const as = (id:string) => dataQueries(db, { tables:['tasks','taskComments','taskLinks','projects','agents','changeTasks','changes'],
       visibility: { ...taskVisibility({kind:'member',id}), ...workVisibility({kind:'member',id}) } });
     const read = async (id:string, source:string, variableValues?:Record<string,unknown>) => {
@@ -95,20 +98,29 @@ it('pages each reader through only the unfiled tickets they may see, from the Wo
     };
     const first = await read('sam', workUnfiledQuery, {offset:0});
     expect(first.unfiled).toHaveLength(unfiledPageSize+1);
-    expect(first.unfiled[0]).toMatchObject({id:'u-51',status:'open'});
+    expect(first.unfiled[0]).toMatchObject({id:'sam-closed',status:'closed'});
+    expect(first.unfiled[1]).toMatchObject({id:'u-51',status:'open'});
     const second = await read('sam', workUnfiledQuery, {offset:unfiledPageSize});
-    expect(second.unfiled.map(row=>row.id)).toEqual(['u-01','u-00']);
+    expect(second.unfiled.map(row=>row.id)).toEqual(['u-02','u-01','u-00']);
     const sam = JSON.stringify([first,second]);
-    for (const hidden of ['Lee private note','Sam closed unfiled','Filed in pond']) expect(sam).not.toContain(hidden);
-    expect((await read('sam', workHomeQuery)).unfiled).toMatchObject([{id:'u-51'}]);
-    // The second reader sees their one ticket and nothing of Sam's, in rows and in the home entry.
+    for (const hidden of ['Lee private note','Kim finished note','Filed in pond']) expect(sam).not.toContain(hidden);
+    expect((await read('sam', workHomeQuery)).unfiled).toMatchObject([{id:'sam-closed'}]);
+    // A reader whose only unfiled ticket is closed still reaches it from the home entry and the first page, and nothing else.
+    const kimHome = await read('kim', workHomeQuery);
+    expect(kimHome.unfiled).toEqual([expect.objectContaining({id:'kim-done',status:'closed'})]);
+    expect((await read('kim', workUnfiledQuery, {offset:0})).unfiled).toEqual([expect.objectContaining({id:'kim-done',status:'closed'})]);
+    for (const hidden of ['Sam unfiled','Sam closed','Lee private']) expect(JSON.stringify(kimHome)).not.toContain(hidden);
+    // A reader with no unfiled ticket gets no entry and an empty list, whatever others hold.
+    expect((await read('ann', workHomeQuery)).unfiled).toEqual([]);
+    expect((await read('ann', workUnfiledQuery, {offset:0})).unfiled).toEqual([]);
+    // Lee sees their one ticket and nothing of Sam's or Kim's; closing it keeps it reachable.
     expect((await read('lee', workUnfiledQuery, {offset:0})).unfiled).toEqual([expect.objectContaining({id:'lee-private',status:'in_progress'})]);
     expect((await read('lee', workUnfiledQuery, {offset:unfiledPageSize})).unfiled).toEqual([]);
     const leeHome = await read('lee', workHomeQuery);
     expect(leeHome.unfiled).toMatchObject([{id:'lee-private'}]);
     expect(JSON.stringify(leeHome)).not.toContain('Sam unfiled');
     db.exec("UPDATE tasks SET status='closed' WHERE id='lee-private'");
-    expect((await read('lee', workHomeQuery)).unfiled).toEqual([]);
-    expect((await read('lee', workUnfiledQuery, {offset:0})).unfiled).toEqual([]);
+    expect((await read('lee', workHomeQuery)).unfiled).toEqual([expect.objectContaining({id:'lee-private',status:'closed'})]);
+    expect((await read('lee', workUnfiledQuery, {offset:0})).unfiled).toEqual([expect.objectContaining({id:'lee-private',status:'closed'})]);
   } finally { db.close(); }
 });
