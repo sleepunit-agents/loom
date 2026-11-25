@@ -26,15 +26,26 @@ it.runIf(enabled)('Sharing opens an existing project and drafts reviewed changes
  try{
   const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});await context.addCookies([{name:'loom_ui',value:cookie,url:app.url}]);const a=await context.newPage(),b=await context.newPage(),errors:string[]=[];let legacy=0;
   for(const page of [a,b]){page.on('pageerror',error=>errors.push(error.message));page.on('websocket',socket=>{if(new URL(socket.url()).pathname==='/live')legacy++;});await page.goto(app.url+'/p/sharing-preview');}
+  await b.setViewportSize({width:440,height:850});
   for(const page of [a,b]){
-   await page.getByRole('button',{name:/Garden/}).click();
+   const garden=page.getByRole('button',{name:/Garden/});
+   await page.locator('.loom-desk-boot').waitFor({state:'hidden'});await garden.focus();await garden.press('Enter');
    expect(await page.getByRole('checkbox',{name:'sam',exact:true}).isChecked()).toBe(true);
+   await page.reload();
+   expect(await page.getByRole('checkbox',{name:'art',exact:true}).isChecked()).toBe(true);
+   await page.getByRole('button',{name:'Projects',exact:true}).click();
+   await expect.poll(()=>garden.evaluate(el=>el===document.activeElement)).toBe(true);
+   await garden.press('Enter');
   }
   await a.getByRole('textbox',{name:'Repositories',exact:true}).fill('github:fixture/garden');
   await a.getByRole('button',{name:'Review project changes'}).click();
   const draft=a.getByRole('textbox',{name:'Message art',exact:true});
   expect(await draft.inputValue()).toContain('github:fixture/garden');
   expect(db.select().from(projectRepositories).all()).toEqual([]);
+  await draft.locator('xpath=ancestor::form').getByRole('button',{name:'Send',exact:true}).click();
+  await expect.poll(()=>new URL(a.url()).pathname).toMatch(/comms-preview/);
+  await a.goBack();
+  expect(await a.getByRole('checkbox',{name:'sam',exact:true}).isChecked()).toBe(true);
   await a.getByRole('button',{name:'New project',exact:true}).click();
   await a.getByRole('textbox',{name:'Slug',exact:true}).fill('orchard');
   await a.getByRole('textbox',{name:'Name',exact:true}).fill('Orchard');
