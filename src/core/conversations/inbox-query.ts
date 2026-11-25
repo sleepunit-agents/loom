@@ -27,7 +27,7 @@ export type QuestionAsker = (viewer:Viewer, account:string)=>string|undefined;
 type Body = { words: string; why?: string | null; ifYes?: string | null; ifNo?: string | null; link?: string | null };
 
 export type InboxQueryPolicy = (viewer: Viewer, fields: Record<string, AnyColumn>) => SQL;
-export type InboxFilter = { folder?: 'needs' | 'alerts' | 'answered' | 'fyi' | 'all'; state?: Item['state']; source?: Item['source']; agent?: string; conversation?: string; limit?: number; offset?: number; search?: string };
+export type InboxFilter = { folder?: 'needs' | 'alerts' | 'answered' | 'fyi' | 'all'; state?: Item['state']; source?: Item['source']; project?: string; agent?: string; conversation?: string; limit?: number; offset?: number; search?: string };
 
 export class InboxQueries {
   private readSet?: InboxReadSet;
@@ -155,6 +155,7 @@ export class InboxQueries {
       ne(inbox.volume, 'mute'),
       filter.state ? eq(inbox.state, filter.state) : undefined,
       filter.source ? eq(inbox.source, filter.source) : undefined,
+      filter.project !== undefined && filter.project !== null ? eq(inbox.project, filter.project) : undefined,
       filter.agent ? eq(inbox.agent, filter.agent) : undefined,
       filter.conversation ? eq(inbox.conversation, filter.conversation) : undefined);
   }
@@ -162,9 +163,9 @@ export class InboxQueries {
     const where=this.mailboxWhere(viewer,filter);
     return this.db.query.inbox.findMany({where:()=>sql`${{getSQL:()=>where!}}`,orderBy:f=>[desc(sql`julianday(${f.at})`),desc(f.id)]});
   }
-  folders(viewer: Viewer) {
+  folders(viewer: Viewer, project?: string) {
     if (viewer.kind !== 'member' && viewer.kind !== 'agent') return { needs: 0, alerts: 0, answered: 0, fyi: 0, all: 0, agents: [] };
-    return readInboxFolders(this.db, this.mailboxWhere(viewer)!);
+    return readInboxFolders(this.db, this.mailboxWhere(viewer,{project})!);
   }
 
   /** Search the recipient's whole mailbox before paging. Private text is opened
@@ -443,7 +444,7 @@ export function inboxQueryFields(service: InboxQueries, discussionAgent?: (viewe
     acceptedAt:{type:GraphQLString},replied:{type:new GraphQLNonNull(GraphQLBoolean)},
   }});
   return { latestBridgeReceipt:{type:peerReceipt,args:{conversation:{type:new GraphQLNonNull(GraphQLString)}},
-    resolve:(_row,args,context)=>service.latestBridgeReceipt(context.viewer,args.conversation)},inboxFolders: { type: new GraphQLNonNull(folders), resolve: (_row, _args, context) => service.folders(context.viewer) }, inboxItem: {
+    resolve:(_row,args,context)=>service.latestBridgeReceipt(context.viewer,args.conversation)},inboxFolders: { type: new GraphQLNonNull(folders), args:{project:{type:GraphQLString}}, resolve: (_row, args, context) => service.folders(context.viewer,args.project) }, inboxItem: {
     type: item, args: { id: { type: new GraphQLNonNull(GraphQLString) } },
     resolve: async(_row,args,context,info)=>{const row=service.item(context.viewer,args.id);return row?(await service.project(context.viewer,[row],info,until=>keepReadUntil(context,until)))[0]:null;},
   }, inboxActionResults: {
@@ -452,7 +453,7 @@ export function inboxQueryFields(service: InboxQueries, discussionAgent?: (viewe
     resolve: (_row, args, context) => service.results(context.viewer, args.limit),
   }, inboxItems: {
     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(item))),
-    args: { folder: { type: GraphQLString }, search: { type: GraphQLString }, state: { type: GraphQLString }, source: { type: GraphQLString }, agent: { type: GraphQLString }, conversation: { type: GraphQLString }, limit: { type: GraphQLInt, defaultValue: 50 }, offset: { type: GraphQLInt, defaultValue: 0 } },
+    args: { folder: { type: GraphQLString }, search: { type: GraphQLString }, state: { type: GraphQLString }, source: { type: GraphQLString }, project: { type: GraphQLString }, agent: { type: GraphQLString }, conversation: { type: GraphQLString }, limit: { type: GraphQLInt, defaultValue: 50 }, offset: { type: GraphQLInt, defaultValue: 0 } },
     resolve: async(_row,args,context,info)=>{
       const retain=(until:number)=>keepReadUntil(context,until);
       let pageStillMatches:(()=>boolean)|undefined;

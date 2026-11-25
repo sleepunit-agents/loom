@@ -1,3 +1,4 @@
+import { ProjectNeeds } from './project-needs';
 import { taskPath } from '../../../../src/task-route';
 import { AppFrame, Body, Empty, Error, LinkButton, List, Loading, Row, Section } from '../../kit';
 import { useDataQuery } from '../../data/graphql';
@@ -24,6 +25,7 @@ export default function Work({path=base,go=(href:string)=>location.assign(href)}
     const {working,recent:recentTickets} = detail.data!;
     const recent = recentTickets.filter(ticket=>!working.some(active=>active.id===ticket.id));
     return <div className="p-4"><AppFrame title={project.name} where={path} go={go} crumb={{label:'Work',href:base}}>
+      <ProjectNeeds key={project.id} project={project.id} go={go}/>
       {project.lifecycle==='retired' && <Body quiet>Retired project</Body>}
       {project.lifecycle==='active' && working.length>0 && tickets('In flight',working)}
       {(project.lifecycle==='retired' ? recentTickets : recent).length>0 && tickets('Recent tickets',project.lifecycle==='retired' ? recentTickets : recent)}

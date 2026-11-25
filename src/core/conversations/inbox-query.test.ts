@@ -622,3 +622,17 @@ it('reports receipt and sent reply only for the latest visible bridge message fr
  expect(receipt()).toMatchObject({id:latest.id,acceptedAt:null,replied:false});
  f.revoke();expect(receipt()).toBeNull();
 });
+
+it('scopes Needs you to the project and recipient before limiting its cards',async()=>{
+  const f=await fixture(), {projects}=await import('../data/schema.js');
+  f.db.insert(projects).values([{id:'pond',name:'Pond'},{id:'loom',name:'Loom'}]).run();
+  const mail=f.comms.threads.conversations;
+  const send=(project:string,to:string,words:string)=>mail.send({toKind:'person',to,member:to,source:'notice',fromKind:'agent',project,words,answers:'yes-no'});
+  const mine=send('loom','alice','My Loom question');
+  send('pond','alice','Unrelated'); send('loom','bob','Private');
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:inboxQueryFields(f.service)})});
+  const read=async()=>graphql({schema,source:'{ inboxFolders(project:"loom"){needs} inboxItems(folder:"needs",project:"loom",limit:1){id} }',contextValue:{viewer:alice}});
+  expect((await read()).data).toEqual({inboxFolders:{needs:1},inboxItems:[{id:mine.id}]});
+  mail.answer(mine.id,'alice','yes');
+  expect((await read()).data).toEqual({inboxFolders:{needs:0},inboxItems:[]});
+});
