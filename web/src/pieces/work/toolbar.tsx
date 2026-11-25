@@ -19,9 +19,10 @@ export function WorkFrame({title,path,project,go,controls,children}:{
       mark={<span className="work-mark" aria-hidden="true"><i/><i/><i/></span>}
       back={project || route===home+'/unfiled' || route.startsWith(home+'/unfiled/') ? {label:'Projects',open:()=>go(home)} : undefined}
       navigation={root ? {label:'Project views',views:views.map(({label,suffix})=>({
-        label,current:route===root+suffix || (suffix==='/backlog' && route.startsWith(root+'/backlog/task/')),open:()=>go(root+suffix),
+        label,current:route===root+suffix || (suffix==='/changes' && route.startsWith(root+'/changes/change/')) || (suffix==='/backlog' && route.startsWith(root+'/backlog/task/')),open:()=>go(root+suffix),
       }))} : {label:'Work views',views:[
         {label:'Projects',current:route===home,open:()=>go(home)},
+        {label:'Pull requests',current:route===home+'/changes' || route.startsWith(home+'/changes/'),open:()=>go(home+'/changes')},
         {label:'Backlog',current:route===home+'/backlog' || route.startsWith(home+'/backlog/'),open:()=>go(home+'/backlog')},
       ]}}>
       {children}

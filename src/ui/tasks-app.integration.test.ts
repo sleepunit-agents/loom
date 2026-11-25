@@ -454,6 +454,8 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     expect(await rows.getByText('Hidden linked change',{exact:true}).count()).toBe(0);
     await rows.getByText('New repository change',{exact:true}).click();
     await page.getByRole('article',{name:'Change',exact:true}).getByText('New repository change',{exact:true}).waitFor();
+    expect(new URL(page.url()).pathname).toContain('/p/work/project/pond/changes/change/');
+    expect(await page.getByRole('button',{name:'Pull requests',exact:true}).getAttribute('aria-current')).toBe('page');
     await page.goBack();
     await rows.waitFor();
     expect(page.url()).toBe(url);
