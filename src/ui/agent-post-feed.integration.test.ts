@@ -84,7 +84,7 @@ it.runIf(process.env.LOOM_TEST_CHROME)('keeps live updates, their linked work an
     await ticket.getByText('Pressure checked at the pump.', {exact:true}).waitFor();
     const project = ticket.getByRole('button', {name:'Example garden', exact:true});
     await project.click();
-    const board = page.getByRole('button', {name:'Open board', exact:true});
+    const board = page.getByRole('button', {name:'Board', exact:true});
     await board.click();
     await page.getByRole('region', {name:'Working', exact:true}).getByText('Compare garden pumps', {exact:true}).waitFor();
     await page.goBack();

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import './home.css';
 import './project.css';
+import {WorkFrame} from './toolbar';
 import {ProjectNotes} from './project-notes';
 import {ProjectChanges} from './project-changes';
 import {BacklogWindow} from './backlog-window';
@@ -12,13 +13,12 @@ import { ProjectNeeds } from './project-needs';
 import { ProjectBoard } from './board';
 import { UnfiledTickets } from './unfiled';
 import { taskPath } from '../../../../src/task-route';
-import { AppFrame, Body, Empty, Error, LinkButton, List, Loading, Row, Section } from '../../kit';
+import { Body, Empty, Error, List, Loading, Row, Section } from '../../kit';
 import { useDataQuery } from '../../data/graphql';
 import { unfiledBase, unfiledPage, workHomeQuery, workProjectQuery } from './query';
 
 type Ticket = {id:string; title:string; status:'open'|'in_progress'|'closed'; changedAt:string};
 type Project = {id:string; name:string; goal:string|null; lifecycle:'active'|'retired'|'removed'};
-const workMark = <span className="work-mark" aria-hidden="true"><i/><i/><i/></span>;
 const base = '/p/work';
 const statusWords = {open:'Open', in_progress:'In progress', closed:'Closed'};
 
@@ -27,41 +27,35 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
   const reading = useReadingVisible(visible);
   const viewer = useDataQuery<{homeComms:{member:string}|null}>('query WorkViewer { homeComms { member } }');
   const member = viewer.status==='live' && !viewer.settling ? viewer.data?.homeComms?.member : undefined;
-  const [,,,section,sectionId] = path.split('/');
+  const [,,,section,sectionId] = path.split('?')[0].split('/');
   const projectId = section==='project' ? sectionId : undefined;
   const unfiled = section==='unfiled';
   const decisions = useDataQuery<{inboxProjectNeeds:{project:string;needs:number}[]}>(
     'query WorkProjectDecisions { inboxProjectNeeds { project needs } }', {}, {pause:!!projectId || unfiled || !reading});
   const home = useDataQuery<{projects:(Project & {tasksByProject:Ticket[]})[];inFlight:{id:string;tasksByProject:{id:string}[]}[];unfiled:Ticket[]}>(workHomeQuery, {}, {pause:!!projectId || unfiled});
   const detail = useDataQuery<{project:Project|null;working:Ticket[];recent:Ticket[]}>(workProjectQuery,{id:projectId ?? ''},{pause:!projectId});
-  if (unfiled) return <div className="p-4"><AppFrame title="Unfiled tickets" where={path} go={go} crumb={{label:'Work',href:base}}>
+  if (unfiled) return <WorkFrame title="Unfiled tickets" path={path} go={go}>
     <UnfiledTickets page={unfiledPage(path)} go={go}/>
-  </AppFrame></div>;
+  </WorkFrame>;
   const feed = projectId ? detail : home;
-  if (feed.status === 'loading' || feed.settling) return <Loading label="Opening Work…"/>;
-  if (feed.status !== 'live') return <Error text="Project information is unavailable."/>;
+  if (feed.status === 'loading' || feed.settling) return <WorkFrame title="Work" path={path} go={go}><Loading label="Opening Work…"/></WorkFrame>;
+  if (feed.status !== 'live') return <WorkFrame title="Work" path={path} go={go}><Error text="Project information is unavailable."/></WorkFrame>;
   if (projectId) {
     const project = detail.data?.project;
-    if (!project || project.id !== projectId || project.lifecycle==='removed') return <Empty title="Project unavailable"><LinkButton onClick={()=>go(base)}>All projects</LinkButton></Empty>;
-    if (path.split('?')[0].endsWith('/changes')) return <div className="p-4"><AppFrame title={project.name+' pull requests'} where={path} go={go}
-      crumb={{label:project.name,href:base+'/project/'+project.id}}><ProjectChanges project={project.id} path={path} go={go}/></AppFrame></div>;
-    if (path.split('?')[0].endsWith('/history')) return <div className="p-4"><AppFrame title={project.name+' backlog history'} where={path} go={go}
-      crumb={{label:project.name,href:base+'/project/'+project.id}}><BacklogWindow key={path} project={project.id} path={path} detail go={go}/></AppFrame></div>;
-    if (path.split('?')[0].endsWith('/board')) return <div className="work-desk work-project work-board"><AppFrame lead={workMark} title={project.name+' board'} where={path} go={go}
-      crumb={{label:project.name,href:base+'/project/'+project.id}}><ProjectBoard key={project.id} project={project.id} path={path} go={go}/></AppFrame></div>;
+    if (!project || project.id !== projectId || project.lifecycle==='removed') return <WorkFrame title="Work" path={path} go={go}><Empty title="Project unavailable"/></WorkFrame>;
+    const frame = {title:project.name,path,go,project:project.id};
+    const view = path.split('?')[0].split('/')[5];
+    if (view==='changes') return <WorkFrame {...frame}><ProjectChanges project={project.id} path={path} go={go}/></WorkFrame>;
+    if (view==='history') return <WorkFrame {...frame}><BacklogWindow key={path} project={project.id} path={path} detail go={go}/></WorkFrame>;
+    if (view==='board') return <WorkFrame {...frame}><ProjectBoard key={project.id} project={project.id} path={path} go={go}/></WorkFrame>;
     const tickets = (label:string, rows:Ticket[]) => <Section label={label}><List label={label}>{rows.map(ticket=>
       <Row key={ticket.id} title={ticket.title} status={statusWords[ticket.status]} onClick={()=>go(taskPath(ticket.id))}/>
     )}</List></Section>;
     const {working,recent:recentTickets} = detail.data!;
     const recent = recentTickets.filter(ticket=>!working.some(active=>active.id===ticket.id));
-    return <div className="work-desk work-project"><AppFrame lead={workMark} title={project.name} where={path} go={go} crumb={{label:'Work',href:base}}>
+    return <WorkFrame {...frame}>
       {project.goal && <Body>{project.goal}</Body>}
       {project.lifecycle==='retired' && <Body quiet>Retired project</Body>}
-      <nav className="work-project-tools" aria-label="Project views">
-        <LinkButton onClick={()=>go(base+'/project/'+project.id+'/board')}>Open board</LinkButton>
-        <LinkButton onClick={()=>go('/p/tasks-preview/?folder='+encodeURIComponent('project:'+project.id))}>Browse project backlog</LinkButton>
-        <LinkButton onClick={()=>go(base+'/project/'+project.id+'/changes')}>Open pull requests</LinkButton>
-      </nav>
       <div className="work-project-panes">
         <div className="work-project-stream">
           <ProjectNeeds key={'needs-'+project.id} project={project.id} go={go}/>
@@ -77,7 +71,7 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
           <BacklogWindow key={'history-'+project.id} project={project.id} path={path} go={go}/>
         </aside>
       </div>
-    </AppFrame></div>;
+    </WorkFrame>;
   }
   const projects = home.data?.projects.filter(project=>project.lifecycle!=='removed') ?? [];
   const active = projects.filter(project=>project.lifecycle==='active');
@@ -108,8 +102,9 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
   })}</div>;
   const retired = projects.filter(project=>project.lifecycle==='retired' && matches(project));
   const latestUnfiled = home.data?.unfiled?.[0];
-  return <div className="work-desk"><AppFrame title="Work" where={base} go={go}
-    lead={workMark}>
+  return <WorkFrame title="Work" path={path} go={go} controls={projects.length>1 &&
+    <input type="search" value={projectSearch} onChange={event=>setProjectSearch(event.target.value)}
+      aria-label="Find a project" placeholder="Find a project…"/>}>
     <dl className="work-counters" aria-label="Project overview">
       <div><dt>Active projects</dt><dd>{active.length}</dd></div>
       <div><dt>With claimed tickets</dt><dd>{activeCount}</dd></div>
@@ -118,10 +113,7 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
     </dl>
     <div className="work-panes">
       <section className="work-directory" aria-label="Project directory">
-        <div className="work-tools"><h2>Project directory</h2>
-          {projects.length>1 && <input type="search" value={projectSearch} onChange={event=>setProjectSearch(event.target.value)}
-            aria-label="Find a project" placeholder="Find a project…"/>}
-        </div>
+        <h2>Project directory</h2>
         {grid(active.filter(matches))}
         {match && !projects.some(matches) && <Empty title="No matching projects"/>}
         {retired.length>0 && <details key={match ? 'filtered' : 'all'} open={match ? true : undefined}><summary>Retired projects ({retired.length})</summary>{grid(retired)}</details>}
@@ -131,5 +123,5 @@ export default function Work({visible=true,path=base,go=(href:string)=>location.
       </section>
       {member && reading && <aside className="work-bulletin" aria-label="Project activity"><CatchUp key={member} member={member} go={go}/></aside>}
     </div>
-  </AppFrame></div>;
+  </WorkFrame>;
 }
