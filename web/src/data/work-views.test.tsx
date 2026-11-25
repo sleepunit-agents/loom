@@ -167,6 +167,21 @@ it('opens approval and reported-step links from Attention and follows shell fold
   }
 });
 
+it('keeps an opened historical approval in History and returns to its list', async () => {
+  fixture();
+  feed.approvals.approvals[0] = { ...feed.approvals.approvals[0], state:'denied' };
+  const go = vi.fn(), history = '/p/approvals-preview/history';
+  await draw(h(ApprovalsApp, {path:history, go}));
+  await selectRow();
+  expect(go).toHaveBeenLastCalledWith(history + '/approval/a-one');
+  await act(async () => tree.update(h(ApprovalsApp, {path:history+'/approval/a-one', go})));
+  const split=tree.root.findByType('Split');
+  expect(split.props.folder).toBe('history');
+  expect(split.props.open).toBe(true);
+  await act(async () => split.props.onBack());
+  expect(go).toHaveBeenLastCalledWith(history);
+});
+
 it('approval deep links show the current answer and withdraw the reader when unavailable', async () => {
   fixture();
   const node = h(ApprovalsApp, { path: '/p/approvals-preview/approval/a-one', go: vi.fn() });

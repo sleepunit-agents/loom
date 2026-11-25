@@ -98,13 +98,17 @@ export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; t
     return () => window.removeEventListener('popstate', pop);
   }, [go]);
   const currentPath = (path ?? localPath).split('?')[0];
+  const historyPath = base + '/history';
+  const historyReader = currentPath.startsWith(historyPath + '/approval/');
+  const folder = historyReader ? 'history' : ['history', 'rules', 'notices'].find(id => currentPath === base + '/' + id) ?? 'pending';
+  const listPath = folder === 'history' ? historyPath : base;
+  const readerPrefix = listPath + '/approval/';
   let selected: string | undefined;
-  if (currentPath.startsWith(`${base}/approval/`)) {
-    try { selected = decodeURIComponent(currentPath.slice(`${base}/approval/`.length)) || undefined; }
+  if (currentPath.startsWith(readerPrefix)) {
+    try { selected = decodeURIComponent(currentPath.slice(readerPrefix.length)) || undefined; }
     catch { /* Malformed URLs leave the reader closed. */ }
   }
   const { snapshot, refresh } = useProposalNow(read, selected, access.owner);
-  const folder = ['history', 'rules', 'notices'].find(id => currentPath === `${base}/${id}`) ?? 'pending';
   const visit = (next: string) => {
     if (go) go(next);
     else {
@@ -122,7 +126,7 @@ export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; t
   const answerActions = actions ?? (defaultActions && { ...defaultActions, openRuleConversation: go ?? ((next:string)=>window.location.assign(next)) });
   return <Approvals snapshot={snapshot} actions={answerActions && { ...answerActions, refreshProposal: refresh }} names={names} viewer={viewer} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)}
     navigation={{ selected,
-      select: id => visit(id ? `${base}/approval/${encodeURIComponent(id)}` : base),
+      select: id => visit(id ? readerPrefix + encodeURIComponent(id) : listPath),
       folder: folder,
       openFolder: id => visit(id === 'pending' ? base : `${base}/${id}`) }} />;
 }
