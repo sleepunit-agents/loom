@@ -578,3 +578,21 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html
     await outcome.waitFor({state:'detached'});
   }finally{await browser.close();await app.close();}
 });
+
+it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root,'index.html')))('opens a direct Work project with independent questions and backlog history',async()=>{
+  const app=await fixture(true),browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  try {
+    app.data.writes.run(()=>app.db.insert(s.memberAgents).values({member:'sam',agent:'art'}).run());
+    const {prepareAgentPost}=await import('../core/conversations/agent-posts.js');
+    const save=await prepareAgentPost(app.db,app.data.services.comms!.key,'work-source:inspection',
+      {action:'open',words:'Watching pressure on the shared pump.',refs:['t-1']},{task:'t-1',agent:'art',project:'pond'});
+    app.data.writes.run(()=>save(new Date(app.clock.now()).toISOString()));
+    const ctx=await browser.newContext({serviceWorkers:'block',reducedMotion:'reduce',viewport:{width:1440,height:900}});
+    await ctx.addCookies([{name:'loom_ui',value:app.cookie,url:app.url}]);
+    const page=await ctx.newPage();page.setDefaultTimeout(8000);
+    await page.goto(app.url+'/p/work/project/pond');
+    await page.getByRole('region',{name:'Latest agent updates'}).getByText(/Watching pressure/).waitFor();
+    await page.getByRole('button',{name:'Compare backlog and see tickets'}).click();
+    await page.waitForURL(url=>url.pathname.endsWith('/project/pond/history'));
+  }finally{await browser.close();await app.close();}
+});
