@@ -68,32 +68,4 @@
   display: block; margin-bottom: 4px; color: var(--v-text-2);
   font: 600 11px/1.4 var(--loom-font-data, monospace); letter-spacing: .045em; text-transform: uppercase;
 }
-.work-toolbar {
-  background: var(--work-paper); border: 1px solid var(--work-rule);
-  border-inline-start: 3px solid var(--work-signal); margin-bottom: 16px; min-width: 0;
-}
-.work-toolbar-title, .work-view-switch, .work-context-controls {
-  display: flex; align-items: center; gap: 6px; padding: 6px 10px; flex-wrap: wrap;
-}
-.work-toolbar-title { gap: 10px; padding-block: 10px; }
-.work-toolbar-title h1 { flex: 1 1 8rem; min-width: 0; overflow-wrap: anywhere; font: italic 650 24px/1.15 var(--font-display,sans-serif); }
-.work-toolbar .work-mark { width: 34px; height: 30px; }
-.work-toolbar button, .work-context-controls input[type=search] {
-  padding: 6px 10px; font: 600 12px/1.5 var(--loom-font-data,monospace);
-}
-.work-view-switch, .work-context-controls { border-top: 1px solid var(--work-rule); }
-.work-view-switch button, .work-return {
-  border: 1px solid transparent; color: var(--v-text-2); background: transparent;
-}
-.work-view-switch button[aria-current=page] {
-  color: var(--work-ink); background: var(--v-paper); box-shadow: inset 0 -3px var(--work-signal);
-}
-.work-toolbar button:is(:hover,:focus-visible) { color: var(--work-ink); border-color: var(--work-rule); }
-.work-return, .work-view-switch .work-backlog { margin-inline-start: auto; border-color: var(--work-rule); }
-.work-context-controls:empty { display: none; }
-.work-context-controls input[type=search] { width: min(100%,18rem); color: var(--work-ink); background: var(--v-paper); border: 1px solid var(--work-rule); }
-.work-context-controls form { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; min-width: 0; max-width: 100%; }
-.work-context-controls form > :first-child { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
-.work-context-controls label { min-width: 0; max-width: 100%; }
-
-@container (min-width: 40rem) { .work-toolbar { position: sticky; top: 0; z-index: 2; } }
+.loom-toolbar .work-mark { width: 34px; height: 30px; }
