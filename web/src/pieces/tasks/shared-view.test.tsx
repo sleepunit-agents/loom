@@ -122,7 +122,7 @@ it('keeps six actions in one row with one filled, the rest behind More, and open
   expect(row().filter((b:{props:{variant?:string}})=>b.props.variant==='primary').map((b:{props:{children:string}})=>b.props.children)).toEqual(['Claim']);
   // No heading over nothing: a task with no relations and no comments names none.
   expect(tree.root.findAllByType('Fact').map((f:{props:{label:string}})=>f.props.label)).not.toEqual(expect.arrayContaining(['Parent','Children','Blocked by','Blocks']));
-  expect(tree.root.findAllByType('Section')).toHaveLength(0);
+  expect(tree.root.findAllByType('Section').map((section:{props:{label:string}})=>section.props.label)).toEqual(['Commitment']);
   // Owner is a name, with no kind word.
   expect(tree.root.findAllByType('Fact').find((f:{props:{label:string}})=>f.props.label==='Owner').props.children).toBe('Art');
   // Yours and in progress: Close is the one filled button.
@@ -140,7 +140,7 @@ it('shows a parent and a blocker as a title and a chip that opens it, and the fo
   // One this person cannot see is its id alone, and opens nothing.
   expect(chips[1].props.onClick).toBeUndefined();
   await act(async () => chips[0].props.onClick()); expect(p.select).toHaveBeenCalledWith('t-3');
-  expect(tree.root.findByType('Section').props.label).toBe('Add comment'); expect(tree.root.findByType('Section').findAllByType('form')).toHaveLength(1);
+  const formSection=tree.root.findAllByType('Section').find((section:{props:{label:string}})=>section.props.label==='Add comment'); expect(formSection.findAllByType('form')).toHaveLength(1);
 });
 it('names its folders as the site does, counts projects and epics, and heads neither when there are none',async () => {
   await draw(props({tasks:[task('t-1',{project:'pond'}),task('t-2',{project:'pond',status:'closed'}),task('t-3',{project:'done',status:'closed'}),task('t-4',{type:'epic',title:'Fix the pond'})],links:[{task:'t-1',dependsOn:'t-4',type:'parent-child'}],names:{jonathan:'Jonathan'}}));
