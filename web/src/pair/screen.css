@@ -86,3 +86,65 @@
     background-position-x: -952px;
   }
 }
+
+.pair-contexts {
+  position: fixed;
+  z-index: 30;
+  inset-block-start: 0;
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 6rem);
+}
+.context-traces {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 32px;
+  min-width: 44px;
+  margin: auto;
+  padding-inline: 8px;
+  max-width: 100%;
+  cursor: pointer;
+}
+.context-trace {
+  position: relative;
+  height: 2px;
+  width: 16px;
+  border-radius: 2px;
+  opacity: 0.48;
+}
+.context-trace[data-active='true'] {
+  width: 32px;
+  height: 3px;
+  opacity: 1;
+}
+.context-trace[data-attention='true'] {
+  opacity: 1;
+}
+.context-trace[data-attention='true']::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 5px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.context-choices {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(20rem, calc(100vw - 2rem));
+  @apply rounded-2xl border bg-popover p-2 text-popover-foreground shadow-lg;
+}
+@media (forced-colors: active) {
+  .context-trace {
+    background: ButtonText !important;
+  }
+  .context-trace[data-active='true'] {
+    background: Highlight !important;
+  }
+}

@@ -1,7 +1,11 @@
 import { entityAddress } from './entities';
 import { linkedEntity } from './entity-links';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { useDataQuery } from '../data/graphql';
+import {
+  ContextDirectory as Directory,
+  contextTitlePrefix as prefix,
+  type ContextRow as Row,
+} from '../data/context-directory';
 import { memberOperation } from '../data/operation';
 import { newId } from '../data/id';
 export type ContextCommand = (words: string) => Promise<string | undefined>;
@@ -41,27 +45,6 @@ export function keep(key: string, value: string) {
 const InlineQuestion = lazy(async () => ({
   default: (await import('../pieces/comms/inline-question')).InlineQuestion,
 }));
-const prefix = 'Context · ';
-type Row = { id: string; title: string; agent: string; member: string };
-const directory =
-  'query ContextRing($member:String!,$offset:Int!){rows:commsThreads(member:$member,limit:50,offset:$offset){id member agent title}}';
-function Directory({
-  member,
-  offset,
-  onPage,
-}: {
-  member: string;
-  offset: number;
-  onPage: (offset: number, rows: Row[]) => void;
-}) {
-  const feed = useDataQuery<{ rows: Row[] }>(directory, { member, offset });
-  useEffect(() => {
-    onPage(offset, feed.status === 'live' ? feed.data?.rows || [] : []);
-  }, [feed.status, feed.data, offset, onPage]);
-  return feed.status === 'live' && feed.data?.rows.length === 50 ? (
-    <Directory member={member} offset={offset + 50} onPage={onPage} />
-  ) : null;
-}
 export function Ring({
   member,
   agent,

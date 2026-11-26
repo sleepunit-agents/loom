@@ -43,6 +43,7 @@ import {
 import { WorkTrace } from './work-trace';
 import { workTree, type EventMessage } from './work-tree';
 import { Reply } from './reply';
+import { ContextSwitcher, type Place } from './context-switcher';
 import './screen.css';
 
 interface Ticket {
@@ -67,7 +68,7 @@ interface Ticket {
   }[];
 }
 const subjectQuery =
-  'query PairTicket($id:String!){ticket:tasksSingle(where:{id:{eq:$id}}){id title project status assignee goal why doneWhen description changeTasksByTask{changeRow{repository number title url state checks}}} agent:workDiscussionAgent(kind:"ticket",id:$id)}';
+  'query PairTicket($id:String!){ticket:tasksSingle(where:{id:{eq:$id}}){id title project status assignee goal why doneWhen description changeTasksByTask{changeRow{repository number title url state checks}}} agent:workDiscussionAgent(kind:"ticket",id:$id) homeComms{agents}}';
 const fields =
   'clientId run seq kind sender at words wordsKeepUntil inboxItem tool cardState delivery verdict notice{error} stepInfo{parent exit limit t0 t1} stepDetails{detail body result items{text state}}';
 const historyQuery =
@@ -272,20 +273,64 @@ function TranscriptPage({
     </>
   );
 }
-function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; agent: string | null }) {
-  const id =
-    'th:pair-' +
-    Array.from(sha256(new TextEncoder().encode(JSON.stringify([member, agent, ticket.project]))), (n) =>
+function threadId(prefix: string, parts: (string | null)[]) {
+  return (
+    prefix +
+    Array.from(sha256(new TextEncoder().encode(JSON.stringify(parts))), (n) =>
       n.toString(16).padStart(2, '0'),
-    ).join('');
+    ).join('')
+  );
+}
+type Draft = { words: string; command: string };
+const emptyDraft: Draft = { words: '', command: '' };
+
+function ContextCanvas({ place }: { place: Place }) {
+  const feed = useDataQuery<Feed>(historyQuery, { id: place.thread, before: null });
+  const rows = feed.data?.rows || [];
+  const now = useDeadline(rows.map((m) => m.wordsKeepUntil));
+  const recent = rows.findLast(
+    (m) =>
+      (m.kind === 'reply' || m.kind === 'message') && m.words && Date.parse(m.wordsKeepUntil || '') > now,
+  );
+  return (
+    <div className="mx-auto max-w-2xl">
+      {recent ? (
+        <Card>
+          <CardHeader>
+            <CardDescription>{place.name}</CardDescription>
+            <CardTitle>{recent.kind === 'reply' ? place.agent : 'You'}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Reply words={recent.words!} />
+          </CardContent>
+        </Card>
+      ) : (
+        <h1 className="pt-16 text-center text-sm text-muted-foreground">{place.name}</h1>
+      )}
+    </div>
+  );
+}
+function Workspace({
+  member,
+  ticket,
+  place,
+  draft,
+  edit,
+}: {
+  member: string;
+  ticket: Ticket | null;
+  place: Place;
+  draft: Draft;
+  edit: (update: (old: Draft) => Draft) => void;
+}) {
+  const { thread: id, agent } = place;
   const pref = 'pair:chat:' + member;
   const [open, setOpen] = useState(() => localStorage.getItem(pref) !== 'hidden'),
     [quick, setQuick] = useState(false),
     [ready, setReady] = useState(false),
     [retry, again] = useState(0);
-  const [words, setWords] = useState(''),
-    [command, setCommand] = useState(''),
-    [busy, sending] = useState(false),
+  const { words, command } = draft;
+  const [busy, sending] = useState(false),
     [error, fail] = useState('');
   const [tail, setTail] = useState<ThreadTail>(emptyTail);
   const composing = useRef(false),
@@ -312,14 +357,18 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
   const chatActivity = tail.working ? 'Working' : tail.last > tail.read ? 'New activity' : '';
   useEffect(() => {
     let live = true;
+    if (place.id.startsWith('th:ctx-')) {
+      setReady(true);
+      return;
+    }
     if (agent)
       memberOperation(
         'comms.open',
         {
           thread: id,
           agent,
-          ...(ticket.project ? { project: ticket.project } : {}),
-          title: 'Pairing · ' + (ticket.project || member),
+          ...(ticket?.project ? { project: ticket.project } : {}),
+          title: ticket ? 'Pairing · ' + (ticket.project || member) : 'Workspace',
         },
         id.slice(3),
       )
@@ -332,7 +381,7 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
     return () => {
       live = false;
     };
-  }, [id, agent, retry, ticket.project, member]);
+  }, [id, agent, retry, ticket?.project, member, place.id]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
@@ -397,7 +446,7 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
     composing.current = true;
     sending(true);
     fail('');
-    const message = '[Ticket workspace · ' + ticket.id + ']\n' + value;
+    const message = ticket ? '[Ticket workspace · ' + ticket.id + ']\n' + value : value;
     const receipt = 'pair-send:' + id + ':' + Array.from(sha256(new TextEncoder().encode(message))).join('.');
     try {
       const clientId = sessionStorage.getItem(receipt) || newId();
@@ -405,12 +454,12 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
       await memberOperation('comms.send', { thread: id, clientId, words: message }, clientId);
       sessionStorage.removeItem(receipt);
       if (bar) {
-        setCommand((current) => (current.trim() === value ? '' : current));
+        edit((current) => (current.command.trim() === value ? { ...current, command: '' } : current));
         if (form.isConnected) {
           setQuick(false);
           showChat(true);
         }
-      } else setWords((current) => (current.trim() === value ? '' : current));
+      } else edit((current) => (current.words.trim() === value ? { ...current, words: '' } : current));
     } catch {
       fail('Delivery unconfirmed. Send the same message to retry.');
     } finally {
@@ -421,52 +470,56 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
   return (
     <main className="flex h-dvh overflow-hidden">
       <section className="relative flex min-w-0 flex-1 flex-col">
-        <div className="min-h-0 flex-1 overflow-auto p-4 sm:p-8">
-          <Card className="mx-auto max-w-2xl">
-            <CardHeader>
-              <CardDescription>
-                {ticket.project} · {ticket.id}
-              </CardDescription>
-              <CardTitle>{ticket.title}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Badge variant="secondary">{ticket.status.replaceAll('_', ' ')}</Badge>
-              {ticket.assignee && <p>Assigned to {ticket.assignee}</p>}
-              {Object.entries({
-                Goal: ticket.goal,
-                Why: ticket.why,
-                'Done when': ticket.doneWhen,
-                Description: ticket.description,
-              }).map(
-                ([k, v]) =>
-                  v && (
-                    <section key={k}>
-                      <h2 className="font-medium">{k}</h2>
-                      <div className="whitespace-pre-wrap text-sm">
-                        <TicketLinks words={v} />
-                      </div>
-                    </section>
-                  ),
-              )}
-              {ticket.changeTasksByTask.map(
-                ({ changeRow: p }) =>
-                  p && (
-                    <Item key={p.url} asChild variant="outline" size="sm">
-                      <a href={p.url} target="_blank" rel="noreferrer">
-                        <ItemContent>
-                          <ItemTitle>
-                            {p.repository} #{p.number} · {p.title}
-                          </ItemTitle>
-                          <ItemDescription>
-                            {p.state} · Checks {p.checks}
-                          </ItemDescription>
-                        </ItemContent>
-                      </a>
-                    </Item>
-                  ),
-              )}
-            </CardContent>
-          </Card>
+        <div className="min-h-0 flex-1 overflow-auto px-4 pt-10 pb-4 sm:px-8 sm:pb-8">
+          {ticket ? (
+            <Card className="mx-auto max-w-2xl">
+              <CardHeader>
+                <CardDescription>
+                  {ticket.project} · {ticket.id}
+                </CardDescription>
+                <CardTitle>{ticket.title}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Badge variant="secondary">{ticket.status.replaceAll('_', ' ')}</Badge>
+                {ticket.assignee && <p>Assigned to {ticket.assignee}</p>}
+                {Object.entries({
+                  Goal: ticket.goal,
+                  Why: ticket.why,
+                  'Done when': ticket.doneWhen,
+                  Description: ticket.description,
+                }).map(
+                  ([k, v]) =>
+                    v && (
+                      <section key={k}>
+                        <h2 className="font-medium">{k}</h2>
+                        <div className="whitespace-pre-wrap text-sm">
+                          <TicketLinks words={v} />
+                        </div>
+                      </section>
+                    ),
+                )}
+                {ticket.changeTasksByTask.map(
+                  ({ changeRow: p }) =>
+                    p && (
+                      <Item key={p.url} asChild variant="outline" size="sm">
+                        <a href={p.url} target="_blank" rel="noreferrer">
+                          <ItemContent>
+                            <ItemTitle>
+                              {p.repository} #{p.number} · {p.title}
+                            </ItemTitle>
+                            <ItemDescription>
+                              {p.state} · Checks {p.checks}
+                            </ItemDescription>
+                          </ItemContent>
+                        </a>
+                      </Item>
+                    ),
+                )}
+              </CardContent>
+            </Card>
+          ) : (
+            <ContextCanvas place={place} />
+          )}
         </div>
         <div
           className={'mx-auto max-w-full p-2 sm:p-3 ' + (quick ? '@container z-20 w-full sm:max-w-lg' : '')}
@@ -528,7 +581,10 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
                     aria-label="Quick message"
                     placeholder={`Ask ${name}…`}
                     value={command}
-                    onChange={(e) => setCommand(e.target.value)}
+                    onChange={(e) => {
+                      const command = e.target.value;
+                      edit((old) => ({ ...old, command }));
+                    }}
                   />
                   <InputGroupAddon align="inline-end">
                     <InputGroupButton
@@ -561,7 +617,9 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
           className="fixed top-2 right-2 z-10 rounded-full text-muted-foreground hover:text-foreground"
         >
           <MessageSquareIcon />
-          {chatActivity && <span aria-hidden="true" className="absolute top-1 right-1 size-1.5 rounded-full bg-primary" />}
+          {chatActivity && (
+            <span aria-hidden="true" className="absolute top-1 right-1 size-1.5 rounded-full bg-primary" />
+          )}
         </Button>
       )}
       <aside
@@ -579,7 +637,12 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
       >
         <header className="flex items-center justify-between border-b p-4">
           <h2 className="font-semibold">You and {agent === 'art' ? 'Art' : agent || 'Art'}</h2>
-          <Button variant="ghost" size="icon-sm" aria-label="Hide conversation" onClick={() => showChat(false)}>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Hide conversation"
+            onClick={() => showChat(false)}
+          >
             <XIcon />
           </Button>
         </header>
@@ -600,7 +663,10 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
               aria-label="Message Art"
               placeholder="Message Art…"
               value={words}
-              onChange={(e) => setWords(e.target.value)}
+              onChange={(e) => {
+                const words = e.target.value;
+                edit((old) => ({ ...old, words }));
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
@@ -647,16 +713,45 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
 }
 function TicketScreen({ member }: { member: string }) {
   const id = new URL(location.href).searchParams.get('ticket') || defaultId;
-  const read = useDataQuery<{ ticket: Ticket | null; agent: string | null }>(subjectQuery, { id });
+  const read = useDataQuery<{
+    ticket: Ticket | null;
+    agent: string | null;
+    homeComms: { agents: string[] } | null;
+  }>(subjectQuery, { id });
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   if (read.status !== 'live' || !read.data?.ticket)
     return <p role="status">{read.status === 'loading' ? 'Opening ticket…' : 'Ticket unavailable.'}</p>;
+  const { ticket, agent } = read.data;
+  const ticketPlace = {
+    id: 'loom',
+    name: ticket.project || 'Loom',
+    agent,
+    detail: ticket.id + ' · ' + ticket.title,
+    thread: threadId('th:pair-', [member, agent, ticket.project]),
+  };
+  const homeAgent = read.data.homeComms?.agents[0] || agent;
+  const home = {
+    id: 'home',
+    name: 'Home',
+    agent: homeAgent,
+    detail: 'Conversation',
+    thread: threadId('th:home-', [member, homeAgent]),
+  };
   return (
-    <Workspace
-      key={[member, read.data.agent, read.data.ticket.project].join(':')}
-      member={member}
-      ticket={read.data.ticket}
-      agent={read.data.agent}
-    />
+    <ContextSwitcher member={member} ticket={ticketPlace} home={home}>
+      {(place) => (
+        <Workspace
+          key={place.thread}
+          member={member}
+          place={place}
+          ticket={place.id === 'loom' ? ticket : null}
+          draft={drafts[place.thread] || emptyDraft}
+          edit={(update) =>
+            setDrafts((old) => ({ ...old, [place.thread]: update(old[place.thread] || emptyDraft) }))
+          }
+        />
+      )}
+    </ContextSwitcher>
   );
 }
 function App() {
