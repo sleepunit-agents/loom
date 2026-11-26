@@ -1380,6 +1380,14 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `message_files` (
+	`thread` text NOT NULL,
+	`seq` integer NOT NULL,
+	`sealed` blob NOT NULL,
+	PRIMARY KEY(`thread`, `seq`),
+	FOREIGN KEY (`thread`,`seq`) REFERENCES `messages`(`thread`,`seq`) ON UPDATE no action ON DELETE cascade
+);
+
 CREATE TABLE `project_claim_directions` (
 	`seq` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`project` text NOT NULL,
@@ -1936,6 +1944,7 @@ CREATE TABLE `secret_write_journal` (
 	CONSTRAINT "secret_write_journal_input_hash_required" CHECK(length(trim("secret_write_journal"."input_hash", char(9,10,11,12,13,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0)
 );
 
+CREATE TRIGGER message_files_expire AFTER UPDATE OF words ON messages WHEN NEW.words IS NULL BEGIN DELETE FROM message_files WHERE thread=NEW.thread AND seq=NEW.seq; END;
 CREATE UNIQUE INDEX triggers_clock_schedule_name ON triggers
   ("to", coalesce(schedule_name, id)) WHERE schedule_removed_at IS NULL AND source_kind = 'time'
   AND lifespan = 'until-stopped' AND target_kind = 'inbox' AND to_kind = 'agent';

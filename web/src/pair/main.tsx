@@ -11,7 +11,8 @@ import type { CommsMessage, CommsThread } from '../pieces/comms-view/model';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './ui/card';
-import { ArrowUpIcon, XIcon, CircleAlertIcon } from 'lucide-react';
+import { Attachment, AttachmentAction, AttachmentActions, AttachmentContent, AttachmentGroup, AttachmentTitle, AttachmentMedia } from "./ui/attachment";
+import { PaperclipIcon, ArrowUpIcon, XIcon, CircleAlertIcon } from 'lucide-react';
 import {
   InputGroup,
   InputGroupAddon,
@@ -70,7 +71,7 @@ interface Ticket {
 const subjectQuery =
   'query PairTicket($id:String!){ticket:tasksSingle(where:{id:{eq:$id}}){id title project status assignee goal why doneWhen description changeTasksByTask{changeRow{repository number title url state checks}}} agent:workDiscussionAgent(kind:"ticket",id:$id) homeComms{agents}}';
 const fields =
-  'clientId run seq kind sender at words wordsKeepUntil inboxItem tool cardState delivery verdict notice{error} stepInfo{parent exit limit t0 t1} stepDetails{detail body result items{text state}}';
+  'hasFiles clientId run seq kind sender at words wordsKeepUntil inboxItem tool cardState delivery verdict notice{error} stepInfo{parent exit limit t0 t1} stepDetails{detail body result items{text state}}';
 const historyQuery =
   'query PairLog($id:String!,$before:Int){thread:commsThread(id:$id){id member agent project conversation working readSeq} rows:commsMessages(thread:$id,beforeSeq:$before,limit:50){' +
   fields +
@@ -126,6 +127,18 @@ function RunDetails({ id }: { id: string }) {
 }
 function Entry({ m }: { m: EventMessage }) {
   const mine = m.kind === 'message' || m.kind === 'answer';
+  let words = m.words;
+  let attachments: string[] = [];
+  const marker = m.hasFiles && m.kind === 'message' && words?.match(/(?:^|\n)Attached files: (\[[^\n]*\])$/);
+  if (marker && words) {
+    try {
+      const names: unknown = JSON.parse(marker[1]);
+      if (Array.isArray(names) && names.length && names.every(name => typeof name === 'string')) {
+        attachments = names;
+        words = words.slice(0,marker.index);
+      }
+    } catch { /* Keep ordinary prose containing the same label. */ }
+  }
   return (
     <Message align={mine ? 'end' : 'start'}>
       <MessageContent>
@@ -140,13 +153,19 @@ function Entry({ m }: { m: EventMessage }) {
             ) : (
               <TicketLinks
                 words={
-                  m.words?.replace(/^\[Ticket workspace · ([^\n]+)\]\n/, '$1\n') ||
+                  words?.replace(/^\[Ticket workspace · ([^\n]+)\]\n/, '$1\n') ||
                   m.notice?.error ||
                   m.verdict ||
-                  'Content unavailable'
+                  (attachments.length ? '' : 'Content unavailable')
                 }
               />
             )}
+            {attachments.length > 0 && <AttachmentGroup aria-label="Sent attachments">
+              {attachments.map((name,index) => <Attachment key={index} size="xs">
+                <AttachmentMedia><PaperclipIcon /></AttachmentMedia>
+                <AttachmentContent><AttachmentTitle title={name}>{name}</AttachmentTitle></AttachmentContent>
+              </Attachment>)}
+            </AttachmentGroup>}
           </BubbleContent>
         </Bubble>
         {m.kind === 'reply' && m.run && <RunDetails id={m.run} />}
@@ -191,7 +210,7 @@ function quickPresence({
   question: boolean;
 }) {
   if (!agent || tail.status === 'unavailable') return { mood: 'error', text: 'Conversation unavailable' };
-  if (error) return { mood: 'error', text: ready ? 'Delivery unconfirmed' : 'Couldn’t connect' };
+  if (error) return { mood: 'error', text: ready ? error : 'Couldn’t connect' };
   if (!ready || tail.status === 'connecting') return { mood: 'thinking', text: 'Connecting…' };
   if (busy) return { mood: 'thinking', text: 'Sending your message…' };
   if (question) return { mood: 'waiting', text: 'Has a question for you' };
@@ -281,8 +300,8 @@ function threadId(prefix: string, parts: (string | null)[]) {
     ).join('')
   );
 }
-type Draft = { words: string; command: string };
-const emptyDraft: Draft = { words: '', command: '' };
+type Draft = { words: string; command: string; files: File[] };
+const emptyDraft: Draft = { words: '', command: '', files: [] };
 
 function ContextCanvas({ place }: { place: Place }) {
   const feed = useDataQuery<Feed>(historyQuery, { id: place.thread, before: null });
@@ -329,7 +348,8 @@ function Workspace({
     [quick, setQuick] = useState(false),
     [ready, setReady] = useState(false),
     [retry, again] = useState(0);
-  const { words, command } = draft;
+  const { words, command, files } = draft;
+  const picker = useRef<HTMLInputElement>(null);
   const [busy, sending] = useState(false),
     [error, fail] = useState('');
   const [tail, setTail] = useState<ThreadTail>(emptyTail);
@@ -454,16 +474,25 @@ function Workspace({
     e.preventDefault();
     const form = e.currentTarget;
     const value = (bar ? command : words).trim();
-    if (composing.current || !value || !ready) return;
+    if (composing.current || (!value && (bar || !files.length)) || !ready) return;
     composing.current = true;
     sending(true);
     fail('');
     const message = ticket ? '[Ticket workspace · ' + ticket.id + ']\n' + value : value;
-    const receipt = 'pair-send:' + id + ':' + Array.from(sha256(new TextEncoder().encode(message))).join('.');
     try {
+      const payload = bar || !files.length ? {} : {files: await Promise.all(files.map(async file => {
+        const contents = await new Promise<string>((resolve,reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result).split(',')[1]);
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(file);
+        });
+        return {name:file.name, contents};
+      }))};
+      const receipt = 'pair-send:' + id + ':' + Array.from(sha256(new TextEncoder().encode('files' in payload ? JSON.stringify([message,payload]) : message))).join('.');
       const clientId = sessionStorage.getItem(receipt) || newId();
       sessionStorage.setItem(receipt, clientId);
-      await memberOperation('comms.send', { thread: id, clientId, words: message }, clientId);
+      await memberOperation('comms.send', { thread: id, clientId, words: message, ...payload }, clientId);
       sessionStorage.removeItem(receipt);
       if (bar) {
         edit((current) => (current.command.trim() === value ? { ...current, command: '' } : current));
@@ -471,7 +500,7 @@ function Workspace({
           setQuick(false);
           showChat(true);
         }
-      } else edit((current) => (current.words.trim() === value ? { ...current, words: '' } : current));
+      } else edit((current) => ({...current, words:current.words.trim() === value ? '' : current.words, files:current.files.filter(file => !files.includes(file))}));
     } catch {
       fail('Delivery unconfirmed. Send the same message to retry.');
     } finally {
@@ -566,6 +595,9 @@ function Workspace({
           >
             {agent === 'art' && (
               <span className="pair-face rounded-lg bg-muted" aria-hidden="true">
+                <svg className="pair-contour" viewBox="0 0 50 50" preserveAspectRatio="none" aria-hidden="true">
+                  <rect x="1" y="1" width="48" height="48" rx="8" pathLength="100" />
+                </svg>
                 <span className="art-portrait shrink-0" data-mood={presence.mood} />
               </span>
             )}
@@ -598,6 +630,26 @@ function Workspace({
             </MessageScroller>
           </MessageScrollerProvider>
           <form onSubmit={(e) => void send(e, false)} className="p-3">
+            <input ref={picker} type="file" multiple hidden onChange={e => {
+              const selected = Array.from(e.currentTarget.files ?? []);
+              e.currentTarget.value = '';
+              const next = [...files, ...selected];
+              if (next.length > 4 || next.reduce((total,file) => total + file.size, 0) > 8 * 1024 * 1024) {
+                fail('Choose up to four files totaling 8 MiB per message.');
+              } else if (next.some(file => !file.name || file.name.length > 255 || /[\p{C}\u2028\u2029]/u.test(file.name))) {
+                fail('Choose files with printable names of up to 255 characters.');
+              } else {
+                fail('');
+                edit(old => ({...old, files:next}));
+              }
+            }} />
+            {files.length > 0 && <AttachmentGroup aria-label="Attachments">
+              {files.map((file,index) => <Attachment key={index} size="xs">
+                <AttachmentMedia><PaperclipIcon /></AttachmentMedia>
+                <AttachmentContent><AttachmentTitle title={file.name}>{file.name}</AttachmentTitle></AttachmentContent>
+                <AttachmentActions><AttachmentAction type="button" disabled={busy} aria-label={'Remove ' + file.name} onClick={() => edit(old => ({...old,files:old.files.filter((_,i) => i !== index)}))}><XIcon /></AttachmentAction></AttachmentActions>
+              </Attachment>)}
+            </AttachmentGroup>}
             <InputGroup>
               <InputGroupTextarea
                 ref={chatInput}
@@ -616,6 +668,7 @@ function Workspace({
                 }}
               />
               <InputGroupAddon align="block-end">
+                <InputGroupButton type="button" size="icon-sm" disabled={busy || !ready} title="Attach files (8 MiB total)" aria-label="Attach files" onClick={() => picker.current?.click()}><PaperclipIcon /></InputGroupButton>
                 {tail.working && <InputGroupText role="status">Working…</InputGroupText>}
                 <InputGroupButton
                   className="ms-auto"
@@ -623,7 +676,7 @@ function Workspace({
                   variant="default"
                   size="icon-sm"
                   aria-label="Send"
-                  disabled={busy || !ready || !words.trim()}
+                  disabled={busy || !ready || (!words.trim() && !files.length)}
                 >
                   <ArrowUpIcon />
                 </InputGroupButton>

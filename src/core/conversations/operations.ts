@@ -1,3 +1,4 @@
+import { chatFiles } from './chat-files.js';
 import { threadTitle } from './title.js';
 import {isPrivateInboxQuestion} from './private-inbox-words.js';
 /** Shared-schema mutation adapters. Composition supplies CURRENT authorization;
@@ -89,10 +90,10 @@ export function registerConversationOperations(operations: Operations, service: 
   }));
 
   operations.register(operation({ ...common, name: 'comms.send',
-    input: target.extend({ clientId: z.string().min(1).max(200), words: z.string().trim().min(1).max(MESSAGE_WORDS_MAX) }),
+    input: target.extend({ clientId: z.string().min(1).max(200), words: z.string().trim().max(MESSAGE_WORDS_MAX), files: chatFiles.optional() }).refine(i => (i.words.length > 0 || !!i.files?.length) && i.words.length + (i.files ? JSON.stringify(i.files.map(f => f.name)).length + 17 : 0) <= MESSAGE_WORDS_MAX),
     output: z.object({ thread: z.string(), seq: z.number().int(), item: z.string() }).strict(),
     may: (v, i) => threadAccess(v, i.thread),
-    prepare: (i, ctx) => service.prepareSend({ thread: i.thread, clientId: i.clientId, words: i.words, sender: member(ctx.viewer), kind: 'message' }),
+    prepare: (i, ctx) => service.prepareSend({ thread: i.thread, clientId: i.clientId, words: i.words, files:i.files, sender: member(ctx.viewer), kind: 'message' }),
     run(ctx, i, prepared) {
       const message = (prepared as Awaited<ReturnType<CommsMessages['prepareSend']>>)();
       changed(ctx, i.thread);

@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
  * encrypted words never enter operation receipts or the plaintext Inbox. */
 import { and, eq, inArray, isNotNull, max, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { conversations, deletedThreads, inbox, inboxRefs, messages, threads, turns, digests } from '../data/schema.js';
+import { messageFiles, conversations, deletedThreads, inbox, inboxRefs, messages, threads, turns, digests } from '../data/schema.js';
 import type { WordsKey } from './words.js';
 import { recordThreadRef } from './thread-ref-store.js';
 import { refsIn } from './refs.js';
@@ -29,6 +29,7 @@ export type MessageInput = {
   clientId?: string; run?: string; tool?: string; cardState?: Message['cardState'];
   turn?: TurnDetails;
   progress?: boolean;
+  files?: {name:string; contents:string}[];
 };
 
 export class CommsMessages {
@@ -100,14 +101,19 @@ export class CommsMessages {
     if (input.sender !== (input.kind === 'message' ? before.cv.member : before.cv.agent)) throw new Error('Sender differs from thread');
     const old = this.retry(input.thread, input.sender, input.clientId);
     if (old) return () => { this.context(input.thread); return old; };
-    const refs = refsIn(input.words), words = await this.key.seal(input.words);
+    const refs = refsIn(input.words);
+    const labels = input.files?.map(file => file.name);
+    const visible = labels?.length ? [input.words, 'Attached files: ' + JSON.stringify(labels)].filter(Boolean).join('\n') : input.words;
+    const words = await this.key.seal(visible);
+    const sealed = input.files?.length ? await this.key.seal(JSON.stringify(input.files)) : undefined;
     return () => this.db.transaction(() => {
       const { cv } = this.context(input.thread);
       if (input.sender !== (input.kind === 'message' ? cv.member : cv.agent)) throw new Error('Sender differs from thread');
       const retry = this.retry(input.thread, input.sender, input.clientId);
       if (retry) return retry;
-      const { turn, progress, ...messageInput } = input;
+      const { turn, progress, files: _files, ...messageInput } = input;
       let row = this.append({ ...messageInput, words, delivery: input.kind === 'message' ? 'sending' : null }, refs, turn, progress);
+      if (sealed) this.db.insert(messageFiles).values({thread:row.thread,seq:row.seq,sealed}).run();
       if (input.kind === 'message') row = this.attach(row, this.threads.conversations.send({
         toKind: 'agent', to: cv.agent, conversation: cv.id, source: 'thread', sourceId: `${row.thread}:${row.seq}`,
         fromKind: 'person', fromId: input.sender, thread: row.thread, messageSeq: row.seq, refs,

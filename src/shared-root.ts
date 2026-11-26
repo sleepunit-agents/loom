@@ -99,6 +99,7 @@ import { approvalRulesService } from './apps/approval-rules.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { sharedConversations } from './shared-conversations.js';
 import { sameRequestOrigin } from './core/data/origin.js';
+import { CHAT_FILE_REQUEST_BYTES } from './core/conversations/chat-files.js';
 import { DOOR_REQUEST_BYTES } from './core/data/http.js';
 import { takeBodyInput } from './core/conversations/body-input.js';
 import { conversationBodyScope } from './core/conversations/body-scope.js';
@@ -592,7 +593,7 @@ export function sharedRoot(options: {
       }else if(name==='household.setPortrait'){
         if(!auth.window||!householdOwner(db,auth.viewer))return c.json(failure('denied','Sign in as a household owner to change a portrait'),403);
         body=await bodyRequest(request,{signal},true,PORTRAIT_REQUEST_BYTES).json();
-      }else body=await bodyRequest(request,{signal},true).json();
+      }else body=await bodyRequest(request,{signal},true,name==='comms.send' && auth.viewer.kind==='member' ? CHAT_FILE_REQUEST_BYTES : DOOR_REQUEST_BYTES).json();
     }catch(error){return error instanceof BodyTooLarge?c.json(failure('invalid','Request body too large'),413):c.json(failure('invalid',multipart?'Invalid attachment':'Invalid JSON'),400);}
     const parsed = envelope.safeParse(body);
     if (!parsed.success) return c.json(failure('invalid', 'Expected {input, id?}'), 400);
@@ -600,8 +601,9 @@ export function sharedRoot(options: {
     const epoch = isGuardedCommandRead(name) ? data.readVersion() : undefined;
     const answer=await executeCommand(auth,name,parsed.data.input,parsed.data.id,signal);
     if (epoch !== undefined && answer.ok) {
+      const until=name==='conversation.messageFiles' ? Number((answer.value as {until:number}).until) : Infinity;
       return guardedResponse(JSON.stringify(answer), {status:200, headers:{'content-type':'application/json', 'cache-control':'no-store'}},
-        () => !closing && auth.valid() && data.readVersion() === epoch);
+        () => !closing && auth.valid() && clock.now() < until && data.readVersion() === epoch);
     }
 
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);

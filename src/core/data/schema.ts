@@ -2485,7 +2485,20 @@ export const bridgePersonSightings = sqliteTable('bridge_person_sightings', {
   label: text('label'),
 });
 
+// Private encrypted files follow the lifetime of their parent message.
+export const messageFiles = sqliteTable('message_files', {
+  thread: text('thread').notNull(),
+  seq: integer('seq').notNull(),
+  sealed: blob('sealed', {mode:'buffer'}).notNull(),
+}, t => [
+  primaryKey({columns:[t.thread,t.seq]}),
+  foreignKey({columns:[t.thread,t.seq],foreignColumns:[messages.thread,messages.seq]}).onDelete('cascade'),
+]);
+
+export const expireMessageFiles = 'CREATE TRIGGER message_files_expire AFTER UPDATE OF words ON messages WHEN NEW.words IS NULL BEGIN DELETE FROM message_files WHERE thread=NEW.thread AND seq=NEW.seq; END;';
+
 export const plumbing = {
+  messageFiles,
   projectClaimDirections, taskBacklogEvents,
   bridgePersonSightings,
   agentPostSources, agentPostThreads, agentPosts, agentPostNames, agentPostWorkRefs, agentPostWorkPending,

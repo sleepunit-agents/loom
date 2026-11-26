@@ -165,3 +165,39 @@ export async function showBodyAttachments(client: Commands, incoming: readonly s
     named.length ? 'Sent as files that you cannot open from here: ' + named.join(', ') + '. Say so plainly if they matter to the answer, and ask for the words to be pasted.' : '',
   ].filter(Boolean).join('\n');
 }
+
+/** A signed-in member attached these files directly to a private Comms message. */
+export async function receiveChatFiles(client: Commands, items: string[], scratch?: string): Promise<string> {
+  const lines: string[] = [];
+  let count = 0, shown = 0, totalBytes = 0;
+  const directory = scratch && join(scratch,'attachments-' + randomUUID());
+  for (const item of items) {
+    if (count >= BODY_ATTACHMENTS) { lines.push('Additional attachments exceeded the run limit.'); break; }
+    try {
+      const reply = await client.command('conversation.messageFiles',{item},randomUUID());
+      if (!reply.ok) throw Error();
+      const {files} = z.object({files:z.array(z.object({name:z.string(),contents:z.string()})).max(4)}).parse(reply.value);
+      for (const file of files) {
+        if (++count > BODY_ATTACHMENTS) { lines.push('Additional attachments exceeded the run limit.'); break; }
+        const bytes = Buffer.from(file.contents,'base64');
+        try {
+          totalBytes += bytes.length;
+          if (totalBytes > BODY_ATTACHMENT_BYTES) {
+            lines.push('Additional attachments exceeded the run byte limit.');
+            return lines.join('\n');
+          }
+          if (directory) {
+            mkdirSync(directory,{mode:0o700,recursive:true});
+            const path = join(directory,count+'-'+plainFileName(file.name));
+            writeFileSync(path,bytes,{mode:0o600,flag:'wx'});
+            lines.push('Attached file '+JSON.stringify(file.name)+' is saved at '+path);
+          } else if (TEXT_NAME.test(file.name) && bytes.length <= SHOWN_TEXT_BYTES && shown + bytes.length <= SHOWN_TEXT_TOTAL) {
+            shown += bytes.length;
+            lines.push(JSON.stringify({attachment:file.name,text:new TextDecoder('utf-8',{fatal:true}).decode(bytes)}));
+          } else lines.push('Received '+JSON.stringify(file.name)+'; this worker cannot open it.');
+        } finally { bytes.fill(0); }
+      }
+    } catch { lines.push('An attachment could not be opened.'); }
+  }
+  return lines.join('\n');
+}

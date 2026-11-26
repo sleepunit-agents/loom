@@ -26,7 +26,7 @@ import {BodyContactExpired,BODY_CONTACT_MESSAGE} from './body-contact.js';
 import {bodyCommandClient} from './body-command-client.js';
 import {bodyMemoryIdentity,bodyChannelBrief} from './body-memory-identity.js';
 import {discordAttachmentLabels} from '../pieces/bridges/discord-link.js';
-import {saveBodyAttachments,showBodyAttachments} from './body-attachments.js';
+import {receiveChatFiles,saveBodyAttachments,showBodyAttachments} from './body-attachments.js';
 import {bodyFileReader,bodyNoteFileReader} from './body-files.js';
 import {bodySessions,type BodySessions} from './body-session.js';
 import { usageReport, type UsageReport } from './usage-report.js';
@@ -155,10 +155,12 @@ export async function bodyProgram(input: {
     let deliveredItems = 0;
     let hasOwnSchedule = false;
     const journalDeliveries: string[] = [];
+    const attachedMail: string[] = [];
     const claimed=job.run?.policy?.mail;let lateStranger=false,placed=false;
     const batch = await client.takeAndAccept(async (item, sinkSignal) => {
       if (sinkSignal.aborted || signal.aborted) throw new Error();
       deliveredItems++;
+      if(job.venue==='loom' && item.source==='thread' && item.words?.match(/(?:^|\n)Attached files: \[/)) attachedMail.push(item.id);
       // This is the receiving body's context, never a parent's pipe queue.
       // Mail in a bridge conversation that is no message from the bridge: a trigger's firing there, or a note
       // from another body of this agent. Its answer is a post in the conversation, answering no message.
@@ -244,6 +246,10 @@ export async function bodyProgram(input: {
       :discordAttachments.size?'You cannot open these attachments because this body has no file tools.'
       :bridge?await (input.showAttachments??showBodyAttachments)(memoryClient,incoming):null;
     if(signal.aborted)throw new Error();
+    if(attachedMail.length){
+      const attachments=await receiveChatFiles(memoryClient,attachedMail,hasFileTools(reach,policy)?input.env[BODY_SCRATCH]:undefined);
+      context.push(attachments);continued.push(attachments);
+    }
     if(sent){context.push(sent);continued.push(sent);}
     // In a bridge's room others speak beside the one who asked. The body is told who this job works for, by loom's
     // reading of the room, before its mail: a body that continues a kept session is told too, since the asker of

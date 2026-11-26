@@ -4,7 +4,7 @@ import Database from 'better-sqlite3';
 import { readFileSync } from 'node:fs';
 import { getTableName } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { polymorphicReferences, schema } from './schema.js';
+import { expireMessageFiles, polymorphicReferences, schema } from './schema.js';
 
 /** Bind the one schema to an already-initialised connection; does no IO itself. */
 export function dataDatabase(client: Database.Database, now: () => string = () => new Date().toISOString()) {
@@ -457,6 +457,8 @@ const upgrades: readonly (readonly string[])[] = [
   // 46: submitted forge reviews are independent of household review jobs.
   ["CREATE TABLE `github_reviews` (\n\t`change` text NOT NULL,\n\t`id` text NOT NULL,\n\t`login` text,\n\t`submitted_at` text NOT NULL,\n\t`state` text NOT NULL,\n\t`head_commit` text,\n\t`body` text NOT NULL,\n\t`url` text NOT NULL,\n\tPRIMARY KEY(`change`, `id`),\n\tFOREIGN KEY (`change`) REFERENCES `changes`(`id`) ON UPDATE no action ON DELETE cascade\n);",
    "CREATE INDEX `github_reviews_timeline` ON `github_reviews` (`change`,`submitted_at`,`id`);"],
+  // 47: encrypted attachments are removed with the parent message or its words.
+  ['CREATE TABLE `message_files` (\n\t`thread` text NOT NULL,\n\t`seq` integer NOT NULL,\n\t`sealed` blob NOT NULL,\n\tPRIMARY KEY(`thread`, `seq`),\n\tFOREIGN KEY (`thread`,`seq`) REFERENCES `messages`(`thread`,`seq`) ON UPDATE no action ON DELETE cascade\n);', expireMessageFiles],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

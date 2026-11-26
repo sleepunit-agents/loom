@@ -8,6 +8,7 @@ export interface CommsThread {
   unread?: boolean;
 }
 export interface CommsMessage {
+  hasFiles?: boolean;
   clientId?: string|null;
   thread: string; seq: number; kind: 'message' | 'reply' | 'card' | 'ask' | 'answer' | 'notice';
   sender: string; at: string; wordsKeepUntil?: string | null; words: string | null; inboxItem?: string | null;

@@ -325,3 +325,25 @@
     background: Highlight !important;
   }
 }
+
+.pair-face { position: relative; }
+.pair-contour {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  fill: none;
+  stroke: color-mix(in oklab, var(--foreground) 42%, transparent);
+}
+.pair-contour rect {
+  vector-effect: non-scaling-stroke;
+  stroke-width: 1;
+  stroke-linecap: round;
+  stroke-dasharray: 17 2 1 80;
+}
+@keyframes pair-contour-travel { to { stroke-dashoffset: -100; } }
+@media (prefers-reduced-motion: no-preference) {
+  .pair-contour rect { animation: pair-contour-travel 12s linear infinite; }
+}
