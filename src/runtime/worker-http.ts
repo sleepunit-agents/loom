@@ -214,7 +214,7 @@ export function workerSignIn(input: WorkerHttpOptions) {
     done: async (done: { id: string; signedIn: boolean; why?: SignInReason }) => { await call('signInDone', done, saved); },
   };
 }
-export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly string[]; slots?: number; programs?: boolean }): WorkerControl {
+export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly string[]; slots?: number; programs?: boolean; pairEvents?: boolean }): WorkerControl {
   const facts = input.facts === undefined ? undefined : machineFacts.parse(input.facts);
   const call = operationCaller(input);
   const ack = z.object({ ok: z.literal(true) });
@@ -252,7 +252,7 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
     next: async coldReviews => {
       const poll = {execution:'container',facts,slots:input.slots,programs:input.programs || undefined};
       const versions = coldReviews ? [{ reviewResults: true, coldReviews: true }, { reviewResults: true }] : [{ reviewResults: true }];
-      for (const capabilities of versions) {
+      for (const capabilities of input.pairEvents ? [{...versions[0],pairEvents:true},...versions] : versions) {
         try { return (await call('next', { ...poll, ...capabilities }, workerAssignment.nullable())) ?? undefined; }
         catch (error) {
           if (!(error instanceof WorkerOperationFailure && error.schemaRefusal)) throw error;

@@ -27,6 +27,7 @@ export class Dispatcher {
   readonly jobs: Jobs;
   readonly machines: Machines;
   // A protocol handshake belongs to the connected worker. Owner labels describe machines and cannot supply it.
+  private readonly pairingBoxes = new Set<string>();
   private readonly coldReviewBoxes = new Set<string>();
   private readonly reviewBoxes = new Set<string>();
   private readonly programBoxes = new Set<string>();
@@ -62,7 +63,8 @@ export class Dispatcher {
    * `ended` is given the id of each job this poll ended as one no harness can hold. The caller tells of those
    * ends once the write is committed, as of any job's end: one job holds one asker's mail, so another asker's
    * mail may be waiting behind such a job for a job of its own. */
-  next(box: string, facts?: readonly string[], ended?: string[], slots?: number, programs = false, poll?: { stampOnly?: boolean }, reviewResults = false, coldReviews = false) {
+  next(box: string, facts?: readonly string[], ended?: string[], slots?: number, programs = false, poll?: { stampOnly?: boolean }, reviewResults = false, coldReviews = false, pairEvents = false) {
+    if(pairEvents)this.pairingBoxes.add(box);else this.pairingBoxes.delete(box);
     const { stampOnly } = this.machines.report(box, facts, slots ?? null), written = rowsWritten(this.db);
     if (coldReviews) this.coldReviewBoxes.add(box); else this.coldReviewBoxes.delete(box);
     if(reviewResults)this.reviewBoxes.add(box);else this.reviewBoxes.delete(box);
@@ -129,8 +131,12 @@ export class Dispatcher {
           continue;
         }
         const policy = jobRoom(this.db, job);
-        const { placement, decision, signInBlocked } = decidePlacement(this.db, { agent: job.agent, now: at, eligibleBoxes: round ? this.coldReviewBoxes : review ? this.reviewBoxes : undefined, roles: workRole ? eligibleModels(workRole,roles,this.nativeHarnesses) : review ? roles.filter(role=>role.harness==='codex') : roles, needs, prefers: job.prefers ?? [], wants: this.wants(job.conversation),
-          cannotRun: harness => this.cannotRun(harness, policy) });
+        const candidates:Parameters<typeof decidePlacement>[1] = { agent: job.agent, now: at, eligibleBoxes: round ? this.coldReviewBoxes : review ? this.reviewBoxes : undefined, roles: workRole ? eligibleModels(workRole,roles,this.nativeHarnesses) : review ? roles.filter(role=>role.harness==='codex') : roles, needs, prefers: job.prefers ?? [], wants: this.wants(job.conversation),
+          cannotRun: harness => this.cannotRun(harness, policy) };
+        // Prefer an eligible runner that can publish native work events for this room.
+        const pairing = cv?.venue==='loom' && /^th:pair-[a-f0-9]{64}$/.test(cv.place||'') && this.pairingBoxes.size
+          ? decidePlacement(this.db,{...candidates,eligibleBoxes:this.pairingBoxes}) : undefined;
+        const {placement,decision,signInBlocked}=pairing?.placement?pairing:decidePlacement(this.db,candidates);
         // A job on anybody else's word runs with loom's tools only, and a harness that always has a shell does
         // not run it. When every model the agent has is on such a harness, no machine will ever take the job:
         // it is ended now and says why. Any other job that cannot be placed waits, as before.
