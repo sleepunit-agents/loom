@@ -13,8 +13,10 @@ function restore(key: string, root?: string): Ring {
       const views: View[] = saved.views.filter(
         (v: View) =>
           v &&
-          /^t-\d+$/.test(v.ticket) &&
-          (v.kind === 'ticket' || (['pull', 'comment'].includes(v.kind) && typeof v.ref === 'string')),
+          (v.kind === 'project'
+            ? typeof v.project === 'string' && !!v.project
+            : /^t-\d+$/.test(v.ticket) &&
+              (v.kind === 'ticket' || (['pull', 'comment'].includes(v.kind) && typeof v.ref === 'string'))),
       );
       if (base && !views.some((v) => viewKey(v) === viewKey(base))) views.unshift(base);
       const focus = base && saved.root !== root ? viewKey(base) : saved.active;
@@ -27,7 +29,21 @@ function restore(key: string, root?: string): Ring {
   return { views, active: views[0] || null };
 }
 export function useViewRing(key: string, root?: string) {
-  const [ring, set] = useState(() => restore(key, root));
+  const [ring, set] = useState(() => {
+    const saved = restore(key, root);
+    const project = new URLSearchParams(location.hash.slice(1)).get('project');
+    if (!project) return saved;
+    const target: View = { kind: 'project', project };
+    const existing = saved.views.find((v) => viewKey(v) === viewKey(target));
+    return { views: existing ? saved.views : [...saved.views, target], active: existing || target };
+  });
+  useEffect(() => {
+    if (new URLSearchParams(location.hash.slice(1)).has('project')) {
+      const url = new URL(location.href);
+      url.hash = '';
+      history.replaceState(history.state, '', url);
+    }
+  }, []);
   useEffect(() => {
     try {
       localStorage.setItem(

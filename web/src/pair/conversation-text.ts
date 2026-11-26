@@ -1,7 +1,7 @@
 // Older context clients stored the routing envelope and agent instructions in the message itself.
 export function conversationText(kind: string, words: string): string {
   if (kind === 'message') {
-    const body = words.replace(/^\[(?:Loom context|Ticket workspace) · [^\r\n]+\]\r?\n/, '');
+    const body = words.replace(/^\[(?:Loom context|Ticket workspace|Project workspace) · [^\r\n]+\]\r?\n/, '');
     if (body === words || !words.startsWith('[Loom context · ')) return body;
     const split = body.match(/^Prepare a split proposal [^\n]+\. Leave all tickets untouched\.\r?\nRequest: ([\s\S]*)$/);
     if (split) return split[1];

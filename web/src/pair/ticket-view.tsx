@@ -6,11 +6,15 @@ import { Button } from './ui/button';
 import { ModuleCard } from './module-card';
 import { Reply } from './reply';
 
-export type View = { ticket: string; kind: 'ticket' | 'pull' | 'comment'; ref?: string; intent?: 'work' };
-export const ticketView = (ticket: string): View => ({ ticket, kind: 'ticket' });
+type TicketView = { ticket: string; kind: 'ticket' | 'pull' | 'comment'; ref?: string; intent?: 'work' };
+export type View = TicketView | { kind: 'project'; project: string };
+export const ticketView = (ticket: string): TicketView => ({ ticket, kind: 'ticket' });
 export const viewKey = (v: View) =>
-  JSON.stringify([v.kind, v.kind === 'pull' ? '' : v.ticket, v.ref, v.intent]);
+  v.kind === 'project'
+    ? JSON.stringify([v.kind, v.project])
+    : JSON.stringify([v.kind, v.kind === 'pull' ? '' : v.ticket, v.ref, v.intent]);
 export function viewLabel(v: View) {
+  if (v.kind === 'project') return 'Overview · ' + v.project;
   if (v.kind === 'comment') return v.ticket + ' · note ' + v.ref;
   if (v.kind === 'pull') return 'Review ' + v.ref?.split('/').slice(-3).join('/').replace('/pull/', '#');
   return (v.intent === 'work' ? 'Work on ' : 'Review ') + v.ticket;
@@ -136,10 +140,7 @@ function SecondaryPanel({
                 <ArrowUpRightIcon />
               </Button>
             </div>
-            <div
-              key={viewKey(detail.target)}
-              className="space-y-1 pb-1 text-sm [overflow-wrap:anywhere]"
-            >
+            <div key={viewKey(detail.target)} className="space-y-1 pb-1 text-sm [overflow-wrap:anywhere]">
               <h3 className="font-semibold">{detail.heading || detail.title}</h3>
               {detail.meta && <p className="text-xs text-muted-foreground">{detail.meta}</p>}
               {detail.detail && (
@@ -209,6 +210,74 @@ function Secondary({
     </aside>
   );
 }
+const ticketRow = (r: Related): Row => ({
+  title: r.title,
+  state: r.status.replaceAll('_', ' '),
+  meta: [r.id, r.status.replaceAll('_', ' '), r.assignee].filter(Boolean).join(' · '),
+  detail: r.goal,
+  target: ticketView(r.id),
+});
+
+export interface Project {
+  id: string;
+  name: string;
+  goal: string;
+  lifecycle: string;
+}
+export interface ProjectOverview {
+  project: Project | null;
+  working: Related[];
+  recent: Related[];
+}
+const recentTickets =
+  'orderBy:{changedAt:{direction:desc,priority:1},id:{direction:asc,priority:0}},limit:10';
+export const projectQuery = `query PairProject($id:String!){
+  project:projectsSingle(where:{id:{eq:$id}}){id name goal lifecycle}
+  working:tasks(where:{project:{eq:$id},status:{eq:in_progress}},${recentTickets}){${relatedFields}}
+  recent:tasks(where:{project:{eq:$id}},${recentTickets}){${relatedFields}}
+}`;
+export function ProjectCanvas({
+  project,
+  working,
+  recent,
+  work,
+  memory,
+}: {
+  project: Project;
+  working: Related[];
+  recent: Related[];
+  work: (v: View) => void;
+  memory: Map<string, SecondaryState>;
+}) {
+  const groups = [
+    { name: 'In progress', rows: working.map(ticketRow) },
+    { name: 'Recently updated', rows: recent.map(ticketRow) },
+  ];
+  return (
+    <>
+      <ModuleCard
+        title={project.name}
+        description="Project overview"
+        action={<Badge variant="secondary">{project.lifecycle}</Badge>}
+      >
+        {project.goal && (
+          <section>
+            <h2 className="font-medium">Goal</h2>
+            <div className="text-card-body text-sm">
+              <Reply words={project.goal} />
+            </div>
+          </section>
+        )}
+      </ModuleCard>
+      <Secondary
+        view={{ kind: 'project', project: project.id }}
+        groups={groups.filter((g) => g.rows.length)}
+        work={work}
+        memory={memory}
+      />
+    </>
+  );
+}
 export function TicketCanvas({
   ticket: t,
   view,
@@ -220,13 +289,6 @@ export function TicketCanvas({
   view: View;
   work: (v: View) => void;
 }) {
-  const ticketRow = (r: Related): Row => ({
-    title: r.title,
-    state: r.status.replaceAll('_', ' '),
-    meta: [r.id, r.status.replaceAll('_', ' '), r.assignee].filter(Boolean).join(' · '),
-    detail: r.goal,
-    target: ticketView(r.id),
-  });
   const pulls = t.changeTasksByTask.flatMap((l) => (l.changeRow ? [l.changeRow] : []));
   const parent: Group = { name: 'Source ticket', rows: [ticketRow(t)] };
   if (view.kind !== 'ticket') {
@@ -312,7 +374,29 @@ export function TicketCanvas({
     <>
       <ModuleCard
         title={t.title}
-        description={[t.project, t.id, t.assignee && 'Assigned to ' + t.assignee].filter(Boolean).join(' · ')}
+        description={
+          <>
+            {t.project && (
+              <>
+                <a
+                  className="underline decoration-muted-foreground/50 underline-offset-2 hover:text-foreground"
+                  href={'#project=' + encodeURIComponent(t.project)}
+                  onClick={(e) => {
+                    if (!e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && t.project) {
+                      e.preventDefault();
+                      work({ kind: 'project', project: t.project });
+                    }
+                  }}
+                >
+                  {t.project}
+                </a>
+                {' · '}
+              </>
+            )}
+            {t.id}
+            {t.assignee && ' · Assigned to ' + t.assignee}
+          </>
+        }
         action={<Badge variant="secondary">{t.status.replaceAll('_', ' ')}</Badge>}
       >
         {Object.entries({

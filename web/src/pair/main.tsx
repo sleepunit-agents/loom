@@ -12,7 +12,7 @@ import { Portrait } from '../contexts/portrait';
 import type { FaceState } from '../face';
 import type { IdleTiming } from '../contexts/portrait-player';
 import { Button } from './ui/button';
-import { detailsQuery, ticketView, TicketCanvas, viewKey, viewLabel, type Ticket, type View, type SecondaryState } from './ticket-view';
+import { projectQuery, ProjectCanvas, type ProjectOverview, detailsQuery, ticketView, TicketCanvas, viewKey, viewLabel, type Ticket, type View, type SecondaryState } from './ticket-view';
 import { useViewRing } from './view-ring';
 import { ModuleCard } from './module-card';
 import { Attachment, AttachmentAction, AttachmentActions, AttachmentContent, AttachmentGroup, AttachmentTitle, AttachmentMedia } from "./ui/attachment";
@@ -329,7 +329,11 @@ function Workspace({
   const root = ticket?.id || initialSubjects[place.id];
   const ring = useViewRing(JSON.stringify(['pair-views',member,id]),root);
   const active = ring.active;
-  const details = useDataQuery<{ticket: Ticket | null}>(detailsQuery,{id:active?.ticket || ''},{pause:!active});
+  const projectId = active?.kind === 'project' ? active.project : '';
+  const ticketId = active && active.kind !== 'project' ? active.ticket : '';
+  const details = useDataQuery<{ticket: Ticket | null}>(detailsQuery,{id:ticketId},{pause:!ticketId});
+  const project = useDataQuery<ProjectOverview>(projectQuery,{id:projectId},{pause:!projectId});
+  const viewStatus = projectId ? project.status : details.status;
   const secondaryState = useRef(new Map<string, SecondaryState>());
   const viewNav = useRef<HTMLElement>(null);
   const canvasScroll = useRef<HTMLDivElement>(null);
@@ -357,13 +361,13 @@ function Workspace({
   }
   useLayoutEffect(() => {
     if (!canvasScroll.current) return;
-    if (details.status !== 'live') return;
+    if (viewStatus !== 'live') return;
     canvasScroll.current.scrollTop = positions.current.get(activeKey) || 0;
     if (focusView.current) {
       canvasScroll.current.querySelector<HTMLElement>('h1')?.focus({preventScroll:true});
       focusView.current = false;
     }
-  },[activeKey,details.status]);
+  },[activeKey,viewStatus]);
   const pref = 'pair:chat:' + member;
   const [open, setOpen] = useState(() => localStorage.getItem(pref) !== 'hidden'),
     [quick, setQuick] = useState(false),
@@ -512,8 +516,8 @@ function Workspace({
     composing.current = true;
     sending(true);
     fail('');
-    const subject = active && (active.kind === 'ticket' ? active.ticket : active.ticket + ' · ' + viewLabel(active));
-    const message = subject ? '[Ticket workspace · ' + subject + ']\n' + value : value;
+    const subject = active && (active.kind === 'project' ? active.project : active.kind === 'ticket' ? active.ticket : active.ticket + ' · ' + viewLabel(active));
+    const message = subject ? (projectId ? '[Project workspace · ' : '[Ticket workspace · ') + subject + ']\n' + value : value;
     try {
       const payload = bar || !files.length ? {} : {files: await Promise.all(files.map(async file => {
         const contents = await new Promise<string>((resolve,reject) => {
@@ -557,12 +561,15 @@ function Workspace({
           {(ring.views.length > 1 || (active && !root)) && <nav aria-label="Open views" ref={viewNav} className="pair-view-ring flex items-center gap-1">
             {ring.views.map(v=><Button key={viewKey(v)} size="sm" variant={viewKey(v)===activeKey ? 'secondary' : 'ghost'}
               aria-current={viewKey(v)===activeKey ? 'page' : undefined} onClick={()=>workOn(v)}>{viewLabel(v)}</Button>)}
-            {active && !(active.intent === 'work' && active.ticket === root) && <Button size="icon-xs" variant="ghost"
+            {active && !(active.kind === 'ticket' && active.intent === 'work' && active.ticket === root) && <Button size="icon-xs" variant="ghost"
               aria-label="Close current view" onClick={ring.close}><XIcon/></Button>}
           </nav>}
-        <div ref={canvasScroll} className="pair-canvas-scroll" onScroll={e=>{if(details.status === 'live') positions.current.set(activeKey,e.currentTarget.scrollTop);}}>
+        <div ref={canvasScroll} className="pair-canvas-scroll" onScroll={e=>{if(viewStatus === 'live') positions.current.set(activeKey,e.currentTarget.scrollTop);}}>
           <div className="pair-zones" key={activeKey}>
-            {active ? details.data?.ticket?.id === active.ticket && details.status==='live' ?
+            {active?.kind === 'project' ? project.data?.project?.id === projectId && project.status === 'live' ?
+              <ProjectCanvas working={project.data.working} recent={project.data.recent} project={project.data.project} work={workOn} memory={secondaryState.current}/> :
+              <p role="status">{project.status === 'loading' ? 'Opening project…' : 'Project unavailable.'}</p> :
+              active ? details.data?.ticket?.id === active.ticket && details.status==='live' ?
               <TicketCanvas ticket={details.data.ticket} view={active} work={workOn} memory={secondaryState.current}/> :
               <p role="status">{details.status === 'loading' ? 'Opening view…' : 'Ticket unavailable.'}</p>
               : <ContextCanvas place={place}/>}
