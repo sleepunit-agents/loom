@@ -39,7 +39,7 @@ interface Ticket {
 const subjectQuery =
   'query PairTicket($id:String!){ticket:tasksSingle(where:{id:{eq:$id}}){id title project status assignee goal why doneWhen description changeTasksByTask{changeRow{repository number title url state checks}}} agent:workDiscussionAgent(kind:"ticket",id:$id)}';
 const fields =
-  'seq kind sender at words wordsKeepUntil inboxItem tool cardState delivery verdict notice{error} stepInfo{parent exit limit t0 t1} stepDetails{detail body result items{text state}}';
+  'run seq kind sender at words wordsKeepUntil inboxItem tool cardState delivery verdict notice{error} stepInfo{parent exit limit t0 t1} stepDetails{detail body result items{text state}}';
 const historyQuery =
   'query PairLog($id:String!,$before:Int){thread:commsThread(id:$id){id member agent project working readSeq} rows:commsMessages(thread:$id,beforeSeq:$before,limit:50){' +
   fields +
@@ -60,7 +60,31 @@ function TicketLinks({ words }: { words: string }) {
     </>
   );
 }
-function Entry({ m }: { m: CommsMessage }) {
+type EventMessage = CommsMessage & { run?: string };
+function RunDetails({ id }: { id: string }) {
+  const read = useDataQuery<{
+    jobUsage: {
+      state: string;
+      usage: { harness: string; model: string; tools: { name: string; count: number }[] | null } | null;
+    } | null;
+  }>('query PairRun($id:String!){jobUsage(id:$id){state usage{harness model tools{name count}}}}', { id });
+  const run = read.data?.jobUsage;
+  if (read.status !== 'live' || !run?.usage) return null;
+  return (
+    <details className="text-xs text-muted-foreground">
+      <summary className="cursor-pointer">Run details · {run.usage.harness}</summary>
+      <p>
+        {run.usage.model} · {run.state}
+      </p>
+      {run.usage.tools?.map((t) => (
+        <p key={t.name}>
+          {t.name} × {t.count}
+        </p>
+      ))}
+    </details>
+  );
+}
+function Entry({ m }: { m: EventMessage }) {
   const step = m.stepDetails,
     info = m.stepInfo;
   if (m.kind === 'card')
@@ -109,6 +133,7 @@ function Entry({ m }: { m: CommsMessage }) {
             />
           </BubbleContent>
         </Bubble>
+        {m.kind === 'reply' && m.run && <RunDetails id={m.run} />}
         {m.delivery === 'failed' && <small>Delivery failed</small>}
       </MessageContent>
     </Message>
