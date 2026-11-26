@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { useDataQuery } from '../data/graphql';
@@ -306,6 +307,9 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
     question: questions.status === 'live' && !!questions.data?.inboxItems.some((item) => item.answers),
   });
   const launcher = useRef<HTMLButtonElement>(null);
+  const chatLauncher = useRef<HTMLButtonElement>(null);
+  const chatInput = useRef<HTMLTextAreaElement>(null);
+  const chatActivity = tail.working ? 'Working' : tail.last > tail.read ? 'New activity' : '';
   useEffect(() => {
     let live = true;
     if (agent)
@@ -379,12 +383,15 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
     setQuick(false);
     launcher.current?.focus();
   }
-  function toggle() {
-    localStorage.setItem(pref, open ? 'hidden' : 'open');
-    setOpen(!open);
+  function showChat(visible: boolean) {
+    localStorage.setItem(pref, visible ? 'open' : 'hidden');
+    // Commit the panel's inert state before transferring keyboard focus.
+    flushSync(() => setOpen(visible));
+    (visible ? chatInput.current : chatLauncher.current)?.focus({ preventScroll: true });
   }
   async function send(e: FormEvent, bar: boolean) {
     e.preventDefault();
+    const form = e.currentTarget;
     const value = (bar ? command : words).trim();
     if (composing.current || !value || !ready) return;
     composing.current = true;
@@ -399,8 +406,10 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
       sessionStorage.removeItem(receipt);
       if (bar) {
         setCommand((current) => (current.trim() === value ? '' : current));
-        if (document.activeElement?.closest('#quick-message')) closeQuick();
-        else setQuick(false);
+        if (form.isConnected) {
+          setQuick(false);
+          showChat(true);
+        }
       } else setWords((current) => (current.trim() === value ? '' : current));
     } catch {
       fail('Delivery unconfirmed. Send the same message to retry.');
@@ -539,23 +548,22 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
           </Item>
         </div>
       </section>
-      <Button
-        variant="outline"
-        aria-expanded={open}
-        aria-label={
-          open || (!tail.working && tail.last <= tail.read)
-            ? 'Toggle conversation'
-            : 'Toggle conversation · ' + (tail.working ? 'Working' : 'New')
-        }
-        aria-controls="pair-conversation"
-        onClick={toggle}
-        className="mt-4 shrink-0"
-      >
-        <MessageSquareIcon /> Chat
-        {!open && (tail.working || tail.last > tail.read) && (
-          <Badge variant="secondary">{tail.working ? 'Working' : 'New'}</Badge>
-        )}
-      </Button>
+      {!open && (
+        <Button
+          ref={chatLauncher}
+          variant="ghost"
+          size="icon-sm"
+          aria-expanded={open}
+          aria-label={chatActivity ? 'Open conversation · ' + chatActivity : 'Open conversation'}
+          title={chatActivity ? 'Open conversation · ' + chatActivity : 'Open conversation'}
+          aria-controls="pair-conversation"
+          onClick={() => showChat(true)}
+          className="fixed top-2 right-2 z-10 rounded-full text-muted-foreground hover:text-foreground"
+        >
+          <MessageSquareIcon />
+          {chatActivity && <span aria-hidden="true" className="absolute top-1 right-1 size-1.5 rounded-full bg-primary" />}
+        </Button>
+      )}
       <aside
         id="pair-conversation"
         aria-label="Conversation"
@@ -571,7 +579,7 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
       >
         <header className="flex items-center justify-between border-b p-4">
           <h2 className="font-semibold">You and {agent === 'art' ? 'Art' : agent || 'Art'}</h2>
-          <Button variant="ghost" size="icon-sm" aria-label="Hide conversation" onClick={toggle}>
+          <Button variant="ghost" size="icon-sm" aria-label="Hide conversation" onClick={() => showChat(false)}>
             <XIcon />
           </Button>
         </header>
@@ -588,6 +596,7 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
         <form onSubmit={(e) => void send(e, false)} className="p-3">
           <InputGroup>
             <InputGroupTextarea
+              ref={chatInput}
               aria-label="Message Art"
               placeholder="Message Art…"
               value={words}
