@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { CheckIcon, PlusIcon } from 'lucide-react';
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from 'lucide-react';
 import {
   ContextDirectory,
   contextTitlePrefix,
@@ -106,6 +106,38 @@ export function ContextSwitcher({
   const place = places.find((p) => p.id === selected);
   const [revealed, reveal] = useState(false),
     [adding, add] = useState(false);
+  // Rows are 3.25rem tall with a .25rem gap. Leave room for the strip and form.
+  const availableRows = () =>
+    Math.max(
+      1,
+      Math.floor(
+        ((window.visualViewport?.height ?? window.innerHeight) /
+          parseFloat(getComputedStyle(document.documentElement).fontSize) -
+          10) /
+          3.5,
+      ),
+    );
+  const [pageSize, setPageSize] = useState(availableRows);
+  const [requestedPage, setRequestedPage] = useState<number | null>(null);
+  const pageCount = Math.ceil(places.length / pageSize);
+  const selectedIndex = Math.max(
+    0,
+    places.findIndex((p) => p.id === selected),
+  );
+  const page = Math.min(requestedPage ?? Math.floor(selectedIndex / pageSize), pageCount - 1);
+  const first = page * pageSize;
+  const visiblePlaces = places.slice(first, first + pageSize);
+  useEffect(() => {
+    if (!revealed) return;
+    const resize = () => setPageSize(availableRows());
+    resize();
+    window.addEventListener('resize', resize);
+    window.visualViewport?.addEventListener('resize', resize);
+    return () => {
+      window.removeEventListener('resize', resize);
+      window.visualViewport?.removeEventListener('resize', resize);
+    };
+  }, [revealed]);
   const [name, setName] = useState(''),
     [error, fail] = useState(''),
     [busy, saving] = useState(false);
@@ -123,6 +155,7 @@ export function ContextSwitcher({
   function close(restore = false) {
     restoring.current = true;
     if (restore) trigger.current?.focus({ preventScroll: true });
+    setRequestedPage(null);
     reveal(false);
     add(false);
     restoring.current = false;
@@ -209,7 +242,13 @@ export function ContextSwitcher({
           if (index >= 0 && ['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft'].includes(e.key)) {
             e.preventDefault();
             const step = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1;
-            choices[(index + step + choices.length) % choices.length]?.focus();
+            const next = (first + index + step + places.length) % places.length;
+            setRequestedPage(Math.floor(next / pageSize));
+            requestAnimationFrame(() =>
+              nav.current
+                ?.querySelectorAll<HTMLButtonElement>('[data-context-choice]')
+                [next % pageSize]?.focus(),
+            );
           }
           if (e.key === 'Escape') {
             e.preventDefault();
@@ -255,14 +294,14 @@ export function ContextSwitcher({
         </button>
         {revealed && (
           <div id="context-choices" className="context-choices">
-            <div className="grid max-h-[45dvh] gap-1 overflow-auto">
-              {places.map((p) => (
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-1">
+              {visiblePlaces.map((p) => (
                 <Button
                   key={p.id}
                   data-context-choice
                   variant="ghost"
                   aria-current={selected === p.id ? 'page' : undefined}
-                  className="h-auto w-full justify-start gap-3 px-2 py-2 text-left"
+                  className="h-[3.25rem] min-w-0 w-full justify-start gap-3 px-2 py-2 text-left"
                   onClick={() => choose(p.id)}
                 >
                   <span
@@ -271,8 +310,8 @@ export function ContextSwitcher({
                     style={{ backgroundColor: `oklch(0.66 0.105 ${hue(p.id)})` }}
                   />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate">{p.name}</span>
-                    <span className="block truncate text-xs font-normal text-muted-foreground">
+                    <span className="block overflow-clip text-ellipsis whitespace-nowrap">{p.name}</span>
+                    <span className="block overflow-clip text-ellipsis whitespace-nowrap text-xs font-normal text-muted-foreground">
                       {signals[p.id] || (p.row?.working ? 'Working' : p.detail)}
                     </span>
                   </span>
@@ -280,6 +319,29 @@ export function ContextSwitcher({
                 </Button>
               ))}
             </div>
+            {pageCount > 1 && (
+              <div className="flex items-center justify-end gap-1">
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label="Previous contexts"
+                  onClick={() => setRequestedPage((page + pageCount - 1) % pageCount)}
+                >
+                  <ChevronLeftIcon />
+                </Button>
+                <span aria-live="polite" className="text-xs tabular-nums text-muted-foreground">
+                  {page + 1} / {pageCount}
+                </span>
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label="Next contexts"
+                  onClick={() => setRequestedPage((page + 1) % pageCount)}
+                >
+                  <ChevronRightIcon />
+                </Button>
+              </div>
+            )}
             {offline && (
               <p role="status" className="p-2 text-xs">
                 Context directory unavailable.
