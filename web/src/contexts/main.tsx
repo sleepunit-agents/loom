@@ -7,6 +7,7 @@ import { useDataQuery } from '../data/graphql';
 import type { SharedTask, SharedTaskComment } from '../pieces/tasks/shared-view';
 import '../looks/looks.css';
 import './style.css';
+import { Notes, PastPulls } from './ticket-work';
 import { Portrait } from './portrait';
 import { Chat } from './chat';
 import { Ring, keep, kept, type Place, type Visit, type Details } from './ring';
@@ -838,7 +839,10 @@ function Workspace({
   const [routingMiss, setRoutingMiss] = useState<{ words: string; ref: string } | null>(null);
   const [routeError, setRouteError] = useState('');
   async function sendChat(words: string) {
-    const text = words.trim().replace(/[?.!]+$/, '');
+    const text = words
+      .trim()
+      .replace(/[?.!]+$/, '')
+      .replace(/^(?:(?:can|could) you |please )+/i, '');
     setRouteError('');
     const namedProject =
       /^(?:(?:show|open|check) (?:me )?(?:the )?)?(?:project (?:health|status)(?: of| for|:)?|(?:status|health) of (?:project|the project))\s+(.+)$/i.exec(
@@ -868,7 +872,7 @@ function Workspace({
       return true;
     }
     if (
-      /^(?:i think we should |let.s |please )?split (?:this|the task|this task)(?: in(?:to)? .*)?$/i.test(
+      /^(?:i think we should |let.s |please )?(?:split|break) (?:this(?: task| ticket)?|the task)(?: in(?:to)? .*)?$/i.test(
         text,
       )
     ) {
@@ -883,7 +887,7 @@ function Workspace({
       );
     }
     if (
-      /^(?:(?:how.s|how is) (?:the |this )?project (?:doing|looking)(?: overall)?|(?:open |show (?:me )?)?(?:the )?project health)$/i.test(
+      /^(?:(?:how.s|how is) (?:the |this )?project (?:doing|looking)(?: overall)?|(?:open |show (?:me )?)?(?:the )?project (?:health|status|overview))$/i.test(
         text,
       )
     ) {
@@ -893,6 +897,20 @@ function Workspace({
         return false;
       }
       openEntity({ kind: 'project', id });
+      record(words);
+      return true;
+    }
+    if (
+      subject &&
+      (!/^show me/i.test(text) || /too|also|alongside|past prs|last batch/i.test(text)) &&
+      /^(?:add|include|let.s (?:add|see)|show me) .*(?:history|past prs|last batch of prs)/i.test(text)
+    ) {
+      const module = entityAddress({
+        kind: 'ticket',
+        id: subject.id,
+        part: [/history/i.test(text) ? 'Ticket history' : 'Past pull requests'],
+      });
+      keepModules([...new Set([...pinned, module])]);
       record(words);
       return true;
     }
@@ -907,15 +925,6 @@ function Workspace({
         id: explicit || subject!.id,
         view: /history|happened/i.test(text) ? 'history' : 'decision',
       });
-      record(words);
-      return true;
-    }
-    if (
-      subject &&
-      /^(?:add|include|let.s (?:add|see)|show me) .*(?:history|past prs|last batch of prs)/i.test(text)
-    ) {
-      const module = entityAddress({ kind: 'ticket', id: subject.id, view: 'history' });
-      keepModules([...new Set([...pinned, module])]);
       record(words);
       return true;
     }
@@ -1223,16 +1232,24 @@ function Workspace({
                       >
                         ×
                       </button>
-                      <EntityModule
-                        companion
-                        target={target}
-                        quote={ignoreQuote}
-                        open={openEntity}
-                        talk={() => {
-                          openEntity(target);
-                          showChat(true);
-                        }}
-                      />
+                      {target.kind === 'ticket' && target.id && target.part?.[0] === 'Past pull requests' ? (
+                        <PastPulls id={target.id} open={openEntity} />
+                      ) : target.kind === 'ticket' && target.id && target.part?.[0] === 'Ticket history' ? (
+                        <section className="module near">
+                          <Notes id={target.id} />
+                        </section>
+                      ) : (
+                        <EntityModule
+                          companion
+                          target={target}
+                          quote={ignoreQuote}
+                          open={openEntity}
+                          talk={() => {
+                            openEntity(target);
+                            showChat(true);
+                          }}
+                        />
+                      )}
                     </div>
                   );
                 })}

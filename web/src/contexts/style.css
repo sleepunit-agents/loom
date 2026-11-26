@@ -1,6 +1,6 @@
 @font-face {
-  font-family: Instrument;
-  src: url('/fonts/instrument-sans-latin-wght-normal.woff2') format('woff2');
+  font-family: 'DM Sans';
+  src: url('../assets/fonts/cojeev-1.woff2') format('woff2');
   font-weight: 100 900;
   font-display: swap;
 }
@@ -12,7 +12,7 @@ body {
   background: #f0f1f2;
   color: #24282c;
   font:
-    16px/1.48 Instrument,
+    16px/1.48 'DM Sans',
     system-ui,
     sans-serif;
 }
@@ -812,23 +812,61 @@ aside a {
   overflow-wrap: anywhere;
 }
 
-.workspace nav[aria-label="Open views"] {
+.workspace nav[aria-label='Open views'] {
   flex-wrap: nowrap;
   overflow-x: auto;
   padding-block: 4px;
 }
-.viewTab { flex: none; }
-.workStatus { display: grid; gap: 1rem; margin-block: 1rem; }
-.workStatus h3 { font-size: 1rem; margin-bottom: .4rem; }
-.workStatus button[aria-pressed="true"] { background: #e8eef0; border-color: #809098; }
-.workStatus article { margin-block: .7rem; }
-.workStatus article p { white-space: pre-wrap; }
-.prCompanion { border: 1px solid #d3d7db; border-radius: .65rem; padding: .65rem; margin-block: .4rem; }
-.prCompanion.near { border-inline-start: 3px solid #a06a32; }
-.prCompanion.far > summary { color: #545d66; }
-.module fieldset { min-width: 0; border: 1px solid #d3d7db; border-radius: .65rem; margin: .75rem 0; }
-.module fieldset label { display: grid; gap: .2rem; margin-block: .5rem; }
-.module fieldset textarea { min-height: 3.5rem; width: 100%; font: inherit; }
+.viewTab {
+  flex: none;
+}
+.workStatus {
+  display: grid;
+  gap: 1rem;
+  margin-block: 1rem;
+}
+.workStatus h3 {
+  font-size: 1rem;
+  margin-bottom: 0.4rem;
+}
+.workStatus button[aria-pressed='true'] {
+  background: #e8eef0;
+  border-color: #809098;
+}
+.workStatus article {
+  margin-block: 0.7rem;
+}
+.workStatus article p {
+  white-space: pre-wrap;
+}
+.prCompanion {
+  border: 1px solid #d3d7db;
+  border-radius: 0.65rem;
+  padding: 0.65rem;
+  margin-block: 0.4rem;
+}
+.prCompanion.near {
+  border-inline-start: 3px solid #a06a32;
+}
+.prCompanion.far > summary {
+  color: #545d66;
+}
+.module fieldset {
+  min-width: 0;
+  border: 1px solid #d3d7db;
+  border-radius: 0.65rem;
+  margin: 0.75rem 0;
+}
+.module fieldset label {
+  display: grid;
+  gap: 0.2rem;
+  margin-block: 0.5rem;
+}
+.module fieldset textarea {
+  min-height: 3.5rem;
+  width: 100%;
+  font: inherit;
+}
 .viewStack:has(> .entityModule) {
   display: flex;
   flex-wrap: wrap;
@@ -836,8 +874,11 @@ aside a {
   align-content: flex-start;
   gap: 14px;
 }
-.viewStack > .workStatus { display: contents; }
-.workStatus > section, .workStatus > .kit-section {
+.viewStack > .workStatus {
+  display: contents;
+}
+.workStatus > section,
+.workStatus > .kit-section {
   width: min(100%, 340px);
   min-width: 0;
   background: white;
@@ -846,21 +887,63 @@ aside a {
   border-radius: 14px;
   overflow-wrap: anywhere;
 }
-.workStatus > section ul { padding-inline-start: 1.1rem; }
-.workStatus > section li { margin-block: .3rem; }
-.workStatus > section h2, .workStatus > section h3 { font-size: 1.05rem; }
-.companionModule .workStatus { display: grid; }
-@media (max-width: 740px) {
-  .workStatus > section { width: 100%; }
+.workStatus > section ul {
+  padding-inline-start: 1.1rem;
 }
-.viewStack > .entityModule.core { order: -3; }
-.viewStack > .splitProposal { order: -2; width: min(100%, 440px); }
-.workStatus > details.prCompanion { align-self: flex-start; width: min(100%, 320px); background: white; }
-.workStatus > details.prCompanion.near { order: -1; }
-.workStatus > details.prCompanion.far { order: 1; }
-@media (max-width: 740px) {
-  .workStatus > details.prCompanion.far:not([open]) { width: auto; max-width: 100%; border-radius: 1rem; }
+.workStatus > section li {
+  margin-block: 0.3rem;
 }
-.dock .quickDock { position: absolute; right: 12px; bottom: 22px; color: #e0e1e4; background: #34353b; border-color: #505158; padding: 4px 6px; }
-.dock .art { padding-right: 88px; }
-@media (max-width: 740px) { .dock .quickDock { bottom: 12px; } }
+.workStatus > section h2,
+.workStatus > section h3 {
+  font-size: 1.05rem;
+}
+.companionModule .workStatus {
+  display: grid;
+}
+@media (max-width: 740px) {
+  .workStatus > section {
+    width: 100%;
+  }
+}
+.viewStack > .entityModule.core {
+  order: -3;
+}
+.viewStack > .splitProposal {
+  order: -2;
+  width: min(100%, 440px);
+}
+.workStatus > details.prCompanion {
+  align-self: flex-start;
+  width: min(100%, 320px);
+  background: white;
+}
+.workStatus > details.prCompanion.near {
+  order: -1;
+}
+.workStatus > details.prCompanion.far {
+  order: 1;
+}
+@media (max-width: 740px) {
+  .workStatus > details.prCompanion.far:not([open]) {
+    width: auto;
+    max-width: 100%;
+    border-radius: 1rem;
+  }
+}
+.dock .quickDock {
+  position: absolute;
+  right: 12px;
+  bottom: 22px;
+  color: #e0e1e4;
+  background: #34353b;
+  border-color: #505158;
+  padding: 4px 6px;
+}
+.dock .art {
+  padding-right: 88px;
+}
+@media (max-width: 740px) {
+  .dock .quickDock {
+    bottom: 12px;
+  }
+}

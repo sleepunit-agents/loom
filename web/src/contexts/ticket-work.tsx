@@ -35,9 +35,47 @@ export const workLinksQuery = `query ContextWorkLinks($id:String!){
   }
   changeSync{readAt failed}
 }`;
+export function PastPulls({ id, open }: { id: string; open: (target: EntityTarget) => void }) {
+  const read = useDataQuery<{
+    ticket: { changeTasksByTask: { changeRow: (Pull & { closedAt: string | null }) | null }[] } | null;
+  }>(
+    'query PastTicketPulls($id:String!){ticket:tasksSingle(where:{id:{eq:$id}}){changeTasksByTask{changeRow{id repository number title state checks closedAt}}}}',
+    { id },
+  );
+  const past = read.data?.ticket?.changeTasksByTask
+    .flatMap((link) =>
+      link.changeRow && ['merged', 'closed'].includes(link.changeRow.state) ? [link.changeRow] : [],
+    )
+    .sort((a, b) => (b.closedAt || '').localeCompare(a.closedAt || ''));
+  return (
+    <section className="module near">
+      <h3>Past pull requests</h3>
+      {read.status !== 'live' || read.settling || !past ? (
+        <p>
+          {read.status === 'loading' || read.settling
+            ? 'Reading pull requests…'
+            : 'Pull requests unavailable.'}
+        </p>
+      ) : past.length ? (
+        past.map((pr) => (
+          <article key={pr.id}>
+            <button onClick={() => open({ kind: 'change', id: pr.id })}>
+              {pr.repository} #{pr.number} · {pr.title}
+            </button>
+            <p>
+              {pr.state} · Checks {pr.checks}
+            </p>
+          </article>
+        ))
+      ) : (
+        <p>No closed or merged pull requests linked to {id}.</p>
+      )}
+    </section>
+  );
+}
 const historyQuery =
   'query ContextTicketNotes($id:String!,$offset:Int!){rows:taskComments(where:{task:{eq:$id}},orderBy:{seq:{direction:desc,priority:0}},limit:31,offset:$offset){seq at actor text}}';
-function Notes({ id }: { id: string }) {
+export function Notes({ id }: { id: string }) {
   const [page, setPage] = useState(0);
   const read = useDataQuery<{ rows: Note[] }>(historyQuery, { id, offset: page * 30 });
   if (read.status !== 'live' || read.settling || !read.data)
