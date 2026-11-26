@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ArrowUpRightIcon } from 'lucide-react';
+import { useLayoutEffect, useRef, useState } from 'react';
+import { ArrowUpRightIcon, ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
 import { Badge } from './ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/tabs';
 import { Button } from './ui/button';
@@ -15,7 +15,7 @@ export function viewLabel(v: View) {
   if (v.kind === 'pull') return 'Review ' + v.ref?.split('/').slice(-3).join('/').replace('/pull/', '#');
   return (v.intent === 'work' ? 'Work on ' : 'Review ') + v.ticket;
 }
-type Related = { id: string; title: string; status: string; assignee: string | null };
+type Related = { id: string; title: string; status: string; assignee: string | null; goal: string };
 type Pull = {
   repository: string;
   number: number;
@@ -28,7 +28,6 @@ type Pull = {
 type Note = { seq: number; text: string; actor: string; at: string };
 export interface Ticket extends Related {
   project: string | null;
-  goal: string;
   why: string;
   doneWhen: string;
   description: string;
@@ -37,17 +36,125 @@ export interface Ticket extends Related {
   changeTasksByTask: { changeRow: Pull | null }[];
   taskCommentsByTask: Note[];
 }
-const relatedFields = 'id title status assignee';
+const relatedFields = 'id title status assignee goal';
 export const detailsQuery = `query PairTicketView($id:String!){ticket:tasksSingle(where:{id:{eq:$id}}){
-  ${relatedFields} project goal why doneWhen description
+  ${relatedFields} project why doneWhen description
   taskLinksByDependsOn{type taskRow{${relatedFields}}} taskLinksByTask{type dependsOnRow{${relatedFields}}}
   changeTasksByTask{changeRow{repository number title url state checks waitingOn}}
   taskCommentsByTask(orderBy:{seq:{direction:desc,priority:0}}){seq text actor at}
 }}`;
-type Row = { title: string; state?: string; detail: string; target: View };
+type Row = { title: string; state?: string; heading?: string; meta?: string; detail: string; target: View };
 type Group = { name: string; rows: Row[] };
-type PanelState = { page: number; expanded?: string };
+type PanelState = { page: number; item?: string };
 export type SecondaryState = { selected: string; panels: Record<string, PanelState> };
+function SecondaryPanel({
+  group,
+  state,
+  update,
+  work,
+}: {
+  group: Group;
+  state: PanelState;
+  update: (next: PanelState) => void;
+  work: (v: View) => void;
+}) {
+  const start = state.page * 5 < group.rows.length ? state.page * 5 : 0;
+  const selected = group.rows.find((row) => viewKey(row.target) === state.item);
+  const [previous, setPrevious] = useState<string>();
+  const detail = selected || group.rows.find((row) => viewKey(row.target) === previous);
+  const list = useRef<HTMLDivElement>(null);
+  const back = useRef<HTMLButtonElement>(null);
+  const moveFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (!moveFocus.current) return;
+    moveFocus.current = false;
+    const origin = list.current?.querySelector<HTMLButtonElement>(
+      'button[data-row="' + CSS.escape(previous || '') + '"]',
+    );
+    (selected ? back.current : origin || list.current)?.focus({ preventScroll: true });
+  }, [state.item, previous, selected]);
+  function goBack() {
+    setPrevious(state.item);
+    moveFocus.current = true;
+    update({ page: state.page });
+  }
+  return (
+    <div
+      className="pair-drill"
+      data-detail={!!selected}
+      onKeyDown={(event) => {
+        if (selected && event.key === 'Escape') {
+          event.stopPropagation();
+          event.preventDefault();
+          goBack();
+        }
+      }}
+    >
+      <div ref={list} tabIndex={-1} className="pair-drill-list" inert={!!selected} aria-hidden={!!selected}>
+        <ul className="divide-y">
+          {group.rows.slice(start, start + 5).map((row) => (
+            <li key={viewKey(row.target)}>
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 py-2 text-left text-sm"
+                data-row={viewKey(row.target)}
+                onClick={() => {
+                  moveFocus.current = true;
+                  update({ page: state.page, item: viewKey(row.target) });
+                }}
+              >
+                <span className="min-w-0 flex-1 leading-snug [overflow-wrap:anywhere]">
+                  {row.title}
+                  {row.state && <span className="ml-2 text-xs text-muted-foreground">{row.state}</span>}
+                </span>
+                <ChevronRightIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+              </button>
+            </li>
+          ))}
+        </ul>
+        {group.rows.length > 5 && (
+          <div className="flex gap-3 text-sm">
+            {start > 0 && <button onClick={() => update({ page: start / 5 - 1 })}>Previous</button>}
+            {start + 5 < group.rows.length && (
+              <button onClick={() => update({ page: start / 5 + 1 })}>
+                +{group.rows.length - start - 5} more
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      <div className="pair-drill-detail" inert={!selected} aria-hidden={!selected}>
+        {detail && (
+          <>
+            <div className="flex items-center justify-between gap-2">
+              <Button ref={back} size="sm" variant="ghost" onClick={goBack}>
+                <ChevronLeftIcon />
+                Back
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => work(detail.target)}>
+                Work on this
+                <ArrowUpRightIcon />
+              </Button>
+            </div>
+            <div
+              key={viewKey(detail.target)}
+              className="min-h-0 space-y-1 overflow-y-auto overscroll-contain pb-1 text-sm [overflow-wrap:anywhere]"
+              tabIndex={0}
+            >
+              <h3 className="font-semibold">{detail.heading || detail.title}</h3>
+              {detail.meta && <p className="text-xs text-muted-foreground">{detail.meta}</p>}
+              {detail.detail && (
+                <div className="text-card-body">
+                  <Reply words={detail.detail} />
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 function Secondary({
   groups,
   work,
@@ -74,15 +181,14 @@ function Secondary({
           <TabsList variant="line" aria-label="Related work categories">
             {groups.map((g) => (
               <TabsTrigger key={g.name} value={g.name}>
-                {g.name} · {g.rows.length}
+                {g.name}
               </TabsTrigger>
             ))}
           </TabsList>
         </div>
         <div className="grid">
           {groups.map((g) => {
-            const { page, expanded } = state.panels[g.name] || { page: 0 };
-            const start = page * 5 < g.rows.length ? page * 5 : 0;
+            const panel = state.panels[g.name] || { page: 0 };
             function updatePanel(next: PanelState) {
               update({ ...state, panels: { ...state.panels, [g.name]: next } });
             }
@@ -93,55 +199,9 @@ function Secondary({
                 forceMount
                 inert={g !== group}
                 aria-hidden={g !== group}
-                className="col-start-1 row-start-1 self-start data-[state=inactive]:invisible"
+                className="col-start-1 row-start-1 min-w-0 data-[state=inactive]:invisible"
               >
-                <ul className="divide-y">
-                  {g.rows.slice(start, start + 5).map((row) => (
-                    <li key={viewKey(row.target)} className="flex items-start gap-2 py-2">
-                      <details open={expanded === viewKey(row.target)} className="min-w-0 flex-1 text-sm">
-                        <summary
-                          onClick={(event) => {
-                            event.preventDefault();
-                            updatePanel({
-                              page,
-                              expanded: expanded === viewKey(row.target) ? undefined : viewKey(row.target),
-                            });
-                          }}
-                          className="cursor-pointer leading-snug [overflow-wrap:anywhere]"
-                        >
-                          {row.title}
-                          {row.state && (
-                            <span className="ml-2 text-xs text-muted-foreground">{row.state}</span>
-                          )}
-                        </summary>
-                        <p className="mt-1 whitespace-pre-wrap text-card-body [overflow-wrap:anywhere]">
-                          {row.detail}
-                        </p>
-                      </details>
-                      <Button
-                        size="icon-xs"
-                        variant="ghost"
-                        aria-label={'Work on this: ' + row.title}
-                        title="Work on this"
-                        onClick={() => work(row.target)}
-                      >
-                        <ArrowUpRightIcon />
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-                {g.rows.length > 5 && (
-                  <div className="flex gap-3 text-sm">
-                    {start > 0 && (
-                      <button onClick={() => updatePanel({ page: start / 5 - 1 })}>Previous</button>
-                    )}
-                    {start + 5 < g.rows.length && (
-                      <button onClick={() => updatePanel({ page: start / 5 + 1 })}>
-                        +{g.rows.length - start - 5} more
-                      </button>
-                    )}
-                  </div>
-                )}
+                <SecondaryPanel group={g} state={panel} update={updatePanel} work={work} />
               </TabsContent>
             );
           })}
@@ -164,7 +224,8 @@ export function TicketCanvas({
   const ticketRow = (r: Related): Row => ({
     title: r.title,
     state: r.status.replaceAll('_', ' '),
-    detail: [r.id, r.assignee].filter(Boolean).join(' · '),
+    meta: [r.id, r.status.replaceAll('_', ' '), r.assignee].filter(Boolean).join(' · '),
+    detail: r.goal,
     target: ticketView(r.id),
   });
   const pulls = t.changeTasksByTask.flatMap((l) => (l.changeRow ? [l.changeRow] : []));
@@ -226,7 +287,10 @@ export function TicketCanvas({
         .map((p) => ({
           title: p.title,
           state: p.checks === 'failing' ? 'Failing checks' : p.state,
-          detail: p.repository + ' #' + p.number + ' · ' + p.state + ' · Checks ' + p.checks,
+          meta: p.repository + ' #' + p.number + ' · ' + p.state,
+          detail: ['Checks: ' + p.checks, p.waitingOn && 'Waiting on: ' + p.waitingOn]
+            .filter(Boolean)
+            .join('\n'),
           target: { kind: 'pull', ticket: t.id, ref: p.url },
         })),
     },
@@ -234,6 +298,8 @@ export function TicketCanvas({
       name: 'Comments',
       rows: t.taskCommentsByTask.map((n) => ({
         title: n.actor + ' · ' + n.text.slice(0, 85).replace(/\s+/g, ' ') + (n.text.length > 85 ? '…' : ''),
+        heading: n.actor,
+        meta: t.id + ' · ' + new Date(n.at).toLocaleString(),
         detail: n.text,
         target: { kind: 'comment', ticket: t.id, ref: String(n.seq) },
       })),
