@@ -538,7 +538,13 @@
 .pair-canvas-scroll::before { flex: 0.34 0 0; order: 0; }
 .pair-view-ring { order: -1; }
 .pair-canvas-scroll::after { flex: 0.66 0 0; }
-.pair-tab-scroll { overflow-x: auto; scrollbar-width: thin; }
+.pair-tab-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.pair-tab-scroll [role='tablist'] { display: flex; }
+.pair-tab-scroll [data-variant='default'] [role='tab']::after { content: none; }
 @media (prefers-reduced-motion: no-preference) {
   .pair-secondary [role='tabpanel'][data-state='active'] { animation: pair-tab-in 160ms ease-out; }
 }
