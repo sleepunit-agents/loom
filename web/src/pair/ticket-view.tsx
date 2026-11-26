@@ -4,6 +4,7 @@ import { Badge } from './ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/tabs';
 import { Button } from './ui/button';
 import { ModuleCard } from './module-card';
+import { EntityPreview, ProjectPreview } from './entity-preview';
 import { Reply } from './reply';
 
 type TicketView = { ticket: string; kind: 'ticket' | 'pull' | 'comment'; ref?: string; intent?: 'work' };
@@ -280,11 +281,13 @@ export function ProjectCanvas({
 }
 export function TicketCanvas({
   ticket: t,
+  projectOpen,
   view,
   work,
   memory,
 }: {
   ticket: Ticket;
+  projectOpen: boolean;
   memory: Map<string, SecondaryState>;
   view: View;
   work: (v: View) => void;
@@ -378,18 +381,28 @@ export function TicketCanvas({
           <>
             {t.project && (
               <>
-                <a
-                  className="underline decoration-muted-foreground/50 underline-offset-2 hover:text-foreground"
-                  href={'#project=' + encodeURIComponent(t.project)}
-                  onClick={(e) => {
-                    if (!e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && t.project) {
-                      e.preventDefault();
-                      work({ kind: 'project', project: t.project });
-                    }
-                  }}
-                >
-                  {t.project}
-                </a>
+                <EntityPreview
+                  intent={
+                    projectOpen
+                      ? 'Return to the open project overview.'
+                      : 'Open the project overview in this context.'
+                  }
+                  preview={<ProjectPreview id={t.project} />}
+                  link={
+                    <a
+                      className="underline decoration-muted-foreground/50 underline-offset-2 hover:text-foreground"
+                      href={'#project=' + encodeURIComponent(t.project)}
+                      onClick={(e) => {
+                        if (!e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && t.project) {
+                          e.preventDefault();
+                          work({ kind: 'project', project: t.project });
+                        }
+                      }}
+                    >
+                      {t.project}
+                    </a>
+                  }
+                />
                 {' · '}
               </>
             )}

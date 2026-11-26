@@ -570,7 +570,7 @@ function Workspace({
               <ProjectCanvas working={project.data.working} recent={project.data.recent} project={project.data.project} work={workOn} memory={secondaryState.current}/> :
               <p role="status">{project.status === 'loading' ? 'Opening project…' : 'Project unavailable.'}</p> :
               active ? details.data?.ticket?.id === active.ticket && details.status==='live' ?
-              <TicketCanvas ticket={details.data.ticket} view={active} work={workOn} memory={secondaryState.current}/> :
+              <TicketCanvas projectOpen={ring.views.some(v=>v.kind === 'project' && v.project === details.data?.ticket?.project)} ticket={details.data.ticket} view={active} work={workOn} memory={secondaryState.current}/> :
               <p role="status">{details.status === 'loading' ? 'Opening view…' : 'Ticket unavailable.'}</p>
               : <ContextCanvas place={place}/>}
           </div>
