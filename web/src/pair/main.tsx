@@ -225,7 +225,7 @@ function quickPresence({
   if (tail.update) return { mood: 'talking', text: 'Has a reply for you' };
   return quick ? { mood: 'thinking', text: 'Listening' } : { mood: 'idle', text: 'Here with you' };
 }
-const idleTiming: IdleTiming = { gap: [3500, 9000], blinkDuration: [320, 420] };
+const idleTiming: IdleTiming = { gap: [3500, 9000] };
 
 type Feed = { thread: CommsThread | null; rows: CommsMessage[] };
 function TranscriptPage({

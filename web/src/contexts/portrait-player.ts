@@ -68,7 +68,7 @@ export function pick(list: Variant[], last: Variant | undefined, r = Math.random
 }
 
 /** What a player needs from the world: a clock, timers, and chance. A page's are the real ones; a test's are fake. */
-export type IdleTiming = { gap: [number, number]; blinkDuration: [number, number] };
+export type IdleTiming = { gap: [number, number] };
 export type PlayerEnv = { now: () => number; setTimeout: (f: () => void, ms: number) => number; clearTimeout: (t: number) => void; random: () => number };
 /** What a player draws: an animation (none: nothing to draw), its frame, the facing, mirrored or not. */
 export type Frame = { v: Variant | undefined; frame: number; facing: Facing; flip: boolean; /** part of a beat (else a rest) */ beat: boolean;
@@ -108,13 +108,11 @@ export function createPlayer(m: Manifest, first: FaceState, draw: (f: Frame) => 
     env.clearTimeout(roll); roll = 0;
     if (southOnly()) facing = 'south';
     anim = pick(variantsFor(m, shownNow, facing).list, last, env.random());
-    const frameMs = idleTiming && shownNow === 'idle' && !anim.rare
-      ? rnd(idleTiming.blinkDuration) / anim.frames : PIXEL.frameMs;
     last = anim;
     playing = true; frame = 0; paint(0);
     const step = () => {
       frame++;
-      if (frame < anim!.frames) { paint(frame); timer = env.setTimeout(step, frameMs); return; }
+      if (frame < anim!.frames) { paint(frame); timer = env.setTimeout(step, PIXEL.frameMs); return; }
       playing = false; anim = undefined;
       const played = shownNow;
       // A talking beat: a breath, then the next, until the run is spent; then the done beat, then rest as idle.
@@ -134,7 +132,7 @@ export function createPlayer(m: Manifest, first: FaceState, draw: (f: Frame) => 
       if (want !== shownNow) return enter(want);
       paint(rest()); resting(gapFor(shownNow), false);
     };
-    timer = env.setTimeout(step, frameMs);
+    timer = env.setTimeout(step, PIXEL.frameMs);
   };
   // Resting: the turn rolls (never while waiting on you), one step at a time, and the next beat after its gap.
   const rolls = () => {

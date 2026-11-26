@@ -88,19 +88,22 @@ describe('a pixel face, on a fake clock', () => {
     }
   });
 
-  it('keeps short idle blinks and full-speed rare gestures while using the ticket cadence', () => {
+  it('plays every idle variant at the original frame speed between variable ticket rests', () => {
     const env = fakeEnv(17), draws: Draw[] = [];
     const player = createPlayer(M, 'idle', f => draws.push({ ...f, at: env.t() }), env, undefined,
-      { gap: [3500, 9000], blinkDuration: [320, 420] });
+      { gap: [3500, 9000] });
     player.live(true); env.run(600_000);
     const complete = beats(draws).filter(b => b.length === 17);
     expect(complete.some(b => b[0].v?.rare)).toBe(true);
     expect(complete.some(b => !b[0].v?.rare)).toBe(true);
-    for (const [first, second] of complete) {
-      const frameMs = second.at - first.at;
-      if (first.v?.rare) expect(frameMs).toBeCloseTo(PIXEL.frameMs);
-      else expect(frameMs * 17).toBeGreaterThanOrEqual(320);
-      if (!first.v?.rare) expect(frameMs * 17).toBeLessThanOrEqual(420);
+    for (const [index, animation] of complete.entries()) {
+      for (let frame = 1; frame < animation.length; frame++)
+        expect(animation[frame].at - animation[frame - 1].at).toBeCloseTo(90);
+      const previous = complete[index - 1];
+      const previousEnd = previous ? previous.at(-1)!.at + PIXEL.frameMs : 0;
+      const gap = animation[0].at - previousEnd;
+      expect(gap).toBeGreaterThanOrEqual(3500);
+      expect(gap).toBeLessThanOrEqual(9000);
     }
     player.live(false, false);
     const stopped = draws.length;
