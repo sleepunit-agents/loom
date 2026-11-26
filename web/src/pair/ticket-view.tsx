@@ -1,5 +1,6 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowUpRightIcon, ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
+import { useDataQuery } from '../data/graphql';
 import { Badge } from './ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/tabs';
 import { Button } from './ui/button';
@@ -49,16 +50,18 @@ export const detailsQuery = `query PairTicketView($id:String!){ticket:tasksSingl
   taskCommentsByTask(orderBy:{seq:{direction:desc,priority:0}}){seq text actor at}
 }}`;
 type Row = { title: string; state?: string; heading?: string; meta?: string; detail: string; target: View };
-type Group = { name: string; rows: Row[] };
+type Group = { name: string; rows: Row[]; boardProject?: string };
 type PanelState = { page: number; item?: string };
 export type SecondaryState = { selected: string; panels: Record<string, PanelState> };
 function SecondaryPanel({
   group,
+  renderList,
   state,
   update,
   work,
 }: {
   group: Group;
+  renderList?: (open: (row: Row) => void) => ReactNode;
   state: PanelState;
   update: (next: PanelState) => void;
   work: (v: View) => void;
@@ -78,6 +81,10 @@ function SecondaryPanel({
     );
     (selected ? back.current : origin || list.current)?.focus({ preventScroll: true });
   }, [state.item, previous, selected]);
+  function openRow(row: Row) {
+    moveFocus.current = true;
+    update({ page: state.page, item: viewKey(row.target) });
+  }
   function goBack() {
     setPrevious(state.item);
     moveFocus.current = true;
@@ -96,36 +103,39 @@ function SecondaryPanel({
       }}
     >
       <div ref={list} tabIndex={-1} className="pair-drill-list" inert={!!selected} aria-hidden={!!selected}>
-        <ul className="divide-y">
-          {group.rows.slice(start, start + 5).map((row) => (
-            <li key={viewKey(row.target)}>
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 py-2 text-left text-sm"
-                data-row={viewKey(row.target)}
-                onClick={() => {
-                  moveFocus.current = true;
-                  update({ page: state.page, item: viewKey(row.target) });
-                }}
-              >
-                <span className="min-w-0 flex-1 leading-snug [overflow-wrap:anywhere]">
-                  {row.title}
-                  {row.state && <span className="ml-2 text-xs text-muted-foreground">{row.state}</span>}
-                </span>
-                <ChevronRightIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-              </button>
-            </li>
-          ))}
-        </ul>
-        {group.rows.length > 5 && (
-          <div className="flex gap-3 text-sm">
-            {start > 0 && <button onClick={() => update({ page: start / 5 - 1 })}>Previous</button>}
-            {start + 5 < group.rows.length && (
-              <button onClick={() => update({ page: start / 5 + 1 })}>
-                +{group.rows.length - start - 5} more
-              </button>
+        {renderList ? (
+          renderList(openRow)
+        ) : (
+          <>
+            <ul className="divide-y">
+              {group.rows.slice(start, start + 5).map((row) => (
+                <li key={viewKey(row.target)}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 py-2 text-left text-sm"
+                    data-row={viewKey(row.target)}
+                    onClick={() => openRow(row)}
+                  >
+                    <span className="min-w-0 flex-1 leading-snug [overflow-wrap:anywhere]">
+                      {row.title}
+                      {row.state && <span className="ml-2 text-xs text-muted-foreground">{row.state}</span>}
+                    </span>
+                    <ChevronRightIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {group.rows.length > 5 && (
+              <div className="flex gap-3 text-sm">
+                {start > 0 && <button onClick={() => update({ page: start / 5 - 1 })}>Previous</button>}
+                {start + 5 < group.rows.length && (
+                  <button onClick={() => update({ page: start / 5 + 1 })}>
+                    +{group.rows.length - start - 5} more
+                  </button>
+                )}
+              </div>
             )}
-          </div>
+          </>
         )}
       </div>
       <div className="pair-drill-detail" inert={!selected} aria-hidden={!selected}>
@@ -154,6 +164,94 @@ function SecondaryPanel({
         )}
       </div>
     </div>
+  );
+}
+type BoardTicket = {
+  id: string;
+  title: string;
+  lane: string;
+  reason: string | null;
+  assignee: string | null;
+};
+const boardPageSize = 12;
+function BoardPanel({
+  project,
+  state,
+  update,
+  work,
+}: {
+  project: string;
+  state: PanelState;
+  update: (next: PanelState) => void;
+  work: (view: View) => void;
+}) {
+  const read = useDataQuery<{ projectBoardTickets: BoardTicket[] }>(
+    'query PairProjectBoard($project:String!,$offset:Int!,$limit:Int!){projectBoardTickets(project:$project,offset:$offset,limit:$limit){id title lane reason assignee}}',
+    { project, offset: state.page * boardPageSize, limit: boardPageSize + 1 },
+  );
+  const tickets = read.data?.projectBoardTickets || [];
+  const rows: Row[] = tickets.slice(0, boardPageSize).map((t) => ({
+    title: t.title,
+    state: t.lane,
+    meta: [t.id, t.assignee, t.lane].filter(Boolean).join(' · '),
+    detail: t.reason || '',
+    target: ticketView(t.id),
+  }));
+  return (
+    <SecondaryPanel
+      group={{ name: 'Board', rows }}
+      state={state}
+      update={update}
+      work={work}
+      renderList={(open) => (
+        <>
+          {read.status !== 'live' ? (
+            <p role="status">{read.status === 'loading' ? 'Opening board…' : 'Board unavailable.'}</p>
+          ) : rows.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              {state.page ? 'No more active tickets.' : 'No active tickets on this board.'}
+            </p>
+          ) : (
+            <div className="pair-board">
+              {['Working', 'Verifying', 'Waiting'].map((lane) => (
+                <section key={lane} aria-label={lane}>
+                  <h3 className="mb-2 border-b pb-1 text-sm font-semibold">{lane}</h3>
+                  <ul className="space-y-2">
+                    {rows
+                      .filter((row) => row.state === lane)
+                      .map((row) => (
+                        <li key={viewKey(row.target)}>
+                          <button
+                            type="button"
+                            className="w-full rounded-lg border border-border bg-card/70 p-2 text-left text-sm leading-snug hover:bg-card"
+                            data-row={viewKey(row.target)}
+                            onClick={() => open(row)}
+                          >
+                            <span className="block font-medium [overflow-wrap:anywhere]">{row.title}</span>
+                            {row.detail && (
+                              <span className="mt-1 block text-xs text-card-body [overflow-wrap:anywhere]">
+                                {row.detail}
+                              </span>
+                            )}
+                          </button>
+                        </li>
+                      ))}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          )}
+          {(state.page > 0 || tickets.length > boardPageSize) && (
+            <div className="mt-3 flex gap-3 text-sm">
+              {state.page > 0 && <button onClick={() => update({ page: state.page - 1 })}>Previous</button>}
+              {tickets.length > boardPageSize && (
+                <button onClick={() => update({ page: state.page + 1 })}>More tickets</button>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    />
   );
 }
 function Secondary({
@@ -202,7 +300,15 @@ function Secondary({
                 aria-hidden={g !== group}
                 className="col-start-1 row-start-1 min-w-0 data-[state=inactive]:invisible"
               >
-                <SecondaryPanel group={g} state={panel} update={updatePanel} work={work} />
+                {g.boardProject ? (
+                  g === group && (
+                    <div className="pair-board-panel">
+                      <BoardPanel project={g.boardProject} state={panel} update={updatePanel} work={work} />
+                    </div>
+                  )
+                ) : (
+                  <SecondaryPanel group={g} state={panel} update={updatePanel} work={work} />
+                )}
               </TabsContent>
             );
           })}
@@ -250,9 +356,10 @@ export function ProjectCanvas({
   work: (v: View) => void;
   memory: Map<string, SecondaryState>;
 }) {
-  const groups = [
+  const groups: Group[] = [
     { name: 'In progress', rows: working.map(ticketRow) },
     { name: 'Recently updated', rows: recent.map(ticketRow) },
+    { name: 'Board', rows: [], boardProject: project.id },
   ];
   return (
     <>
@@ -272,7 +379,7 @@ export function ProjectCanvas({
       </ModuleCard>
       <Secondary
         view={{ kind: 'project', project: project.id }}
-        groups={groups.filter((g) => g.rows.length)}
+        groups={groups.filter((g) => g.rows.length || g.boardProject)}
         work={work}
         memory={memory}
       />

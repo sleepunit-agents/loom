@@ -643,3 +643,21 @@
     background-image: linear-gradient(color-mix(in srgb, currentColor 4%, transparent) 0 100%);
   }
 }
+
+.pair-entity-preview {
+  background-color: light-dark(#fffefa, #40464d);
+  border: 1px solid light-dark(#b8bdba, #707881);
+  box-shadow: 0 2px 5px rgb(0 0 0 / 15%), 0 9px 24px light-dark(rgb(42 47 53 / 16%), rgb(0 0 0 / 36%));
+}
+.pair-entity-preview .text-muted-foreground { color: light-dark(#565c60, #c9cdd0); }
+.pair-entity-preview .text-card-body { color: light-dark(#363d40, #e0e3e5); }
+.pair-board-panel {
+  position: relative;
+  min-height: 10rem;
+  container-type: inline-size;
+}
+.pair-board-panel > .pair-drill { position: absolute; inset: 0 0 auto; height: auto; }
+.pair-board { display: grid; gap: 1rem; }
+@container (min-width: 31rem) {
+  .pair-board { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .625rem; }
+}

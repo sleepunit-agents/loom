@@ -21,7 +21,7 @@ export function EntityPreview({
         align="start"
         sideOffset={6}
         collisionPadding={12}
-        className="w-72 max-w-[calc(100vw-1.5rem)] space-y-2 p-3"
+        className="pair-entity-preview w-72 max-w-[calc(100vw-1.5rem)] space-y-2 p-3"
       >
         {preview}
         <p className="text-xs text-muted-foreground">{intent}</p>
