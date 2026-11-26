@@ -1,4 +1,4 @@
-@import "tailwindcss" source(none);
+@import 'tailwindcss' source(none);
 @source "./";
 @theme inline {
   --color-background: oklch(1 0 0);
@@ -34,4 +34,38 @@
   --color-sidebar-border: oklch(0.922 0 0);
   --color-sidebar-ring: oklch(0.708 0 0);
 }
-@layer base { * { @apply border-border; } body { @apply m-0 bg-background text-foreground antialiased; } }
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply m-0 bg-background text-foreground antialiased;
+  }
+}
+
+/* Art's existing 17-frame sprite, cropped to one cell. */
+.art-portrait {
+  width: 56px;
+  height: 84px;
+  zoom: 0.55;
+  background: url('../contexts/sheet.png') 0 -840px no-repeat;
+  image-rendering: pixelated;
+}
+.art-portrait[data-working='true'] {
+  background-position-y: -336px;
+}
+@media (min-width: 640px) {
+  .art-portrait {
+    zoom: 1;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .art-portrait {
+    animation: pair-art 1.7s steps(17) infinite;
+  }
+}
+@keyframes pair-art {
+  to {
+    background-position-x: -952px;
+  }
+}

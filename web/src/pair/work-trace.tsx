@@ -10,7 +10,8 @@ import {
   TraceLine,
   TraceTitle,
 } from './ui/trace';
-import { CodeBlock, CodeBlockContent } from './ui/code-block';
+import { Highlight, SourceBlock } from './highlight';
+import { Reply } from './reply';
 import type { WorkNode } from './work-tree';
 
 // Compositions from shadcn/ui's Terminal, Tool, and Subagent examples.
@@ -48,7 +49,7 @@ export function WorkTrace({ node, latestTerminal }: { node: WorkNode; latestTerm
             <TraceIcon>
               <Icon />
             </TraceIcon>
-            <TraceTitle>{command || label}</TraceTitle>
+            <TraceTitle>{command ? <Highlight source={command} language="bash" /> : label}</TraceTitle>
             <TraceDescription>{last.cardState || 'Recorded'}</TraceDescription>
           </TraceLine>
         </TraceCollapsibleTrigger>
@@ -58,13 +59,13 @@ export function WorkTrace({ node, latestTerminal }: { node: WorkNode; latestTerm
           ))}
           {output &&
             (agent ? (
-              <p>{output}</p>
+              <Reply words={output} />
             ) : (
-              <CodeBlock size="sm" variant={last.cardState === 'failed' ? 'destructive' : 'default'}>
-                <CodeBlockContent wrap className="max-h-64">
-                  {output}
-                </CodeBlockContent>
-              </CodeBlock>
+              <SourceBlock
+                source={output}
+                failed={last.cardState === 'failed'}
+                language={output === command ? 'bash' : undefined}
+              />
             ))}
           {facts.map((f, i) => f && <p key={i}>{f}</p>)}
           {!output && !node.children.length && !facts.some(Boolean) && (
