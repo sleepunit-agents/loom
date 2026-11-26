@@ -543,7 +543,7 @@ function Workspace({
                   <h1>{ticket.title}</h1>
                 </CardTitle>
                 <CardDescription className="[overflow-wrap:anywhere]">
-                  <span className="uppercase tracking-wide">{[ticket.project, ticket.id].filter(Boolean).join(' · ')}</span>
+                  {[ticket.project, ticket.id].filter(Boolean).join(' · ')}
                   {ticket.assignee && ` · Assigned to ${ticket.assignee}`}
                 </CardDescription>
                 <CardAction>
@@ -561,7 +561,7 @@ function Workspace({
                     v && (
                       <section key={k}>
                         <h2 className="font-medium">{k}</h2>
-                        <div className="whitespace-pre-wrap text-sm">
+                        <div className="whitespace-pre-wrap text-sm text-card-body">
                           <TicketLinks words={v} />
                         </div>
                       </section>
