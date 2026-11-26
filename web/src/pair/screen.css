@@ -39,6 +39,13 @@
 @layer base {
   :root {
     color-scheme: light dark;
+    --canvas-cool: light-dark(#eaf0f5, #171c22);
+    --canvas-center: light-dark(#fafafa, #151617);
+    --canvas-warm: light-dark(#f5eeec, #211b1c);
+    --surface-edge: light-dark(rgb(48 57 70 / 12%), rgb(230 235 244 / 11%));
+    --contact: light-dark(rgb(30 40 54 / 8%), rgb(0 0 0 / 28%));
+    --ambient: light-dark(rgb(30 40 54 / 6%), rgb(0 0 0 / 18%));
+    --rim: light-dark(rgb(255 255 255 / 76%), rgb(255 255 255 / 5%));
   }
   * {
     @apply border-border;
@@ -48,6 +55,40 @@
   }
 }
 
+.pair-workspace {
+  position: relative;
+  isolation: isolate;
+  background-color: var(--canvas-center);
+}
+.pair-workspace::before {
+  content: '';
+  position: absolute;
+  inset: -12%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 75% 37%, var(--canvas-center), transparent 62%),
+    linear-gradient(172deg, var(--canvas-cool) 6%, var(--canvas-center) 53%, var(--canvas-warm) 95%);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .pair-workspace::before {
+    animation: canvas-drift 52s ease-in-out infinite alternate;
+  }
+}
+@keyframes canvas-drift {
+  from { transform: translate(-3%, -2%) rotate(-2deg); }
+  to { transform: translate(3%, 2%) rotate(2deg); }
+}
+.pair-workspace [data-slot='card'] {
+  background-color: light-dark(rgb(255 255 255 / 82%), rgb(32 33 35 / 88%));
+  border-color: var(--surface-edge);
+  box-shadow: inset 0 1px var(--rim), 0 1px 2px var(--contact), 0 3px 10px -5px var(--ambient);
+}
+.pair-dock,
+.context-choices {
+  border-color: var(--surface-edge);
+  box-shadow: inset 0 1px var(--rim), 0 1px 3px var(--contact), 0 9px 22px -8px var(--ambient);
+}
 /* Art's existing 17-frame sprite, cropped to one cell. */
 .art-portrait {
   width: 56px;
@@ -138,9 +179,12 @@
   left: 50%;
   transform: translateX(-50%);
   width: min(20rem, calc(100vw - 2rem));
-  @apply rounded-2xl border bg-popover p-2 text-popover-foreground shadow-lg;
+  @apply rounded-2xl border p-2 text-popover-foreground;
+  background-color: light-dark(#fafbfc, #2a2b2d);
+  box-shadow: inset 0 1px var(--rim), 0 2px 4px var(--contact), 0 8px 20px -4px var(--ambient);
 }
 @media (forced-colors: active) {
+  .pair-workspace::before { display: none; }
   .context-trace {
     background: ButtonText !important;
   }

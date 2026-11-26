@@ -468,7 +468,7 @@ function Workspace({
     }
   }
   return (
-    <main className="flex h-dvh overflow-hidden">
+    <main className="pair-workspace flex h-dvh overflow-hidden">
       <section className="relative flex min-w-0 flex-1 flex-col">
         <div className="min-h-0 flex-1 overflow-auto px-4 pt-10 pb-4 sm:px-8 sm:pb-8">
           {ticket ? (
@@ -527,7 +527,7 @@ function Workspace({
           <Item
             variant="outline"
             className={
-              'relative grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-0 rounded-3xl bg-card p-2 text-card-foreground shadow-md ' +
+              'relative grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-0 rounded-3xl bg-card p-2 text-card-foreground pair-dock ' +
               (quick ? '@min-[25rem]:grid-cols-[auto_minmax(0,1fr)_auto]' : '')
             }
           >
