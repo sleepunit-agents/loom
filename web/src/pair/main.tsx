@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -20,7 +20,6 @@ import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
-  InputGroupInput,
   InputGroupTextarea,
   InputGroupText,
 } from './ui/input-group';
@@ -47,6 +46,7 @@ import {
 import { WorkTrace } from './work-trace';
 import { workTree, type EventMessage } from './work-tree';
 import { Reply } from './reply';
+import { QuickBar } from './quick-bar';
 import { ContextSwitcher, type Place } from './context-switcher';
 import './screen.css';
 
@@ -343,12 +343,14 @@ function Workspace({
   ticket,
   place,
   draft,
+  namingContext,
   edit,
 }: {
   member: string;
   ticket: Ticket | null;
   place: Place;
   draft: Draft;
+  namingContext: boolean;
   edit: (update: (old: Draft) => Draft) => void;
 }) {
   const { thread: id, agent } = place;
@@ -383,13 +385,12 @@ function Workspace({
   const quickOrigin = useRef<HTMLElement | null>(null);
   const chatLauncher = useRef<HTMLButtonElement>(null);
   const chatInput = useRef<HTMLTextAreaElement>(null);
-  const quickInput = useRef<HTMLInputElement>(null);
   const chatBody = useRef<HTMLDivElement>(null);
   const [closingChat, setClosingChat] = useState(false);
   const [historyVisit, setHistoryVisit] = useState(0);
-  useLayoutEffect(() => {
-    if (quick) quickInput.current?.focus({ preventScroll: true });
-  }, [quick]);
+  useEffect(() => {
+    if (namingContext) setQuick(false);
+  }, [namingContext]);
   useEffect(() => {
     if (!closingChat) return;
     let current = true;
@@ -429,26 +430,15 @@ function Workspace({
   }, [id, agent, retry, ticket?.project, member, place.id]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      if (!e.defaultPrevented && !namingContext && !quick && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        if (quick) closeQuick();
-        else {
-          quickOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-          setQuick(true);
-        }
+        quickOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        setQuick(true);
       }
-      if (e.key === 'Escape' && quick) closeQuick();
-    };
-    const outside = (e: PointerEvent) => {
-      if (quick && e.target instanceof Element && !e.target.closest('#quick-message')) setQuick(false);
     };
     window.addEventListener('keydown', key);
-    document.addEventListener('pointerdown', outside);
-    return () => {
-      window.removeEventListener('keydown', key);
-      document.removeEventListener('pointerdown', outside);
-    };
-  }, [quick]);
+    return () => window.removeEventListener('keydown', key);
+  }, [quick, namingContext]);
   useEffect(() => {
     if (!open || !tail.last) return;
     const el = scroll.current;
@@ -553,9 +543,8 @@ function Workspace({
                   <h1>{ticket.title}</h1>
                 </CardTitle>
                 <CardDescription className="[overflow-wrap:anywhere]">
-                  {[ticket.project, ticket.id, ticket.assignee && `Assigned to ${ticket.assignee}`]
-                    .filter(Boolean)
-                    .join(' · ')}
+                  <span className="uppercase tracking-wide">{[ticket.project, ticket.id].filter(Boolean).join(' · ')}</span>
+                  {ticket.assignee && ` · Assigned to ${ticket.assignee}`}
                 </CardDescription>
                 <CardAction>
                   <Badge variant="secondary">{ticket.status.replaceAll('_', ' ')}</Badge>
@@ -720,47 +709,10 @@ function Workspace({
           </form>
         </div>
       </aside>
-      <form
-        inert={!quick}
-        aria-hidden={!quick}
-        id="quick-message"
-        aria-label="Quick message"
-        className="pair-prompt"
-        onSubmit={(e) => void send(e, true)}
-      >
-        <InputGroup className="h-12 rounded-xl bg-popover has-[[data-slot=input-group-control]:focus-visible]:border-input has-[[data-slot=input-group-control]:focus-visible]:ring-0">
-          <InputGroupInput
-            ref={quickInput}
-            aria-label="Quick message"
-            placeholder={`Ask ${name}…`}
-            value={command}
-            onChange={(e) => {
-              const command = e.target.value;
-              edit((old) => ({ ...old, command }));
-            }}
-          />
-          <InputGroupAddon align="inline-end">
-            <InputGroupButton
-              type="submit"
-              variant="default"
-              size="icon-sm"
-              aria-label="Send quick message"
-              className="focus-visible:bg-secondary focus-visible:text-secondary-foreground focus-visible:ring-0"
-              disabled={busy || !ready || !command.trim()}
-            >
-              <ArrowUpIcon />
-            </InputGroupButton>
-            <InputGroupButton
-              size="icon-sm"
-              aria-label="Close quick bar"
-              className="focus-visible:bg-secondary focus-visible:ring-0"
-              onClick={closeQuick}
-            >
-              <XIcon />
-            </InputGroupButton>
-          </InputGroupAddon>
-        </InputGroup>
-      </form>
+      <QuickBar id="quick-message" open={quick && !namingContext} label="Quick message"
+        placeholder={`Ask ${name}…`} action="Send quick message" value={command} busy={busy} disabled={!ready}
+        onChange={command => edit(old => ({ ...old, command }))} onSubmit={e => void send(e, true)}
+        onClose={restore => restore ? closeQuick() : setQuick(false)} />
       {(error || !agent) && (
         <Alert variant="destructive" className="fixed top-2 left-2 z-50 max-w-sm">
           <CircleAlertIcon />
@@ -810,11 +762,12 @@ function TicketScreen({ member }: { member: string }) {
   };
   return (
     <ContextSwitcher member={member} ticket={ticketPlace} home={home}>
-      {(place) => (
+      {(place, namingContext) => (
         <Workspace
           key={place.thread}
           member={member}
           place={place}
+          namingContext={namingContext}
           ticket={place.id === 'loom' ? ticket : null}
           draft={drafts[place.thread] || emptyDraft}
           edit={(update) =>

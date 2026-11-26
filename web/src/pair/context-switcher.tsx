@@ -11,7 +11,7 @@ import { useDataQuery } from '../data/graphql';
 import { newId } from '../data/id';
 import { memberOperation } from '../data/operation';
 import { Button } from './ui/button';
-import { Input } from './ui/input';
+import { QuickBar } from './quick-bar';
 
 export type Place = {
   id: string;
@@ -70,7 +70,7 @@ export function ContextSwitcher({
   member: string;
   ticket: Place;
   home: Place;
-  children: (place: Place) => ReactNode;
+  children: (place: Place, naming: boolean) => ReactNode;
 }) {
   const [pages, setPages] = useState<Record<number, Page>>({});
   const onPage = useCallback((offset: number, rows: ContextRow[], status: DirectoryStatus) => {
@@ -124,7 +124,7 @@ export function ContextSwitcher({
   }, []);
   const [revealed, reveal] = useState(false),
     [adding, add] = useState(false);
-  // Rows are 3.25rem tall with a .25rem gap. Leave room for the strip and form.
+  // Rows are 3.25rem tall with a .25rem gap. Leave room for the strip and controls.
   const availableRows = () =>
     Math.max(
       1,
@@ -175,13 +175,13 @@ export function ContextSwitcher({
     if (restore) trigger.current?.focus({ preventScroll: true });
     setRequestedPage(null);
     reveal(false);
-    add(false);
     restoring.current = false;
   }
   useEffect(() => {
     function back() {
       switchTo(currentContext());
       close();
+      add(false);
     }
     window.addEventListener('popstate', back);
     return () => window.removeEventListener('popstate', back);
@@ -203,11 +203,12 @@ export function ContextSwitcher({
       switchTo(id);
     }
     close(true);
+    add(false);
   }
   async function create() {
     const title = name.trim();
     if (!title || !ticket.agent || !loaded || locked.current) return;
-    if (places.some((p) => p.name.toLowerCase() === title.toLowerCase())) {
+    if (places.some((p) => p.id !== pending.current?.id && p.name.toLowerCase() === title.toLowerCase())) {
       fail('A context already has that name.');
       return;
     }
@@ -225,7 +226,7 @@ export function ContextSwitcher({
       pending.current = null;
       setName('');
       add(false);
-      trigger.current?.focus();
+      if (document.activeElement?.closest('#context-name-prompt')) close(true);
     } catch {
       fail('Creation unconfirmed. Retry with the same name.');
     } finally {
@@ -244,7 +245,7 @@ export function ContextSwitcher({
         aria-label="Contexts"
         className="pair-contexts"
         onPointerEnter={(e) => {
-          if (e.pointerType === 'mouse') reveal(true);
+          if (e.pointerType === 'mouse' && !adding) reveal(true);
         }}
         onPointerLeave={(e) => {
           if (e.pointerType === 'mouse' && !adding && !nav.current?.querySelector(':focus-visible')) close();
@@ -364,53 +365,30 @@ export function ContextSwitcher({
               Context directory unavailable.
             </p>
           )}
-          {adding ? (
-            <form
-              className="mt-2 flex gap-1"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void create();
-              }}
-            >
-              <Input
-                autoFocus
-                aria-label="Context name"
-                placeholder="Context name"
-                maxLength={48}
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value);
-                  fail('');
-                }}
-              />
-              <Button size="sm" disabled={!name.trim() || busy || !loaded}>
-                Create
-              </Button>
-            </form>
-          ) : (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="mt-1 text-muted-foreground"
-              disabled={!ticket.agent || !loaded}
-              onClick={() => {
-                add(true);
-                fail('');
-              }}
-            >
-              <PlusIcon />
-              New context
-            </Button>
-          )}
-          {error && (
-            <p role="alert" className="p-2 text-xs">
-              {error}
-            </p>
-          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="mt-1 text-muted-foreground"
+            disabled={!ticket.agent || !loaded}
+            onClick={() => {
+              close();
+              add(true);
+              fail('');
+            }}
+          >
+            <PlusIcon />
+            New context
+          </Button>
         </div>
       </nav>
+      <QuickBar id="context-name-prompt" open={adding} label="New context"
+        question="What would you like to call this context?" placeholder="Context name" action="Create"
+        value={name} maxLength={48} busy={busy} disabled={!loaded || !ticket.agent} error={error}
+        onChange={value => { setName(value); fail(''); }}
+        onClose={restore => { add(false); if (restore) close(true); }}
+        onSubmit={e => { e.preventDefault(); void create(); }} />
       {place ? (
-        children(place)
+        children(place, adding)
       ) : (
         <main className="p-10 text-sm" role="status">
           {loaded || offline ? (

@@ -2,7 +2,18 @@
 @import 'highlight.js/styles/github.css' (prefers-color-scheme: light);
 @import 'highlight.js/styles/github-dark.css' (prefers-color-scheme: dark);
 @source "./";
+@font-face {
+  font-family: 'Instrument Sans';
+  src: url('../../../assets/fonts/instrument-sans-latin-wght-normal.woff2') format('woff2');
+  font-weight: 400 700;
+  font-display: swap;
+}
 @theme inline {
+  --font-sans: 'Instrument Sans', system-ui, sans-serif;
+  --text-xs: .84375rem;
+  --text-sm: .96875rem;
+  --text-base: 1.0625rem;
+  --text-lg: 1.25rem;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -44,12 +55,12 @@
   :root {
     color-scheme: light dark;
     --radius: 0.625rem;
-    --background: light-dark(oklch(1 0 0), oklch(0.145 0 0));
-    --foreground: light-dark(oklch(0.145 0 0), oklch(0.985 0 0));
-    --card: light-dark(oklch(1 0 0), oklch(0.205 0 0));
-    --card-foreground: light-dark(oklch(0.145 0 0), oklch(0.985 0 0));
-    --popover: light-dark(oklch(1 0 0), oklch(0.205 0 0));
-    --popover-foreground: light-dark(oklch(0.145 0 0), oklch(0.985 0 0));
+    --background: light-dark(#ebece8, oklch(0.145 0 0));
+    --foreground: light-dark(oklch(0.145 0 0), #e3e4e0);
+    --card: light-dark(#f3f2ee, oklch(0.205 0 0));
+    --card-foreground: light-dark(oklch(0.145 0 0), #e3e4e0);
+    --popover: light-dark(#f5f4f0, oklch(0.205 0 0));
+    --popover-foreground: light-dark(oklch(0.145 0 0), #e3e4e0);
     --primary: light-dark(oklch(0.205 0 0), oklch(0.922 0 0));
     --primary-foreground: light-dark(oklch(0.985 0 0), oklch(0.205 0 0));
     --secondary: light-dark(oklch(0.97 0 0), oklch(0.269 0 0));
@@ -68,7 +79,7 @@
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
     --sidebar: light-dark(oklch(0.985 0 0), oklch(0.205 0 0));
-    --sidebar-foreground: light-dark(oklch(0.145 0 0), oklch(0.985 0 0));
+    --sidebar-foreground: light-dark(oklch(0.145 0 0), #e3e4e0);
     --sidebar-primary: light-dark(oklch(0.205 0 0), oklch(0.488 0.243 264.376));
     --sidebar-primary-foreground: light-dark(oklch(0.985 0 0), oklch(0.985 0 0));
     --sidebar-accent: light-dark(oklch(0.97 0 0), oklch(0.269 0 0));
@@ -80,9 +91,9 @@
     --motion-panel: 380ms;
     --ease-settle: cubic-bezier(.22, .72, .18, 1);
     --floating-shadow: inset 0 1px var(--rim), 0 2px 4px var(--contact), 0 12px 28px -8px var(--ambient);
-    --canvas-cool: light-dark(#eaf0f5, #171c22);
-    --canvas-center: light-dark(#fafafa, #151617);
-    --canvas-warm: light-dark(#f5eeec, #211b1c);
+    --canvas-cool: light-dark(#e1e6e8, #171c22);
+    --canvas-center: light-dark(#eaece9, #151617);
+    --canvas-warm: light-dark(#ece6e2, #211b1c);
     --surface-edge: light-dark(rgb(48 57 70 / 12%), rgb(230 235 244 / 11%));
     --contact: light-dark(rgb(30 40 54 / 8%), rgb(0 0 0 / 28%));
     --ambient: light-dark(rgb(30 40 54 / 6%), rgb(0 0 0 / 18%));
@@ -92,7 +103,7 @@
     @apply border-border;
   }
   body {
-    @apply m-0 bg-background text-foreground antialiased;
+    @apply m-0 bg-background font-sans text-base text-foreground antialiased;
   }
 }
 
@@ -126,7 +137,7 @@
   }
 }
 .pair-workspace [data-slot='card'] {
-  background-color: light-dark(rgb(255 255 255 / 82%), rgb(32 33 35 / 88%));
+  background-color: color-mix(in srgb, var(--card) 88%, transparent);
   border-color: var(--surface-edge);
   box-shadow:
     inset 0 1px var(--rim),
@@ -134,7 +145,7 @@
     0 3px 10px -5px var(--ambient);
 }
 .pair-chat {
-  --chat-base: light-dark(#fff, #303134);
+  --chat-base: light-dark(#f3f2ee, #303134);
   background-color: var(--chat-base);
   background-image: linear-gradient(
     172deg,
@@ -328,7 +339,7 @@
   translate: -50% 0;
   width: min(20rem, calc(100vw - 2rem));
   @apply rounded-2xl border p-2 text-popover-foreground;
-  background-color: light-dark(#fafbfc, #2a2b2d);
+  background-color: light-dark(var(--popover), #2a2b2d);
 
 }
 @media (forced-colors: active) {
@@ -416,7 +427,7 @@
     transition: opacity var(--motion-reveal) var(--ease-settle),
       transform var(--motion-reveal) var(--ease-settle), visibility 0s;
   }
-  .context-choices { transform-origin: top center; }
+  .context-choices { transform-origin: top center; transition-duration: 300ms, 300ms, 0s; }
   .pair-prompt { transform-origin: center; }
   .context-choices[inert], .pair-prompt[inert], .pair-chat-body[inert] {
     transition-duration: var(--motion-detail), var(--motion-detail), 0s;
@@ -426,7 +437,7 @@
   .pair-prompt[inert] { transform: translateY(5px) scale(.985); }
   .pair-chat-body[inert] { transform: translateX(7px); }
   .pair-canvas > div { transition: padding-top var(--motion-panel) var(--ease-settle); }
-  .context-page, .context-choices form,
+  .context-page,
   .pair-workspace [data-arrived='true'], .pair-workspace [role='alert'],
   .pair-chat-body form [data-slot='attachment'], .pair-presence > svg {
     animation: pair-arrive var(--motion-reveal) var(--ease-settle) both;
@@ -477,3 +488,11 @@
 }
 @keyframes pair-context-out { to { opacity: 0; transform: translateX(-6px); } }
 @keyframes pair-context-in { from { opacity: 0; transform: translateX(8px); } }
+
+
+.pair-prompt[data-question] {
+  @apply rounded-2xl border bg-popover p-3 text-popover-foreground;
+  border-color: var(--surface-edge);
+  box-shadow: var(--floating-shadow);
+}
+.pair-prompt[data-question] [data-slot='input-group'] { box-shadow: none; }
