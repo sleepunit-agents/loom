@@ -4,6 +4,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNod
 import { useDataQuery } from '../data/graphql';
 import { memberOperation } from '../data/operation';
 import { newId } from '../data/id';
+export type ContextCommand = (words: string) => Promise<string | undefined>;
 export interface Place {
   id: string;
   name: string;
@@ -75,6 +76,7 @@ export function Ring({
     active: boolean,
     visit: Visit | null,
     report: (id: string, d: Details) => void,
+    command: ContextCommand,
   ) => ReactNode;
 }) {
   const [pages, setPages] = useState<Record<number, Row[]>>({});
@@ -147,12 +149,13 @@ export function Ring({
     window.addEventListener('popstate', back);
     return () => window.removeEventListener('popstate', back);
   }, []);
-  async function create() {
-    const title = name.trim();
-    if (!title || !agent || locked.current) return;
+  async function create(candidate = name) {
+    const title = candidate.trim();
+    if (!title || !agent || locked.current) return 'Context creation unavailable.';
+    if (title.length > 48) return 'Use 48 characters or fewer for the context name.';
     if (places.some((p) => p.name.toLowerCase() === title.toLowerCase())) {
       setError('A context already has that name.');
-      return;
+      return 'A context already has that name.';
     }
     locked.current = true;
     setBusy(true);
@@ -169,11 +172,29 @@ export function Ring({
       add(false);
     } catch {
       setError('Could not confirm creation. Retry with the same name.');
+      return 'Could not confirm creation. Retry with the same name.';
     } finally {
       locked.current = false;
       setBusy(false);
     }
   }
+  const command: ContextCommand = async (words) => {
+    const start = /^(?:new context:|create (?:a )?context(?: named)? )\s*(.*)$/i.exec(words);
+    if (start) {
+      if (!start[1].trim()) {
+        setName('');
+        add(true);
+        return '';
+      }
+      return (await create(start[1])) || '';
+    }
+    const go = /^(?:take me to|switch to(?: context)?|open context) (.+)$/i.exec(words);
+    if (!go) return;
+    const target = places.find((p) => p.name.toLowerCase() === go[1].trim().toLowerCase());
+    if (!target) return 'No context named ' + go[1] + '.';
+    choose(target);
+    return '';
+  };
   return (
     <>
       <Directory member={member} offset={0} onPage={onPage} />
@@ -311,7 +332,7 @@ export function Ring({
       )}
       {places.map((p) => (
         <div key={p.id} hidden={p.id !== selected}>
-          {children(p, p.id === selected, visit?.place === p.id ? visit : null, report)}
+          {children(p, p.id === selected, visit?.place === p.id ? visit : null, report, command)}
         </div>
       ))}
       {!places.some((p) => p.id === selected) && (

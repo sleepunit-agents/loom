@@ -10,7 +10,7 @@ import './style.css';
 import { Notes, PastPulls } from './ticket-work';
 import { Portrait } from './portrait';
 import { Chat } from './chat';
-import { Ring, keep, kept, type Place, type Visit, type Details } from './ring';
+import { Ring, keep, kept, type ContextCommand, type Place, type Visit, type Details } from './ring';
 
 import { useTaskCommandSubmitter } from '../data/task-command';
 import { Head } from '../kit/reader';
@@ -174,6 +174,7 @@ function Workspace({
   place,
   active,
   visit,
+  contextCommand,
   report,
 }: {
   ticket: Ticket | null;
@@ -182,6 +183,7 @@ function Workspace({
   place: Place;
   active: boolean;
   visit: Visit | null;
+  contextCommand: ContextCommand;
   report: (id: string, d: Details) => void;
 }) {
   const project = ticket?.projectRow,
@@ -844,6 +846,12 @@ function Workspace({
       .replace(/[?.!]+$/, '')
       .replace(/^(?:(?:can|could) you |please )+/i, '');
     setRouteError('');
+    const handled = await contextCommand(text);
+    if (handled !== undefined) {
+      if (handled) setRouteError(handled);
+      else record(words);
+      return !handled;
+    }
     const namedProject =
       /^(?:(?:show|open|check) (?:me )?(?:the )?)?(?:project (?:health|status)(?: of| for|:)?|(?:status|health) of (?:project|the project))\s+(.+)$/i.exec(
         text,
@@ -1379,7 +1387,7 @@ function App() {
     return <main role="status">Opening ticket…</main>;
   return (
     <Ring key={member} member={member} agent={agent} project={project?.name || 'Loom'}>
-      {(place, active, visit, report) => (
+      {(place, active, visit, report, contextCommand) => (
         <Workspace
           ticket={ticket}
           homeProject={home.data?.agent ? project?.id || '' : ''}
@@ -1387,6 +1395,7 @@ function App() {
           place={place}
           active={active}
           visit={visit}
+          contextCommand={contextCommand}
           report={report}
         />
       )}
