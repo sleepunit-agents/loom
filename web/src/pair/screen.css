@@ -525,7 +525,20 @@
   display: flex;
   flex-direction: column;
 }
-.pair-view-ring { margin-bottom: 1.25rem; }
+.pair-view-ring {
+  flex: none;
+  align-self: flex-start;
+  margin: 2.25rem 0 .5rem clamp(.75rem, 2cqw, 1.5rem);
+  max-width: calc(100% - min(46vw, 9rem) - 2rem);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.pair-view-ring + .pair-canvas-scroll { padding-top: 1.25rem; }
+@media (min-width: 640px) {
+  .pair-view-ring { max-width: calc(100% - 14rem); }
+  .pair-workspace:has(.pair-chat[data-open='true']) .pair-view-ring { max-width: calc(100% - 3rem); }
+}
 .pair-zones {
   display: grid;
   gap: 1.75rem;
@@ -536,7 +549,6 @@
 }
 .pair-canvas-scroll::before, .pair-canvas-scroll::after { content: ''; }
 .pair-canvas-scroll::before { flex: 0.34 0 0; order: 0; }
-.pair-view-ring { order: -1; }
 .pair-canvas-scroll::after { flex: 0.66 0 0; }
 .pair-tab-scroll {
   overflow-x: auto;
@@ -544,7 +556,7 @@
   scrollbar-width: thin;
 }
 .pair-tab-scroll [role='tablist'] { display: flex; }
-.pair-tab-scroll [data-variant='default'] [role='tab']::after { content: none; }
+.pair-tab-scroll [data-variant='line'] [role='tab']::after { bottom: -2px; }
 @media (prefers-reduced-motion: no-preference) {
   .pair-secondary [role='tabpanel'][data-state='active'] { animation: pair-tab-in 160ms ease-out; }
 }

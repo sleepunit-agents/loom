@@ -331,10 +331,26 @@ function Workspace({
   const active = ring.active;
   const details = useDataQuery<{ticket: Ticket | null}>(detailsQuery,{id:active?.ticket || ''},{pause:!active});
   const secondaryState = useRef(new Map<string, SecondaryState>());
+  const viewNav = useRef<HTMLElement>(null);
   const canvasScroll = useRef<HTMLDivElement>(null);
   const positions = useRef(new Map<string,number>());
   const activeKey = active ? viewKey(active) : '';
   const focusView = useRef(false);
+  useLayoutEffect(() => {
+    const nav = viewNav.current;
+    const selected = nav?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!nav || !selected) return;
+    const reveal = () => {
+      const bounds = nav.getBoundingClientRect();
+      const item = selected.getBoundingClientRect();
+      if (item.left < bounds.left) nav.scrollLeft += item.left - bounds.left;
+      else if (item.right > bounds.right) nav.scrollLeft += item.right - bounds.right;
+    };
+    reveal();
+    const resize = new ResizeObserver(reveal);
+    resize.observe(nav);
+    return () => resize.disconnect();
+  }, [activeKey, ring.views.length]);
   function workOn(view: View) {
     focusView.current = viewKey(view) !== activeKey;
     ring.work(view);
@@ -538,13 +554,13 @@ function Workspace({
       }
     }}>
       <section className="pair-canvas relative flex min-w-0 flex-1 flex-col">
-        <div ref={canvasScroll} className="pair-canvas-scroll" onScroll={e=>{if(details.status === 'live') positions.current.set(activeKey,e.currentTarget.scrollTop);}}>
-          {(ring.views.length > 1 || (active && !root)) && <nav aria-label="Open views" className="pair-view-ring flex flex-wrap items-center gap-1">
+          {(ring.views.length > 1 || (active && !root)) && <nav aria-label="Open views" ref={viewNav} className="pair-view-ring flex items-center gap-1">
             {ring.views.map(v=><Button key={viewKey(v)} size="sm" variant={viewKey(v)===activeKey ? 'secondary' : 'ghost'}
               aria-current={viewKey(v)===activeKey ? 'page' : undefined} onClick={()=>workOn(v)}>{viewLabel(v)}</Button>)}
             {active && !(active.intent === 'work' && active.ticket === root) && <Button size="icon-xs" variant="ghost"
               aria-label="Close current view" onClick={ring.close}><XIcon/></Button>}
           </nav>}
+        <div ref={canvasScroll} className="pair-canvas-scroll" onScroll={e=>{if(details.status === 'live') positions.current.set(activeKey,e.currentTarget.scrollTop);}}>
           <div className="pair-zones" key={activeKey}>
             {active ? details.data?.ticket?.id === active.ticket && details.status==='live' ?
               <TicketCanvas ticket={details.data.ticket} view={active} work={workOn} memory={secondaryState.current}/> :

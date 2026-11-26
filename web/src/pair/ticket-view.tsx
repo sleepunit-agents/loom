@@ -71,7 +71,7 @@ function Secondary({
     <aside aria-label="Related work" className="pair-secondary min-w-0">
       <Tabs value={group.name} onValueChange={(name) => update({ ...state, selected: name })}>
         <div className="pair-tab-scroll">
-          <TabsList aria-label="Related work categories">
+          <TabsList variant="line" aria-label="Related work categories">
             {groups.map((g) => (
               <TabsTrigger key={g.name} value={g.name}>
                 {g.name} · {g.rows.length}
