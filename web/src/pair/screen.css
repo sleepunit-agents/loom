@@ -121,6 +121,7 @@
   z-index: -1;
   pointer-events: none;
   background:
+    linear-gradient(light-dark(transparent, rgb(255 255 255 / 9%)) 0 100%),
     radial-gradient(ellipse at 75% 37%, var(--canvas-center), transparent 62%),
     linear-gradient(172deg, var(--canvas-cool) 6%, var(--canvas-center) 53%, var(--canvas-warm) 95%);
 }
