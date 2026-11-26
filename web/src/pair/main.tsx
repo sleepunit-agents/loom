@@ -500,7 +500,7 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
               aria-describedby="quick-presence"
               aria-expanded={quick}
               className={
-                'col-start-2 row-start-1 mr-1 rounded-full ' +
+                'col-start-2 row-start-1 mr-1 rounded-full focus-visible:bg-foreground focus-visible:text-background focus-visible:ring-0 ' +
                 (quick ? '@min-[25rem]:col-start-3' : 'after:absolute after:inset-0 after:rounded-3xl')
               }
               onClick={() => setQuick((v) => !v)}
@@ -513,7 +513,7 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
                 className="col-span-full mt-2 min-w-0 @min-[25rem]:col-span-1 @min-[25rem]:col-start-2 @min-[25rem]:row-start-1 @min-[25rem]:mt-0"
                 onSubmit={(e) => void send(e, true)}
               >
-                <InputGroup className="rounded-2xl bg-background">
+                <InputGroup className="rounded-2xl bg-background has-[[data-slot=input-group-control]:focus-visible]:border-input has-[[data-slot=input-group-control]:focus-visible]:ring-0">
                   <InputGroupInput
                     autoFocus
                     aria-label="Quick message"
@@ -527,6 +527,7 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
                       variant="default"
                       size="icon-sm"
                       aria-label="Send quick message"
+                      className="focus-visible:bg-secondary focus-visible:text-secondary-foreground focus-visible:ring-0"
                       disabled={busy || !ready || !command.trim()}
                     >
                       <ArrowUpIcon />
