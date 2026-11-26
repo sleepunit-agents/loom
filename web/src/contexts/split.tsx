@@ -80,7 +80,7 @@ export function SplitProposal({
   initial?: Draft[];
   working: boolean;
   open: (t: EntityTarget) => void;
-  receipt: (text: string) => void;
+  receipt: (text: string) => Promise<boolean>;
 }) {
   const key = 'context-split:' + id;
   const [drafts, edit] = useState<Draft[] | undefined>(() => readSplit(kept(key), true)?.drafts);
@@ -98,11 +98,42 @@ export function SplitProposal({
     : state.startsWith('approved:')
       ? state.slice(9).split(',')
       : [];
-  if (state === 'discarded' && !approved.length) return null;
+  const [outcome, setOutcome] = useState(() => kept(key + ':outcome'));
+  const [posting, setPosting] = useState(false);
+  async function postOutcome(words: string) {
+    keep(key + ':outcome', words);
+    setOutcome(words);
+    setPosting(true);
+    try {
+      if (await receipt(words)) {
+        keep(key + ':outcome', '');
+        setOutcome('');
+      }
+    } finally {
+      setPosting(false);
+    }
+  }
+  const delivery = outcome && (
+    <p>
+      {posting ? (
+        'Recording in conversation…'
+      ) : (
+        <button onClick={() => void postOutcome(outcome)}>Record outcome in conversation</button>
+      )}
+    </p>
+  );
+  if (state === 'discarded' && !approved.length)
+    return delivery ? (
+      <section className="module near">
+        <h3>Split discarded</h3>
+        {delivery}
+      </section>
+    ) : null;
   if (approved.length)
     return (
       <section className="module near splitProposal">
         <h3>Split approved</h3>
+        {delivery}
         {approved.map((child) => (
           <button key={child} onClick={() => open({ kind: 'ticket', id: child })}>
             {child}
@@ -113,7 +144,7 @@ export function SplitProposal({
   function discard() {
     keep(key + ':state', 'discarded');
     setState('discarded');
-    receipt('Discarded the split proposal for ' + parent + '.');
+    void postOutcome('Discarded the split proposal for ' + parent + '.');
   }
   async function approve() {
     if (!values || lock.current) return;
@@ -130,7 +161,7 @@ export function SplitProposal({
       const done = 'approved:' + children.join(',');
       keep(key + ':state', done);
       setState(done);
-      receipt('Approved split of ' + parent + ' into ' + children.join(' and ') + '.');
+      void postOutcome('Approved split of ' + parent + ' into ' + children.join(' and ') + '.');
     } catch {
       setState('pending');
       fail('Approval could not be confirmed. Retry to check the same approval.');

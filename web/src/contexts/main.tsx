@@ -937,7 +937,7 @@ function Workspace({
         return true;
       }
     }
-    const requested = entityRequest(words);
+    const requested = entityRequest(text);
     if (requested) {
       openEntity(requested);
       record(words);
@@ -1124,9 +1124,15 @@ function Workspace({
                 project={subject.project}
                 working={discussion.working}
                 open={openEntity}
-                receipt={(words) => {
-                  record(words);
-                  void discussion.send(words, { ticket: subject.id, view: focusKey }, () => {});
+                receipt={async (words) => {
+                  const sent = await discussion.send(
+                    words,
+                    { ticket: subject.id, view: focusKey },
+                    () => {},
+                    split.id + '-outcome',
+                  );
+                  if (sent) record(words);
+                  return sent;
                 }}
               />
             )}

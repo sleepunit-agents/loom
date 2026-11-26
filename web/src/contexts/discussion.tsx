@@ -104,7 +104,7 @@ export function useDiscussion(
       if (alive.current) setError('Could not open this conversation.');
     }
   }
-  async function send(request: string, origin: Origin, onAttempt: (id: string) => void) {
+  async function send(request: string, origin: Origin, onAttempt: (id: string) => void, stableId?: string) {
     if (lock.current || !agent) return false;
     const words = '[Loom context · ' + origin.ticket + ' · ' + origin.view + ']\n' + request;
     lock.current = true;
@@ -126,7 +126,7 @@ export function useDiscussion(
       } catch {
         /* In-memory retry on this mount. */
       }
-      const clientId = retry.current.clientId;
+      const clientId = stableId || retry.current.clientId;
       onAttempt(clientId);
       await memberOperation('comms.send', { thread: id, words, clientId }, clientId);
       try {
