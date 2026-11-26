@@ -12,7 +12,7 @@ const isolation: Plugin = {
         const id = module.split('/web/src/')[1]?.split('?')[0];
         if (
           id &&
-          !/^(pair\/|data\/|signin\/use-session\.ts$|lib\/utils\.ts$|pieces\/comms\/use-deadline\.ts$)/.test(
+          !/^(pair\/|contexts\/(?:portrait\.tsx|portrait-player\.ts|manifest\.json|sheet\.png)$|data\/|signin\/use-session\.ts$|lib\/utils\.ts$|pieces\/comms\/use-deadline\.ts$)/.test(
             id,
           )
         )

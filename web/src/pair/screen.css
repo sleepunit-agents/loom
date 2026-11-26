@@ -259,40 +259,19 @@
   width: 56px;
   height: 84px;
   zoom: 0.85;
-  background: url('../contexts/sheet.png') 0 -840px no-repeat;
   image-rendering: pixelated;
 }
-.art-portrait[data-mood='working'] {
-  background-position-y: -336px;
-}
-.art-portrait[data-mood='thinking'] {
-  background-position-y: -1092px;
-}
-.art-portrait[data-mood='waiting'] {
-  background-position-y: -2184px;
-}
-.art-portrait[data-mood='talking'] {
-  background-position-y: -588px;
-}
-.art-portrait[data-mood='error'] {
-  background-position-y: -84px;
+.art-portrait > span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background-repeat: no-repeat;
 }
 @media (min-width: 640px) {
   .art-portrait {
     zoom: 1;
   }
 }
-@media (prefers-reduced-motion: no-preference) {
-  .art-portrait:not([data-mood='idle']) {
-    animation: pair-art 1.7s steps(17) infinite;
-  }
-}
-@keyframes pair-art {
-  to {
-    background-position-x: -952px;
-  }
-}
-
 .pair-contexts {
   position: fixed;
   z-index: 30;

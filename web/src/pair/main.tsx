@@ -8,6 +8,9 @@ import { useSession } from '../signin/use-session';
 import { newId } from '../data/id';
 import { useDeadline } from '../pieces/comms/use-deadline';
 import type { CommsMessage, CommsThread } from '../pieces/comms-view/model';
+import { Portrait } from '../contexts/portrait';
+import type { FaceState } from '../face';
+import type { IdleTiming } from '../contexts/portrait-player';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Card, CardHeader, CardTitle, CardAction, CardDescription, CardContent } from './ui/card';
@@ -208,12 +211,12 @@ function quickPresence({
   quick: boolean;
   tail: ThreadTail;
   question: boolean;
-}) {
+}): { mood: FaceState; text: string } {
   if (!agent || tail.status === 'unavailable') return { mood: 'error', text: 'Conversation unavailable' };
   if (error) return { mood: 'error', text: ready ? error : 'Couldn’t connect' };
   if (!ready || tail.status === 'connecting') return { mood: 'thinking', text: 'Connecting…' };
   if (busy) return { mood: 'thinking', text: 'Sending your message…' };
-  if (question) return { mood: 'waiting', text: 'Has a question for you' };
+  if (question) return { mood: 'needs-input', text: 'Has a question for you' };
   if (tail.working) {
     const tool = tail.tool?.split(' → ').at(-1);
     const text = tool === 'Terminal' ? 'Working in the terminal' : tool ? 'Working · ' + tool : 'Working';
@@ -222,34 +225,7 @@ function quickPresence({
   if (tail.update) return { mood: 'talking', text: 'Has a reply for you' };
   return quick ? { mood: 'thinking', text: 'Listening' } : { mood: 'idle', text: 'Here with you' };
 }
-function ArtPortrait({ mood }: { mood: string }) {
-  const portrait = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    const face = portrait.current;
-    if (!face || mood !== 'idle') return;
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-    let blink: Animation | undefined;
-    function schedule() {
-      blink?.cancel();
-      if (reducedMotion.matches || document.hidden) return;
-      // The underlying sprite rests on its first, open-eyed frame during the delay.
-      blink = face!.animate(
-        [{ backgroundPositionX: '0px' }, { backgroundPositionX: '-952px' }],
-        { delay: 3500 + Math.random() * 5500, duration: 320 + Math.random() * 100, easing: 'steps(17)' },
-      );
-      blink.onfinish = schedule;
-    }
-    schedule();
-    reducedMotion.addEventListener('change', schedule);
-    document.addEventListener('visibilitychange', schedule);
-    return () => {
-      blink?.cancel();
-      reducedMotion.removeEventListener('change', schedule);
-      document.removeEventListener('visibilitychange', schedule);
-    };
-  }, [mood]);
-  return <span ref={portrait} className="art-portrait shrink-0" data-mood={mood} />;
-}
+const idleTiming: IdleTiming = { gap: [3500, 9000], blinkDuration: [320, 420] };
 
 type Feed = { thread: CommsThread | null; rows: CommsMessage[] };
 function TranscriptPage({
@@ -633,7 +609,7 @@ function Workspace({
                   <rect />
                   <rect className="pair-contour-highlight" pathLength="100" />
                 </svg>
-                <ArtPortrait mood={presence.mood} />
+                <Portrait className="art-portrait shrink-0" state={presence.mood} idleTiming={idleTiming} />
               </span>
             )}
             <span className="min-w-0 flex-1 text-left">

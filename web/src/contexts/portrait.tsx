@@ -1,12 +1,16 @@
 import { useEffect, useRef } from 'react';
-import { createPlayer } from '../pixel-face';
+import { createPlayer, type IdleTiming } from './portrait-player';
 import type { FaceState } from '../face';
 import { checkSpriteLayout } from '../../../src/desk-sprite-layout';
 import manifest from './manifest.json';
 import sheet from './sheet.png';
 
 const layout = checkSpriteLayout(manifest);
-export function Portrait({ state }: { state: FaceState }) {
+export function Portrait({ state, className = 'portrait', idleTiming }: {
+  state: FaceState;
+  className?: string;
+  idleTiming?: IdleTiming;
+}) {
   const node = useRef<HTMLSpanElement>(null),
     player = useRef<ReturnType<typeof createPlayer> | null>(null);
   useEffect(() => {
@@ -17,7 +21,7 @@ export function Portrait({ state }: { state: FaceState }) {
       layout,
       'idle',
       (frame) => {
-        target.style.backgroundPosition = -frame.frame * 56 + 'px ' + -(frame.v?.row ?? 10) * 84 + 'px';
+        target.style.backgroundPosition = -frame.frame * layout.cell[0] + 'px ' + -(frame.v?.row ?? 0) * layout.cell[1] + 'px';
         target.style.transform = frame.flip ? 'scaleX(-1)' : 'none';
       },
       {
@@ -26,9 +30,11 @@ export function Portrait({ state }: { state: FaceState }) {
         setTimeout: (f, n) => window.setTimeout(f, n),
         clearTimeout: (id) => clearTimeout(id),
       },
+      undefined,
+      idleTiming,
     );
     player.current = p;
-    const refresh = () => p.live(visible && !document.hidden && !motion.matches);
+    const refresh = () => p.live(visible && !document.hidden && !motion.matches, false);
     const observer = new IntersectionObserver((entries) => {
       visible = entries.some((e) => e.isIntersecting);
       refresh();
@@ -43,12 +49,12 @@ export function Portrait({ state }: { state: FaceState }) {
       document.removeEventListener('visibilitychange', refresh);
       motion.removeEventListener('change', refresh);
     };
-  }, []);
+  }, [idleTiming]);
   useEffect(() => {
     player.current?.want(state);
-  }, [state]);
+  }, [state, idleTiming]);
   return (
-    <span className="portrait" aria-hidden="true" data-state={state}>
+    <span className={className} aria-hidden="true" data-state={state}>
       <span ref={node} style={{ backgroundImage: 'url(' + sheet + ')' }} />
     </span>
   );
