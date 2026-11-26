@@ -40,7 +40,7 @@ export const codexBody: BodyHarness = input => {
         '-c', `${server}tool_timeout_sec=86400`, '-c', `shell_environment_policy.exclude=[${quote(tokenVariable)}]`] : []),
       '-'];
     const env = { ...input.env, ...(tools ? { [tokenVariable]: tools.authorization.slice('Bearer '.length) } : {}) };
-    const output = await runHarnessChild({ command: input.command, args, cwd: input.cwd, env, words, signal, spawn: input.spawn, onFailedOutput });
+    const output = await runHarnessChild({ command: input.command, args, cwd: input.cwd, env, words, signal, spawn: input.spawn, onFailedOutput, onOutput:input.pairOutput });
     try {
       const rows = new TextDecoder('utf-8', { fatal: true }).decode(output).split(/\r?\n/).filter(line => line.trim()).map(line => event.parse(JSON.parse(line)));
       let started = 0, completed = 0, last: string | undefined;

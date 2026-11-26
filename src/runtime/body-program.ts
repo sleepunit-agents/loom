@@ -1,3 +1,4 @@
+import {pairEvents} from './pair-events.js';
 /** Fixed private child: bootstrap enters on stdin only, after the parent's
  * running ACK. Native execution and mail acceptance happen in this program.
  *
@@ -12,7 +13,7 @@ import { bodyInput, eraseBootstrap, type BodyBootstrap } from './body-bootstrap.
 import { bodyConversationClient,bodyMailContext } from './conversation-client.js';
 import { omittedWakeTools, type OmittedWakeTools } from './wake-tool-profiles.js';
 import { bodyHarness, harnessCannotRun, harnesses } from './body-harnesses.js';
-import { BODY_OWN_HARNESS, BODY_SCRATCH, HarnessResumeUnavailable, type HarnessRun } from './body-harness.js';
+import { BODY_OWN_HARNESS, BODY_SCRATCH, harnessTools, HarnessResumeUnavailable, type HarnessRun } from './body-harness.js';
 import {kitReasons,kitUnavailableList,type KitUnavailable} from './kit-availability.js';
 import {bodyKitTools,KIT_SOCKET} from './body-kit-tools.js';
 import {KitCapacity} from './kit-refused.js';
@@ -332,7 +333,20 @@ export async function bodyProgram(input: {
     if(tools?.houseSend)shellEnv.LOOM_BODY_HOUSE_SEND=tools.houseSend;
     delete shellEnv.LOOM_BODY_HOUSE_NOTE;
     if(tools?.houseNote)shellEnv.LOOM_BODY_HOUSE_NOTE=tools.houseNote;
-    const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, reach, omitClaudeTools, env: shellEnv, failedUsage:usage=>{failureReport=usage;}, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
+    // Only the owner's dedicated pairing room opts in to native work cards.
+    let posted = Promise.resolve();
+    const privateValues = [parsed.bootstrap.token, harnessTools(tools?.config)?.authorization.slice(7), tools?.houseSend, tools?.houseNote,...Object.entries(shellEnv)
+      .filter(([key])=>/token|secret|password|api.?key|authorization/i.test(key))
+      .map(([,value])=>value)].filter((v):v is string=>typeof v==='string'&&v.length>=8);
+    const pairOutput = coordinating && !guest && /^th:pair-[a-f0-9]{64}$/.test(job.thread||'')
+      ? pairEvents(step=>{
+          const sensitive=(value:string)=>!(tools??secrets).allowsReply(value)||privateValues.some(v=>value.includes(v))||
+            /(?:Bearer\s+[A-Za-z0-9_.+/=-]{12,}|-----BEGIN [^\n]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{16,})/i.test(value);
+          const tool=sensitive(step.tool)?'Tool':step.tool.slice(0,180);
+          const words=sensitive(step.words)?'Output withheld.':step.words.length>16000?step.words.slice(0,16000)+'\n[Output truncated]':step.words;
+          posted=posted.then(async()=>{if(!signal.aborted)await client!.card({tool,words,cardState:step.cardState,clientId:randomUUID()})}).catch(()=>{});
+        }) : undefined;
+    const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, reach, omitClaudeTools, pairOutput, env: shellEnv, failedUsage:usage=>{failureReport=usage;}, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
     // A second one for the case the session cannot be continued: each takes its own copy of the tools file.
     const native = harness(), afresh = resume ? harness() : undefined;
     tools?.config.fill(0);
@@ -354,6 +368,7 @@ export async function bodyProgram(input: {
     }
     catch { if(!stopped) throw new Error(); }
     finally {
+      await posted;
       const report = {...(answer?.usage ?? failureReport ?? {source:'none' as const}), harness:job.harness,
         model:answer?.model ?? job.model, wallMs:Math.round(performance.now()-harnessStarted)};
       // Keep a valid measurement in flight during retirement and reply settlement.

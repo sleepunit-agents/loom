@@ -83,7 +83,7 @@ export const agyBody: BodyHarness = input => {
       const args = ['-p', '', '--input-format', 'stream-json', '--output-format', 'stream-json', '--model', job.model,
         '--dangerously-skip-permissions', '--add-dir', input.cwd];
       const line = JSON.stringify({ event: 'user', message: { content: words } }) + '\n';
-      const output = await runHarnessChild({ command: input.command, args, cwd: workspace, env: input.env, words: line, signal, spawn: input.spawn, onFailedOutput, onOutput: note });
+      const output = await runHarnessChild({ command: input.command, args, cwd: workspace, env: input.env, words: line, signal, spawn: input.spawn, onFailedOutput, onOutput: chunk=>{note(chunk);input.pairOutput?.(chunk);} });
       try {
         const rows = new TextDecoder('utf-8', { fatal: true }).decode(output).split(/\r?\n/).filter(text => text.trim()).map(text => row.parse(JSON.parse(text)));
         let started = 0, finished = 0, model: string | undefined, text: string | undefined;

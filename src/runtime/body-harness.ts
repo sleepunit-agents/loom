@@ -32,6 +32,7 @@ export type HarnessSpawn = (command: string, args: readonly string[], options: {
   cwd: string; env: NodeJS.ProcessEnv; shell: false; detached: false; stdio: 'pipe' | ['pipe', 'pipe', 'pipe', 'pipe'];
 }) => ChildProcessWithoutNullStreams;
 export interface HarnessInput {
+  pairOutput?: (chunk:Buffer)=>void;
   failedUsage?: (usage:UsageReport)=>void;
   /** The harness's own program, from the machine's body file. */
   command: string; cwd: string; env: NodeJS.ProcessEnv; spawn?: HarnessSpawn;

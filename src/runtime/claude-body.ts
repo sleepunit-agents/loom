@@ -85,7 +85,7 @@ export const claudeBody: BodyHarness = input => {
     let output: Buffer;
     try { output = await runHarnessChild({ command: input.command, args, cwd: input.cwd, env, words, signal, spawn: input.spawn, onFailedOutput, control,
       // Looked for across the join of two pieces of output too: a marker cut in half is still the model speaking.
-      onOutput: chunk => { const seen = tail + chunk.toString('latin1'); if (seen.includes(SPOKE)) spoke = true; tail = seen.slice(-SPOKE.length); } }); }
+      onOutput: chunk => { input.pairOutput?.(chunk); const seen = tail + chunk.toString('latin1'); if (seen.includes(SPOKE)) spoke = true; tail = seen.slice(-SPOKE.length); } }); }
     // A session that cannot be continued ends the program before the model is asked anything.
     catch { throw resume && !spoke && !signal.aborted ? new HarnessResumeUnavailable() : harnessUnavailable(); }
     try {
