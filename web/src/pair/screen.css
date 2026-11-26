@@ -532,17 +532,32 @@
   width: 100%;
   max-width: 42rem;
   margin-inline: auto;
-  margin-block: auto;
+  flex: none;
+}
+.pair-canvas-scroll::before, .pair-canvas-scroll::after { content: ''; }
+.pair-canvas-scroll::before { flex: 0.34 0 0; order: 0; }
+.pair-view-ring { order: -1; }
+.pair-canvas-scroll::after { flex: 0.66 0 0; }
+.pair-tab-scroll { overflow-x: auto; scrollbar-width: thin; }
+@media (prefers-reduced-motion: no-preference) {
+  .pair-secondary [role='tabpanel'][data-state='active'] { animation: pair-tab-in 160ms ease-out; }
+}
+@keyframes pair-tab-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
 }
 .pair-secondary { align-self: end; }
 @container (min-width: 54rem) {
   .pair-zones {
-    grid-template-columns: minmax(0, 2fr) minmax(13rem, 1fr);
-    gap: clamp(2rem, 4cqw, 4rem);
-    max-width: 66rem;
+    --zone-gap: clamp(2rem, 4cqw, 4rem);
+    grid-template-columns: minmax(0, calc((min(100%, 66rem) - var(--zone-gap)) * 2 / 3)) minmax(0, 1fr);
+    gap: var(--zone-gap);
+    max-width: none;
     margin-inline: 4% auto;
     width: 96%;
   }
+  .pair-secondary { width: fit-content; min-width: min(20rem, 100%); max-width: 100%; }
+  .pair-secondary [role='tabpanel'] { contain: inline-size; }
 }
 .pair-id, .pair-workspace a[href^='?ticket='] {
   font-family: var(--font-mono);
@@ -552,5 +567,33 @@
 @media (hover: hover) and (pointer: fine) {
   [data-slot='message']:not(:hover,:focus-within) .pair-run-details:not(:has([data-state='open'])) {
     opacity: 0;
+  }
+}
+
+/* The ticket workspace has its own entry stylesheet. Use the same focus cue
+   for native controls, shadcn controls, and their composite wrappers. */
+@media (forced-colors: none) {
+  :focus-visible {
+    outline: none;
+    --tw-ring-shadow: 0 0 #0000;
+  }
+  :is(button, a, summary):focus-visible {
+    text-decoration: underline;
+    text-underline-offset: .2em;
+    background-image: linear-gradient(color-mix(in srgb, currentColor 12%, transparent) 0 100%);
+  }
+  :is([data-slot='tabs-trigger'], [data-slot='button']):focus-visible {
+    border-color: transparent;
+  }
+  [data-slot='input-group']:has(:focus-visible),
+  [data-slot='code-block']:has(:focus-visible),
+  [data-slot='attachment']:focus-within {
+    --tw-ring-shadow: 0 0 #0000;
+  }
+  [data-slot='input-group']:has(:focus-visible):not(:has([aria-invalid='true'])) {
+    border-color: var(--input);
+  }
+  :is([role='tabpanel'], [data-slot='code-block-content'], [data-slot='message-scroller-viewport']):focus-visible {
+    background-image: linear-gradient(color-mix(in srgb, currentColor 4%, transparent) 0 100%);
   }
 }

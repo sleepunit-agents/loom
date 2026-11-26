@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ArrowUpRightIcon } from 'lucide-react';
 import { Badge } from './ui/badge';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/tabs';
 import { Button } from './ui/button';
 import { ModuleCard } from './module-card';
 import { Reply } from './reply';
@@ -69,61 +70,71 @@ function Secondary({
   if (!group) return null;
   const start = page * 5 < group.rows.length ? page * 5 : 0;
   return (
-    <aside aria-label="Related work" className="pair-secondary min-w-0 space-y-2">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        {groups.map((g) => (
-          <button
-            type="button"
-            key={g.name}
-            aria-pressed={g === group}
-            className="text-sm text-muted-foreground aria-pressed:font-semibold aria-pressed:text-foreground"
-            onClick={() => {
-              update({ selected: g.name, page: 0 });
-            }}
-          >
-            {g.name} · {g.rows.length}
-          </button>
-        ))}
-      </div>
-      <ul className="divide-y">
-        {group.rows.slice(start, start + 5).map((row) => (
-          <li key={viewKey(row.target)} className="flex items-start gap-2 py-2">
-            <details open={expanded === viewKey(row.target)} className="min-w-0 flex-1 text-sm">
-              <summary
-                onClick={(event) => {
-                  event.preventDefault();
-                  update({
-                    ...state,
-                    expanded: expanded === viewKey(row.target) ? undefined : viewKey(row.target),
-                  });
-                }}
-                className="cursor-pointer leading-snug [overflow-wrap:anywhere]"
-              >
-                {row.title}
-                {row.state && <span className="ml-2 text-xs text-muted-foreground">{row.state}</span>}
-              </summary>
-              <p className="mt-1 whitespace-pre-wrap text-card-body [overflow-wrap:anywhere]">{row.detail}</p>
-            </details>
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              aria-label={'Work on this: ' + row.title}
-              title="Work on this"
-              onClick={() => work(row.target)}
-            >
-              <ArrowUpRightIcon />
-            </Button>
-          </li>
-        ))}
-      </ul>
-      {group.rows.length > 5 && (
-        <div className="flex gap-3 text-sm">
-          {start > 0 && <button onClick={() => paginate(start / 5 - 1)}>Previous</button>}
-          {start + 5 < group.rows.length && (
-            <button onClick={() => paginate(start / 5 + 1)}>+{group.rows.length - start - 5} more</button>
-          )}
+    <aside aria-label="Related work" className="pair-secondary min-w-0">
+      <Tabs value={group.name} onValueChange={(name) => update({ selected: name, page: 0 })}>
+        <div className="pair-tab-scroll">
+          <TabsList aria-label="Related work categories">
+            {groups.map((g) => (
+              <TabsTrigger key={g.name} value={g.name}>
+                {g.name} · {g.rows.length}
+              </TabsTrigger>
+            ))}
+          </TabsList>
         </div>
-      )}
+        {groups.map((g) => (
+          <TabsContent key={g.name} value={g.name}>
+            {g === group && (
+              <>
+                <ul className="divide-y">
+                  {group.rows.slice(start, start + 5).map((row) => (
+                    <li key={viewKey(row.target)} className="flex items-start gap-2 py-2">
+                      <details open={expanded === viewKey(row.target)} className="min-w-0 flex-1 text-sm">
+                        <summary
+                          onClick={(event) => {
+                            event.preventDefault();
+                            update({
+                              ...state,
+                              expanded: expanded === viewKey(row.target) ? undefined : viewKey(row.target),
+                            });
+                          }}
+                          className="cursor-pointer leading-snug [overflow-wrap:anywhere]"
+                        >
+                          {row.title}
+                          {row.state && (
+                            <span className="ml-2 text-xs text-muted-foreground">{row.state}</span>
+                          )}
+                        </summary>
+                        <p className="mt-1 whitespace-pre-wrap text-card-body [overflow-wrap:anywhere]">
+                          {row.detail}
+                        </p>
+                      </details>
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
+                        aria-label={'Work on this: ' + row.title}
+                        title="Work on this"
+                        onClick={() => work(row.target)}
+                      >
+                        <ArrowUpRightIcon />
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+                {group.rows.length > 5 && (
+                  <div className="flex gap-3 text-sm">
+                    {start > 0 && <button onClick={() => paginate(start / 5 - 1)}>Previous</button>}
+                    {start + 5 < group.rows.length && (
+                      <button onClick={() => paginate(start / 5 + 1)}>
+                        +{group.rows.length - start - 5} more
+                      </button>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </TabsContent>
+        ))}
+      </Tabs>
     </aside>
   );
 }
