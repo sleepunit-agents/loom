@@ -75,6 +75,11 @@
     --sidebar-accent-foreground: light-dark(oklch(0.205 0 0), oklch(0.985 0 0));
     --sidebar-border: light-dark(oklch(0.922 0 0), oklch(1 0 0 / 10%));
     --sidebar-ring: light-dark(oklch(0.708 0 0), oklch(0.556 0 0));
+    --motion-detail: 180ms;
+    --motion-reveal: 260ms;
+    --motion-panel: 380ms;
+    --ease-settle: cubic-bezier(.22, .72, .18, 1);
+    --floating-shadow: inset 0 1px var(--rim), 0 2px 4px var(--contact), 0 12px 28px -8px var(--ambient);
     --canvas-cool: light-dark(#eaf0f5, #171c22);
     --canvas-center: light-dark(#fafafa, #151617);
     --canvas-warm: light-dark(#f5eeec, #211b1c);
@@ -201,8 +206,10 @@
   min-height: 0;
   width: calc(var(--chat-width) - 1px);
 }
-.pair-chat-body[inert] {
+.pair-chat-body[inert], .pair-prompt[inert], .context-choices[inert] {
   visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 .pair-chat-space {
   width: 0;
@@ -234,8 +241,8 @@
   .pair-presence,
   .pair-face {
     transition-property: width, height, top, right, border-radius, padding, gap;
-    transition-duration: 220ms;
-    transition-timing-function: ease-out;
+    transition-duration: var(--motion-panel);
+    transition-timing-function: var(--ease-settle);
   }
 }
 .pair-prompt {
@@ -243,16 +250,13 @@
   z-index: 40;
   top: 50%;
   left: 50%;
-  transform: translate(-50%, -50%);
+  translate: -50% -50%;
   width: min(30rem, calc(100vw - 2rem));
 }
 .pair-prompt [data-slot='input-group'],
 .context-choices {
   border-color: var(--surface-edge);
-  box-shadow:
-    inset 0 1px var(--rim),
-    0 1px 3px var(--contact),
-    0 9px 22px -8px var(--ambient);
+  box-shadow: var(--floating-shadow);
 }
 /* Art's existing 17-frame sprite, cropped to one cell. */
 .art-portrait {
@@ -321,14 +325,11 @@
   position: absolute;
   top: 100%;
   left: 50%;
-  transform: translateX(-50%);
+  translate: -50% 0;
   width: min(20rem, calc(100vw - 2rem));
   @apply rounded-2xl border p-2 text-popover-foreground;
   background-color: light-dark(#fafbfc, #2a2b2d);
-  box-shadow:
-    inset 0 1px var(--rim),
-    0 2px 4px var(--contact),
-    0 8px 20px -4px var(--ambient);
+
 }
 @media (forced-colors: active) {
   .pair-workspace::before {
@@ -371,3 +372,108 @@
 @media (prefers-reduced-motion: no-preference) {
   .pair-contour-highlight { animation: pair-contour-travel 6s linear infinite; }
 }
+
+/* Keep fixed controls distinct from the moving transcript. The scroller already
+   reports which edges have more content, including after a resize or prepend. */
+.pair-chat[data-open='true'] > header {
+  position: relative;
+  z-index: 1;
+  background: color-mix(in srgb, var(--chat-base) 72%, var(--canvas-cool));
+  box-shadow: inset 0 1px var(--rim), 0 3px 9px -3px var(--contact);
+}
+.pair-chat-body > form {
+  position: relative;
+  background: color-mix(in srgb, var(--chat-base) 65%, var(--canvas-warm));
+  border-top: 1px solid var(--surface-edge);
+  box-shadow: 0 -3px 8px -5px var(--contact);
+}
+[data-slot='message-scroller-viewport'][data-scrollable] {
+  mask-image: linear-gradient(to bottom, transparent, black var(--fade-start, 0px),
+    black calc(100% - var(--fade-end, 0px)), transparent);
+}
+[data-slot='message-scroller-viewport'][data-scrollable~='start'] { --fade-start: 16px; }
+[data-slot='message-scroller-viewport'][data-scrollable~='end'] { --fade-end: 12px; }
+.pair-canvas [data-slot='card-header'].border-b {
+  background: linear-gradient(transparent 65%, color-mix(in srgb, var(--foreground) 2%, transparent));
+  box-shadow: 0 2px 4px -3px var(--contact);
+}
+.pair-chat [data-slot='code-block'] {
+  box-shadow: inset 0 1px 2px var(--contact);
+}
+.pair-workspace [data-slot='message-scroller-button'],
+.pair-workspace [role='alert'] { box-shadow: var(--floating-shadow); }
+
+@keyframes pair-arrive {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes trace-unfold {
+  from { height: 0; opacity: 0; }
+  to { height: var(--radix-collapsible-content-height); opacity: 1; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .context-choices, .pair-prompt, .pair-chat-body {
+    transition: opacity var(--motion-reveal) var(--ease-settle),
+      transform var(--motion-reveal) var(--ease-settle), visibility 0s;
+  }
+  .context-choices { transform-origin: top center; }
+  .pair-prompt { transform-origin: center; }
+  .context-choices[inert], .pair-prompt[inert], .pair-chat-body[inert] {
+    transition-duration: var(--motion-detail), var(--motion-detail), 0s;
+    transition-delay: 0s, 0s, var(--motion-detail);
+  }
+  .context-choices[inert] { transform: translateY(-4px) scale(.985); }
+  .pair-prompt[inert] { transform: translateY(5px) scale(.985); }
+  .pair-chat-body[inert] { transform: translateX(7px); }
+  .pair-canvas > div { transition: padding-top var(--motion-panel) var(--ease-settle); }
+  .context-page, .context-choices form,
+  .pair-workspace [data-arrived='true'], .pair-workspace [role='alert'],
+  .pair-chat-body form [data-slot='attachment'], .pair-presence > svg {
+    animation: pair-arrive var(--motion-reveal) var(--ease-settle) both;
+  }
+  .context-trace {
+    transition: width var(--motion-reveal) var(--ease-settle),
+      height var(--motion-reveal) var(--ease-settle), opacity var(--motion-detail);
+  }
+  [data-slot='trace-collapsible-content'][data-state='open'] {
+    animation: trace-unfold var(--motion-reveal) var(--ease-settle);
+  }
+  [data-slot='trace-collapsible-content'][data-state='closed'] {
+    animation: trace-unfold var(--motion-detail) ease-in reverse;
+  }
+  .pair-workspace button:enabled:active, .pair-contexts button:enabled:active { scale: .98; }
+  .pair-presence:enabled:active { scale: 1; }
+  .pair-workspace button, .pair-contexts button {
+    transition-property: background-color, color, border-color, box-shadow, scale, opacity, translate;
+  }
+  .pair-workspace .pair-presence {
+    transition-property: height, padding, gap, background-color;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pair-workspace *, .pair-contexts * { transition-duration: 0s !important; }
+}
+@media (forced-colors: active) {
+  [data-slot='message-scroller-viewport'][data-scrollable] { mask-image: none; }
+}
+
+/* A context change replaces the canvas once. Keep the snapshots out of hit testing. */
+:root { view-transition-name: none; }
+::view-transition { pointer-events: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .pair-canvas { view-transition-name: pair-canvas; }
+  .pair-chat { view-transition-name: pair-chat; }
+  .pair-contexts { view-transition-name: pair-switcher; }
+  ::view-transition-group(pair-chat) { z-index: 10; animation: none; }
+  ::view-transition-group(pair-switcher) { z-index: 30; animation: none; }
+  ::view-transition-old(pair-chat), ::view-transition-old(pair-switcher) { display: none; }
+  ::view-transition-new(pair-chat), ::view-transition-new(pair-switcher) { animation: none; }
+  @supports not (view-transition-name: pair-canvas) {
+    .pair-canvas > div > * { animation: pair-arrive var(--motion-reveal) var(--ease-settle); }
+  }
+  ::view-transition-group(pair-canvas) { animation-duration: var(--motion-reveal); }
+  ::view-transition-old(pair-canvas) { animation: pair-context-out var(--motion-detail) ease-in both; }
+  ::view-transition-new(pair-canvas) { animation: pair-context-in var(--motion-reveal) var(--ease-settle) both; }
+}
+@keyframes pair-context-out { to { opacity: 0; transform: translateX(-6px); } }
+@keyframes pair-context-in { from { opacity: 0; transform: translateX(8px); } }

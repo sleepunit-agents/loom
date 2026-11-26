@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from 'lucide-react';
 import {
   ContextDirectory,
@@ -104,6 +105,23 @@ export function ContextSwitcher({
   }
   const [selected, select] = useState(currentContext);
   const place = places.find((p) => p.id === selected);
+  // Snapshot only the canvas. The switcher, portrait, and conversation stay interactive.
+  const pendingTransition = useRef<ViewTransition | null>(null);
+  const switchTo = useCallback((id: string) => {
+    pendingTransition.current?.skipTransition();
+    if (!document.startViewTransition || document.hidden || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      pendingTransition.current = null;
+      select(id);
+      return;
+    }
+    const transition = document.startViewTransition(() => {
+      if (pendingTransition.current === transition) flushSync(() => select(id));
+    });
+    pendingTransition.current = transition;
+    void transition.finished.finally(() => {
+      if (pendingTransition.current === transition) pendingTransition.current = null;
+    });
+  }, []);
   const [revealed, reveal] = useState(false),
     [adding, add] = useState(false);
   // Rows are 3.25rem tall with a .25rem gap. Leave room for the strip and form.
@@ -162,12 +180,12 @@ export function ContextSwitcher({
   }
   useEffect(() => {
     function back() {
-      select(currentContext());
+      switchTo(currentContext());
       close();
     }
     window.addEventListener('popstate', back);
     return () => window.removeEventListener('popstate', back);
-  }, []);
+  }, [switchTo]);
   useEffect(() => {
     if (!revealed) return;
     const outside = (e: PointerEvent) => {
@@ -177,12 +195,12 @@ export function ContextSwitcher({
     return () => document.removeEventListener('pointerdown', outside);
   }, [revealed]);
   function choose(id: string) {
-    if (id !== selected) {
+    if (id !== currentContext()) {
       const url = new URL(location.href);
       if (id === 'loom') url.searchParams.delete('ctx');
       else url.searchParams.set('ctx', id);
       history.pushState(null, '', url);
-      select(id);
+      switchTo(id);
     }
     close(true);
   }
@@ -292,106 +310,104 @@ export function ContextSwitcher({
             />
           ))}
         </button>
-        {revealed && (
-          <div id="context-choices" className="context-choices">
-            <div className="grid grid-cols-[minmax(0,1fr)] gap-1">
-              {visiblePlaces.map((p) => (
-                <Button
-                  key={p.id}
-                  data-context-choice
-                  variant="ghost"
-                  aria-current={selected === p.id ? 'page' : undefined}
-                  className="h-[3.25rem] min-w-0 w-full justify-start gap-3 px-2 py-2 text-left"
-                  onClick={() => choose(p.id)}
-                >
-                  <span
-                    aria-hidden="true"
-                    className="h-6 w-1 shrink-0 rounded-full"
-                    style={{ backgroundColor: `oklch(0.66 0.105 ${hue(p.id)})` }}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block overflow-clip text-ellipsis whitespace-nowrap">{p.name}</span>
-                    <span className="block overflow-clip text-ellipsis whitespace-nowrap text-xs font-normal text-muted-foreground">
-                      {signals[p.id] || (p.row?.working ? 'Working' : p.detail)}
-                    </span>
-                  </span>
-                  {selected === p.id && <CheckIcon aria-hidden="true" />}
-                </Button>
-              ))}
-            </div>
-            {pageCount > 1 && (
-              <div className="flex items-center justify-end gap-1">
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label="Previous contexts"
-                  onClick={() => setRequestedPage((page + pageCount - 1) % pageCount)}
-                >
-                  <ChevronLeftIcon />
-                </Button>
-                <span aria-live="polite" className="text-xs tabular-nums text-muted-foreground">
-                  {page + 1} / {pageCount}
-                </span>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label="Next contexts"
-                  onClick={() => setRequestedPage((page + 1) % pageCount)}
-                >
-                  <ChevronRightIcon />
-                </Button>
-              </div>
-            )}
-            {offline && (
-              <p role="status" className="p-2 text-xs">
-                Context directory unavailable.
-              </p>
-            )}
-            {adding ? (
-              <form
-                className="mt-2 flex gap-1"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void create();
-                }}
-              >
-                <Input
-                  autoFocus
-                  aria-label="Context name"
-                  placeholder="Context name"
-                  maxLength={48}
-                  value={name}
-                  onChange={(e) => {
-                    setName(e.target.value);
-                    fail('');
-                  }}
-                />
-                <Button size="sm" disabled={!name.trim() || busy || !loaded}>
-                  Create
-                </Button>
-              </form>
-            ) : (
+        <div id="context-choices" className="context-choices" inert={!revealed} aria-hidden={!revealed}>
+          <div key={page} className="context-page grid grid-cols-[minmax(0,1fr)] gap-1">
+            {visiblePlaces.map((p) => (
               <Button
-                size="sm"
+                key={p.id}
+                data-context-choice
                 variant="ghost"
-                className="mt-1 text-muted-foreground"
-                disabled={!ticket.agent || !loaded}
-                onClick={() => {
-                  add(true);
+                aria-current={selected === p.id ? 'page' : undefined}
+                className="h-[3.25rem] min-w-0 w-full justify-start gap-3 px-2 py-2 text-left"
+                onClick={() => choose(p.id)}
+              >
+                <span
+                  aria-hidden="true"
+                  className="h-6 w-1 shrink-0 rounded-full"
+                  style={{ backgroundColor: `oklch(0.66 0.105 ${hue(p.id)})` }}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block overflow-clip text-ellipsis whitespace-nowrap">{p.name}</span>
+                  <span className="block overflow-clip text-ellipsis whitespace-nowrap text-xs font-normal text-muted-foreground">
+                    {signals[p.id] || (p.row?.working ? 'Working' : p.detail)}
+                  </span>
+                </span>
+                {selected === p.id && <CheckIcon aria-hidden="true" />}
+              </Button>
+            ))}
+          </div>
+          {pageCount > 1 && (
+            <div className="flex items-center justify-end gap-1">
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Previous contexts"
+                onClick={() => setRequestedPage((page + pageCount - 1) % pageCount)}
+              >
+                <ChevronLeftIcon />
+              </Button>
+              <span aria-live="polite" className="text-xs tabular-nums text-muted-foreground">
+                {page + 1} / {pageCount}
+              </span>
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Next contexts"
+                onClick={() => setRequestedPage((page + 1) % pageCount)}
+              >
+                <ChevronRightIcon />
+              </Button>
+            </div>
+          )}
+          {offline && (
+            <p role="status" className="p-2 text-xs">
+              Context directory unavailable.
+            </p>
+          )}
+          {adding ? (
+            <form
+              className="mt-2 flex gap-1"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void create();
+              }}
+            >
+              <Input
+                autoFocus
+                aria-label="Context name"
+                placeholder="Context name"
+                maxLength={48}
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
                   fail('');
                 }}
-              >
-                <PlusIcon />
-                New context
+              />
+              <Button size="sm" disabled={!name.trim() || busy || !loaded}>
+                Create
               </Button>
-            )}
-            {error && (
-              <p role="alert" className="p-2 text-xs">
-                {error}
-              </p>
-            )}
-          </div>
-        )}
+            </form>
+          ) : (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="mt-1 text-muted-foreground"
+              disabled={!ticket.agent || !loaded}
+              onClick={() => {
+                add(true);
+                fail('');
+              }}
+            >
+              <PlusIcon />
+              New context
+            </Button>
+          )}
+          {error && (
+            <p role="alert" className="p-2 text-xs">
+              {error}
+            </p>
+          )}
+        </div>
       </nav>
       {place ? (
         children(place)

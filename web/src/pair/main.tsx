@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -246,6 +246,10 @@ function TranscriptPage({
   const latest = rows.at(-1);
   const last = latest?.seq || 0;
   const thread = read.data?.thread;
+  const initialTail = useRef<number | null>(null);
+  useEffect(() => {
+    if (visible && read.status === 'live' && initialTail.current === null) initialTail.current = last;
+  }, [visible, read.status, last]);
   const status =
     read.status === 'live' && thread ? 'live' : read.status === 'loading' ? 'connecting' : 'unavailable';
   const working = !!thread?.working,
@@ -281,7 +285,7 @@ function TranscriptPage({
           Date.parse(m.wordsKeepUntil ?? '') > now ? m : { ...m, words: null, stepDetails: null },
         ),
       ).map((node) => (
-        <MessageScrollerItem key={node.events[0].seq} messageId={String(node.events[0].seq)}>
+        <MessageScrollerItem key={node.events[0].seq} messageId={String(node.events[0].seq)} data-arrived={initialTail.current !== null && node.events[0].seq > initialTail.current || undefined}>
           {node.events[0].kind === 'card' ? (
             <WorkTrace
               key={node.events[0].seq}
@@ -379,6 +383,22 @@ function Workspace({
   const quickOrigin = useRef<HTMLElement | null>(null);
   const chatLauncher = useRef<HTMLButtonElement>(null);
   const chatInput = useRef<HTMLTextAreaElement>(null);
+  const quickInput = useRef<HTMLInputElement>(null);
+  const chatBody = useRef<HTMLDivElement>(null);
+  const [closingChat, setClosingChat] = useState(false);
+  const [historyVisit, setHistoryVisit] = useState(0);
+  useLayoutEffect(() => {
+    if (quick) quickInput.current?.focus({ preventScroll: true });
+  }, [quick]);
+  useEffect(() => {
+    if (!closingChat) return;
+    let current = true;
+    const transitions = chatBody.current?.getAnimations() ?? [];
+    Promise.allSettled(transitions.map(animation => animation.finished)).then(() => {
+      if (current) setClosingChat(false);
+    });
+    return () => { current = false; };
+  }, [closingChat]);
   const chatActivity = tail.working ? 'Working' : tail.last > tail.read ? 'New activity' : '';
   useEffect(() => {
     let live = true;
@@ -472,7 +492,11 @@ function Workspace({
   function showChat(visible: boolean) {
     localStorage.setItem(pref, visible ? 'open' : 'hidden');
     // Commit the panel's inert state before transferring keyboard focus.
-    flushSync(() => setOpen(visible));
+    flushSync(() => {
+      if (visible && !open) setHistoryVisit(visit => visit + 1);
+      setClosingChat(!visible);
+      setOpen(visible);
+    });
     (visible ? chatInput.current : chatLauncher.current)?.focus({ preventScroll: true });
   }
   async function send(e: FormEvent, bar: boolean) {
@@ -515,7 +539,7 @@ function Workspace({
   }
   return (
     <main className="pair-workspace flex h-dvh overflow-hidden">
-      <section className="relative flex min-w-0 flex-1 flex-col">
+      <section className="pair-canvas relative flex min-w-0 flex-1 flex-col">
         <div
           className={
             'min-h-0 flex-1 overflow-auto px-4 pb-4 sm:px-8 sm:pb-8 ' +
@@ -629,12 +653,12 @@ function Workspace({
             )}
           </button>
         </header>
-        <div id="pair-chat-body" aria-hidden={!open} inert={!open} className="pair-chat-body">
-          <MessageScrollerProvider key={open ? 'open' : 'hidden'} defaultScrollPosition="end" autoScroll>
+        <div ref={chatBody} id="pair-chat-body" aria-hidden={!open} inert={!open} className="pair-chat-body">
+          <MessageScrollerProvider key={historyVisit} defaultScrollPosition="end" autoScroll>
             <MessageScroller>
               <MessageScrollerViewport ref={scroll} preserveScrollOnPrepend aria-label="Conversation history">
                 <MessageScrollerContent className="p-4">
-                  {ready && <TranscriptPage id={id} visible={open} onTail={setTail} />}
+                  {ready && <TranscriptPage id={id} visible={open || closingChat} onTail={setTail} />}
                 </MessageScrollerContent>
               </MessageScrollerViewport>
               <MessageScrollerButton />
@@ -696,47 +720,47 @@ function Workspace({
           </form>
         </div>
       </aside>
-      {quick && (
-        <form
-          id="quick-message"
-          aria-label="Quick message"
-          className="pair-prompt"
-          onSubmit={(e) => void send(e, true)}
-        >
-          <InputGroup className="h-12 rounded-xl bg-popover has-[[data-slot=input-group-control]:focus-visible]:border-input has-[[data-slot=input-group-control]:focus-visible]:ring-0">
-            <InputGroupInput
-              autoFocus
-              aria-label="Quick message"
-              placeholder={`Ask ${name}…`}
-              value={command}
-              onChange={(e) => {
-                const command = e.target.value;
-                edit((old) => ({ ...old, command }));
-              }}
-            />
-            <InputGroupAddon align="inline-end">
-              <InputGroupButton
-                type="submit"
-                variant="default"
-                size="icon-sm"
-                aria-label="Send quick message"
-                className="focus-visible:bg-secondary focus-visible:text-secondary-foreground focus-visible:ring-0"
-                disabled={busy || !ready || !command.trim()}
-              >
-                <ArrowUpIcon />
-              </InputGroupButton>
-              <InputGroupButton
-                size="icon-sm"
-                aria-label="Close quick bar"
-                className="focus-visible:bg-secondary focus-visible:ring-0"
-                onClick={closeQuick}
-              >
-                <XIcon />
-              </InputGroupButton>
-            </InputGroupAddon>
-          </InputGroup>
-        </form>
-      )}
+      <form
+        inert={!quick}
+        aria-hidden={!quick}
+        id="quick-message"
+        aria-label="Quick message"
+        className="pair-prompt"
+        onSubmit={(e) => void send(e, true)}
+      >
+        <InputGroup className="h-12 rounded-xl bg-popover has-[[data-slot=input-group-control]:focus-visible]:border-input has-[[data-slot=input-group-control]:focus-visible]:ring-0">
+          <InputGroupInput
+            ref={quickInput}
+            aria-label="Quick message"
+            placeholder={`Ask ${name}…`}
+            value={command}
+            onChange={(e) => {
+              const command = e.target.value;
+              edit((old) => ({ ...old, command }));
+            }}
+          />
+          <InputGroupAddon align="inline-end">
+            <InputGroupButton
+              type="submit"
+              variant="default"
+              size="icon-sm"
+              aria-label="Send quick message"
+              className="focus-visible:bg-secondary focus-visible:text-secondary-foreground focus-visible:ring-0"
+              disabled={busy || !ready || !command.trim()}
+            >
+              <ArrowUpIcon />
+            </InputGroupButton>
+            <InputGroupButton
+              size="icon-sm"
+              aria-label="Close quick bar"
+              className="focus-visible:bg-secondary focus-visible:ring-0"
+              onClick={closeQuick}
+            >
+              <XIcon />
+            </InputGroupButton>
+          </InputGroupAddon>
+        </InputGroup>
+      </form>
       {(error || !agent) && (
         <Alert variant="destructive" className="fixed top-2 left-2 z-50 max-w-sm">
           <CircleAlertIcon />
