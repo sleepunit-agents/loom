@@ -46,6 +46,7 @@ import {
 import { WorkTrace } from './work-trace';
 import { workTree, type EventMessage } from './work-tree';
 import { Reply } from './reply';
+import { conversationText } from './conversation-text';
 import { QuickBar } from './quick-bar';
 import { ContextSwitcher, type Place } from './context-switcher';
 import './screen.css';
@@ -142,6 +143,7 @@ function Entry({ m }: { m: EventMessage }) {
       }
     } catch { /* Keep ordinary prose containing the same label. */ }
   }
+  if (words) words = conversationText(m.kind, words);
   return (
     <Message align={mine ? 'end' : 'start'}>
       <MessageContent>
@@ -151,12 +153,12 @@ function Entry({ m }: { m: EventMessage }) {
         </MessageHeader>
         <Bubble variant={mine ? 'secondary' : 'ghost'} align={mine ? 'end' : 'start'}>
           <BubbleContent className="whitespace-pre-wrap break-words">
-            {m.kind === 'reply' && m.words ? (
-              <Reply words={m.words} />
+            {m.kind === 'reply' && words ? (
+              <Reply words={words} />
             ) : (
               <TicketLinks
                 words={
-                  words?.replace(/^\[Ticket workspace · ([^\n]+)\]\n/, '$1\n') ||
+                  words ||
                   m.notice?.error ||
                   m.verdict ||
                   (attachments.length ? '' : 'Content unavailable')
@@ -329,7 +331,7 @@ function ContextCanvas({ place }: { place: Place }) {
             <CardTitle>{recent.kind === 'reply' ? place.agent : 'You'}</CardTitle>
           </CardHeader>
           <CardContent>
-            <Reply words={recent.words!} />
+            <Reply words={conversationText(recent.kind, recent.words!)} />
           </CardContent>
         </Card>
       ) : (
