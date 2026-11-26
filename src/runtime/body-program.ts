@@ -344,7 +344,8 @@ export async function bodyProgram(input: {
             /(?:Bearer\s+[A-Za-z0-9_.+/=-]{12,}|-----BEGIN [^\n]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{16,})/i.test(value);
           const tool=sensitive(step.tool)?'Tool':step.tool.slice(0,180);
           const words=sensitive(step.words)?'Output withheld.':step.words.length>16000?step.words.slice(0,16000)+'\n[Output truncated]':step.words;
-          posted=posted.then(async()=>{if(!signal.aborted)await client!.card({tool,words,cardState:step.cardState,clientId:randomUUID()})}).catch(()=>{});
+          const callId=step.call ? 'pair.'+keyOf(step.call).slice(0,24)+'.'+(step.parent?keyOf(step.parent).slice(0,24):'-')+'.'+randomUUID() : randomUUID();
+          posted=posted.then(async()=>{if(!signal.aborted)await client!.card({tool,words,cardState:step.cardState,clientId:callId})}).catch(()=>{});
         }) : undefined;
     const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, reach, omitClaudeTools, pairOutput, env: shellEnv, failedUsage:usage=>{failureReport=usage;}, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
     // A second one for the case the session cannot be continued: each takes its own copy of the tools file.

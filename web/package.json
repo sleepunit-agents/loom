@@ -37,6 +37,7 @@
     "clsx": "^2.1.1",
     "graphql": "^16.15.0",
     "graphql-ws": "^6.4.2",
+    "lucide-react": "^1.80.0",
     "motion": "^14.7.1",
     "prismjs": "^1.30.0",
     "react": "^19.3.1",

@@ -1,5 +1,7 @@
 import { StringDecoder } from 'node:string_decoder';
 export interface PairStep {
+  call?: string;
+  parent?: string;
   tool: string;
   words: string;
   cardState: 'running' | 'done' | 'failed';
@@ -23,7 +25,7 @@ function printed(v: unknown) {
  * are never conversation cards. Shell output is checked at the body disclosure boundary. */
 export function pairEvents(emit: (s: PairStep) => void) {
   const decoder = new StringDecoder('utf8'),
-    calls = new Map<string, { name: string; label: string }>();
+    calls = new Map<string, { name: string; label: string; parent?: string }>();
   let tail = '';
   function event(row: Row) {
     const item = object(row.item);
@@ -71,7 +73,7 @@ export function pairEvents(emit: (s: PairStep) => void) {
                 .filter(Boolean)
                 .join(', ')
             : '';
-      emit({ tool: label, cardState: status, words: words || label });
+      emit({ call: text(item.id), tool: label, cardState: status, words: words || label });
       return;
     }
     if (row.type === 'assistant') {
@@ -88,8 +90,10 @@ export function pairEvents(emit: (s: PairStep) => void) {
             ? 'Terminal'
             : name;
         const label = parent && delegate(parent.name) ? parent.label + ' → ' + ownLabel : ownLabel;
-        calls.set(id, { name, label });
+        calls.set(id, { name, label, parent: text(row.parent_tool_use_id) });
         emit({
+          call: id,
+          parent: text(row.parent_tool_use_id),
           tool: label,
           cardState: 'running',
           words: shell(name)
@@ -111,6 +115,8 @@ export function pairEvents(emit: (s: PairStep) => void) {
         if (!found) continue;
         calls.delete(text(p.tool_use_id));
         emit({
+          call: text(p.tool_use_id),
+          parent: found.parent,
           tool: found.label,
           cardState: p.is_error ? 'failed' : 'done',
           words: shell(found.name) ? printed(p.content) || 'Command completed' : found.label,

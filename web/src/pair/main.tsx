@@ -13,6 +13,16 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './ui/
 import { Textarea } from './ui/textarea';
 import { Message, MessageContent, MessageHeader } from './ui/message';
 import { Bubble, BubbleContent } from './ui/bubble';
+import {
+  Trace,
+  TraceCollapsible,
+  TraceCollapsibleContent,
+  TraceCollapsibleTrigger,
+  TraceLine,
+  TraceTitle,
+} from './ui/trace';
+import { WorkTrace } from './work-trace';
+import { workTree, type EventMessage } from './work-tree';
 import { Reply } from './reply';
 import './screen.css';
 
@@ -40,7 +50,7 @@ interface Ticket {
 const subjectQuery =
   'query PairTicket($id:String!){ticket:tasksSingle(where:{id:{eq:$id}}){id title project status assignee goal why doneWhen description changeTasksByTask{changeRow{repository number title url state checks}}} agent:workDiscussionAgent(kind:"ticket",id:$id)}';
 const fields =
-  'run seq kind sender at words wordsKeepUntil inboxItem tool cardState delivery verdict notice{error} stepInfo{parent exit limit t0 t1} stepDetails{detail body result items{text state}}';
+  'clientId run seq kind sender at words wordsKeepUntil inboxItem tool cardState delivery verdict notice{error} stepInfo{parent exit limit t0 t1} stepDetails{detail body result items{text state}}';
 const historyQuery =
   'query PairLog($id:String!,$before:Int){thread:commsThread(id:$id){id member agent project working readSeq} rows:commsMessages(thread:$id,beforeSeq:$before,limit:50){' +
   fields +
@@ -61,7 +71,7 @@ function TicketLinks({ words }: { words: string }) {
     </>
   );
 }
-type EventMessage = CommsMessage & { run?: string };
+
 function RunDetails({ id }: { id: string }) {
   const read = useDataQuery<{
     jobUsage: {
@@ -72,48 +82,28 @@ function RunDetails({ id }: { id: string }) {
   const run = read.data?.jobUsage;
   if (read.status !== 'live' || !run?.usage) return null;
   return (
-    <details className="text-xs text-muted-foreground">
-      <summary className="cursor-pointer">Run details · {run.usage.harness}</summary>
-      <p>
-        {run.usage.model} · {run.state}
-      </p>
-      {run.usage.tools?.map((t) => (
-        <p key={t.name}>
-          {t.name} × {t.count}
-        </p>
-      ))}
-    </details>
+    <Trace>
+      <TraceCollapsible>
+        <TraceCollapsibleTrigger>
+          <TraceLine>
+            <TraceTitle>Run details · {run.usage.harness}</TraceTitle>
+          </TraceLine>
+        </TraceCollapsibleTrigger>
+        <TraceCollapsibleContent>
+          <p>
+            {run.usage.model} · {run.state}
+          </p>
+          {run.usage.tools?.map((t) => (
+            <p key={t.name}>
+              {t.name} × {t.count}
+            </p>
+          ))}
+        </TraceCollapsibleContent>
+      </TraceCollapsible>
+    </Trace>
   );
 }
-function Entry({ m, expand }: { m: EventMessage; expand:boolean }) {
-  const step = m.stepDetails,
-    info = m.stepInfo;
-  if (m.kind === 'card')
-    return (
-      <details open={expand} className="rounded-md border p-3 text-sm">
-        <summary className="cursor-pointer">
-          {m.tool || 'Work step'} · {m.cardState || 'Recorded'}
-        </summary>
-        {m.words && (
-          <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-all">{m.words}</pre>
-        )}
-        {info?.parent && <p>Parent · {info.parent}</p>}
-        {info?.exit != null && <p>Exit code {info.exit}</p>}
-        {[step?.detail, step?.body, step?.result].map(
-          (v, i) =>
-            v && (
-              <pre key={i} className="overflow-auto whitespace-pre-wrap break-all">
-                {v}
-              </pre>
-            ),
-        )}
-        {step?.items?.map((item, i) => (
-          <p key={i}>
-            {item.text} · {item.state}
-          </p>
-        ))}
-      </details>
-    );
+function Entry({ m }: { m: EventMessage }) {
   const mine = m.kind === 'message' || m.kind === 'answer';
   return (
     <Message align={mine ? 'end' : 'start'}>
@@ -170,7 +160,9 @@ function TranscriptPage({
       <p role="status">{read.status === 'loading' ? 'Opening conversation…' : 'Conversation unavailable.'}</p>
     ) : null;
   if (!visible) return null;
-  const latestTerminal=rows.findLast(m=>m.kind==='card' && m.tool?.endsWith('Terminal') && m.cardState!=='running')?.seq;
+  const latestTerminal = rows.findLast(
+    (m) => m.kind === 'card' && m.tool?.endsWith('Terminal') && m.cardState !== 'running',
+  )?.seq;
   return (
     <>
       {rows.length === 50 &&
@@ -181,13 +173,21 @@ function TranscriptPage({
             Earlier messages
           </Button>
         ))}
-      {rows.map((m) => (
-        <Entry
-          expand={!before && m.seq===latestTerminal}
-          key={m.seq}
-          m={Date.parse(m.wordsKeepUntil ?? '') > now ? m : { ...m, words: null, stepDetails: null }}
-        />
-      ))}
+      {workTree(
+        rows.map((m) =>
+          Date.parse(m.wordsKeepUntil ?? '') > now ? m : { ...m, words: null, stepDetails: null },
+        ),
+      ).map((node) =>
+        node.events[0].kind === 'card' ? (
+          <WorkTrace
+            key={node.events[0].seq}
+            node={node}
+            latestTerminal={before ? undefined : latestTerminal}
+          />
+        ) : (
+          <Entry key={node.events[0].seq} m={node.events[0]} />
+        ),
+      )}
     </>
   );
 }
