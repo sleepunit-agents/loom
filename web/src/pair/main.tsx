@@ -8,7 +8,6 @@ import { newId } from '../data/id';
 import { useDeadline } from '../pieces/comms/use-deadline';
 import type { CommsMessage, CommsThread } from '../pieces/comms-view/model';
 import { Button } from './ui/button';
-import { Kbd } from './ui/kbd';
 import { Badge } from './ui/badge';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './ui/card';
 import { ArrowUpIcon, XIcon, MessageSquareIcon, CircleAlertIcon } from 'lucide-react';
@@ -490,11 +489,6 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
                   {presence.text}
                 </div>
               </div>
-              {!quick && (
-                <Kbd aria-hidden="true" className="ms-2 hidden sm:inline-flex">
-                  {/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K'}
-                </Kbd>
-              )}
             </div>
             <Button
               ref={launcher}
