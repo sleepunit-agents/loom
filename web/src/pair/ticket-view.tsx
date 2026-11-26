@@ -138,8 +138,7 @@ function SecondaryPanel({
             </div>
             <div
               key={viewKey(detail.target)}
-              className="min-h-0 space-y-1 overflow-y-auto overscroll-contain pb-1 text-sm [overflow-wrap:anywhere]"
-              tabIndex={0}
+              className="space-y-1 pb-1 text-sm [overflow-wrap:anywhere]"
             >
               <h3 className="font-semibold">{detail.heading || detail.title}</h3>
               {detail.meta && <p className="text-xs text-muted-foreground">{detail.meta}</p>}
