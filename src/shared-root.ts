@@ -81,9 +81,10 @@ import { registerTerminalSession } from './shared-terminal-session.js';
 import { registerJobUsage } from './shared-job-usage.js';
 import { registerConversationSessions } from './shared-conversation-sessions.js';
 import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
-import { sharedChangesReader } from './shared-changes-reader.js';
+import {pullCheckReader} from './pieces/changes/check-runs.js';
+import { sharedChangesReader,sharedForgeSecrets } from './shared-changes-reader.js';
 import { pollChanges } from './apps/changes-polling.js';
-import { registerWorkRefresh } from './shared-work-refresh.js';
+import { registerWorkRefresh,registerPullChecks } from './shared-work-refresh.js';
 import { inboxProposalTitles, workQueryFields } from './shared-work-queries.js';
 import { workLifetime } from './shared-work-lifetime.js';
 import { guardedResponse, isGuardedCommandRead } from './core/data/guarded-response.js';
@@ -613,6 +614,7 @@ export function sharedRoot(options: {
     terminal: viewer => credentials.terminalMachine(viewer),
   });
   registerSharedWorkAlways(operations,db,services.approvals,services.approvalRules);
+  if(options.changes && 'github' in options.changes) registerPullChecks(operations,db,pullCheckReader(sharedForgeSecrets(options.changes.github),options.changes.github.request));
   if (changePolling) registerWorkRefresh(operations,db,changePolling.refresh);
   if(comms)for(const row of recentReviewEnds(comms.service))deliverReview(row.id);
   if (!options.deferRuntimeStart) runtime.start();

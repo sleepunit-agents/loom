@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { memberOperation } from '../data/operation';
+import { useEffect, useState } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { Facts } from './entity-facts';
 import type { EntityTarget } from './entities';
@@ -34,7 +35,7 @@ const related = {
   change: {
     label: 'Checks, participants and reviews',
     query:
-      'query Related($id:String!){changeReviewHistory(change:$id){change job headCommit tier round requestedAt completedAt verdict findings} pull:changesSingle(where:{id:{eq:$id}}){changeChecksByChange{name state} changePeopleByChange{login role} changeTasksByChange{task}}}',
+      'query Related($id:String!){changeReviewHistory(change:$id){change job headCommit tier round requestedAt completedAt verdict findings} pull:changesSingle(where:{id:{eq:$id}}){headCommit checks changeChecksByChange{name state} changePeopleByChange{login role} changeTasksByChange{task}}}',
   },
   trigger: {
     label: 'Program, journal and runs',
@@ -62,6 +63,8 @@ export function Related({ target }: { target: EntityTarget }) {
   const result = useDataQuery<
     Record<string, unknown> & {
       pull?: {
+        headCommit: string;
+        checks: string;
         changeChecksByChange: { name: string; state: string }[];
         changePeopleByChange: { login: string; role: string }[];
         changeTasksByChange: { task: string }[];
@@ -80,18 +83,12 @@ export function Related({ target }: { target: EntityTarget }) {
         (result.status === 'live' && result.data ? (
           target.kind === 'change' && result.data.pull ? (
             <section>
-              <h3>Checks</h3>
-              {result.data.pull.changeChecksByChange.length ? (
-                <ul>
-                  {result.data.pull.changeChecksByChange.map((check) => (
-                    <li key={check.name}>
-                      {check.name} · {check.state}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p>No recorded checks.</p>
-              )}
+              <PullChecks
+                key={target.id + ':' + result.data.pull.headCommit + ':' + result.data.pull.checks}
+                id={target.id!}
+                head={result.data.pull.headCommit}
+                cached={result.data.pull.changeChecksByChange}
+              />
               <h3>Assignees</h3>
               <p>
                 {result.data.pull.changePeopleByChange
@@ -115,5 +112,59 @@ export function Related({ target }: { target: EntityTarget }) {
           <p>{result.status === 'loading' ? 'Loading…' : 'Related records unavailable.'}</p>
         ))}
     </details>
+  );
+}
+
+type Check = { name: string; state: string };
+function PullChecks({ id, head, cached }: { id: string; head: string; cached: Check[] }) {
+  const [result, setResult] = useState<{ checks: Check[]; readAt: string } | null>(null);
+  const [failed, fail] = useState(false),
+    [attempt, retry] = useState(0);
+  useEffect(() => {
+    let live = true;
+    memberOperation<{ checks: Check[]; readAt: string }>('changes.checkRuns', { id, head })
+      .then((rows) => {
+        if (live) setResult(rows);
+      })
+      .catch(() => {
+        if (live) fail(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, [id, head, attempt]);
+  const checks = result?.checks || cached;
+  return (
+    <section>
+      <h3>Checks</h3>
+      {result ? (
+        <small>GitHub · {new Date(result.readAt).toLocaleString()}</small>
+      ) : failed ? (
+        <p>
+          Full GitHub check list unavailable.{' '}
+          <button
+            onClick={() => {
+              fail(false);
+              retry((n) => n + 1);
+            }}
+          >
+            Retry
+          </button>
+        </p>
+      ) : (
+        <p>Reading checks from GitHub…</p>
+      )}
+      {checks.length ? (
+        <ul>
+          {checks.map((check, i) => (
+            <li key={i}>
+              {check.name} · {check.state.toLowerCase()}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        result && <p>No checks on this commit.</p>
+      )}
+    </section>
   );
 }
