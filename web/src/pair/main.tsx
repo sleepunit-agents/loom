@@ -447,10 +447,11 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
         aria-hidden={!open}
         inert={!open}
         className={
-          'flex shrink-0 flex-col overflow-hidden bg-background transition-[width] motion-reduce:transition-none ' +
-          (open
-            ? 'fixed inset-y-0 right-0 z-10 w-[min(90vw,32rem)] border-l sm:static sm:w-[min(44vw,36rem)]'
-            : 'w-0')
+          // Slide the dock while keeping the transcript at its final reading width.
+          'fixed inset-y-0 right-0 z-10 flex shrink-0 flex-col overflow-hidden bg-background ' +
+          '[--chat-width:min(90vw,32rem)] sm:static sm:[--chat-width:min(44vw,36rem)] ' +
+          '*:w-[calc(var(--chat-width)-1px)] transition-[width] motion-reduce:transition-none ' +
+          (open ? 'w-(--chat-width) border-l' : 'w-0')
         }
       >
         <header className="flex items-center justify-between border-b p-4">
