@@ -33,6 +33,10 @@ export function WorkJobs({ scope, id }: { scope: 'task' | 'project'; id: string 
           {reports.map((r) => (
             <li key={r.id}>
               <strong>{r.agent} · running</strong> · Reported work on {r.tasks.join(', ')}
+              <details>
+                <summary>Runtime record</summary>
+                <code>{r.id}</code>
+              </details>
               <div>
                 Reported {new Date(r.at).toLocaleString()} · Last heard {new Date(r.heardAt).toLocaleString()}
               </div>
@@ -44,6 +48,10 @@ export function WorkJobs({ scope, id }: { scope: 'task' | 'project'; id: string 
                 {job.agent} · {job.state}
               </strong>{' '}
               · {job.basis}
+              <details>
+                <summary>Runtime record</summary>
+                <code>{job.id}</code>
+              </details>
               <div>
                 {job.heardAt
                   ? 'Last heard ' + new Date(job.heardAt).toLocaleString()

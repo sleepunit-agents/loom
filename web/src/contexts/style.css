@@ -853,3 +853,14 @@ aside a {
 @media (max-width: 740px) {
   .workStatus > section { width: 100%; }
 }
+.viewStack > .entityModule.core { order: -3; }
+.viewStack > .splitProposal { order: -2; width: min(100%, 440px); }
+.workStatus > details.prCompanion { align-self: flex-start; width: min(100%, 320px); background: white; }
+.workStatus > details.prCompanion.near { order: -1; }
+.workStatus > details.prCompanion.far { order: 1; }
+@media (max-width: 740px) {
+  .workStatus > details.prCompanion.far:not([open]) { width: auto; max-width: 100%; border-radius: 1rem; }
+}
+.dock .quickDock { position: absolute; right: 12px; bottom: 22px; color: #e0e1e4; background: #34353b; border-color: #505158; padding: 4px 6px; }
+.dock .art { padding-right: 88px; }
+@media (max-width: 740px) { .dock .quickDock { bottom: 12px; } }

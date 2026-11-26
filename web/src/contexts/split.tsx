@@ -1,4 +1,6 @@
-import { useRef, useState } from 'react';
+import { DeskMember } from '../signin/desk-member';
+import { useDataQuery } from '../data/graphql';
+import { useContext, useRef, useState } from 'react';
 import { memberOperation } from '../data/operation';
 import { keep, kept } from './ring';
 import type { EntityTarget } from './entities';
@@ -6,19 +8,18 @@ import type { CommsMessage } from '../pieces/comms-view/model';
 
 const fields = ['title', 'goal', 'why', 'doneWhen'] as const;
 type Draft = Record<(typeof fields)[number], string>;
-export function readSplit(words: string) {
+export function readSplit(words: string, editing = false) {
   try {
-    const value = JSON.parse(
-      words
-        .trim()
-        .replace(/^\x60\x60\x60(?:json)?\s*/, '')
-        .replace(/\s*\x60\x60\x60$/, ''),
-    );
+    const fenced = [...words.matchAll(/\x60{3}(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n\x60{3}/gi)];
+    if (fenced.length > 1) return;
+    const value = JSON.parse(fenced[0]?.[1] ?? words.trim());
     if (
       typeof value.proposal !== 'string' ||
       !Array.isArray(value.drafts) ||
       value.drafts.length !== 2 ||
-      !value.drafts.every((d: Draft) => d && fields.every((k) => typeof d[k] === 'string' && d[k].trim()))
+      !value.drafts.every(
+        (d: Draft) => d && fields.every((k) => typeof d[k] === 'string' && (editing || d[k].trim())),
+      )
     )
       return;
     return {
@@ -82,24 +83,31 @@ export function SplitProposal({
   receipt: (text: string) => void;
 }) {
   const key = 'context-split:' + id;
-  const [drafts, edit] = useState<Draft[] | undefined>(() => readSplit(kept(key))?.drafts);
+  const [drafts, edit] = useState<Draft[] | undefined>(() => readSplit(kept(key), true)?.drafts);
   const [state, setState] = useState(() => kept(key + ':state'));
   const [error, fail] = useState('');
   const lock = useRef(false);
   const values = drafts || initial;
-  if (state === 'discarded') return null;
-  if (state.startsWith('approved:'))
+  const member = useContext(DeskMember);
+  const saved = useDataQuery<{ tasks: { id: string }[] }>(
+    'query ApprovedSplit($source:String!){tasks(where:{sourceKind:{eq:"context-split"},sourceId:{eq:$source}}){id}}',
+    { source: JSON.stringify([member, parent, id]) },
+  );
+  const approved = saved.data?.tasks.length
+    ? saved.data.tasks.map((t) => t.id)
+    : state.startsWith('approved:')
+      ? state.slice(9).split(',')
+      : [];
+  if (state === 'discarded' && !approved.length) return null;
+  if (approved.length)
     return (
-      <section className="module near">
+      <section className="module near splitProposal">
         <h3>Split approved</h3>
-        {state
-          .slice(9)
-          .split(',')
-          .map((child) => (
-            <button key={child} onClick={() => open({ kind: 'ticket', id: child })}>
-              {child}
-            </button>
-          ))}
+        {approved.map((child) => (
+          <button key={child} onClick={() => open({ kind: 'ticket', id: child })}>
+            {child}
+          </button>
+        ))}
       </section>
     );
   function discard() {
@@ -132,13 +140,13 @@ export function SplitProposal({
   }
   const pending = state === 'pending' || state === 'sending';
   return (
-    <section className="module near">
+    <section className="module near splitProposal">
       <h3>{values ? 'Split proposal' : working ? 'Art is drafting the split' : 'Split requested'}</h3>
       {!values && (
         <p>
           {working
             ? 'The drafts will appear here.'
-            : 'Waiting for a reply with two drafts. Check the conversation for Art’s response.'}
+            : 'No usable drafts have arrived. Open the conversation to see Art’s response or ask for another split.'}
         </p>
       )}
       {values?.map((d, i) => (

@@ -1,3 +1,4 @@
+import { workScope } from './work-scope.js';
 import { and, desc, eq, getTableColumns, inArray, isNotNull, ne, or, sql } from 'drizzle-orm';
 import {
   GraphQLList,
@@ -39,18 +40,19 @@ export function workJobFields(
         if ((project == null) === (task == null)) throw Error('Choose a project or ticket');
         observed();
         const scope = sqlVisibility(viewer, ['jobs', 'tasks', 'projects', 'conversations', 'changeTasks']);
+        const tree = workScope(db, viewer, project, task);
         const review = db
           .select({ id: changeReviewRounds.job })
           .from(changeReviewRounds)
           .innerJoin(changeTasks, eq(changeReviewRounds.change, changeTasks.change))
-          .where(and(eq(changeTasks.task, task ?? ''), scope.changeTasks(getTableColumns(changeTasks))));
+          .where(and(sql`${changeTasks.task} in (${tree})`, scope.changeTasks(getTableColumns(changeTasks))));
         const source = db
           .select({ id: conversations.id })
           .from(conversations)
           .innerJoin(tasks, and(eq(tasks.sourceKind, 'conversation'), eq(tasks.sourceId, conversations.id)))
           .where(
             and(
-              eq(tasks.id, task ?? ''),
+              sql`${tasks.id} in (${tree})`,
               scope.tasks(getTableColumns(tasks)),
               scope.conversations(getTableColumns(conversations)),
             ),
@@ -67,10 +69,7 @@ export function workJobFields(
             state: jobs.state,
             heardAt: jobs.heardAt,
             queuedAt: jobs.queuedAt,
-            basis:
-              project != null
-                ? sql<string>`'Project job'`
-                : sql<string>`case when ${jobs.id} in ${review} then 'Linked PR review' else 'Ticket source conversation' end`,
+            basis: sql<string>`case when ${jobs.id} in ${review} then 'Linked PR review' when ${jobs.conversation} in ${source} then 'Ticket source conversation' else 'Project job' end`,
           })
           .from(jobs)
           .where(
@@ -81,9 +80,11 @@ export function workJobFields(
                 ne(jobs.startedByKind, 'terminal'),
                 and(isNotNull(jobs.conversation), sql`julianday(${jobs.heardAt}) > julianday(${cutoff})`),
               ),
-              project != null
-                ? inArray(jobs.project, projectIds)
-                : or(inArray(jobs.id, review), inArray(jobs.conversation, source)),
+              or(
+                project != null ? inArray(jobs.project, projectIds) : undefined,
+                inArray(jobs.id, review),
+                inArray(jobs.conversation, source),
+              ),
             ),
           )
           .orderBy(desc(jobs.heardAt), jobs.id)

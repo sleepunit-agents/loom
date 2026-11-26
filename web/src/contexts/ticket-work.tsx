@@ -1,5 +1,5 @@
 import { TicketUpdates } from './ticket-updates';
-import { EpicProgress } from './epic-progress';
+import { EpicProgress, ScopeWork } from './epic-progress';
 import { DeskMember } from '../signin/desk-member';
 import { kept, keep } from './ring';
 import { entityAddress } from './entities';
@@ -60,6 +60,12 @@ function Notes({ id }: { id: string }) {
     </section>
   );
 }
+// A blueprint orders existing live readers. Each view instance keeps its own edits.
+const blueprints = {
+  status: ['runtime'],
+  history: ['timeline', 'updates', 'runtime'],
+  decision: ['question', 'runtime'],
+} as const;
 export function TicketWork({
   target,
   row,
@@ -129,48 +135,57 @@ export function TicketWork({
     );
   return (
     <div className="workStatus">
-      <section><h3>Ticket status</h3><p>
-        {String(row.type)} · {String(row.status).replaceAll('_', ' ')} ·{' '}
-        {row.assignee ? 'Assigned to ' + row.assignee : 'Unassigned'}
-      </p>
-      <div className="entityActions">
-        {Object.entries(ticketViews).map(([view, label]) => (
-          <button
-            key={view}
-            aria-pressed={target.view === view}
-            onClick={() => open({ ...target, view: view as keyof typeof ticketViews })}
-          >
-            {label}
-          </button>
-        ))}
-        {typeof row.project === 'string' && (
-          <button onClick={() => open({ kind: 'project', id: row.project as string })}>Project health</button>
-        )}
-      </div>
+      <section>
+        <h3>Ticket status</h3>
+        <p>
+          {String(row.type)} · {String(row.status).replaceAll('_', ' ')} ·{' '}
+          {row.assignee ? 'Assigned to ' + row.assignee : 'Unassigned'}
+        </p>
+        <div className="entityActions">
+          {Object.entries(ticketViews).map(([view, label]) => (
+            <button
+              key={view}
+              aria-pressed={target.view === view}
+              onClick={() => open({ ...target, view: view as keyof typeof ticketViews })}
+            >
+              {label}
+            </button>
+          ))}
+          {typeof row.project === 'string' && (
+            <button onClick={() => open({ kind: 'project', id: row.project as string })}>
+              Project health
+            </button>
+          )}
+        </div>
       </section>
+      {row.type === 'epic' && <ScopeWork kind="task" id={target.id} open={open} />}
       {row.type === 'epic' && typeof row.project === 'string' && (
         <EpicProgress project={row.project} epic={target.id} open={open} />
       )}
-      <WorkJobs scope="task" id={target.id} />
-      {target.view === 'history' && (
-        <>
-          <Notes id={target.id} />
-          <TicketUpdates id={target.id} open={open} />
-        </>
-      )}
-      {target.view === 'decision' && (
-        <section>
-          <h3>Decision</h3>
-          <p>
-            {String(
-              row.ask ||
-                (row.status === 'closed'
-                  ? row.closeReason || 'Ticket closed.'
-                  : 'No open question on this ticket.'),
-            )}
-          </p>
-        </section>
-      )}
+      {blueprints[target.view || 'status'].map((module) => {
+        switch (module) {
+          case 'timeline':
+            return <Notes key={module} id={target.id} />;
+          case 'updates':
+            return <TicketUpdates key={module} id={target.id} open={open} />;
+          case 'runtime':
+            return <WorkJobs key={module} scope="task" id={target.id} />;
+          case 'question':
+            return (
+              <section key={module}>
+                <h3>Decision</h3>
+                <p>
+                  {String(
+                    row.ask ||
+                      (row.status === 'closed'
+                        ? row.closeReason || 'Ticket closed.'
+                        : 'No open question on this ticket.'),
+                  )}
+                </p>
+              </section>
+            );
+        }
+      })}
       {read.status !== 'live' || read.settling || !links ? (
         <p>
           {read.status === 'loading' || read.settling ? 'Reading linked work…' : 'Linked work unavailable.'}
@@ -178,10 +193,13 @@ export function TicketWork({
       ) : (
         <>
           {(row.type === 'epic' || children.length > 0) && (
-            <section><h3>Progress</h3><p>
-              {children.filter((c) => c.status === 'closed').length} of {children.length} visible children
-              closed · {children.filter((c) => c.status === 'in_progress').length} in progress
-            </p></section>
+            <section>
+              <h3>Progress</h3>
+              <p>
+                {children.filter((c) => c.status === 'closed').length} of {children.length} visible children
+                closed · {children.filter((c) => c.status === 'in_progress').length} in progress
+              </p>
+            </section>
           )}
           {group('Child tickets', children)}
           {group(
@@ -203,28 +221,6 @@ export function TicketWork({
           <section>
             <h3>Linked pull requests</h3>
             {!links.changeTasksByTask.some((l) => l.changeRow) && <p>No visible linked pull requests.</p>}
-            {pulls
-              .filter((pr) => !hidden.includes(pr.id))
-              .sort((a, b) => Number(!!reason(b)) - Number(!!reason(a)))
-              .map((pr) => (
-                <details
-                  className={'prCompanion ' + (reason(pr) ? 'near' : 'far')}
-                  key={pr.id}
-                  open={!!reason(pr) || target.view === 'history'}
-                >
-                  <summary>
-                    {pr.repository} #{pr.number} · {pr.title}
-                    {reason(pr) && ' · ' + reason(pr)}
-                  </summary>
-                  <p>
-                    {pr.draft ? 'Draft · ' : ''}
-                    {pr.state} · Checks {pr.checks} · Review {pr.review.replaceAll('_', ' ')} · Waiting on{' '}
-                    {pr.waitingOn}
-                  </p>
-                  <button onClick={() => open({ kind: 'change', id: pr.id })}>Open pull request</button>
-                  <button onClick={() => remember([...hidden, pr.id])}>Dismiss from this view</button>
-                </details>
-              ))}
             {pulls.some((pr) => hidden.includes(pr.id)) && (
               <button onClick={() => remember([])}>Restore dismissed pull requests</button>
             )}
@@ -235,6 +231,28 @@ export function TicketWork({
                 : 'GitHub read time unavailable.'}
             </small>
           </section>
+          {pulls
+            .filter((pr) => !hidden.includes(pr.id))
+            .sort((a, b) => Number(!!reason(b)) - Number(!!reason(a)))
+            .map((pr) => (
+              <details
+                className={'prCompanion ' + (reason(pr) ? 'near' : 'far')}
+                key={pr.id}
+                open={!!reason(pr) || target.view === 'history'}
+              >
+                <summary>
+                  {pr.repository} #{pr.number} · {pr.title}
+                  {reason(pr) && ' · ' + reason(pr)}
+                </summary>
+                <p>
+                  {pr.draft ? 'Draft · ' : ''}
+                  {pr.state} · Checks {pr.checks} · Review {pr.review.replaceAll('_', ' ')} · Waiting on{' '}
+                  {pr.waitingOn}
+                </p>
+                <button onClick={() => open({ kind: 'change', id: pr.id })}>Open pull request</button>
+                <button onClick={() => remember([...hidden, pr.id])}>Dismiss from this view</button>
+              </details>
+            ))}
         </>
       )}
     </div>

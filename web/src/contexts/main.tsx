@@ -255,7 +255,7 @@ function Workspace({
     } catch {
       /* Fresh context. */
     }
-    return home ? views : active && ['#decision', '#history'].includes(location.hash) ? [intent] : [];
+    return active && ['#decision', '#history'].includes(location.hash) ? [intent] : [];
   });
   const current = opened.includes(intent) ? intent : opened[0];
   const viewKey = selectedAddress || current || 'context';
@@ -276,9 +276,13 @@ function Workspace({
     return { [viewKey]: savedAddresses(legacyPins, []) };
   });
   const pinned = pinsByView[viewKey] || [];
-  function keepModules(next: string[]) {
+  const [choosingDestination, chooseDestination] = useState('');
+  const elsewhere = [...opened, ...recordViews].filter(
+    (ref) => ref !== viewKey && !(pinsByView[ref] || []).includes(viewKey),
+  );
+  function keepModules(next: string[], destination = viewKey) {
     setPinsByView((previous) => {
-      const updated = { ...previous, [viewKey]: next };
+      const updated = { ...previous, [destination]: next };
       keep(pinsKey, JSON.stringify(updated));
       return updated;
     });
@@ -304,7 +308,7 @@ function Workspace({
   function closeView(view: Intent) {
     const next = opened.filter((v) => v !== view);
     rememberViews(next);
-    if (current === view) {
+    if (!entity && current === view) {
       const target = next[0];
       location.hash = target || 'context';
       if (target) focus(target);
@@ -376,7 +380,7 @@ function Workspace({
       if (!active) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
-        showChat((v) => !v);
+        openBar((v) => !v);
       }
       if (event.altKey && event.code === 'Backquote') {
         event.preventDefault();
@@ -817,26 +821,43 @@ function Workspace({
       : null;
   const latestProject =
     entity?.kind === 'project' ? entity.id : subject?.project || (home ? homeProject : undefined);
-  const latestTicket = useDataQuery<{ tasks: { id: string }[] }>(
-    'query ContextLatest($project:String!){tasks(where:{project:{eq:$project}},orderBy:{createdAt:{direction:desc,priority:1},id:{direction:desc,priority:0}},limit:1){id}}',
-    { project: latestProject || '' },
-    { pause: !active || !latestProject },
+  const directory = useDataQuery<{
+    projects: { id: string; name: string; tasksByProject: { id: string }[] }[];
+  }>(
+    'query ContextProjects {projects{id name tasksByProject(orderBy:{createdAt:{direction:desc,priority:1},position:{direction:desc,priority:0}},limit:1){id}}}',
+    {},
+    { pause: !active },
   );
+  function projectNamed(name: string | undefined) {
+    return directory.data?.projects.find(
+      (p) =>
+        name && (p.id.toLowerCase() === name.toLowerCase() || p.name.toLowerCase() === name.toLowerCase()),
+    );
+  }
   const split = subject ? splitFor(discussion.messages, focusKey, agent) : undefined;
   const [routingMiss, setRoutingMiss] = useState<{ words: string; ref: string } | null>(null);
   const [routeError, setRouteError] = useState('');
   async function sendChat(words: string) {
     const text = words.trim().replace(/[?.!]+$/, '');
     setRouteError('');
+    const namedProject =
+      /^(?:(?:show|open|check) (?:me )?(?:the )?)?(?:project (?:health|status)(?: of| for|:)?|(?:status|health) of (?:project|the project))\s+(.+)$/i.exec(
+        text,
+      );
+    if (namedProject) {
+      openEntity({ kind: 'project', id: projectNamed(namedProject[1].trim())?.id || namedProject[1].trim() });
+      record(words);
+      return true;
+    }
     const latest =
       /^(?:show|open|find) (?:me )?(?:the )?(?:latest|newest|most recent) (?:task|ticket)(?: in (.+))?$/i.exec(
         text,
       );
-    if (latest && (!latest[1] || latest[1].toLowerCase() === latestProject?.toLowerCase())) {
-      const id = latestTicket.status === 'live' && latestTicket.data?.tasks[0]?.id;
+    if (latest) {
+      const id = projectNamed(latest[1]?.trim() || latestProject)?.tasksByProject[0]?.id;
       if (!id) {
         setRouteError(
-          latestTicket.status === 'live'
+          directory.status === 'live'
             ? 'No visible tickets in this project.'
             : 'Project tickets unavailable.',
         );
@@ -1021,13 +1042,27 @@ function Workspace({
                 target={entity}
                 open={openEntity}
                 quote={setExcerpt}
-                pin={
-                  entity.id && !pinned.includes(entityAddress(entity))
-                    ? () => keepModules([...pinned, entityAddress(entity)])
-                    : undefined
-                }
+                pin={entity.id && elsewhere.length ? () => chooseDestination(viewKey) : undefined}
                 talk={() => showChat(true)}
               />
+            )}
+            {active && entity && choosingDestination === viewKey && (
+              <section className="module near">
+                <h3>Keep alongside which view?</h3>
+                {elsewhere.map((ref) => (
+                  <button
+                    key={ref}
+                    onClick={() => {
+                      keepModules([...(pinsByView[ref] || []), viewKey], ref);
+                      chooseDestination('');
+                      record('Added ' + entityName(entity) + ' to ' + ref);
+                    }}
+                  >
+                    {entityAt(ref) ? entityName(entityAt(ref)!) : labels[ref as Intent]}
+                  </button>
+                ))}
+                <button onClick={() => chooseDestination('')}>Cancel</button>
+              </section>
             )}
             {active && routeError && <p role="alert">{routeError}</p>}
             {active && routingMiss?.ref === focusKey && (
@@ -1219,6 +1254,28 @@ function Workspace({
         </div>
       </main>
       <div className="dock">
+        {active &&
+          unread &&
+          originMarker &&
+          entityAt(originMarker) &&
+          originMarker !== focusKey &&
+          reply.seq !== dismissed && (
+            <div className="ding" role="status">
+              Art replied about {entityName(entityAt(originMarker)!)}{' '}
+              <button
+                onClick={() => {
+                  setDismissed(reply.seq);
+                  openEntity(entityAt(originMarker)!);
+                  showChat(true);
+                }}
+              >
+                Show me
+              </button>
+              <button aria-label="Dismiss notification" onClick={() => setDismissed(reply.seq)}>
+                ×
+              </button>
+            </div>
+          )}
         {result?.notify && result.seq !== dismissed && response && (entity || current !== result.view) && (
           <div className="ding" role="status">
             Reply from {response.sender}{' '}
@@ -1262,6 +1319,13 @@ function Workspace({
                   : 'Talk to Art'}
             </span>
           </span>
+        </button>
+        <button
+          className="quickDock"
+          aria-expanded={bar}
+          aria-label="Quick command"
+          onClick={() => openBar((v) => !v)}
+        >
           <kbd>⌘ / Ctrl K</kbd>
         </button>
       </div>

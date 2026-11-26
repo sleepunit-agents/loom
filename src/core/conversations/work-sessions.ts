@@ -1,4 +1,6 @@
-import { and, desc, eq, getTableColumns, gt, gte, inArray, isNotNull } from 'drizzle-orm';
+import { workScope } from '../data/work-scope.js';
+import { and, desc, eq, getTableColumns, gt, gte, inArray, isNotNull, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/sqlite-core';
 import type { SQL } from 'drizzle-orm';
 import type { Viewer } from '../../policy.js';
 import { sqlVisibility } from '../../policy-sql.js';
@@ -41,6 +43,7 @@ export async function reportedSessions(
         ),
       )
       .all();
+  const report = alias(agentPosts, 'latest_report');
   const latest = (thread: string, since: string) =>
     db
       .select({ seq: agentPosts.seq, at: agentPosts.at, refs: agentPosts.workRefs })
@@ -50,7 +53,15 @@ export async function reportedSessions(
         and(
           eq(agentPosts.source, thread),
           gte(agentPosts.at, since),
-          isNotNull(agentPosts.workRefs),
+          eq(
+            agentPosts.seq,
+            db
+              .select({ seq: report.seq })
+              .from(report)
+              .where(and(eq(report.source, thread), gte(report.at, since), isNotNull(report.workRefs)))
+              .orderBy(desc(report.seq))
+              .limit(1),
+          ),
           allActivitySourcesMatch(db, readableActivitySources(db, viewer, allowed)),
         ),
       )
@@ -74,7 +85,7 @@ export async function reportedSessions(
           and(
             scope.tasks(getTableColumns(tasks)),
             inArray(tasks.id, ids),
-            project != null ? eq(tasks.project, project) : eq(tasks.id, task!),
+            sql`${tasks.id} in (${workScope(db, viewer, project, task)})`,
           ),
         )
         .all();

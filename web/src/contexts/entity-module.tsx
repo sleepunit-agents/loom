@@ -321,11 +321,26 @@ function Collection(props: ModuleProps) {
                 {target.part && (
                   <button onClick={() => open({ ...target, part: undefined })}>Back to record</button>
                 )}
-                {selected && ['ticket','project','change'].includes(target.kind) && <p>{String(selected.goal || selected.body || '')}</p>}
+                {selected && ['ticket', 'project', 'change'].includes(target.kind) && (
+                  <p>{String(selected.goal || selected.body || '')}</p>
+                )}
                 <div className="entityActions">
                   <button onClick={talk}>Discuss with Art</button>
                   {pin && <button onClick={pin}>Keep alongside other modules</button>}
                 </div>
+                {target.kind === 'change' && selected && (
+                  <>
+                    <p>
+                      {String(selected.state)} · Checks {String(selected.checks)} · Review{' '}
+                      {String(selected.review).replaceAll('_', ' ')} · Waiting on {String(selected.waitingOn)}
+                    </p>
+                    {typeof selected.url === 'string' && /^https:\/\/github\.com\//i.test(selected.url) && (
+                      <a href={selected.url} target="_blank" rel="noreferrer">
+                        Read on GitHub
+                      </a>
+                    )}
+                  </>
+                )}
                 {hasDetail(target.kind) ? (
                   <RichDetail target={{ ...target, id: target.id }} />
                 ) : !target.part && ['project', 'ticket', 'change'].includes(target.kind) ? (
@@ -388,12 +403,12 @@ function Collection(props: ModuleProps) {
           </>
         )}
       </section>
-                {target.kind === 'project' && target.id && selected && !target.part && (
-                  <ProjectHealth id={target.id} open={open} />
-                )}
-                {target.kind === 'ticket' && target.id && selected && !target.part && (
-                  <TicketWork target={{ ...target, id: target.id }} row={selected} open={open} />
-                )}
+      {target.kind === 'project' && target.id && selected && !target.part && (
+        <ProjectHealth id={target.id} open={open} />
+      )}
+      {target.kind === 'ticket' && target.id && selected && !target.part && (
+        <TicketWork target={{ ...target, id: target.id }} row={selected} open={open} />
+      )}
     </FieldContext.Provider>
   );
 }

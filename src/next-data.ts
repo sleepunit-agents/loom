@@ -1,3 +1,5 @@
+import {contextTicketFields} from './core/data/context-tickets.js';
+import {epicWorkFields} from './core/data/epic-work.js';
 import { workJobFields } from './core/data/work-jobs.js';
 import { assertReadSchema } from './core/data/read-schema.js';
 import { conversationTables, conversationVisibility, talkVisibility } from './core/data/conversation-visibility.js';
@@ -63,7 +65,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   const live = new DataLive(measure);
   const bridges = new BridgeQueries(db, () => clock.now());
   let activityRead = false, currentJobsRead = false;
-  const ownFields = { ...workJobFields(db, () => clock.now(), () => { if (!currentJobsRead) { currentJobsRead = true; schedule(); } }), ...backlogWindowFields(db), ...workBoardFields(db), ...changeReviewFields(db), ...bridgeSecretsReaderFields(db), ...bridgeQueryFields(bridges, viewer => {
+  const ownFields = { ...contextTicketFields(db), ...epicWorkFields(db), ...workJobFields(db, () => clock.now(), () => { if (!currentJobsRead) { currentJobsRead = true; schedule(); } }), ...backlogWindowFields(db), ...workBoardFields(db), ...changeReviewFields(db), ...bridgeSecretsReaderFields(db), ...bridgeQueryFields(bridges, viewer => {
     const visibility = bridgeSecretsVisibility(viewer);
     return { connections: visibility.bridgeConnections!(getTableColumns(bridgeConnections)), incoming: visibility.bridgeIncoming!(getTableColumns(bridgeIncoming)) };
   }, () => { activityRead = true; schedule(); }) };

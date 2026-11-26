@@ -1,5 +1,5 @@
 /** One registered Tasks command for browser, CLI and other outside callers. */
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { inbox, tasks } from './core/data/schema.js';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
@@ -27,7 +27,10 @@ export function registerSharedTaskCommands(operations: Operations, db: DataDatab
     run(ctx,input) {
       if(ctx.viewer.kind!=='member') throw new OperationError('denied','Member approval required');
       const actor=ctx.viewer;
-      const children=input.drafts.map(d=>service.create({...d,parent:input.parent,project:input.project,owner:actor},actor).id);
+      const source={kind:'context-split',id:JSON.stringify([actor.id,input.parent,ctx.receipt!.id])};
+      if(db.select({id:tasks.id}).from(tasks).where(and(eq(tasks.sourceKind,source.kind),eq(tasks.sourceId,source.id))).limit(1).get())
+        throw new OperationError('conflict','This split has already been approved');
+      const children=input.drafts.map(d=>service.create({...d,parent:input.parent,project:input.project,owner:actor,source},actor).id);
       service.comment(input.parent,'Approved split into '+children.join(' and '),actor);
       for(const id of [input.parent,...children]) ctx.changed('task',id);
       return {children};

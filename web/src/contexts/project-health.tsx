@@ -4,73 +4,47 @@ import { linkedEntity } from './entity-links';
 import { WorkJobs } from './work-jobs';
 import { useState } from 'react';
 import { useDataQuery } from '../data/graphql';
-import { ProjectChanges } from '../pieces/work/project-changes';
+import { ScopeWork, EpicProgress } from './epic-progress';
 import type { EntityTarget } from './entities';
-type Ticket = {
-  id: string;
-  title: string;
-  type: string;
-  status: string;
-  isReady: boolean;
-  isShelved: boolean;
-  assignee: string | null;
-  ask: string | null;
-};
-const query = `query ContextProjectHealth($id:String!){
-  project:projectsSingle(where:{id:{eq:$id}}){id tasksByProject(orderBy:{changedAt:{direction:desc,priority:1},id:{direction:asc,priority:0}}){id title type status isReady isShelved assignee ask}}
-}`;
+type Ticket = { id: string; title: string; assignee: string | null };
 const filters = ['In progress', 'Open', 'Blocked', 'Questions', 'Epics', 'Closed'] as const;
-function matches(t: Ticket, filter: (typeof filters)[number]) {
-  switch (filter) {
-    case 'Epics':
-      return t.type === 'epic';
-    case 'Questions':
-      return !!t.ask && t.status !== 'closed';
-    case 'Blocked':
-      return t.type !== 'epic' && t.status === 'open' && !t.isReady && !t.isShelved && !t.ask;
-    case 'Open':
-      return t.status === 'open';
-    case 'Closed':
-      return t.status === 'closed';
-    case 'In progress':
-      return t.status === 'in_progress';
-  }
-}
+const query =
+  'query ContextProjectTickets($id:String!,$group:String!,$offset:Int!){contextProjectTickets(id:$id,group:$group,offset:$offset){rows{id title assignee} counts{group count}}}';
 export function ProjectHealth({ id, open }: { id: string; open: (target: EntityTarget) => void }) {
-  const read = useDataQuery<{ project: { tasksByProject: Ticket[] } | null }>(query, { id });
-  const [filter, choose] = useState<(typeof filters)[number]>('In progress');
-  const [page, setPage] = useState(0);
-  const base = '/p/work/project/' + encodeURIComponent(id) + '/changes';
-  const [path, setPath] = useState(base);
-  const tickets = read.data?.project?.tasksByProject;
+  const [filter, choose] = useState<(typeof filters)[number]>('In progress'),
+    [page, setPage] = useState(0);
+  const read = useDataQuery<{
+    contextProjectTickets: { rows: Ticket[]; counts: { group: string; count: number }[] } | null;
+  }>(query, { id, group: filter, offset: page * 30 });
+  const tickets = read.data?.contextProjectTickets?.rows;
+  const count = (f: string) =>
+    read.data?.contextProjectTickets?.counts.find((item) => item.group === f)?.count || 0;
   return (
     <section className="workStatus">
-      <section><h2>Project health</h2>
-      {read.status !== 'live' || read.settling || !tickets ? (
-        <p>
-          {read.status === 'loading' || read.settling ? 'Reading project…' : 'Project status unavailable.'}
-        </p>
-      ) : (
-        <>
-          <div className="entityActions">
-            {filters.map((f) => (
-              <button
-                key={f}
-                aria-pressed={f === filter}
-                onClick={() => {
-                  choose(f);
-                  setPage(0);
-                }}
-              >
-                {f} · {tickets.filter((t) => matches(t, f)).length}
-              </button>
-            ))}
-          </div>
-          <ul>
-            {tickets
-              .filter((t) => matches(t, filter))
-              .slice(page * 30, (page + 1) * 30)
-              .map((t) => (
+      <section>
+        <h2>Project health</h2>
+        {read.status !== 'live' || read.settling || !tickets ? (
+          <p>
+            {read.status === 'loading' || read.settling ? 'Reading project…' : 'Project status unavailable.'}
+          </p>
+        ) : (
+          <>
+            <div className="entityActions">
+              {filters.map((f) => (
+                <button
+                  key={f}
+                  aria-pressed={f === filter}
+                  onClick={() => {
+                    choose(f);
+                    setPage(0);
+                  }}
+                >
+                  {f} · {count(f)}
+                </button>
+              ))}
+            </div>
+            <ul>
+              {tickets.map((t) => (
                 <li key={t.id}>
                   <button onClick={() => open({ kind: 'ticket', id: t.id })}>
                     {t.id} · {t.title}
@@ -78,14 +52,14 @@ export function ProjectHealth({ id, open }: { id: string; open: (target: EntityT
                   {t.assignee}
                 </li>
               ))}
-          </ul>
-          {!tickets.some((t) => matches(t, filter)) && <p>No matching tickets.</p>}
-          {page > 0 && <button onClick={() => setPage(page - 1)}>Previous tickets</button>}
-          {tickets.filter((t) => matches(t, filter)).length > (page + 1) * 30 && (
-            <button onClick={() => setPage(page + 1)}>More tickets</button>
-          )}
-        </>
-      )}
+            </ul>
+            {!tickets.length && <p>No matching tickets.</p>}
+            {page > 0 && <button onClick={() => setPage(page - 1)}>Previous tickets</button>}
+            {count(filter) > (page + 1) * 30 && (
+              <button onClick={() => setPage(page + 1)}>More tickets</button>
+            )}
+          </>
+        )}
       </section>
       <ProjectPosts
         project={id}
@@ -99,15 +73,8 @@ export function ProjectHealth({ id, open }: { id: string; open: (target: EntityT
         go={(path) => open({ kind: 'projectNotes', id: decodeURIComponent(path.split('/').at(-1)!) })}
       />
       <WorkJobs scope="project" id={id} />
-      <ProjectChanges
-        project={id}
-        path={path}
-        go={(next) => {
-          const match = /\/change\/([^?]+)/.exec(next);
-          if (match) open({ kind: 'change', id: decodeURIComponent(match[1]) });
-          else setPath(next);
-        }}
-      />
+      <EpicProgress project={id} open={open} />
+      <ScopeWork kind="project" id={id} open={open} />
     </section>
   );
 }
