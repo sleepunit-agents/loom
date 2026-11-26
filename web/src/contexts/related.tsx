@@ -32,7 +32,7 @@ const related = {
       'query Related($id:String!){projectClaimStates(project:$id){agent paused at} project:projectsSingle(where:{id:{eq:$id}}){projectMembersByProject{member}}}',
   },
   change: {
-    label: 'Review rounds',
+    label: 'Checks, participants and reviews',
     query:
       'query Related($id:String!){changeReviewHistory(change:$id){change job headCommit tier round requestedAt completedAt verdict findings} pull:changesSingle(where:{id:{eq:$id}}){changeChecksByChange{name state} changePeopleByChange{login role} changeTasksByChange{task}}}',
   },
@@ -59,7 +59,15 @@ const related = {
 export function Related({ target }: { target: EntityTarget }) {
   const entry = related[target.kind as keyof typeof related];
   const [open, setOpen] = useState(target.part?.[0] === 'related');
-  const result = useDataQuery<Record<string, unknown>>(
+  const result = useDataQuery<
+    Record<string, unknown> & {
+      pull?: {
+        changeChecksByChange: { name: string; state: string }[];
+        changePeopleByChange: { login: string; role: string }[];
+        changeTasksByChange: { task: string }[];
+      } | null;
+    }
+  >(
     entry?.query ?? '{__typename}',
     { id: target.id, ...(target.kind === 'post' ? { agent: target.scope } : {}) },
     { pause: !entry || !open },
@@ -70,7 +78,39 @@ export function Related({ target }: { target: EntityTarget }) {
       <summary>{entry.label}</summary>
       {open &&
         (result.status === 'live' && result.data ? (
-          <Facts row={result.data} section="related" />
+          target.kind === 'change' && result.data.pull ? (
+            <section>
+              <h3>Checks</h3>
+              {result.data.pull.changeChecksByChange.length ? (
+                <ul>
+                  {result.data.pull.changeChecksByChange.map((check) => (
+                    <li key={check.name}>
+                      {check.name} · {check.state}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>No recorded checks.</p>
+              )}
+              <h3>Assignees</h3>
+              <p>
+                {result.data.pull.changePeopleByChange
+                  .filter((p) => p.role === 'assignee')
+                  .map((p) => p.login)
+                  .join(', ') || 'Unassigned'}
+              </p>
+              <Facts
+                row={{
+                  participants: result.data.pull.changePeopleByChange.filter((p) => p.role !== 'assignee'),
+                  linkedTickets: result.data.pull.changeTasksByChange,
+                  reviewRounds: result.data.changeReviewHistory,
+                }}
+                section="related"
+              />
+            </section>
+          ) : (
+            <Facts row={result.data} section="related" />
+          )
         ) : (
           <p>{result.status === 'loading' ? 'Loading…' : 'Related records unavailable.'}</p>
         ))}
