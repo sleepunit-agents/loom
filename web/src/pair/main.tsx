@@ -8,6 +8,7 @@ import { newId } from '../data/id';
 import { useDeadline } from '../pieces/comms/use-deadline';
 import type { CommsMessage, CommsThread } from '../pieces/comms-view/model';
 import { Button } from './ui/button';
+import { Kbd } from './ui/kbd';
 import { Badge } from './ui/badge';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './ui/card';
 import { ArrowUpIcon, XIcon, MessageSquareIcon, CircleAlertIcon } from 'lucide-react';
@@ -70,7 +71,7 @@ const subjectQuery =
 const fields =
   'clientId run seq kind sender at words wordsKeepUntil inboxItem tool cardState delivery verdict notice{error} stepInfo{parent exit limit t0 t1} stepDetails{detail body result items{text state}}';
 const historyQuery =
-  'query PairLog($id:String!,$before:Int){thread:commsThread(id:$id){id member agent project working readSeq} rows:commsMessages(thread:$id,beforeSeq:$before,limit:50){' +
+  'query PairLog($id:String!,$before:Int){thread:commsThread(id:$id){id member agent project conversation working readSeq} rows:commsMessages(thread:$id,beforeSeq:$before,limit:50){' +
   fields +
   '}}';
 const defaultId = 't-2384';
@@ -153,6 +154,54 @@ function Entry({ m }: { m: EventMessage }) {
     </Message>
   );
 }
+type ThreadTail = {
+  last: number;
+  read: number;
+  working: boolean;
+  conversation: string;
+  tool: string | null;
+  update: boolean;
+  status: 'connecting' | 'live' | 'unavailable';
+};
+const emptyTail: ThreadTail = {
+  last: 0,
+  read: 0,
+  working: false,
+  conversation: '',
+  tool: null,
+  update: false,
+  status: 'connecting',
+};
+function quickPresence({
+  agent,
+  error,
+  ready,
+  busy,
+  quick,
+  tail,
+  question,
+}: {
+  agent: string | null;
+  error: string;
+  ready: boolean;
+  busy: boolean;
+  quick: boolean;
+  tail: ThreadTail;
+  question: boolean;
+}) {
+  if (!agent || tail.status === 'unavailable') return { mood: 'error', text: 'Conversation unavailable' };
+  if (error) return { mood: 'error', text: ready ? 'Delivery unconfirmed' : 'Couldn’t connect' };
+  if (!ready || tail.status === 'connecting') return { mood: 'thinking', text: 'Connecting…' };
+  if (busy) return { mood: 'thinking', text: 'Sending your message…' };
+  if (question) return { mood: 'waiting', text: 'Has a question for you' };
+  if (tail.working) {
+    const tool = tail.tool?.split(' → ').at(-1);
+    const text = tool === 'Terminal' ? 'Working in the terminal' : tool ? 'Working · ' + tool : 'Working';
+    return { mood: 'working', text };
+  }
+  if (tail.update) return { mood: 'talking', text: 'Has a reply for you' };
+  return quick ? { mood: 'thinking', text: 'Listening' } : { mood: 'idle', text: 'Here with you' };
+}
 type Feed = { thread: CommsThread | null; rows: CommsMessage[] };
 function TranscriptPage({
   id,
@@ -163,17 +212,27 @@ function TranscriptPage({
   id: string;
   before?: number;
   visible: boolean;
-  onTail?: (last: number, read: number, working: boolean) => void;
+  onTail?: (tail: ThreadTail) => void;
 }) {
   const read = useDataQuery<Feed>(historyQuery, { id, before: before ?? null });
   const [older, showOlder] = useState(false),
     rows = read.data?.rows || [];
   const now = useDeadline(rows.map((m) => m.wordsKeepUntil));
-  const last = rows.at(-1)?.seq || 0;
+  const latest = rows.at(-1);
+  const last = latest?.seq || 0;
+  const thread = read.data?.thread;
+  const status =
+    read.status === 'live' && thread ? 'live' : read.status === 'loading' ? 'connecting' : 'unavailable';
+  const working = !!thread?.working,
+    readSeq = thread?.readSeq || 0,
+    conversation = thread?.conversation || '';
+  const tool =
+    working && latest?.kind === 'card' && latest.cardState === 'running' ? latest.tool || null : null;
+  const update = rows.some((m) => m.seq > readSeq && m.kind === 'reply');
   useEffect(() => {
-    if (read.status === 'live' && read.data?.thread)
-      onTail?.(last, read.data.thread.readSeq, read.data.thread.working);
-  }, [last, read.status, read.data?.thread?.working, read.data?.thread?.readSeq, onTail]);
+    if (status !== 'connecting')
+      onTail?.({ last, read: readSeq, working, conversation, tool, update, status });
+  }, [last, readSeq, working, conversation, tool, update, status, onTail]);
   if (read.status !== 'live' || !read.data?.thread)
     return visible ? (
       <p role="status">{read.status === 'loading' ? 'Opening conversation…' : 'Conversation unavailable.'}</p>
@@ -228,15 +287,26 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
     [command, setCommand] = useState(''),
     [busy, sending] = useState(false),
     [error, fail] = useState('');
-  const [tail, setTail] = useState({ last: 0, read: 0, working: false });
+  const [tail, setTail] = useState<ThreadTail>(emptyTail);
   const composing = useRef(false),
     scroll = useRef<HTMLDivElement>(null),
     mark = useRef(0);
-  const receive = useRef((last: number, read: number, working: boolean) =>
-    setTail((p) =>
-      p.last === last && p.read === read && p.working === working ? p : { last, read, working },
-    ),
-  ).current;
+  const questions = useDataQuery<{ inboxItems: { answers: string | null }[] }>(
+    'query PairNeeds($conversation:String!){inboxItems(conversation:$conversation,state:"waiting",folder:"needs",limit:50){id answers}}',
+    { conversation: tail.conversation },
+    { pause: !tail.conversation },
+  );
+  const name = agent === 'art' ? 'Art' : agent || 'Agent';
+  const presence = quickPresence({
+    agent,
+    error,
+    ready,
+    busy,
+    quick,
+    tail,
+    question: questions.status === 'live' && !!questions.data?.inboxItems.some((item) => item.answers),
+  });
+  const launcher = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     let live = true;
     if (agent)
@@ -264,9 +334,11 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
     const key = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        setQuick((v) => !v);
+        if (document.activeElement?.closest('#quick-message')) closeQuick();
+        else setQuick((v) => !v);
       }
-      if (e.key === 'Escape') setQuick(false);
+      if (e.key === 'Escape' && document.activeElement?.closest('#quick-message')) closeQuick();
+      else if (e.key === 'Escape') setQuick(false);
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
@@ -304,6 +376,10 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
       observer.disconnect();
     };
   }, [open, tail.last, tail.read, id]);
+  function closeQuick() {
+    setQuick(false);
+    launcher.current?.focus();
+  }
   function toggle() {
     localStorage.setItem(pref, open ? 'hidden' : 'open');
     setOpen(!open);
@@ -324,7 +400,8 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
       sessionStorage.removeItem(receipt);
       if (bar) {
         setCommand((current) => (current.trim() === value ? '' : current));
-        setQuick(false);
+        if (document.activeElement?.closest('#quick-message')) closeQuick();
+        else setQuick(false);
       } else setWords((current) => (current.trim() === value ? '' : current));
     } catch {
       fail('Delivery unconfirmed. Send the same message to retry.');
@@ -383,45 +460,71 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
             </CardContent>
           </Card>
         </div>
-        <div className={quick ? 'z-20 mx-auto w-full max-w-md p-3' : 'mx-auto p-3'}>
-          {quick ? (
-            <form onSubmit={(e) => void send(e, true)}>
-              <InputGroup className="bg-background">
-                <InputGroupInput
-                  autoFocus
-                  aria-label="Quick message"
-                  placeholder="Ask Art…"
-                  value={command}
-                  onChange={(e) => setCommand(e.target.value)}
-                />
-                <InputGroupAddon align="inline-end">
-                  <InputGroupButton
-                    type="submit"
-                    variant="default"
-                    size="icon-sm"
-                    aria-label="Send quick message"
-                    disabled={busy || !ready || !command.trim()}
-                  >
-                    <ArrowUpIcon />
-                  </InputGroupButton>
-                  <InputGroupButton
-                    aria-label="Close quick bar"
-                    size="icon-sm"
-                    onClick={() => setQuick(false)}
-                  >
-                    <XIcon />
-                  </InputGroupButton>
-                </InputGroupAddon>
-              </InputGroup>
-            </form>
-          ) : (
-            <Button variant="outline" className="h-auto" onClick={() => setQuick(true)}>
+        <div className={'mx-auto max-w-full p-2 sm:p-3 ' + (quick ? 'z-20 w-full sm:max-w-2xl' : '')}>
+          <Item variant="outline" size="sm" className="bg-background">
+            <Button
+              ref={launcher}
+              variant="ghost"
+              aria-label={quick ? 'Close quick message' : `Talk to ${name}`}
+              aria-describedby="quick-presence"
+              aria-expanded={quick}
+              className="h-auto shrink p-0"
+              onClick={() => setQuick((v) => !v)}
+            >
               {agent === 'art' && (
-                <span aria-hidden="true" className="art-portrait" data-working={tail.working} />
+                <span aria-hidden="true" className="art-portrait shrink-0" data-mood={presence.mood} />
               )}
-              Quick bar
+              <span className="min-w-0 text-left">
+                <span className="block font-semibold">{name}</span>
+                <span
+                  id="quick-presence"
+                  role="status"
+                  className="block whitespace-normal text-sm font-normal text-muted-foreground"
+                >
+                  {presence.text}
+                </span>
+              </span>
+              {!quick && (
+                <span className="flex items-center gap-2">
+                  Talk to {name}
+                  <Kbd aria-hidden="true" className="hidden sm:inline-flex">
+                    {/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K'}
+                  </Kbd>
+                </span>
+              )}
             </Button>
-          )}
+            {quick ? (
+              <form
+                id="quick-message"
+                className="min-w-0 flex-[1_1_16rem]"
+                onSubmit={(e) => void send(e, true)}
+              >
+                <InputGroup className="bg-background">
+                  <InputGroupInput
+                    autoFocus
+                    aria-label="Quick message"
+                    placeholder={`Ask ${name}…`}
+                    value={command}
+                    onChange={(e) => setCommand(e.target.value)}
+                  />
+                  <InputGroupAddon align="inline-end">
+                    <InputGroupButton
+                      type="submit"
+                      variant="default"
+                      size="icon-sm"
+                      aria-label="Send quick message"
+                      disabled={busy || !ready || !command.trim()}
+                    >
+                      <ArrowUpIcon />
+                    </InputGroupButton>
+                    <InputGroupButton aria-label="Close quick bar" size="icon-sm" onClick={closeQuick}>
+                      <XIcon />
+                    </InputGroupButton>
+                  </InputGroupAddon>
+                </InputGroup>
+              </form>
+            ) : null}
+          </Item>
         </div>
       </section>
       <Button
@@ -464,7 +567,7 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
           <MessageScroller>
             <MessageScrollerViewport ref={scroll} preserveScrollOnPrepend aria-label="Conversation history">
               <MessageScrollerContent className="p-4">
-                {ready && <TranscriptPage id={id} visible={open} onTail={receive} />}
+                {ready && <TranscriptPage id={id} visible={open} onTail={setTail} />}
               </MessageScrollerContent>
             </MessageScrollerViewport>
             <MessageScrollerButton />

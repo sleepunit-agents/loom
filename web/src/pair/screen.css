@@ -51,8 +51,20 @@
   background: url('../contexts/sheet.png') 0 -840px no-repeat;
   image-rendering: pixelated;
 }
-.art-portrait[data-working='true'] {
+.art-portrait[data-mood='working'] {
   background-position-y: -336px;
+}
+.art-portrait[data-mood='thinking'] {
+  background-position-y: -1092px;
+}
+.art-portrait[data-mood='waiting'] {
+  background-position-y: -2184px;
+}
+.art-portrait[data-mood='talking'] {
+  background-position-y: -588px;
+}
+.art-portrait[data-mood='error'] {
+  background-position-y: -84px;
 }
 @media (min-width: 640px) {
   .art-portrait {
