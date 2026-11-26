@@ -594,9 +594,10 @@ function Workspace({
             onClick={() => showChat(!open)}
           >
             {agent === 'art' && (
-              <span className="pair-face rounded-lg bg-muted" aria-hidden="true">
-                <svg className="pair-contour" viewBox="0 0 50 50" preserveAspectRatio="none" aria-hidden="true">
-                  <rect x="1" y="1" width="48" height="48" rx="8" pathLength="100" />
+              <span className="pair-face rounded-lg bg-muted/40" aria-hidden="true">
+                <svg className="pair-contour" aria-hidden="true">
+                  <rect />
+                  <rect className="pair-contour-highlight" pathLength="100" />
                 </svg>
                 <span className="art-portrait shrink-0" data-mood={presence.mood} />
               </span>
