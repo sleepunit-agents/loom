@@ -10,7 +10,7 @@ import { useDeadline } from '../pieces/comms/use-deadline';
 import type { CommsMessage, CommsThread } from '../pieces/comms-view/model';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './ui/card';
+import { Card, CardHeader, CardTitle, CardAction, CardDescription, CardContent } from './ui/card';
 import { Attachment, AttachmentAction, AttachmentActions, AttachmentContent, AttachmentGroup, AttachmentTitle, AttachmentMedia } from "./ui/attachment";
 import { PaperclipIcon, ArrowUpIcon, XIcon, CircleAlertIcon } from 'lucide-react';
 import {
@@ -519,15 +519,20 @@ function Workspace({
         >
           {ticket ? (
             <Card className="mx-auto max-w-2xl">
-              <CardHeader>
-                <CardDescription>
-                  {ticket.project} · {ticket.id}
+              <CardHeader className="border-b">
+                <CardTitle className="min-w-0 text-lg leading-snug [overflow-wrap:anywhere]">
+                  <h1>{ticket.title}</h1>
+                </CardTitle>
+                <CardDescription className="[overflow-wrap:anywhere]">
+                  {[ticket.project, ticket.id, ticket.assignee && `Assigned to ${ticket.assignee}`]
+                    .filter(Boolean)
+                    .join(' · ')}
                 </CardDescription>
-                <CardTitle>{ticket.title}</CardTitle>
+                <CardAction>
+                  <Badge variant="secondary">{ticket.status.replaceAll('_', ' ')}</Badge>
+                </CardAction>
               </CardHeader>
               <CardContent className="space-y-4">
-                <Badge variant="secondary">{ticket.status.replaceAll('_', ' ')}</Badge>
-                {ticket.assignee && <p>Assigned to {ticket.assignee}</p>}
                 {Object.entries({
                   Goal: ticket.goal,
                   Why: ticket.why,
