@@ -276,14 +276,19 @@ export const entities = {
     title: 'agent',
     search: 'agent',
   }),
-  ticket: table('Tickets', 'tasks', 'id title status goal why doneWhen priority project owner createdAt', {
-    search: 'title id project',
-  }),
+  ticket: table(
+    'Tickets',
+    'tasks',
+    'id title type status goal why doneWhen description priority project ownerKind owner assigneeKind assignee ask ifYes ifNo answers askedByKind askedBy sourceKind sourceId specItem criterion closeReason createdByKind createdBy startedAt closedAt changedAt createdAt isReady isShelved',
+    {
+      search: 'title id project',
+    },
+  ),
   project: table('Projects', 'projects', 'id name goal lifecycle', { search: 'name id' }),
   change: table(
     'Pull requests',
     'changes',
-    'id repository number title body state authorLogin project checks review branch updatedAt',
+    'id repository number title body url state draft authorLogin project agent branch headCommit baseBranch checks review mergeable waitingOn openedAt updatedAt closedAt',
     { search: 'title id project repository' },
   ),
   approval: table(
@@ -492,12 +497,21 @@ export const entities = {
   ),
 } satisfies Record<string, EntityType>;
 export type EntityKind = keyof typeof entities;
-export type EntityTarget = { kind: EntityKind; id?: string; scope?: string; part?: string[] };
+export const ticketViews = { history: 'History', decision: 'Decisions' } as const;
+export type TicketView = keyof typeof ticketViews;
+export type EntityTarget = {
+  kind: EntityKind;
+  id?: string;
+  scope?: string;
+  part?: string[];
+  view?: TicketView;
+};
 export function entityName(target: EntityTarget) {
   return target.id
     ? (target.part
         ? target.part.filter((v) => !/^([0-9a-f]{64}|record|related|detail)$/.test(v)).join(' · ') + ' · '
         : '') +
+        (target.view ? ticketViews[target.view] + ' · ' : '') +
         target.kind +
         ' ' +
         target.id
@@ -505,6 +519,7 @@ export function entityName(target: EntityTarget) {
 }
 export function entityAddress(target: EntityTarget) {
   const params = new URLSearchParams();
+  if (target.view) params.set('view', target.view);
   if (target.scope) params.set('scope', target.scope);
   if (target.part) params.set('part', JSON.stringify(target.part));
   return (
@@ -520,6 +535,8 @@ export function entityAt(address: string): EntityTarget | null {
   const scope = new URLSearchParams(params).get('scope');
   if (!address.startsWith('entity/') || !Object.hasOwn(entities, kind)) return null;
   try {
+    const view = new URLSearchParams(params).get('view');
+    if (view && (kind !== 'ticket' || !id.length || !Object.hasOwn(ticketViews, view))) return null;
     const raw = new URLSearchParams(params).get('part');
     const part = raw ? JSON.parse(raw) : undefined;
     if (
@@ -529,6 +546,7 @@ export function entityAt(address: string): EntityTarget | null {
       return null;
     return {
       kind: kind as EntityKind,
+      ...(view ? { view: view as TicketView } : {}),
       ...(part ? { part } : {}),
       ...(scope ? { scope } : {}),
       ...(id.length ? { id: decodeURIComponent(id.join('/')) } : {}),
@@ -538,7 +556,7 @@ export function entityAt(address: string): EntityTarget | null {
   }
 }
 const aliases: Partial<Record<EntityKind, string[]>> = {
-  ticket: ['task', 'tasks'],
+  ticket: ['task', 'tasks', 'epic', 'epics'],
   change: ['pull request', 'pr', 'prs'],
   question: ['inbox', 'question', 'questions'],
   box: ['machine', 'machines'],

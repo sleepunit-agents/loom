@@ -334,3 +334,24 @@ it('counts each requested agent once for visible current work on its card', () =
   h.job('current');
   expect(view.agentsAtWork(['art','art'])).toEqual(['art']);
 });
+
+it('separates a claim from a visible linked runtime and drops it when the terminal heartbeat expires',async()=>{
+  const {workJobFields}=await import('../core/data/work-jobs.js');
+  const h=household();
+  h.db.insert(projectMembers).values({project:'pond',member:'alex'}).run();
+  h.talk('cv','terminal','th:work','Working',{member:'alex',project:'pond'});
+  h.job('live',{member:'alex',conversation:'cv',project:'pond',startedByKind:'terminal'});
+  h.task('related','Filed here',{project:'pond',sourceKind:'conversation',sourceId:'cv'});
+  h.task('claimed','Claimed elsewhere',{project:'pond'});
+  let now=Date.parse(at);
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:workJobFields(h.db,()=>now,()=>{})})});
+  const read=async(viewer:Viewer,query:string)=>{
+    const result=await graphql({schema,source:query,contextValue:{viewer}});
+    expect(result.errors).toBeUndefined();return result.data?.contextWorkJobs;
+  };
+  expect(await read(alex,'{contextWorkJobs(task:"related"){id basis}}')).toEqual([{id:'live',basis:'Ticket source conversation'}]);
+  expect(await read(alex,'{contextWorkJobs(task:"claimed"){id}}')).toEqual([]);
+  expect(await read(bo,'{contextWorkJobs(task:"related"){id}}')).toEqual([]);
+  now+=24*3600000;
+  expect(await read(alex,'{contextWorkJobs(task:"related"){id}}')).toEqual([]);
+});

@@ -332,3 +332,22 @@ it('finishes active work and preserves a scoped claim pause for a restarted prog
   expect(await(await write(second,'work/setProjectClaims',{...pause,paused:false,expectedRevision:1},'resume','sam')).json()).toMatchObject({ok:true,value:{paused:false,revision:2}});
   expect((await command({action:'claim',id:next.id},'next')).status).toBe(200);
 });
+
+it('splits a visible parent on approval, atomically, and replays the same children after a lost reply',async()=>{
+  const f=fixture();
+  const parent=f.root.services.tasks.create({...f.input,project:'pond'},{kind:'member',id:'sam'});
+  const drafts=['Inspect','Repair'].map(title=>({title,goal:title,why:'Pump',doneWhen:'Verified'}));
+  const call=(who:keyof typeof raw)=>f.root.http.request('http://loom/api/tasks/split',{method:'POST',
+    headers:{'content-type':'application/json',authorization:'Bearer '+raw[who]},
+    body:JSON.stringify({id:'approve-proposal',input:{parent:parent.id,project:'pond',drafts}})});
+  expect((await call('lee')).status).toBe(403);
+  f.client.exec("CREATE TRIGGER split_failure BEFORE INSERT ON tasks WHEN NEW.title='Repair' BEGIN SELECT RAISE(ABORT,'fixture'); END");
+  expect((await call('sam')).ok).toBe(false);
+  expect(f.db.select().from(tasks).all()).toHaveLength(1);
+  f.client.exec('DROP TRIGGER split_failure');
+  const approved=await (await call('sam')).json();
+  expect(approved).toEqual({ok:true,value:{children:['t-2','t-3']}});
+  expect(await (await call('sam')).json()).toEqual(approved);
+  expect(f.db.select().from(taskLinks).all().map(r=>r.dependsOn)).toEqual([parent.id,parent.id]);
+  expect(f.db.select().from(taskComments).all()).toHaveLength(1);
+});

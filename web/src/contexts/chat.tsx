@@ -1,3 +1,4 @@
+import { readSplit, splitPrefix } from './split';
 import { ChatReferences } from './chat-references';
 import { openLinkedEntity } from './entity-links';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
@@ -99,6 +100,9 @@ export function Chat({
   }
   function printable(m: CommsMessage) {
     const text = m.words?.replace(/^\[Loom context · [^\n]+\]\n/, '') || '';
+    if (m.kind === 'message' && text.startsWith(splitPrefix))
+      return text.split('\nRequest: ')[1] || 'Split this task';
+    if (m.kind === 'reply' && readSplit(text)) return 'I drafted two child tickets for you to review.';
     if (m.kind === 'message' && text.startsWith('Review the decision evidence for '))
       return 'Review the decision evidence.';
     if (m.kind === 'message' && text.startsWith('Interpret this workspace request: '))

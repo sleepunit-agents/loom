@@ -1,3 +1,5 @@
+import { SplitProposal, splitFor, splitPrompt } from './split';
+import { newId } from '../data/id';
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import Signin from '../shell/signin';
@@ -122,7 +124,7 @@ function BlueprintTicket({
   filed,
 }: {
   words: string;
-  ticket: Ticket;
+  ticket: Pick<Ticket, 'id' | 'projectRow'>;
   member: string;
   filed(): void;
 }) {
@@ -204,31 +206,30 @@ function Workspace({
     return ref ? entityAt(ref) : home ? { kind: 'ticket' } : null;
   });
   const recordViewKey = lastFocus + ':record';
-  const [recordView, setRecordView] = useState(() => (entity ? entityAddress(entity) : kept(recordViewKey)));
   const selectedAddress = entity ? entityAddress(entity) : '';
-  useEffect(() => {
-    if (selectedAddress) {
-      keep(recordViewKey, selectedAddress);
-      setRecordView(selectedAddress);
-    }
-  }, [selectedAddress, recordViewKey]);
-  const remembered = entity || entityAt(recordView);
-  const hasTicket = !!ticket;
-  const pinnedKey = 'context-modules:' + member + ':' + place.id;
-  const [pinned, setPinned] = useState<string[]>(() => {
+  function savedAddresses(key: string, fallback: string[]) {
     try {
-      const values = JSON.parse(kept(pinnedKey) || '[]');
-      return Array.isArray(values)
-        ? values.filter((v): v is string => typeof v === 'string' && !!entityAt(v)?.id)
-        : [];
+      const raw: unknown = JSON.parse(kept(key) || 'null');
+      if (Array.isArray(raw)) return raw.filter((v): v is string => typeof v === 'string' && !!entityAt(v));
     } catch {
-      return [];
+      /* Former or unavailable storage. */
     }
-  });
-  function keepModules(next: string[]) {
-    setPinned(next);
-    keep(pinnedKey, JSON.stringify(next));
+    return fallback.filter((v) => !!entityAt(v));
   }
+  const [recordViews, setRecordViews] = useState<string[]>(() =>
+    savedAddresses(recordViewKey + ':all', [kept(recordViewKey)]),
+  );
+  useEffect(() => {
+    if (selectedAddress)
+      setRecordViews((previous) => {
+        if (previous.includes(selectedAddress)) return previous;
+        const next = [...previous, selectedAddress];
+        keep(recordViewKey + ':all', JSON.stringify(next));
+        return next;
+      });
+  }, [selectedAddress, recordViewKey]);
+  const hasTicket = !!ticket;
+  const legacyPins = 'context-modules:' + member + ':' + place.id;
   const [excerpt, setExcerpt] = useState('');
   function openEntity(target: EntityTarget) {
     setEntity(target);
@@ -257,6 +258,41 @@ function Workspace({
     return home ? views : active && ['#decision', '#history'].includes(location.hash) ? [intent] : [];
   });
   const current = opened.includes(intent) ? intent : opened[0];
+  const viewKey = selectedAddress || current || 'context';
+  const pinsKey = legacyPins + ':views';
+  const [pinsByView, setPinsByView] = useState<Record<string, string[]>>(() => {
+    try {
+      const value = JSON.parse(kept(pinsKey) || 'null');
+      if (value && typeof value === 'object' && !Array.isArray(value))
+        return Object.fromEntries(
+          Object.entries(value).filter(
+            (entry): entry is [string, string[]] =>
+              Array.isArray(entry[1]) && entry[1].every((ref) => typeof ref === 'string' && entityAt(ref)),
+          ),
+        );
+    } catch {
+      /* Preserve readable legacy pins on the initial view. */
+    }
+    return { [viewKey]: savedAddresses(legacyPins, []) };
+  });
+  const pinned = pinsByView[viewKey] || [];
+  function keepModules(next: string[]) {
+    setPinsByView((previous) => {
+      const updated = { ...previous, [viewKey]: next };
+      keep(pinsKey, JSON.stringify(updated));
+      return updated;
+    });
+  }
+  function closeRecord(ref: string) {
+    const next = recordViews.filter((v) => v !== ref);
+    keep(recordViewKey + ':all', JSON.stringify(next));
+    setRecordViews(next);
+    if (selectedAddress === ref) {
+      const address = next.at(-1) || current || 'context';
+      setEntity(entityAt(address));
+      location.hash = address;
+    }
+  }
   function rememberViews(next: Intent[]) {
     setOpened(next);
     try {
@@ -344,7 +380,7 @@ function Workspace({
       }
       if (event.altKey && event.code === 'Backquote') {
         event.preventDefault();
-        const addresses = [...opened, ...(recordView ? [recordView] : [])];
+        const addresses = [...opened, ...recordViews];
         if (addresses.length > 1)
           location.hash =
             addresses[(addresses.indexOf(selectedAddress || current || '') + 1) % addresses.length];
@@ -359,7 +395,7 @@ function Workspace({
       window.removeEventListener('hashchange', change);
       window.removeEventListener('keydown', key);
     };
-  }, [opened, current, active, hasTicket, recordView, selectedAddress]);
+  }, [opened, current, active, hasTicket, recordViews, selectedAddress]);
   useEffect(() => {
     if (bar) input.current?.focus();
   }, [bar]);
@@ -744,15 +780,124 @@ function Workspace({
   useEffect(() => {
     keep(lastFocus, focusKey);
     report(place.id, {
-      views: [...opened.map((v) => labels[v]), ...(entity ? [entityName(entity)] : [])],
+      views: [...opened.map((v) => labels[v]), ...recordViews.map((ref) => entityName(entityAt(ref)!))],
       focus: focusKey,
       reason,
       origin,
       event: reply?.seq || 0,
       question: discussion.questions[0],
     });
-  }, [lastFocus, focusKey, opened, reason, origin, reply?.seq, discussion.questions[0], place.id, report]);
+  }, [
+    lastFocus,
+    focusKey,
+    opened,
+    recordViews,
+    reason,
+    origin,
+    reply?.seq,
+    discussion.questions[0],
+    place.id,
+    report,
+  ]);
+  const focusedId = entity
+    ? entity.kind === 'ticket'
+      ? entity.id
+      : undefined
+    : current
+      ? ticket?.id
+      : undefined;
+  const subjectRead = useDataQuery<{ subject: { id: string; project: string | null } | null }>(
+    'query ContextSubject($id:String!){subject:tasksSingle(where:{id:{eq:$id}}){id project}}',
+    { id: focusedId || '' },
+    { pause: !active || !focusedId },
+  );
+  const subject =
+    subjectRead.status === 'live' && subjectRead.data?.subject?.id === focusedId
+      ? subjectRead.data?.subject
+      : null;
+  const latestProject =
+    entity?.kind === 'project' ? entity.id : subject?.project || (home ? homeProject : undefined);
+  const latestTicket = useDataQuery<{ tasks: { id: string }[] }>(
+    'query ContextLatest($project:String!){tasks(where:{project:{eq:$project}},orderBy:{createdAt:{direction:desc,priority:1},id:{direction:desc,priority:0}},limit:1){id}}',
+    { project: latestProject || '' },
+    { pause: !active || !latestProject },
+  );
+  const split = subject ? splitFor(discussion.messages, focusKey, agent) : undefined;
+  const [routingMiss, setRoutingMiss] = useState<{ words: string; ref: string } | null>(null);
+  const [routeError, setRouteError] = useState('');
   async function sendChat(words: string) {
+    const text = words.trim().replace(/[?.!]+$/, '');
+    setRouteError('');
+    const latest =
+      /^(?:show|open|find) (?:me )?(?:the )?(?:latest|newest|most recent) (?:task|ticket)(?: in (.+))?$/i.exec(
+        text,
+      );
+    if (latest && (!latest[1] || latest[1].toLowerCase() === latestProject?.toLowerCase())) {
+      const id = latestTicket.status === 'live' && latestTicket.data?.tasks[0]?.id;
+      if (!id) {
+        setRouteError(
+          latestTicket.status === 'live'
+            ? 'No visible tickets in this project.'
+            : 'Project tickets unavailable.',
+        );
+        return false;
+      }
+      openEntity({ kind: 'ticket', id });
+      record(words);
+      return true;
+    }
+    if (
+      /^(?:i think we should |let.s |please )?split (?:this|the task|this task)(?: in(?:to)? .*)?$/i.test(
+        text,
+      )
+    ) {
+      if (!subject) {
+        setRouteError('Open a ticket to split it.');
+        return false;
+      }
+      return discussion.send(
+        splitPrompt(words, newId(), subject.id),
+        { ticket: subject.id, view: focusKey },
+        () => {},
+      );
+    }
+    if (
+      /^(?:(?:how.s|how is) (?:the |this )?project (?:doing|looking)(?: overall)?|(?:open |show (?:me )?)?(?:the )?project health)$/i.test(
+        text,
+      )
+    ) {
+      const id = entity?.kind === 'project' ? entity.id : subject?.project;
+      if (!id) {
+        setRouteError('Open a project or one of its tickets first.');
+        return false;
+      }
+      openEntity({ kind: 'project', id });
+      record(words);
+      return true;
+    }
+    const explicit = text.match(/\bt-\d+\b/i)?.[0].toLowerCase();
+    if (
+      (subject || explicit) &&
+      /^(?:show |open |what happened|history|what needs a decision|decisions)/i.test(text) &&
+      /history|what happened|decision/i.test(text)
+    ) {
+      openEntity({
+        kind: 'ticket',
+        id: explicit || subject!.id,
+        view: /history|happened/i.test(text) ? 'history' : 'decision',
+      });
+      record(words);
+      return true;
+    }
+    if (
+      subject &&
+      /^(?:add|include|let.s (?:add|see)|show me) .*(?:history|past prs|last batch of prs)/i.test(text)
+    ) {
+      const module = entityAddress({ kind: 'ticket', id: subject.id, view: 'history' });
+      keepModules([...new Set([...pinned, module])]);
+      record(words);
+      return true;
+    }
     const add = /^(?:add|keep) (.+?) (?:alongside|as a module|beside this view)[.!]?$/i.exec(words.trim());
     if (add) {
       const module = add[1].toLowerCase() === 'this' ? entity : entityRequest('open ' + add[1]);
@@ -766,6 +911,18 @@ function Workspace({
     if (requested) {
       openEntity(requested);
       record(words);
+      return true;
+    }
+    if (/^(show |open |find |list |bring up )/i.test(text)) {
+      const target =
+        entity || (subject ? { kind: 'ticket' as const, id: subject.id } : { kind: 'ticket' as const });
+      if (!entity) openEntity(target);
+      const ref = entityAddress(target);
+      if (kept(lastFocus + ':confirmed:' + (await phraseKey(words))) !== ref) setRoutingMiss({ words, ref });
+      return true;
+    }
+    if (!entity && /^(?:add|include|remove|hide) /i.test(text)) {
+      await route(words);
       return true;
     }
     const view = current;
@@ -782,7 +939,9 @@ function Workspace({
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          route(command);
+          void sendChat(command).then((ok) => {
+            if (ok) closeBar();
+          });
         }}
       >
         <label htmlFor={'intent-' + place.id}>What would you like to see?</label>
@@ -801,23 +960,16 @@ function Workspace({
               .filter((k) => available(k) && !!current && !visible(current).includes(k))
               .map((k) => 'Add ' + moduleLabels[k]),
           ].map((s) => (
-            <button type="button" key={s} onClick={() => route(s)}>
+            <button type="button" key={s} onClick={() => void sendChat(s)}>
               {s}
             </button>
           ))}
         </div>
         {command.trim() && (
           <div>
-            <button type="submit">Change this view</button>{' '}
-            {agent && (
-              <button
-                type="button"
-                disabled={discussion.busy}
-                onClick={() => void ask(command, current || intent)}
-              >
-                Ask {agent}
-              </button>
-            )}
+            <button type="submit" disabled={discussion.busy}>
+              Send
+            </button>
           </div>
         )}
         {discussion.error && <p role="alert">{discussion.error}</p>}
@@ -838,24 +990,25 @@ function Workspace({
               </button>
             </span>
           ))}
-          <button
-            aria-current={entity ? 'page' : undefined}
-            onClick={() => openEntity(remembered || { kind: 'ticket' })}
-          >
-            {remembered ? entityName(remembered) : 'Explore records'}
-          </button>
-          {entity && (
-            <button
-              aria-label="Close record view"
-              onClick={() => {
-                keep(recordViewKey, '');
-                setRecordView('');
-                setEntity(null);
-                location.hash = current || 'context';
-              }}
-            >
-              ×
-            </button>
+          {recordViews.map((ref) => {
+            const target = entityAt(ref)!;
+            return (
+              <span className="viewTab" key={ref}>
+                <a href={'#' + ref} aria-current={selectedAddress === ref ? 'page' : undefined}>
+                  {entityName(target)}
+                </a>
+                <button
+                  className="remove"
+                  aria-label={'Close ' + entityName(target)}
+                  onClick={() => closeRecord(ref)}
+                >
+                  ×
+                </button>
+              </span>
+            );
+          })}
+          {!recordViews.length && (
+            <button onClick={() => openEntity({ kind: 'ticket' })}>Explore records</button>
           )}
           {opened.length === 2 && <button onClick={() => openBar(true)}>View options</button>}
           {ticket && opened.length < 2 && <button onClick={() => openBar(true)}>Open view</button>}
@@ -874,6 +1027,63 @@ function Workspace({
                     : undefined
                 }
                 talk={() => showChat(true)}
+              />
+            )}
+            {active && routeError && <p role="alert">{routeError}</p>}
+            {active && routingMiss?.ref === focusKey && (
+              <section className="module near">
+                <h3>Is this the view you meant?</h3>
+                <p>{routingMiss.words}</p>
+                <button
+                  onClick={async () => {
+                    const { words, ref } = routingMiss;
+                    keep(lastFocus + ':confirmed:' + (await phraseKey(words)), ref);
+                    setRoutingMiss(null);
+                    record('Confirmed route for ' + words);
+                  }}
+                >
+                  Route is correct
+                </button>
+                <button
+                  onClick={() => {
+                    openEntity(
+                      subject?.project ? { kind: 'project', id: subject.project } : { kind: 'project' },
+                    );
+                    setRoutingMiss(null);
+                  }}
+                >
+                  Try another view
+                </button>
+                <BlueprintTicket
+                  words={routingMiss.words}
+                  ticket={{
+                    id: subject?.id || focusKey,
+                    projectRow: subject?.project ? { id: subject.project, name: subject.project } : null,
+                  }}
+                  member={member}
+                  filed={() => {
+                    record('Filed blueprint ticket');
+                    setRoutingMiss(null);
+                  }}
+                />
+                <button aria-label="Dismiss routing question" onClick={() => setRoutingMiss(null)}>
+                  ×
+                </button>
+              </section>
+            )}
+            {active && subject && split && (
+              <SplitProposal
+                key={split.id}
+                id={split.id}
+                initial={split.drafts}
+                parent={subject.id}
+                project={subject.project}
+                working={discussion.working}
+                open={openEntity}
+                receipt={(words) => {
+                  record(words);
+                  void discussion.send(words, { ticket: subject.id, view: focusKey }, () => {});
+                }}
               />
             )}
             {!entity && !opened.length && (

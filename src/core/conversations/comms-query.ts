@@ -33,7 +33,7 @@ export class CommsQueries {
     return allowed;
   }
   activityFields() {
-    return agentPostFields(this.db, this.key, viewer => this.allowed(viewer));
+    return agentPostFields(this.db, this.key, viewer => this.allowed(viewer),this.now);
   }
   archivedHistory() {
     return archivedQuestionsField(this.db, this.key, viewer => this.allowed(viewer), this.now);

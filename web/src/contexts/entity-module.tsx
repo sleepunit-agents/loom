@@ -1,3 +1,5 @@
+import { ProjectHealth } from './project-health';
+import { TicketWork } from './ticket-work';
 import { useLayoutEffect, useState } from 'react';
 import { useDataQuery } from '../data/graphql';
 import {
@@ -319,12 +321,18 @@ function Collection(props: ModuleProps) {
                 {target.part && (
                   <button onClick={() => open({ ...target, part: undefined })}>Back to record</button>
                 )}
+                {selected && ['ticket','project','change'].includes(target.kind) && <p>{String(selected.goal || selected.body || '')}</p>}
                 <div className="entityActions">
                   <button onClick={talk}>Discuss with Art</button>
                   {pin && <button onClick={pin}>Keep alongside other modules</button>}
                 </div>
                 {hasDetail(target.kind) ? (
                   <RichDetail target={{ ...target, id: target.id }} />
+                ) : !target.part && ['project', 'ticket', 'change'].includes(target.kind) ? (
+                  <details>
+                    <summary>All record fields</summary>
+                    <Facts row={selected!} />
+                  </details>
                 ) : (
                   <Facts row={selected!} />
                 )}
@@ -380,6 +388,12 @@ function Collection(props: ModuleProps) {
           </>
         )}
       </section>
+                {target.kind === 'project' && target.id && selected && !target.part && (
+                  <ProjectHealth id={target.id} open={open} />
+                )}
+                {target.kind === 'ticket' && target.id && selected && !target.part && (
+                  <TicketWork target={{ ...target, id: target.id }} row={selected} open={open} />
+                )}
     </FieldContext.Provider>
   );
 }

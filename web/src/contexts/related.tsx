@@ -24,17 +24,17 @@ const related = {
   ticket: {
     label: 'Reviews and linked work',
     query:
-      'query Related($id:String!){taskReviewHistory(task:$id){change job headCommit tier round requestedAt completedAt verdict findings} taskGithubReviews(task:$id){id change login submittedAt state headCommit body} task:tasksSingle(where:{id:{eq:$id}}){description ask ifYes ifNo closeReason taskCommentsByTask(orderBy:{seq:{direction:desc,priority:0}},limit:30){seq actor at text} taskLinksByTask{dependsOn type} changeTasksByTask {change}}}',
+      'query Related($id:String!){taskReviewHistory(task:$id){change job headCommit tier round requestedAt completedAt verdict findings} taskGithubReviews(task:$id){id change login submittedAt state headCommit body} task:tasksSingle(where:{id:{eq:$id}}){description ask ifYes ifNo closeReason taskLinksByTask{dependsOn type} changeTasksByTask {change}}}',
   },
   project: {
     label: 'Project work',
     query:
-      'query Related($id:String!){projectClaimStates(project:$id){agent paused at} project:projectsSingle(where:{id:{eq:$id}}){projectMembersByProject{member} tasksByProject(limit:30){id title status}}}',
+      'query Related($id:String!){projectClaimStates(project:$id){agent paused at} project:projectsSingle(where:{id:{eq:$id}}){projectMembersByProject{member}}}',
   },
   change: {
     label: 'Review rounds',
     query:
-      'query Related($id:String!){changeReviewHistory(change:$id){change job headCommit tier round verdict findings}}',
+      'query Related($id:String!){changeReviewHistory(change:$id){change job headCommit tier round requestedAt completedAt verdict findings} pull:changesSingle(where:{id:{eq:$id}}){changeChecksByChange{name state} changePeopleByChange{login role} changeTasksByChange{task}}}',
   },
   trigger: {
     label: 'Program, journal and runs',
