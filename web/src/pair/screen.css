@@ -393,6 +393,14 @@
   background: color-mix(in srgb, var(--chat-base) 72%, var(--canvas-cool));
   box-shadow: inset 0 1px var(--rim), 0 3px 9px -3px var(--contact);
 }
+.pair-chat-body {
+  --secondary: light-dark(#d7dbd9, #434952);
+  --border: light-dark(#acb2b0, #626974);
+  --input: var(--border);
+}
+.pair-chat-body [data-variant='secondary'] > [data-slot='bubble-content'] {
+  border-color: var(--border);
+}
 .pair-chat-body > form {
   position: relative;
   background: color-mix(in srgb, var(--chat-base) 65%, var(--canvas-warm));
