@@ -40,8 +40,8 @@ const OtherGrammar = lazy(() =>
     .catch(() => plain),
 );
 const ColoredTokens = lazy(() =>
-  Promise.all([import('highlight.js/lib/common'), import('highlight.js/styles/github.css')])
-    .then(([{ default: common }]) => {
+  import('highlight.js/lib/common')
+    .then(({ default: common }) => {
       const CommonTokens = tokenRenderer(common);
       return {
         default: (props: TokenProps) =>

@@ -460,46 +460,66 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
             </CardContent>
           </Card>
         </div>
-        <div className={'mx-auto max-w-full p-2 sm:p-3 ' + (quick ? 'z-20 w-full sm:max-w-2xl' : '')}>
-          <Item variant="outline" size="sm" className="bg-background">
-            <Button
-              ref={launcher}
-              variant="ghost"
-              aria-label={quick ? 'Close quick message' : `Talk to ${name}`}
-              aria-describedby="quick-presence"
-              aria-expanded={quick}
-              className="h-auto shrink p-0"
-              onClick={() => setQuick((v) => !v)}
-            >
+        <div
+          className={'mx-auto max-w-full p-2 sm:p-3 ' + (quick ? '@container z-20 w-full sm:max-w-lg' : '')}
+        >
+          <Item
+            variant="outline"
+            className={
+              'relative grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-0 rounded-3xl bg-card p-2 text-card-foreground shadow-md ' +
+              (quick ? '@min-[25rem]:grid-cols-[auto_minmax(0,1fr)_auto]' : '')
+            }
+          >
+            <div className="flex min-w-0 items-center gap-3 pr-1 @min-[25rem]:max-w-48">
               {agent === 'art' && (
-                <span aria-hidden="true" className="art-portrait shrink-0" data-mood={presence.mood} />
+                <span className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-muted sm:size-16">
+                  <span
+                    aria-hidden="true"
+                    className="art-portrait shrink-0 scale-125"
+                    data-mood={presence.mood}
+                  />
+                </span>
               )}
-              <span className="min-w-0 text-left">
-                <span className="block font-semibold">{name}</span>
-                <span
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold leading-tight">{name}</div>
+                <div
                   id="quick-presence"
                   role="status"
-                  className="block whitespace-normal text-sm font-normal text-muted-foreground"
+                  className="mt-1 wrap-anywhere text-xs leading-snug text-muted-foreground"
                 >
                   {presence.text}
-                </span>
-              </span>
+                </div>
+              </div>
               {!quick && (
-                <span className="flex items-center gap-2">
-                  Talk to {name}
-                  <Kbd aria-hidden="true" className="hidden sm:inline-flex">
-                    {/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K'}
-                  </Kbd>
-                </span>
+                <Kbd aria-hidden="true" className="ms-2 hidden sm:inline-flex">
+                  {/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K'}
+                </Kbd>
               )}
+            </div>
+            <Button
+              ref={launcher}
+              type="button"
+              variant={quick ? 'ghost' : 'secondary'}
+              size="icon-sm"
+              title={quick ? 'Close quick bar' : `Talk to ${name}`}
+              aria-label={quick ? 'Close quick bar' : `Talk to ${name}`}
+              aria-describedby="quick-presence"
+              aria-expanded={quick}
+              className={
+                'col-start-2 row-start-1 mr-1 rounded-full ' +
+                (quick ? '@min-[25rem]:col-start-3' : 'after:absolute after:inset-0 after:rounded-3xl')
+              }
+              onClick={() => setQuick((v) => !v)}
+            >
+              {quick ? <XIcon /> : <MessageSquareIcon />}
             </Button>
             {quick ? (
               <form
                 id="quick-message"
-                className="min-w-0 flex-[1_1_16rem]"
+                className="col-span-full mt-2 min-w-0 @min-[25rem]:col-span-1 @min-[25rem]:col-start-2 @min-[25rem]:row-start-1 @min-[25rem]:mt-0"
                 onSubmit={(e) => void send(e, true)}
               >
-                <InputGroup className="bg-background">
+                <InputGroup className="rounded-2xl bg-background">
                   <InputGroupInput
                     autoFocus
                     aria-label="Quick message"
@@ -516,9 +536,6 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
                       disabled={busy || !ready || !command.trim()}
                     >
                       <ArrowUpIcon />
-                    </InputGroupButton>
-                    <InputGroupButton aria-label="Close quick bar" size="icon-sm" onClick={closeQuick}>
-                      <XIcon />
                     </InputGroupButton>
                   </InputGroupAddon>
                 </InputGroup>

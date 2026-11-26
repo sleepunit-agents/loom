@@ -1,40 +1,45 @@
 @import 'tailwindcss' source(none);
+@import 'highlight.js/styles/github.css' (prefers-color-scheme: light);
+@import 'highlight.js/styles/github-dark.css' (prefers-color-scheme: dark);
 @source "./";
 @theme inline {
-  --color-background: oklch(1 0 0);
-  --color-foreground: oklch(0.145 0 0);
-  --color-card: oklch(1 0 0);
-  --color-card-foreground: oklch(0.145 0 0);
-  --color-popover: oklch(1 0 0);
-  --color-popover-foreground: oklch(0.145 0 0);
-  --color-primary: oklch(0.205 0 0);
-  --color-primary-foreground: oklch(0.985 0 0);
-  --color-secondary: oklch(0.97 0 0);
-  --color-secondary-foreground: oklch(0.205 0 0);
-  --color-muted: oklch(0.97 0 0);
-  --color-muted-foreground: oklch(0.556 0 0);
-  --color-accent: oklch(0.97 0 0);
-  --color-accent-foreground: oklch(0.205 0 0);
-  --color-destructive: oklch(0.577 0.245 27.325);
-  --color-border: oklch(0.922 0 0);
-  --color-input: oklch(0.922 0 0);
-  --color-ring: oklch(0.708 0 0);
+  --color-background: light-dark(oklch(1 0 0), oklch(0.145 0 0));
+  --color-foreground: light-dark(oklch(0.145 0 0), oklch(0.985 0 0));
+  --color-card: light-dark(oklch(1 0 0), oklch(0.205 0 0));
+  --color-card-foreground: light-dark(oklch(0.145 0 0), oklch(0.985 0 0));
+  --color-popover: light-dark(oklch(1 0 0), oklch(0.205 0 0));
+  --color-popover-foreground: light-dark(oklch(0.145 0 0), oklch(0.985 0 0));
+  --color-primary: light-dark(oklch(0.205 0 0), oklch(0.922 0 0));
+  --color-primary-foreground: light-dark(oklch(0.985 0 0), oklch(0.205 0 0));
+  --color-secondary: light-dark(oklch(0.97 0 0), oklch(0.269 0 0));
+  --color-secondary-foreground: light-dark(oklch(0.205 0 0), oklch(0.985 0 0));
+  --color-muted: light-dark(oklch(0.97 0 0), oklch(0.269 0 0));
+  --color-muted-foreground: light-dark(oklch(0.556 0 0), oklch(0.708 0 0));
+  --color-accent: light-dark(oklch(0.97 0 0), oklch(0.269 0 0));
+  --color-accent-foreground: light-dark(oklch(0.205 0 0), oklch(0.985 0 0));
+  --color-destructive: light-dark(oklch(0.577 0.245 27.325), oklch(0.704 0.191 22.216));
+  --color-border: light-dark(oklch(0.922 0 0), oklch(1 0 0 / 10%));
+  --color-input: light-dark(oklch(0.922 0 0), oklch(1 0 0 / 15%));
+  --color-ring: light-dark(oklch(0.708 0 0), oklch(0.556 0 0));
   --color-chart-1: oklch(0.87 0 0);
   --color-chart-2: oklch(0.556 0 0);
   --color-chart-3: oklch(0.439 0 0);
   --color-chart-4: oklch(0.371 0 0);
   --color-chart-5: oklch(0.269 0 0);
   --color-radius: 0.625rem;
-  --color-sidebar: oklch(0.985 0 0);
-  --color-sidebar-foreground: oklch(0.145 0 0);
-  --color-sidebar-primary: oklch(0.205 0 0);
-  --color-sidebar-primary-foreground: oklch(0.985 0 0);
-  --color-sidebar-accent: oklch(0.97 0 0);
-  --color-sidebar-accent-foreground: oklch(0.205 0 0);
-  --color-sidebar-border: oklch(0.922 0 0);
-  --color-sidebar-ring: oklch(0.708 0 0);
+  --color-sidebar: light-dark(oklch(0.985 0 0), oklch(0.205 0 0));
+  --color-sidebar-foreground: light-dark(oklch(0.145 0 0), oklch(0.985 0 0));
+  --color-sidebar-primary: light-dark(oklch(0.205 0 0), oklch(0.488 0.243 264.376));
+  --color-sidebar-primary-foreground: light-dark(oklch(0.985 0 0), oklch(0.985 0 0));
+  --color-sidebar-accent: light-dark(oklch(0.97 0 0), oklch(0.269 0 0));
+  --color-sidebar-accent-foreground: light-dark(oklch(0.205 0 0), oklch(0.985 0 0));
+  --color-sidebar-border: light-dark(oklch(0.922 0 0), oklch(1 0 0 / 10%));
+  --color-sidebar-ring: light-dark(oklch(0.708 0 0), oklch(0.556 0 0));
 }
 @layer base {
+  :root {
+    color-scheme: light dark;
+  }
   * {
     @apply border-border;
   }
