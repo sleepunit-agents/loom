@@ -629,7 +629,7 @@ function Workspace({
         inert={!open}
         className={
           // Slide the dock while keeping the transcript at its final reading width.
-          'fixed inset-y-0 right-0 z-10 flex shrink-0 flex-col overflow-hidden bg-background ' +
+          'pair-chat fixed inset-y-0 right-0 z-10 flex shrink-0 flex-col overflow-hidden ' +
           '[--chat-width:min(90vw,32rem)] sm:static sm:[--chat-width:min(44vw,36rem)] ' +
           '*:w-[calc(var(--chat-width)-1px)] transition-[width] motion-reduce:transition-none ' +
           (open ? 'w-(--chat-width) border-l' : 'w-0')
