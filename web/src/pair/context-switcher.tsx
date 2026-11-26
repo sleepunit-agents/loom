@@ -18,7 +18,6 @@ export type Place = {
   thread: string;
   name: string;
   agent: string | null;
-  detail: string;
   row?: ContextRow;
 };
 type Page = { rows: ContextRow[]; status: DirectoryStatus };
@@ -99,7 +98,6 @@ export function ContextSwitcher({
       thread: row.id,
       name: row.title.startsWith(contextTitlePrefix) ? row.title.slice(contextTitlePrefix.length) : row.title,
       agent: row.agent,
-      detail: 'With ' + (row.agent === 'art' ? 'Art' : row.agent),
       row,
     });
   }
@@ -330,7 +328,7 @@ export function ContextSwitcher({
                 <span className="min-w-0 flex-1">
                   <span className="block overflow-clip text-ellipsis whitespace-nowrap">{p.name}</span>
                   <span className="block overflow-clip text-ellipsis whitespace-nowrap text-xs font-normal text-muted-foreground">
-                    {signals[p.id] || (p.row?.working ? 'Working' : p.detail)}
+                    {signals[p.id] || (p.row?.working ? 'Working' : offline ? 'Status unavailable' : loaded ? 'Quiet' : 'Connecting…')}
                   </span>
                 </span>
                 {selected === p.id && <CheckIcon aria-hidden="true" />}

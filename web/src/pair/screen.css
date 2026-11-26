@@ -515,3 +515,42 @@
   box-shadow: var(--floating-shadow);
 }
 .pair-prompt[data-question] [data-slot='input-group'] { box-shadow: none; }
+
+.pair-canvas { container-type: inline-size; }
+.pair-canvas-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6rem clamp(1rem, 4cqw, 4rem) 2rem;
+  display: flex;
+  flex-direction: column;
+}
+.pair-view-ring { margin-bottom: 1.25rem; }
+.pair-zones {
+  display: grid;
+  gap: 1.75rem;
+  width: 100%;
+  max-width: 42rem;
+  margin-inline: auto;
+  margin-block: auto;
+}
+.pair-secondary { align-self: end; }
+@container (min-width: 54rem) {
+  .pair-zones {
+    grid-template-columns: minmax(0, 2fr) minmax(13rem, 1fr);
+    gap: clamp(2rem, 4cqw, 4rem);
+    max-width: 66rem;
+    margin-inline: 4% auto;
+    width: 96%;
+  }
+}
+.pair-id, .pair-workspace a[href^='?ticket='] {
+  font-family: var(--font-mono);
+  text-decoration: none;
+}
+.pair-id:hover, .pair-workspace a[href^='?ticket=']:is(:hover,:focus-visible) { text-decoration: underline; }
+@media (hover: hover) and (pointer: fine) {
+  [data-slot='message']:not(:hover,:focus-within) .pair-run-details:not(:has([data-state='open'])) {
+    opacity: 0;
+  }
+}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -12,7 +12,8 @@ import { Portrait } from '../contexts/portrait';
 import type { FaceState } from '../face';
 import type { IdleTiming } from '../contexts/portrait-player';
 import { Button } from './ui/button';
-import { Badge } from './ui/badge';
+import { detailsQuery, ticketView, TicketCanvas, viewKey, viewLabel, type Ticket, type View, type SecondaryState } from './ticket-view';
+import { useViewRing } from './view-ring';
 import { ModuleCard } from './module-card';
 import { Attachment, AttachmentAction, AttachmentActions, AttachmentContent, AttachmentGroup, AttachmentTitle, AttachmentMedia } from "./ui/attachment";
 import { PaperclipIcon, ArrowUpIcon, XIcon, CircleAlertIcon } from 'lucide-react';
@@ -23,7 +24,6 @@ import {
   InputGroupTextarea,
   InputGroupText,
 } from './ui/input-group';
-import { Item, ItemContent, ItemTitle, ItemDescription } from './ui/item';
 import { Alert, AlertDescription } from './ui/alert';
 import {
   MessageScrollerProvider,
@@ -51,29 +51,11 @@ import { QuickBar } from './quick-bar';
 import { ContextSwitcher, type Place } from './context-switcher';
 import './screen.css';
 
-interface Ticket {
-  id: string;
-  title: string;
-  project: string | null;
-  status: string;
-  goal: string;
-  why: string;
-  doneWhen: string;
-  description: string;
-  assignee: string | null;
-  changeTasksByTask: {
-    changeRow: {
-      repository: string;
-      number: number;
-      title: string;
-      url: string;
-      state: string;
-      checks: string;
-    } | null;
-  }[];
-}
+type RootTicket = Pick<Ticket,'id' | 'title' | 'project'>;
 const subjectQuery =
-  'query PairTicket($id:String!){ticket:tasksSingle(where:{id:{eq:$id}}){id title project status assignee goal why doneWhen description changeTasksByTask{changeRow{repository number title url state checks}}} agent:workDiscussionAgent(kind:"ticket",id:$id) homeComms{agents}}';
+  'query PairTicket($id:String!){ticket:tasksSingle(where:{id:{eq:$id}}){id title project} agent:workDiscussionAgent(kind:"ticket",id:$id) homeComms{agents}}';
+// This existing trial predates explicit view subjects. Its agreed starting view is the split parent.
+const initialSubjects: Record<string,string> = { 'th:ctx-b7ac31a9-6b61-49aa-b730-91e1af5cadaa': 't-2424' };
 const fields =
   'hasFiles clientId run seq kind sender at words wordsKeepUntil inboxItem tool cardState delivery verdict notice{error} stepInfo{parent exit limit t0 t1} stepDetails{detail body result items{text state}}';
 const historyQuery =
@@ -108,16 +90,16 @@ function RunDetails({ id }: { id: string }) {
   const run = read.data?.jobUsage;
   if (read.status !== 'live' || !run?.usage) return null;
   return (
-    <Trace>
+    <Trace className="pair-run-details">
       <TraceCollapsible>
         <TraceCollapsibleTrigger>
           <TraceLine>
-            <TraceTitle>Run details · {run.usage.harness}</TraceTitle>
+            <TraceTitle>Run details</TraceTitle>
           </TraceLine>
         </TraceCollapsibleTrigger>
         <TraceCollapsibleContent>
           <p>
-            {run.usage.model} · {run.state}
+            {run.usage.harness} · {run.usage.model} · {run.state}
           </p>
           {run.usage.tools?.map((t) => (
             <p key={t.name}>
@@ -225,8 +207,9 @@ function quickPresence({
     return { mood: 'working', text };
   }
   if (tail.update) return { mood: 'talking', text: 'Has a reply for you' };
-  return quick ? { mood: 'thinking', text: 'Listening' } : { mood: 'idle', text: 'Here with you' };
+  return quick ? { mood: 'thinking', text: 'Listening' } : { mood: 'idle', text: '' };
 }
+const idleLines = ['I’m around.', 'Here when you need me.', 'What’ve we got?'];
 const idleTiming: IdleTiming = { gap: [3500, 9000] };
 
 type Feed = { thread: CommsThread | null; rows: CommsMessage[] };
@@ -318,21 +301,14 @@ function ContextCanvas({ place }: { place: Place }) {
   const feed = useDataQuery<Feed>(historyQuery, { id: place.thread, before: null });
   const rows = feed.data?.rows || [];
   const now = useDeadline(rows.map((m) => m.wordsKeepUntil));
-  const recent = rows.findLast(
-    (m) =>
-      (m.kind === 'reply' || m.kind === 'message') && m.words && Date.parse(m.wordsKeepUntil || '') > now,
-  );
-  return (
-    <div className="mx-auto max-w-2xl">
-      {recent ? (
-        <ModuleCard title={place.name} description={recent.kind === 'reply' ? recent.sender === 'art' ? 'Art' : recent.sender : 'You'}>
-          <Reply words={conversationText(recent.kind, recent.words!)} />
-        </ModuleCard>
-      ) : (
-        <h1 className="pt-16 text-center text-sm text-muted-foreground">{place.name}</h1>
-      )}
-    </div>
-  );
+  const refs = new Set<string>();
+  for (const row of [...rows].reverse()) {
+    if (['message','reply'].includes(row.kind) && Date.parse(row.wordsKeepUntil || '') > now)
+      for (const match of (row.words || '').matchAll(/\bt-\d+\b/gi)) refs.add(match[0].toLowerCase());
+  }
+  return <ModuleCard title={place.name} description={refs.size ? 'Tickets mentioned in this conversation' : 'Open a ticket from chat to start a view.'}>
+    {refs.size > 0 && <ul className="flex flex-wrap gap-3">{[...refs].map(id=><li key={id}><a className="pair-id" href={'?ticket='+id}>{id}</a></li>)}</ul>}
+  </ModuleCard>;
 }
 function Workspace({
   member,
@@ -343,13 +319,35 @@ function Workspace({
   edit,
 }: {
   member: string;
-  ticket: Ticket | null;
+  ticket: RootTicket | null;
   place: Place;
   draft: Draft;
   namingContext: boolean;
   edit: (update: (old: Draft) => Draft) => void;
 }) {
   const { thread: id, agent } = place;
+  const root = ticket?.id || initialSubjects[place.id];
+  const ring = useViewRing(JSON.stringify(['pair-views',member,id]),root);
+  const active = ring.active;
+  const details = useDataQuery<{ticket: Ticket | null}>(detailsQuery,{id:active?.ticket || ''},{pause:!active});
+  const secondaryState = useRef(new Map<string, SecondaryState>());
+  const canvasScroll = useRef<HTMLDivElement>(null);
+  const positions = useRef(new Map<string,number>());
+  const activeKey = active ? viewKey(active) : '';
+  const focusView = useRef(false);
+  function workOn(view: View) {
+    focusView.current = viewKey(view) !== activeKey;
+    ring.work(view);
+  }
+  useLayoutEffect(() => {
+    if (!canvasScroll.current) return;
+    if (details.status !== 'live') return;
+    canvasScroll.current.scrollTop = positions.current.get(activeKey) || 0;
+    if (focusView.current) {
+      canvasScroll.current.querySelector<HTMLElement>('h1')?.focus({preventScroll:true});
+      focusView.current = false;
+    }
+  },[activeKey,details.status]);
   const pref = 'pair:chat:' + member;
   const [open, setOpen] = useState(() => localStorage.getItem(pref) !== 'hidden'),
     [quick, setQuick] = useState(false),
@@ -378,6 +376,11 @@ function Workspace({
     tail,
     question: questions.status === 'live' && !!questions.data?.inboxItems.some((item) => item.answers),
   });
+  const [idleLine, setIdleLine] = useState(() => Math.floor(Math.random() * idleLines.length));
+  useEffect(() => {
+    if (presence.mood === 'idle') setIdleLine(i => (i + 1) % idleLines.length);
+  }, [presence.mood]);
+  const statusText = presence.mood === 'idle' ? idleLines[idleLine] : presence.text;
   const quickOrigin = useRef<HTMLElement | null>(null);
   const chatLauncher = useRef<HTMLButtonElement>(null);
   const chatInput = useRef<HTMLTextAreaElement>(null);
@@ -493,7 +496,8 @@ function Workspace({
     composing.current = true;
     sending(true);
     fail('');
-    const message = ticket ? '[Ticket workspace · ' + ticket.id + ']\n' + value : value;
+    const subject = active && (active.kind === 'ticket' ? active.ticket : active.ticket + ' · ' + viewLabel(active));
+    const message = subject ? '[Ticket workspace · ' + subject + ']\n' + value : value;
     try {
       const payload = bar || !files.length ? {} : {files: await Promise.all(files.map(async file => {
         const contents = await new Promise<string>((resolve,reject) => {
@@ -524,57 +528,29 @@ function Workspace({
     }
   }
   return (
-    <main className="pair-workspace flex h-dvh overflow-hidden">
+    <main className="pair-workspace flex h-dvh overflow-hidden" onClick={e=>{
+      const link = e.target instanceof Element && e.target.closest('a');
+      const match = link && /^\?ticket=(t-\d+)$/i.exec(link.getAttribute('href') || '');
+      if (match && !e.defaultPrevented && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        if (open && link.closest('.pair-chat') && matchMedia('(max-width: 639px)').matches) showChat(false);
+        workOn(ticketView(match[1].toLowerCase()));
+      }
+    }}>
       <section className="pair-canvas relative flex min-w-0 flex-1 flex-col">
-        <div
-          className={
-            'min-h-0 flex-1 overflow-auto px-4 pb-4 sm:px-8 sm:pb-8 ' +
-            (open ? 'pt-10' : 'pt-24 sm:pt-20 xl:pt-10')
-          }
-        >
-          {ticket ? (
-            <ModuleCard
-              title={ticket.title}
-              description={[ticket.project, ticket.id, ticket.assignee && 'Assigned to ' + ticket.assignee].filter(Boolean).join(' · ')}
-              action={<Badge variant="secondary">{ticket.status.replaceAll('_', ' ')}</Badge>}
-            >
-              {Object.entries({
-                Goal: ticket.goal,
-                Why: ticket.why,
-                'Done when': ticket.doneWhen,
-                Description: ticket.description,
-              }).map(
-                ([k, v]) =>
-                  v && (
-                    <section key={k}>
-                      <h2 className="font-medium">{k}</h2>
-                      <div className="text-sm text-card-body">
-                        <Reply words={v} />
-                      </div>
-                    </section>
-                  ),
-              )}
-              {ticket.changeTasksByTask.map(
-                ({ changeRow: p }) =>
-                  p && (
-                    <Item key={p.url} asChild variant="outline" size="sm">
-                      <a href={p.url} target="_blank" rel="noreferrer">
-                        <ItemContent>
-                          <ItemTitle>
-                            {p.repository} #{p.number} · {p.title}
-                          </ItemTitle>
-                          <ItemDescription>
-                            {p.state} · Checks {p.checks}
-                          </ItemDescription>
-                        </ItemContent>
-                      </a>
-                    </Item>
-                  ),
-              )}
-            </ModuleCard>
-          ) : (
-            <ContextCanvas place={place} />
-          )}
+        <div ref={canvasScroll} className="pair-canvas-scroll" onScroll={e=>{if(details.status === 'live') positions.current.set(activeKey,e.currentTarget.scrollTop);}}>
+          {(ring.views.length > 1 || (active && !root)) && <nav aria-label="Open views" className="pair-view-ring flex flex-wrap items-center gap-1">
+            {ring.views.map(v=><Button key={viewKey(v)} size="sm" variant={viewKey(v)===activeKey ? 'secondary' : 'ghost'}
+              aria-current={viewKey(v)===activeKey ? 'page' : undefined} onClick={()=>workOn(v)}>{viewLabel(v)}</Button>)}
+            {active && !(active.intent === 'work' && active.ticket === root) && <Button size="icon-xs" variant="ghost"
+              aria-label="Close current view" onClick={ring.close}><XIcon/></Button>}
+          </nav>}
+          <div className="pair-zones" key={activeKey}>
+            {active ? details.data?.ticket?.id === active.ticket && details.status==='live' ?
+              <TicketCanvas ticket={details.data.ticket} view={active} work={workOn} memory={secondaryState.current}/> :
+              <p role="status">{details.status === 'loading' ? 'Opening view…' : 'Ticket unavailable.'}</p>
+              : <ContextCanvas place={place}/>}
+          </div>
         </div>
       </section>
       <div aria-hidden="true" className="pair-chat-space" data-open={open} />
@@ -617,9 +593,9 @@ function Workspace({
                 id="pair-presence-status"
                 role="status"
                 className="block truncate text-xs text-muted-foreground"
-                title={presence.text}
+                title={statusText}
               >
-                {presence.text}
+                {statusText}
               </span>
             </span>
             {open && <XIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />}
@@ -680,7 +656,7 @@ function Workspace({
               <InputGroupAddon align="block-end">
                 <InputGroupButton type="button" size="icon-sm" disabled={busy || !ready} title="Attach files (8 MiB total)" aria-label="Attach files" onClick={() => picker.current?.click()}><PaperclipIcon /></InputGroupButton>
                 {tail.working && <InputGroupText role="status">Working…</InputGroupText>}
-                <InputGroupButton
+                {(!!words.trim() || files.length > 0) && <InputGroupButton
                   className="ms-auto"
                   type="submit"
                   variant="default"
@@ -689,7 +665,7 @@ function Workspace({
                   disabled={busy || !ready || (!words.trim() && !files.length)}
                 >
                   <ArrowUpIcon />
-                </InputGroupButton>
+                </InputGroupButton>}
               </InputGroupAddon>
             </InputGroup>
           </form>
@@ -723,7 +699,7 @@ function Workspace({
 function TicketScreen({ member }: { member: string }) {
   const id = new URL(location.href).searchParams.get('ticket') || defaultId;
   const read = useDataQuery<{
-    ticket: Ticket | null;
+    ticket: RootTicket | null;
     agent: string | null;
     homeComms: { agents: string[] } | null;
   }>(subjectQuery, { id });
@@ -735,7 +711,6 @@ function TicketScreen({ member }: { member: string }) {
     id: 'loom',
     name: ticket.project || 'Loom',
     agent,
-    detail: ticket.id + ' · ' + ticket.title,
     thread: threadId('th:pair-', [member, agent, ticket.project]),
   };
   const homeAgent = read.data.homeComms?.agents[0] || agent;
@@ -743,7 +718,6 @@ function TicketScreen({ member }: { member: string }) {
     id: 'home',
     name: 'Home',
     agent: homeAgent,
-    detail: 'Conversation',
     thread: threadId('th:home-', [member, homeAgent]),
   };
   return (
