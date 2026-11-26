@@ -53,7 +53,7 @@ export function pairEvents(emit: (s: PairStep) => void) {
         : shell(kind)
           ? 'Terminal'
           : name;
-      let words = shell(kind)
+      const words = shell(kind)
         ? [
             text(item.command),
             text(item.aggregated_output),
@@ -81,11 +81,13 @@ export function pairEvents(emit: (s: PairStep) => void) {
           name = text(p.name),
           input = object(p.input);
         if (!id || !name) continue;
-        const label = delegate(name)
+        const parent = calls.get(text(row.parent_tool_use_id));
+        const ownLabel = delegate(name)
           ? 'Subagent · ' + (text(input.subagent_type) || name)
           : shell(name)
             ? 'Terminal'
             : name;
+        const label = parent && delegate(parent.name) ? parent.label + ' → ' + ownLabel : ownLabel;
         calls.set(id, { name, label });
         emit({
           tool: label,

@@ -13,6 +13,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './ui/
 import { Textarea } from './ui/textarea';
 import { Message, MessageContent, MessageHeader } from './ui/message';
 import { Bubble, BubbleContent } from './ui/bubble';
+import { Reply } from './reply';
 import './screen.css';
 
 interface Ticket {
@@ -84,12 +85,12 @@ function RunDetails({ id }: { id: string }) {
     </details>
   );
 }
-function Entry({ m }: { m: EventMessage }) {
+function Entry({ m, expand }: { m: EventMessage; expand:boolean }) {
   const step = m.stepDetails,
     info = m.stepInfo;
   if (m.kind === 'card')
     return (
-      <details className="rounded-md border p-3 text-sm">
+      <details open={expand} className="rounded-md border p-3 text-sm">
         <summary className="cursor-pointer">
           {m.tool || 'Work step'} · {m.cardState || 'Recorded'}
         </summary>
@@ -118,19 +119,23 @@ function Entry({ m }: { m: EventMessage }) {
     <Message align={mine ? 'end' : 'start'}>
       <MessageContent>
         <MessageHeader>
-          {mine ? 'You' : m.sender} ·{' '}
+          {mine ? 'You' : m.sender === 'art' ? 'Art' : m.sender} ·{' '}
           {new Date(m.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
         </MessageHeader>
         <Bubble variant={mine ? 'secondary' : 'ghost'} align={mine ? 'end' : 'start'}>
           <BubbleContent className="whitespace-pre-wrap break-words">
-            <TicketLinks
-              words={
-                m.words?.replace(/^\[Ticket workspace · ([^\n]+)\]\n/, '$1\n') ||
-                m.notice?.error ||
-                m.verdict ||
-                'Content unavailable'
-              }
-            />
+            {m.kind === 'reply' && m.words ? (
+              <Reply words={m.words} />
+            ) : (
+              <TicketLinks
+                words={
+                  m.words?.replace(/^\[Ticket workspace · ([^\n]+)\]\n/, '$1\n') ||
+                  m.notice?.error ||
+                  m.verdict ||
+                  'Content unavailable'
+                }
+              />
+            )}
           </BubbleContent>
         </Bubble>
         {m.kind === 'reply' && m.run && <RunDetails id={m.run} />}
@@ -165,6 +170,7 @@ function TranscriptPage({
       <p role="status">{read.status === 'loading' ? 'Opening conversation…' : 'Conversation unavailable.'}</p>
     ) : null;
   if (!visible) return null;
+  const latestTerminal=rows.findLast(m=>m.kind==='card' && m.tool?.endsWith('Terminal') && m.cardState!=='running')?.seq;
   return (
     <>
       {rows.length === 50 &&
@@ -177,6 +183,7 @@ function TranscriptPage({
         ))}
       {rows.map((m) => (
         <Entry
+          expand={!before && m.seq===latestTerminal}
           key={m.seq}
           m={Date.parse(m.wordsKeepUntil ?? '') > now ? m : { ...m, words: null, stepDetails: null }}
         />
@@ -290,9 +297,9 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
       await memberOperation('comms.send', { thread: id, clientId, words: message }, clientId);
       sessionStorage.removeItem(receipt);
       if (bar) {
-        setCommand('');
+        setCommand((current) => (current.trim() === value ? '' : current));
         setQuick(false);
-      } else setWords('');
+      } else setWords((current) => (current.trim() === value ? '' : current));
       follow.current = true;
     } catch {
       fail('Delivery unconfirmed. Send the same message to retry.');
@@ -366,7 +373,7 @@ function Workspace({ member, ticket, agent }: { member: string; ticket: Ticket; 
         }
       >
         <header className="flex items-center justify-between border-b p-4">
-          <h2 className="font-semibold">You and {agent || 'Art'}</h2>
+          <h2 className="font-semibold">You and {agent === 'art' ? 'Art' : agent || 'Art'}</h2>
           <Button variant="ghost" aria-label="Hide conversation" onClick={toggle}>
             ×
           </Button>

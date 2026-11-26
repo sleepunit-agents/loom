@@ -430,3 +430,9 @@ it('claims the frozen program through a capable poll with no account or model', 
   expect(f.runtime.next('second',[],undefined,1,true)).toMatchObject({program,box:'second',model:'',account:'',harness:'house-program'});
   expect(f.runtime.next('second',[],undefined,1,true)).toBeUndefined();
 });
+
+it('places an owner pairing thread on an eligible worker with native events',()=>{
+ const f=fixture();
+ f.db.update(conversations).set({place:'th:pair-'+'a'.repeat(64)}).where(eq(conversations.id,f.conversation.id)).run();
+ expect(f.runtime.next('second',undefined,undefined,undefined,false,undefined,false,false,true)?.id).toBe(f.job.id);
+});
