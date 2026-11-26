@@ -25,7 +25,7 @@ function ticketReferences() {
 
 export function Reply({ words }: { words: string }) {
   return (
-    <div className="space-y-2 whitespace-normal [&_a]:underline [&_ol]:list-decimal [&_ul]:list-disc [&_li]:ml-4">
+    <div className="pair-prose space-y-3 whitespace-normal [&_a]:underline [&_ol]:list-decimal [&_ul]:list-disc">
       <Markdown
         remarkPlugins={[remarkGfm, remarkBreaks, ticketReferences]}
         disallowedElements={['img']}

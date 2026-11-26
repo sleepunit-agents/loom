@@ -413,6 +413,15 @@
 }
 [data-slot='message-scroller-viewport'][data-scrollable~='start'] { --fade-start: 16px; }
 [data-slot='message-scroller-viewport'][data-scrollable~='end'] { --fade-end: 12px; }
+.pair-prose :where(ol, ul) {
+  padding-inline-start: 1.5em;
+}
+.pair-prose li + li, .pair-prose li > :is(ol, ul, p) + p, .pair-prose li > :is(ol, ul) {
+  margin-block-start: .5em;
+}
+.pair-prose > :is(ol, ul) + :is(ol, ul) {
+  margin-block-start: 1em;
+}
 .pair-canvas [data-slot='card-header'].border-b {
   background: linear-gradient(transparent 65%, color-mix(in srgb, var(--foreground) 2%, transparent));
   box-shadow: 0 2px 4px -3px var(--contact);

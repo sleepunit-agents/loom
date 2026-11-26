@@ -13,7 +13,7 @@ import type { FaceState } from '../face';
 import type { IdleTiming } from '../contexts/portrait-player';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { Card, CardHeader, CardTitle, CardAction, CardDescription, CardContent } from './ui/card';
+import { ModuleCard } from './module-card';
 import { Attachment, AttachmentAction, AttachmentActions, AttachmentContent, AttachmentGroup, AttachmentTitle, AttachmentMedia } from "./ui/attachment";
 import { PaperclipIcon, ArrowUpIcon, XIcon, CircleAlertIcon } from 'lucide-react';
 import {
@@ -325,15 +325,9 @@ function ContextCanvas({ place }: { place: Place }) {
   return (
     <div className="mx-auto max-w-2xl">
       {recent ? (
-        <Card>
-          <CardHeader>
-            <CardDescription>{place.name}</CardDescription>
-            <CardTitle>{recent.kind === 'reply' ? place.agent : 'You'}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Reply words={conversationText(recent.kind, recent.words!)} />
-          </CardContent>
-        </Card>
+        <ModuleCard title={place.name} description={recent.kind === 'reply' ? recent.sender === 'art' ? 'Art' : recent.sender : 'You'}>
+          <Reply words={conversationText(recent.kind, recent.words!)} />
+        </ModuleCard>
       ) : (
         <h1 className="pt-16 text-center text-sm text-muted-foreground">{place.name}</h1>
       )}
@@ -539,55 +533,45 @@ function Workspace({
           }
         >
           {ticket ? (
-            <Card className="mx-auto max-w-2xl">
-              <CardHeader className="border-b">
-                <CardTitle className="min-w-0 text-lg leading-snug [overflow-wrap:anywhere]">
-                  <h1>{ticket.title}</h1>
-                </CardTitle>
-                <CardDescription className="[overflow-wrap:anywhere]">
-                  {[ticket.project, ticket.id].filter(Boolean).join(' · ')}
-                  {ticket.assignee && ` · Assigned to ${ticket.assignee}`}
-                </CardDescription>
-                <CardAction>
-                  <Badge variant="secondary">{ticket.status.replaceAll('_', ' ')}</Badge>
-                </CardAction>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {Object.entries({
-                  Goal: ticket.goal,
-                  Why: ticket.why,
-                  'Done when': ticket.doneWhen,
-                  Description: ticket.description,
-                }).map(
-                  ([k, v]) =>
-                    v && (
-                      <section key={k}>
-                        <h2 className="font-medium">{k}</h2>
-                        <div className="whitespace-pre-wrap text-sm text-card-body">
-                          <TicketLinks words={v} />
-                        </div>
-                      </section>
-                    ),
-                )}
-                {ticket.changeTasksByTask.map(
-                  ({ changeRow: p }) =>
-                    p && (
-                      <Item key={p.url} asChild variant="outline" size="sm">
-                        <a href={p.url} target="_blank" rel="noreferrer">
-                          <ItemContent>
-                            <ItemTitle>
-                              {p.repository} #{p.number} · {p.title}
-                            </ItemTitle>
-                            <ItemDescription>
-                              {p.state} · Checks {p.checks}
-                            </ItemDescription>
-                          </ItemContent>
-                        </a>
-                      </Item>
-                    ),
-                )}
-              </CardContent>
-            </Card>
+            <ModuleCard
+              title={ticket.title}
+              description={[ticket.project, ticket.id, ticket.assignee && 'Assigned to ' + ticket.assignee].filter(Boolean).join(' · ')}
+              action={<Badge variant="secondary">{ticket.status.replaceAll('_', ' ')}</Badge>}
+            >
+              {Object.entries({
+                Goal: ticket.goal,
+                Why: ticket.why,
+                'Done when': ticket.doneWhen,
+                Description: ticket.description,
+              }).map(
+                ([k, v]) =>
+                  v && (
+                    <section key={k}>
+                      <h2 className="font-medium">{k}</h2>
+                      <div className="text-sm text-card-body">
+                        <Reply words={v} />
+                      </div>
+                    </section>
+                  ),
+              )}
+              {ticket.changeTasksByTask.map(
+                ({ changeRow: p }) =>
+                  p && (
+                    <Item key={p.url} asChild variant="outline" size="sm">
+                      <a href={p.url} target="_blank" rel="noreferrer">
+                        <ItemContent>
+                          <ItemTitle>
+                            {p.repository} #{p.number} · {p.title}
+                          </ItemTitle>
+                          <ItemDescription>
+                            {p.state} · Checks {p.checks}
+                          </ItemDescription>
+                        </ItemContent>
+                      </a>
+                    </Item>
+                  ),
+              )}
+            </ModuleCard>
           ) : (
             <ContextCanvas place={place} />
           )}
