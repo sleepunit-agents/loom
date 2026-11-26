@@ -56,6 +56,7 @@
 }
 
 .pair-workspace {
+  --chat-width: min(90vw, 32rem);
   position: relative;
   isolation: isolate;
   background-color: var(--canvas-center);
@@ -76,36 +77,151 @@
   }
 }
 @keyframes canvas-drift {
-  from { transform: translate(-3%, -2%) rotate(-2deg); }
-  to { transform: translate(3%, 2%) rotate(2deg); }
+  from {
+    transform: translate(-3%, -2%) rotate(-2deg);
+  }
+  to {
+    transform: translate(3%, 2%) rotate(2deg);
+  }
 }
 .pair-workspace [data-slot='card'] {
   background-color: light-dark(rgb(255 255 255 / 82%), rgb(32 33 35 / 88%));
   border-color: var(--surface-edge);
-  box-shadow: inset 0 1px var(--rim), 0 1px 2px var(--contact), 0 3px 10px -5px var(--ambient);
+  box-shadow:
+    inset 0 1px var(--rim),
+    0 1px 2px var(--contact),
+    0 3px 10px -5px var(--ambient);
 }
 .pair-chat {
   --chat-base: light-dark(#fff, #303134);
   background-color: var(--chat-base);
-  background-image: linear-gradient(172deg,
+  background-image: linear-gradient(
+    172deg,
     color-mix(in srgb, var(--chat-base) 52%, var(--canvas-cool)),
     color-mix(in srgb, var(--chat-base) 64%, var(--canvas-center)) 54%,
-    color-mix(in srgb, var(--chat-base) 52%, var(--canvas-warm)));
-  border-color: var(--surface-edge);
+    color-mix(in srgb, var(--chat-base) 52%, var(--canvas-warm))
+  );
+  position: fixed;
+  z-index: 10;
+  top: 1.625rem;
+  right: 0.5rem;
+  width: min(9rem, 46vw);
+  height: 3.25rem;
+  display: flex;
+  flex-direction: column;
+  overflow: clip;
+  border: 1px solid var(--surface-edge);
+  box-shadow:
+    inset 0 1px var(--rim),
+    0 2px 6px -2px var(--contact);
 }
-.pair-chat[aria-hidden='false'] {
-  box-shadow: inset 1px 0 var(--rim), -3px 0 10px -6px var(--contact);
+.pair-chat[data-open='true'] {
+  top: 0;
+  right: 0;
+  width: var(--chat-width);
+  height: 100dvh;
+  border-radius: 0;
+  border-width: 0 0 0 1px;
+  box-shadow:
+    inset 1px 0 var(--rim),
+    -3px 0 10px -6px var(--contact);
 }
-.pair-dock,
+.pair-presence {
+  display: flex;
+  width: 100%;
+  height: 3.125rem;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.625rem 0.25rem 0.25rem;
+  cursor: pointer;
+}
+.pair-presence:focus-visible {
+  outline: none;
+  background: var(--canvas-center);
+}
+.pair-face {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 100%;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.pair-chat[data-open='true'] .pair-presence {
+  height: 4.5rem;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--surface-edge);
+}
+.pair-chat[data-open='true'] .pair-face {
+  width: 3.25rem;
+}
+.pair-chat-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: calc(var(--chat-width) - 1px);
+}
+.pair-chat-body[inert] {
+  visibility: hidden;
+}
+.pair-chat-space {
+  width: 0;
+  flex-shrink: 0;
+}
+@media (min-width: 640px) {
+  .pair-workspace {
+    --chat-width: min(44vw, 36rem);
+  }
+  .pair-chat {
+    top: 0.75rem;
+    right: 0.75rem;
+    width: 11.5rem;
+    height: 4rem;
+  }
+  .pair-presence {
+    height: 3.875rem;
+  }
+  .pair-face {
+    width: 3rem;
+  }
+  .pair-chat-space[data-open='true'] {
+    width: var(--chat-width);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .pair-chat,
+  .pair-chat-space,
+  .pair-presence,
+  .pair-face {
+    transition-property: width, height, top, right, border-radius, padding, gap;
+    transition-duration: 220ms;
+    transition-timing-function: ease-out;
+  }
+}
+.pair-prompt {
+  position: fixed;
+  z-index: 40;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(30rem, calc(100vw - 2rem));
+}
+.pair-prompt [data-slot='input-group'],
 .context-choices {
   border-color: var(--surface-edge);
-  box-shadow: inset 0 1px var(--rim), 0 1px 3px var(--contact), 0 9px 22px -8px var(--ambient);
+  box-shadow:
+    inset 0 1px var(--rim),
+    0 1px 3px var(--contact),
+    0 9px 22px -8px var(--ambient);
 }
 /* Art's existing 17-frame sprite, cropped to one cell. */
 .art-portrait {
   width: 56px;
   height: 84px;
-  zoom: 0.55;
+  zoom: 0.85;
   background: url('../contexts/sheet.png') 0 -840px no-repeat;
   image-rendering: pixelated;
 }
@@ -193,10 +309,15 @@
   width: min(20rem, calc(100vw - 2rem));
   @apply rounded-2xl border p-2 text-popover-foreground;
   background-color: light-dark(#fafbfc, #2a2b2d);
-  box-shadow: inset 0 1px var(--rim), 0 2px 4px var(--contact), 0 8px 20px -4px var(--ambient);
+  box-shadow:
+    inset 0 1px var(--rim),
+    0 2px 4px var(--contact),
+    0 8px 20px -4px var(--ambient);
 }
 @media (forced-colors: active) {
-  .pair-workspace::before { display: none; }
+  .pair-workspace::before {
+    display: none;
+  }
   .context-trace {
     background: ButtonText !important;
   }

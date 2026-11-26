@@ -11,7 +11,7 @@ import type { CommsMessage, CommsThread } from '../pieces/comms-view/model';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './ui/card';
-import { ArrowUpIcon, XIcon, MessageSquareIcon, CircleAlertIcon } from 'lucide-react';
+import { ArrowUpIcon, XIcon, CircleAlertIcon } from 'lucide-react';
 import {
   InputGroup,
   InputGroupAddon,
@@ -351,7 +351,7 @@ function Workspace({
     tail,
     question: questions.status === 'live' && !!questions.data?.inboxItems.some((item) => item.answers),
   });
-  const launcher = useRef<HTMLButtonElement>(null);
+  const quickOrigin = useRef<HTMLElement | null>(null);
   const chatLauncher = useRef<HTMLButtonElement>(null);
   const chatInput = useRef<HTMLTextAreaElement>(null);
   const chatActivity = tail.working ? 'Working' : tail.last > tail.read ? 'New activity' : '';
@@ -386,15 +386,24 @@ function Workspace({
     const key = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        if (document.activeElement?.closest('#quick-message')) closeQuick();
-        else setQuick((v) => !v);
+        if (quick) closeQuick();
+        else {
+          quickOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          setQuick(true);
+        }
       }
-      if (e.key === 'Escape' && document.activeElement?.closest('#quick-message')) closeQuick();
-      else if (e.key === 'Escape') setQuick(false);
+      if (e.key === 'Escape' && quick) closeQuick();
+    };
+    const outside = (e: PointerEvent) => {
+      if (quick && e.target instanceof Element && !e.target.closest('#quick-message')) setQuick(false);
     };
     window.addEventListener('keydown', key);
-    return () => window.removeEventListener('keydown', key);
-  }, []);
+    document.addEventListener('pointerdown', outside);
+    return () => {
+      window.removeEventListener('keydown', key);
+      document.removeEventListener('pointerdown', outside);
+    };
+  }, [quick]);
   useEffect(() => {
     if (!open || !tail.last) return;
     const el = scroll.current;
@@ -430,7 +439,10 @@ function Workspace({
   }, [open, tail.last, tail.read, id]);
   function closeQuick() {
     setQuick(false);
-    launcher.current?.focus();
+    const target = quickOrigin.current;
+    (target?.isConnected && target !== document.body ? target : chatLauncher.current)?.focus({
+      preventScroll: true,
+    });
   }
   function showChat(visible: boolean) {
     localStorage.setItem(pref, visible ? 'open' : 'hidden');
@@ -470,7 +482,12 @@ function Workspace({
   return (
     <main className="pair-workspace flex h-dvh overflow-hidden">
       <section className="relative flex min-w-0 flex-1 flex-col">
-        <div className="min-h-0 flex-1 overflow-auto px-4 pt-10 pb-4 sm:px-8 sm:pb-8">
+        <div
+          className={
+            'min-h-0 flex-1 overflow-auto px-4 pb-4 sm:px-8 sm:pb-8 ' +
+            (open ? 'pt-10' : 'pt-24 sm:pt-20 xl:pt-10')
+          }
+        >
           {ticket ? (
             <Card className="mx-auto max-w-2xl">
               <CardHeader>
@@ -521,177 +538,143 @@ function Workspace({
             <ContextCanvas place={place} />
           )}
         </div>
-        <div
-          className={'mx-auto max-w-full p-2 sm:p-3 ' + (quick ? '@container z-20 w-full sm:max-w-lg' : '')}
-        >
-          <Item
-            variant="outline"
-            className={
-              'relative grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-0 rounded-3xl bg-card p-2 text-card-foreground pair-dock ' +
-              (quick ? '@min-[25rem]:grid-cols-[auto_minmax(0,1fr)_auto]' : '')
-            }
-          >
-            <div className="flex min-w-0 items-center gap-3 pr-1 @min-[25rem]:max-w-48">
-              {agent === 'art' && (
-                <span className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-muted sm:size-16">
-                  <span
-                    aria-hidden="true"
-                    className="art-portrait shrink-0 scale-125"
-                    data-mood={presence.mood}
-                  />
-                </span>
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="font-semibold leading-tight">{name}</div>
-                <div
-                  id="quick-presence"
-                  role="status"
-                  className="mt-1 wrap-anywhere text-xs leading-snug text-muted-foreground"
-                >
-                  {presence.text}
-                </div>
-              </div>
-            </div>
-            <Button
-              ref={launcher}
-              type="button"
-              variant={quick ? 'ghost' : 'secondary'}
-              size="icon-sm"
-              title={quick ? 'Close quick bar' : `Talk to ${name}`}
-              aria-label={quick ? 'Close quick bar' : `Talk to ${name}`}
-              aria-describedby="quick-presence"
-              aria-expanded={quick}
-              className={
-                'col-start-2 row-start-1 mr-1 rounded-full focus-visible:bg-foreground focus-visible:text-background focus-visible:ring-0 ' +
-                (quick ? '@min-[25rem]:col-start-3' : 'after:absolute after:inset-0 after:rounded-3xl')
-              }
-              onClick={() => setQuick((v) => !v)}
-            >
-              {quick ? <XIcon /> : <MessageSquareIcon />}
-            </Button>
-            {quick ? (
-              <form
-                id="quick-message"
-                className="col-span-full mt-2 min-w-0 @min-[25rem]:col-span-1 @min-[25rem]:col-start-2 @min-[25rem]:row-start-1 @min-[25rem]:mt-0"
-                onSubmit={(e) => void send(e, true)}
-              >
-                <InputGroup className="rounded-2xl bg-background has-[[data-slot=input-group-control]:focus-visible]:border-input has-[[data-slot=input-group-control]:focus-visible]:ring-0">
-                  <InputGroupInput
-                    autoFocus
-                    aria-label="Quick message"
-                    placeholder={`Ask ${name}…`}
-                    value={command}
-                    onChange={(e) => {
-                      const command = e.target.value;
-                      edit((old) => ({ ...old, command }));
-                    }}
-                  />
-                  <InputGroupAddon align="inline-end">
-                    <InputGroupButton
-                      type="submit"
-                      variant="default"
-                      size="icon-sm"
-                      aria-label="Send quick message"
-                      className="focus-visible:bg-secondary focus-visible:text-secondary-foreground focus-visible:ring-0"
-                      disabled={busy || !ready || !command.trim()}
-                    >
-                      <ArrowUpIcon />
-                    </InputGroupButton>
-                  </InputGroupAddon>
-                </InputGroup>
-              </form>
-            ) : null}
-          </Item>
-        </div>
       </section>
-      {!open && (
-        <Button
-          ref={chatLauncher}
-          variant="ghost"
-          size="icon-sm"
-          aria-expanded={open}
-          aria-label={chatActivity ? 'Open conversation · ' + chatActivity : 'Open conversation'}
-          title={chatActivity ? 'Open conversation · ' + chatActivity : 'Open conversation'}
-          aria-controls="pair-conversation"
-          onClick={() => showChat(true)}
-          className="fixed top-2 right-2 z-10 rounded-full text-muted-foreground hover:text-foreground"
-        >
-          <MessageSquareIcon />
-          {chatActivity && (
-            <span aria-hidden="true" className="absolute top-1 right-1 size-1.5 rounded-full bg-primary" />
-          )}
-        </Button>
-      )}
+      <div aria-hidden="true" className="pair-chat-space" data-open={open} />
       <aside
         id="pair-conversation"
-        aria-label="Conversation"
-        aria-hidden={!open}
-        inert={!open}
-        className={
-          // Slide the dock while keeping the transcript at its final reading width.
-          'pair-chat fixed inset-y-0 right-0 z-10 flex shrink-0 flex-col overflow-hidden ' +
-          '[--chat-width:min(90vw,32rem)] sm:static sm:[--chat-width:min(44vw,36rem)] ' +
-          '*:w-[calc(var(--chat-width)-1px)] transition-[width] motion-reduce:transition-none ' +
-          (open ? 'w-(--chat-width) border-l' : 'w-0')
-        }
+        role={open ? 'complementary' : 'presentation'}
+        aria-label={open ? 'Conversation' : undefined}
+        data-open={open}
+        className="pair-chat rounded-xl"
       >
-        <header className="flex items-center justify-between border-b p-4">
-          <h2 className="font-semibold">You and {agent === 'art' ? 'Art' : agent || 'Art'}</h2>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Hide conversation"
-            onClick={() => showChat(false)}
+        <header className="shrink-0">
+          <button
+            ref={chatLauncher}
+            type="button"
+            className="pair-presence"
+            aria-label={
+              open
+                ? 'Hide conversation'
+                : chatActivity
+                  ? 'Open conversation · ' + chatActivity
+                  : 'Open conversation'
+            }
+            aria-describedby="pair-presence-status"
+            aria-expanded={open}
+            aria-controls="pair-chat-body"
+            onClick={() => showChat(!open)}
           >
-            <XIcon />
-          </Button>
+            {agent === 'art' && (
+              <span className="pair-face rounded-lg bg-muted" aria-hidden="true">
+                <span className="art-portrait shrink-0" data-mood={presence.mood} />
+              </span>
+            )}
+            <span className="min-w-0 flex-1 text-left">
+              <span className="block text-sm font-semibold">{name}</span>
+              <span
+                id="pair-presence-status"
+                role="status"
+                className="block truncate text-xs text-muted-foreground"
+                title={presence.text}
+              >
+                {presence.text}
+              </span>
+            </span>
+            {open && <XIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />}
+            {!open && chatActivity && (
+              <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-primary" />
+            )}
+          </button>
         </header>
-        <MessageScrollerProvider key={open ? 'open' : 'hidden'} defaultScrollPosition="end" autoScroll>
-          <MessageScroller>
-            <MessageScrollerViewport ref={scroll} preserveScrollOnPrepend aria-label="Conversation history">
-              <MessageScrollerContent className="p-4">
-                {ready && <TranscriptPage id={id} visible={open} onTail={setTail} />}
-              </MessageScrollerContent>
-            </MessageScrollerViewport>
-            <MessageScrollerButton />
-          </MessageScroller>
-        </MessageScrollerProvider>
-        <form onSubmit={(e) => void send(e, false)} className="p-3">
-          <InputGroup>
-            <InputGroupTextarea
-              ref={chatInput}
-              aria-label="Message Art"
-              placeholder="Message Art…"
-              value={words}
+        <div id="pair-chat-body" aria-hidden={!open} inert={!open} className="pair-chat-body">
+          <MessageScrollerProvider key={open ? 'open' : 'hidden'} defaultScrollPosition="end" autoScroll>
+            <MessageScroller>
+              <MessageScrollerViewport ref={scroll} preserveScrollOnPrepend aria-label="Conversation history">
+                <MessageScrollerContent className="p-4">
+                  {ready && <TranscriptPage id={id} visible={open} onTail={setTail} />}
+                </MessageScrollerContent>
+              </MessageScrollerViewport>
+              <MessageScrollerButton />
+            </MessageScroller>
+          </MessageScrollerProvider>
+          <form onSubmit={(e) => void send(e, false)} className="p-3">
+            <InputGroup>
+              <InputGroupTextarea
+                ref={chatInput}
+                aria-label="Message Art"
+                placeholder="Message Art…"
+                value={words}
+                onChange={(e) => {
+                  const words = e.target.value;
+                  edit((old) => ({ ...old, words }));
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    e.currentTarget.form?.requestSubmit();
+                  }
+                }}
+              />
+              <InputGroupAddon align="block-end">
+                {tail.working && <InputGroupText role="status">Working…</InputGroupText>}
+                <InputGroupButton
+                  className="ms-auto"
+                  type="submit"
+                  variant="default"
+                  size="icon-sm"
+                  aria-label="Send"
+                  disabled={busy || !ready || !words.trim()}
+                >
+                  <ArrowUpIcon />
+                </InputGroupButton>
+              </InputGroupAddon>
+            </InputGroup>
+          </form>
+        </div>
+      </aside>
+      {quick && (
+        <form
+          id="quick-message"
+          aria-label="Quick message"
+          className="pair-prompt"
+          onSubmit={(e) => void send(e, true)}
+        >
+          <InputGroup className="h-12 rounded-xl bg-popover has-[[data-slot=input-group-control]:focus-visible]:border-input has-[[data-slot=input-group-control]:focus-visible]:ring-0">
+            <InputGroupInput
+              autoFocus
+              aria-label="Quick message"
+              placeholder={`Ask ${name}…`}
+              value={command}
               onChange={(e) => {
-                const words = e.target.value;
-                edit((old) => ({ ...old, words }));
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                  e.preventDefault();
-                  e.currentTarget.form?.requestSubmit();
-                }
+                const command = e.target.value;
+                edit((old) => ({ ...old, command }));
               }}
             />
-            <InputGroupAddon align="block-end">
-              {tail.working && <InputGroupText role="status">Working…</InputGroupText>}
+            <InputGroupAddon align="inline-end">
               <InputGroupButton
-                className="ms-auto"
                 type="submit"
                 variant="default"
                 size="icon-sm"
-                aria-label="Send"
-                disabled={busy || !ready || !words.trim()}
+                aria-label="Send quick message"
+                className="focus-visible:bg-secondary focus-visible:text-secondary-foreground focus-visible:ring-0"
+                disabled={busy || !ready || !command.trim()}
               >
                 <ArrowUpIcon />
+              </InputGroupButton>
+              <InputGroupButton
+                size="icon-sm"
+                aria-label="Close quick bar"
+                className="focus-visible:bg-secondary focus-visible:ring-0"
+                onClick={closeQuick}
+              >
+                <XIcon />
               </InputGroupButton>
             </InputGroupAddon>
           </InputGroup>
         </form>
-      </aside>
+      )}
       {(error || !agent) && (
-        <Alert variant="destructive" className="fixed top-2 left-2 z-30 max-w-sm">
+        <Alert variant="destructive" className="fixed top-2 left-2 z-50 max-w-sm">
           <CircleAlertIcon />
           <AlertDescription>
             {error || 'No agent available for this ticket.'}
