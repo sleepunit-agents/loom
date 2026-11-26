@@ -46,7 +46,8 @@ export const detailsQuery = `query PairTicketView($id:String!){ticket:tasksSingl
 }}`;
 type Row = { title: string; state?: string; detail: string; target: View };
 type Group = { name: string; rows: Row[] };
-export type SecondaryState = { selected: string; page: number; expanded?: string };
+type PanelState = { page: number; expanded?: string };
+export type SecondaryState = { selected: string; panels: Record<string, PanelState> };
 function Secondary({
   groups,
   work,
@@ -59,19 +60,16 @@ function Secondary({
   view: View;
 }) {
   const key = viewKey(view);
-  const [state, setState] = useState<SecondaryState>(() => memory.get(key) || { selected: '', page: 0 });
-  const { selected, page, expanded } = state;
+  const [state, setState] = useState<SecondaryState>(() => memory.get(key) || { selected: '', panels: {} });
   function update(next: SecondaryState) {
     memory.set(key, next);
     setState(next);
   }
-  const paginate = (page: number) => update({ selected, page });
-  const group = groups.find((g) => g.name === selected) || groups[0];
+  const group = groups.find((g) => g.name === state.selected) || groups[0];
   if (!group) return null;
-  const start = page * 5 < group.rows.length ? page * 5 : 0;
   return (
     <aside aria-label="Related work" className="pair-secondary min-w-0">
-      <Tabs value={group.name} onValueChange={(name) => update({ selected: name, page: 0 })}>
+      <Tabs value={group.name} onValueChange={(name) => update({ ...state, selected: name })}>
         <div className="pair-tab-scroll">
           <TabsList aria-label="Related work categories">
             {groups.map((g) => (
@@ -81,19 +79,31 @@ function Secondary({
             ))}
           </TabsList>
         </div>
-        {groups.map((g) => (
-          <TabsContent key={g.name} value={g.name}>
-            {g === group && (
-              <>
+        <div className="grid">
+          {groups.map((g) => {
+            const { page, expanded } = state.panels[g.name] || { page: 0 };
+            const start = page * 5 < g.rows.length ? page * 5 : 0;
+            function updatePanel(next: PanelState) {
+              update({ ...state, panels: { ...state.panels, [g.name]: next } });
+            }
+            return (
+              <TabsContent
+                key={g.name}
+                value={g.name}
+                forceMount
+                inert={g !== group}
+                aria-hidden={g !== group}
+                className="col-start-1 row-start-1 self-start data-[state=inactive]:invisible"
+              >
                 <ul className="divide-y">
-                  {group.rows.slice(start, start + 5).map((row) => (
+                  {g.rows.slice(start, start + 5).map((row) => (
                     <li key={viewKey(row.target)} className="flex items-start gap-2 py-2">
                       <details open={expanded === viewKey(row.target)} className="min-w-0 flex-1 text-sm">
                         <summary
                           onClick={(event) => {
                             event.preventDefault();
-                            update({
-                              ...state,
+                            updatePanel({
+                              page,
                               expanded: expanded === viewKey(row.target) ? undefined : viewKey(row.target),
                             });
                           }}
@@ -120,20 +130,22 @@ function Secondary({
                     </li>
                   ))}
                 </ul>
-                {group.rows.length > 5 && (
+                {g.rows.length > 5 && (
                   <div className="flex gap-3 text-sm">
-                    {start > 0 && <button onClick={() => paginate(start / 5 - 1)}>Previous</button>}
-                    {start + 5 < group.rows.length && (
-                      <button onClick={() => paginate(start / 5 + 1)}>
-                        +{group.rows.length - start - 5} more
+                    {start > 0 && (
+                      <button onClick={() => updatePanel({ page: start / 5 - 1 })}>Previous</button>
+                    )}
+                    {start + 5 < g.rows.length && (
+                      <button onClick={() => updatePanel({ page: start / 5 + 1 })}>
+                        +{g.rows.length - start - 5} more
                       </button>
                     )}
                   </div>
                 )}
-              </>
-            )}
-          </TabsContent>
-        ))}
+              </TabsContent>
+            );
+          })}
+        </div>
       </Tabs>
     </aside>
   );
