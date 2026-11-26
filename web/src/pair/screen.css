@@ -283,7 +283,7 @@
   }
 }
 @media (prefers-reduced-motion: no-preference) {
-  .art-portrait {
+  .art-portrait:not([data-mood='idle']) {
     animation: pair-art 1.7s steps(17) infinite;
   }
 }

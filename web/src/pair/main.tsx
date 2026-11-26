@@ -222,6 +222,35 @@ function quickPresence({
   if (tail.update) return { mood: 'talking', text: 'Has a reply for you' };
   return quick ? { mood: 'thinking', text: 'Listening' } : { mood: 'idle', text: 'Here with you' };
 }
+function ArtPortrait({ mood }: { mood: string }) {
+  const portrait = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const face = portrait.current;
+    if (!face || mood !== 'idle') return;
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let blink: Animation | undefined;
+    function schedule() {
+      blink?.cancel();
+      if (reducedMotion.matches || document.hidden) return;
+      // The underlying sprite rests on its first, open-eyed frame during the delay.
+      blink = face!.animate(
+        [{ backgroundPositionX: '0px' }, { backgroundPositionX: '-952px' }],
+        { delay: 3500 + Math.random() * 5500, duration: 320 + Math.random() * 100, easing: 'steps(17)' },
+      );
+      blink.onfinish = schedule;
+    }
+    schedule();
+    reducedMotion.addEventListener('change', schedule);
+    document.addEventListener('visibilitychange', schedule);
+    return () => {
+      blink?.cancel();
+      reducedMotion.removeEventListener('change', schedule);
+      document.removeEventListener('visibilitychange', schedule);
+    };
+  }, [mood]);
+  return <span ref={portrait} className="art-portrait shrink-0" data-mood={mood} />;
+}
+
 type Feed = { thread: CommsThread | null; rows: CommsMessage[] };
 function TranscriptPage({
   id,
@@ -604,7 +633,7 @@ function Workspace({
                   <rect />
                   <rect className="pair-contour-highlight" pathLength="100" />
                 </svg>
-                <span className="art-portrait shrink-0" data-mood={presence.mood} />
+                <ArtPortrait mood={presence.mood} />
               </span>
             )}
             <span className="min-w-0 flex-1 text-left">
