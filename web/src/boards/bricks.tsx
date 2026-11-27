@@ -40,7 +40,7 @@ function useOwnFlag<T>(value: T | undefined, raise: Raise, name: (before: T, now
 const fit = (primary: [number, number, number, number], side: number): Fits => ({
   primary: { min: primary[0], ideal: primary[1], max: primary[2], height: primary[3] },
   side: { min: 260, ideal: 360, max: 420, height: side },
-  compact: { min: 220, ideal: 320, max: 420, height: 68 },
+  compact: { min: 220, ideal: 320, max: 420, height: 84 },
 });
 const words = (v: unknown) => (v === undefined || v === null ? '' : String(v));
 const Unavailable = ({ what }: { what: string }) => <p className="text-muted-foreground">This {what} is unavailable.</p>;
@@ -303,9 +303,9 @@ export const bricks: Record<string, BrickView> = {
   trend: { fits: fit([460, 720, 860, 360], 232), title: () => 'Opened and closed', sub: (p) => `${words(p.project)} · ${words(p.days)} days`,
     Body: ({ params, form }) => <Trend project={words(params.project)} days={Number(params.days) || 30} form={form} chip={ticketChip} /> },
   ticket: { fits: fit([460, 700, 820, 380], 230), title: () => 'Ticket', sub: (p) => words(p.ticket), Body: Ticket },
-  person: { fits: fit([420, 640, 760, 260], 150), title: (p) => words(p.person).split(':')[1] || 'Person', sub: (p) => words(p.person).split(':')[0],
+  person: { fits: fit([420, 640, 760, 260], 150), title: () => 'Person', sub: (p) => words(p.person),
     Body: ({ params, form }) => { const [kind, id] = words(params.person).split(':'); return kind === 'member' ? <Assigned who={id} kind="member" form={form} /> : <NotDrawn params={params} />; } },
-  agent: { fits: fit([420, 640, 760, 260], 150), title: (p) => words(p.agent), sub: () => 'agent', Body: ({ params, form }) => <Assigned who={words(params.agent)} kind="agent" form={form} /> },
+  agent: { fits: fit([420, 640, 760, 260], 150), title: () => 'Agent', sub: (p) => words(p.agent), Body: ({ params, form }) => <Assigned who={words(params.agent)} kind="agent" form={form} /> },
   comments: { fits: fit([440, 680, 820, 420], 260), title: () => 'Comments', sub: (p) => words(p.ticket), Body: Comments },
   session: { fits: fit([440, 680, 820, 360], 170), title: () => 'Session', sub: (p) => words(p.session).slice(0, 11), Body: Session },
   pull: later('Pull request', 'change'),

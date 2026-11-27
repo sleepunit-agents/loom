@@ -19,10 +19,9 @@
 .board-placement { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; overflow: hidden;
   background: color-mix(in srgb, var(--card) 92%, transparent); border: 1px solid var(--surface-edge); border-radius: calc(var(--radius) + 4px);
   box-shadow: inset 0 1px var(--rim), 0 1px 2px var(--contact), 0 6px 18px -10px var(--ambient); }
-.board-placement > header { display: flex; align-items: baseline; gap: .5rem; padding: .7rem .9rem .5rem; }
-.board-placement > header h2 { font-size: .95rem; font-weight: 600; min-width: 3ch; flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.board-placement:not([data-form='compact']) > header h2 { flex-shrink: 0; }
-.board-placement > header small { color: var(--muted-foreground); white-space: nowrap; margin-right: auto; min-width: 0; flex: 0 2 auto; overflow: hidden; text-overflow: ellipsis; }
+.board-placement > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .5rem; padding: .7rem .9rem .5rem; }
+.board-placement > header h2 { font-size: .95rem; font-weight: 600; flex: 0 0 auto; max-width: 100%; }
+.board-placement > header small { color: var(--muted-foreground); margin-right: auto; min-width: 0; flex: 0 1 auto; overflow-wrap: anywhere; }
 .board-placement > header :is(button, .board-flag) { flex: none; }
 .board-placement > header .board-remove { color: var(--muted-foreground); opacity: 0; padding: 0 .25rem; }
 .board-placement:is(:hover, :focus-within) > header .board-remove { opacity: 1; }
@@ -32,8 +31,7 @@
 .board-placement[data-form='primary'] > div { padding: 0 1.2rem 1.2rem; }
 .board-placement[data-form='compact'] > div { overflow: hidden; padding-bottom: .5rem; }
 .board-placement[data-form='compact'] > header { padding-bottom: .15rem; }
-.board-brief { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: .86rem; }
-.board-placement[data-form='compact'] > header h2 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.board-brief { font-size: .86rem; line-height: 1.35; overflow-wrap: anywhere; }
 .board-placement > header .board-maximize { color: var(--muted-foreground); padding: 0 .25rem; opacity: .55; }
 .board-placement > header .board-maximize:is(:hover, :focus-visible) { opacity: 1; color: var(--foreground); }
 .board-flag { font-size: .74rem; font-weight: 600; border-radius: 999px; padding: .05rem .5rem; white-space: nowrap; background: var(--flag, #c2410c); color: #fff; }

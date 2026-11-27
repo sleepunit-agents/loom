@@ -90,7 +90,7 @@ function BoardView({ board, onRemove, onMaximize, onClose }: { board: Board; onR
                 {!board.closed && p.canBeBig && !p.big && <button type="button" className="board-maximize" aria-label={'Make ' + p.view.title(p.values) + ' the big one'} onClick={() => onMaximize(p.id)}>⤢</button>}
                 {!board.closed && <button type="button" className="board-remove" aria-label={'Remove ' + p.view.title(p.values)} onClick={() => onRemove(p.id)}>✕</button>}
               </header>
-              <div><Body params={p.values} form={slot.form} raise={(name) => raise(p.id, name)} act={(action, detail) => void memberOperation('boards.act', { board: board.id, placement: p.id, action, detail }).catch(() => {})} /></div>
+              <div inert={board.closed}><Body params={p.values} form={slot.form} raise={(name) => raise(p.id, name)} act={(action, detail) => void memberOperation('boards.act', { board: board.id, placement: p.id, action, detail }).catch(() => {})} /></div>
             </article>
           );
         })}

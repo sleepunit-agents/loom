@@ -46,6 +46,8 @@ it('uses selections and argument types served by the runtime',async()=>{
 
 it('keeps the table and the opened conversation on screen while another date range loads',async()=>{
   const day=(n:number)=>`2026-11-${String(n).padStart(2,'0')}`;
+  // The page starts on the six days up to today, so the days chosen below are only a valid range on a known day.
+  vi.useFakeTimers({now:new Date(day(20)+'T12:00:00'),toFake:['Date']});
   let changing=false;
   // As the data hook answers: with `keep`, the last answer again, marked settling; without it, loading.
   feed.mockImplementation((query:string,_variables:unknown,options?:{keep?:boolean})=>changing&&!options?.keep?{status:'loading'}:{status:'live',settling:changing||undefined,data:query.includes('conversationJobUsage')?
@@ -64,5 +66,5 @@ it('keeps the table and the opened conversation on screen while another date ran
     expect(tree.root.findAll(node=>(node.type==='table'||node.type==='section')&&node.props['aria-busy']).map(node=>node.props['aria-busy'])).toEqual([true,true]);
     expect(tree.root.findAllByType('button')[0].props['aria-expanded']).toBe(true);
     expect(feed.mock.calls.at(-1)![1]).toMatchObject({from:new Date(day(1)+'T00:00:00').toISOString(),conversation:'large'});
-  } finally { await act(async()=>tree.unmount()); }
+  } finally { await act(async()=>tree.unmount()); vi.useRealTimers(); }
 });

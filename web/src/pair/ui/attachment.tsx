@@ -100,7 +100,7 @@ function AttachmentTitle({
     <span
       data-slot="attachment-title"
       className={cn(
-        "block max-w-full min-w-0 truncate font-medium group-data-[state=processing]/attachment:shimmer group-data-[state=uploading]/attachment:shimmer",
+        "block max-w-full min-w-0 break-words font-medium group-data-[state=processing]/attachment:shimmer group-data-[state=uploading]/attachment:shimmer",
         className
       )}
       {...props}
@@ -116,7 +116,7 @@ function AttachmentDescription({
     <span
       data-slot="attachment-description"
       className={cn(
-        "mt-0.5 block min-w-0 truncate text-xs text-muted-foreground group-data-[state=error]/attachment:text-destructive/80",
+        "mt-0.5 block min-w-0 break-words text-xs text-muted-foreground group-data-[state=error]/attachment:text-destructive/80",
         "max-w-full",
         className
       )}

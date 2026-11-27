@@ -173,9 +173,9 @@ export function ViewLink({
 export function MiniCard({ title, meta, detail }: { title: string; meta?: string; detail?: string | null }) {
   return (
     <div className="space-y-1 [overflow-wrap:anywhere]">
-      <strong className="line-clamp-2 font-semibold">{title}</strong>
+      <strong className="font-semibold">{title}</strong>
       {meta && <p className="text-xs text-muted-foreground">{meta}</p>}
-      {detail && <p className="line-clamp-3 text-card-body">{detail}</p>}
+      {detail && <p className="text-card-body">{detail}</p>}
     </div>
   );
 }

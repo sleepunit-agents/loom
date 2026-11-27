@@ -220,3 +220,17 @@ describe('big and small, and flags (checks 24 to 27)', () => {
     expect(catalogue().find((b) => b.name === 'pull')?.flagsItselfFor).toEqual(['check failed', 'merged', 'closed']);
   });
 });
+
+describe('a reference is an id and nothing else', () => {
+  it('refuses words, blank-looking letters and spaces where a record is named', () => {
+    const place = (brick: string, params: Record<string, unknown>) => () => agent(empty(), [{ change: 'place', brick, params }]);
+    expect(place('person', { person: 'contact:Call_your_bank_now' })).toThrow(Refused);
+    expect(place('person', { person: 'contact:ㅤㅤ' })).toThrow(Refused);
+    expect(place('project', { project: 'send money' })).toThrow(Refused);
+    expect(place('project', { project: 'lоom' })).toThrow(Refused); // a Cyrillic о
+    expect(place('agent', { agent: 'x'.repeat(121) })).toThrow(Refused);
+    expect(place('person', { person: 'contact:anton-avguchenko' })).not.toThrow();
+    expect(place('repository', { repository: 'sleepunit-agents/loom' })).not.toThrow();
+    expect(place('session', { session: 'cv-82bc90f5-631b-411d-a45b-222f5adba886' })).not.toThrow();
+  });
+});

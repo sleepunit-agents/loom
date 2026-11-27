@@ -4,10 +4,12 @@
 import { z } from 'zod';
 
 /** Record references are checked for shape only. Whether the record exists, and whether the member looking
- * may read it, is decided by the read that draws the brick. */
-const ref = z.string().min(1).max(200).regex(/^[^\p{C}\s]+$/u);
+ * may read it, is decided by the read that draws the brick. The shape is an id's: ASCII letters, digits and
+ * the few marks loom's ids use, so a reference cannot carry a sentence, a look-alike letter or blank space
+ * onto a board. The page shows a reference only in its small monospace line, never as a heading. */
+const ref = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9:._\/@-]{0,119}$/);
 const ticket = z.string().regex(/^t-[1-9]\d*$/);
-const person = z.string().max(200).regex(/^(member|contact):[^\p{C}\s]+$/u);
+const person = z.string().regex(/^(member|contact):[a-z0-9][a-z0-9._-]{0,99}$/);
 
 export const recordKinds = [
   'project', 'ticket', 'change', 'repository', 'person', 'agent', 'inbox item', 'approval', 'session',

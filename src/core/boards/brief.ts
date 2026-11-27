@@ -47,7 +47,7 @@ export function described(board: Board): string {
 export function boardBrief(shown: Board | null, boards: readonly { board: Board; unseen: readonly ChangeRow[] }[]): string {
   const changes = boards.flatMap(({ board, unseen }) => changeSentences(board, unseen));
   return [
-    shown ? 'The member is looking at this board:\n' + described(shown) : 'No board is open in this thread.',
+    shown ? (shown.closed ? 'The member last sent from this board, which has since been closed:\n' : 'The member is looking at this board:\n') + described(shown) : 'No board is open in this thread.',
     ...(changes.length ? ['Since you last looked:\n' + changes.map((s) => '- ' + s).join('\n')] : []),
   ].join('\n\n');
 }
@@ -77,7 +77,8 @@ export function boardsMail(brief: string): string {
     'Save a board worth returning to as a blueprint, and always when you find yourself building the same board again.',
     'If no brick shows what is needed, say so and file a ticket for the brick. Do not approximate.',
     'Here you decide and dispatch. Look things up, run a command, use quick subagents to read. Work that writes code or',
-    'runs long is handed off with conversation.handoff, not done in this conversation.',
+    'runs long is handed off with conversation.handoff, not done in this conversation. Place a session brick for it,',
+    'with the conversation id the handoff returned, so the member can watch it and stop it.',
     '',
     brief,
   ].join('\n');
