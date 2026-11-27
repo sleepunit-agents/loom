@@ -118,13 +118,17 @@ There is no note brick. What the agent has to say goes in the conversation.
 
 ## Records
 
-Four tables, all in the shared schema.
+Five tables, all in the shared schema.
+
+**`board_threads`**: `thread`, `since`. A thread that has the second window: its member has sent from this page.
+Only in such a thread is an agent told about boards or allowed to open one. A board nobody can see is never made.
 
 **`boards`**: `id`; `thread`; `title` (at most 80 characters, may be empty, stored as a thread's title is);
 `blueprint` (the one it was opened from, or null); `revision` (1 when opened; goes up by exactly one for each later
 operation that writes a `board_changes` row); `agent_seen` (a revision; 0 until the agent has been handed the board);
 `opened_at`; `trail_at` (when it last joined the trail: set on open and on reopen); `changed_at`; `closed_at` (null
-while it is on the trail). A board is readable by its thread's member and its thread's agent and by nobody else. A
+while it is on the trail); `shown_at` (when the member last sent a message with this board on screen, or null). A
+board is readable by its thread's member and its thread's agent and by nobody else. A
 board is always between one member and one agent. Two members never share one.
 
 **`board_placements`**: `board`; `id` (unique across all boards, never reused); `brick`; `params` (JSON, valid for that brick's schema, stored
@@ -156,8 +160,9 @@ is when the call is applied, and the result always returns the board as it then 
 
 ### For the agent
 
-These are the operations as a job's body may call them, and only for boards in that job's own thread and blueprints of
-that job's own agent; anything else from a body is denied. Where a member may call an operation of the same name, what
+These are the operations as a job's body may call them, and only for boards in that job's own thread, only when
+that thread has a `board_threads` row, and only for blueprints of that job's own agent; anything else from a body is
+denied. Where a member may call an operation of the same name, what
 the member may pass is under "For the member".
 
 - `bricks.catalogue()` → for every brick: name, one line on what it shows, parameter schema with defaults, link key,
@@ -228,17 +233,22 @@ the brick draws "unavailable", the same in each case. Operations check shape. Vi
 
 ## What the agent is told
 
-`comms.send` gains one optional field, `board`: the id of the board on screen. It must be a board of that thread, open
-or closed, or the send is refused. Nothing is added to the member's words; the bracketed prefix goes.
+`comms.send` gains one optional field, `shows`: `{"board": <id or null>}`. The page always sends it, with the id of
+the board on screen or null. The send writes the thread's `board_threads` row if it has none and, for a board, sets
+that board's `shown_at`. A board that is not in the thread refuses the send. Nothing is added to the member's words;
+the bracketed prefix goes.
 
-When a job starts, the server calls `takeBoardBrief(thread, board?)` and adds its text to the job's mail. It does three
-things, in one transaction:
+When a job starts in a thread with a `board_threads` row, its body calls `boards.brief` before it reads its mail, and
+is told what the reply says, after a fixed paragraph on how to fill a board (the standing instructions below). In any
+other thread the call is refused and the body is told nothing about boards. `boards.brief` does three things, in one
+transaction:
 
-1. Picks the **shown** board: the one named in the send, else the last on the trail, else none.
+1. Picks the **shown** board: among the thread's boards, the one with the latest of its `shown_at` and, if it is
+   open, its `trail_at`. So it is the board the member last sent from, unless one has joined the trail since.
 2. Builds the text with the pure function `boardBrief(shown, boards)`, where each board comes with its placements
    (live ones, and removed ones named by an unseen change) and its member `board_changes` rows with a revision greater
    than its `agent_seen`.
-3. Sets `agent_seen` to the current revision on every board it included.
+3. Sets `agent_seen` to the current revision on the shown board and on every board with unseen member changes.
 
 The text reads, for the shown board: its id, its title, whether it is open or closed, and its live placements in rank order, each as placement id,
 brick and params. Then, for every board in the thread with unseen member changes, one sentence per row, naming the
@@ -374,18 +384,20 @@ the thread's member. No model is involved. Each check sets up its own board unle
 8. With a `ticket` placed whose assignee is an agent: as the member, click the assignee chip. An `agent` placement is
    stored with `placed_by_kind` `member`, at the last rank, and no job is started. Clicking again stores nothing.
 9. With a board of `lanes` and `trend` that the agent has been handed: as the member, remove `trend`.
-   `takeBoardBrief` returns text with the board's id, `lanes` with its placement id, and the remove sentence naming
-   `trend(project=…, days=30)`. `agent_seen` then equals the revision, and a second `takeBoardBrief` has no change
+   `boards.brief` returns text with the board's id, `lanes` with its placement id, and the remove sentence naming
+   `trend(project=…, days=30)`. `agent_seen` then equals the revision, and a second `boards.brief` has no change
    sentences.
 10. As in 9, but in place of the brief the agent calls `boards.change`: its result's meanwhile holds the remove
-    sentence, and a following `takeBoardBrief` does not.
-11. A member change on a board that is not the shown one appears in `takeBoardBrief` as a sentence naming that board.
+    sentence, and a following `boards.brief` does not.
+11. A member change on a board that is not the shown one appears in `boards.brief` as a sentence naming that board.
     With an empty trail the text says no board is open.
 12. As the member: set a ticket's status from its brick. The ticket changes through `tasks.command`, an `act` row is
     written, and the brief has the act sentence with the ticket id and the status. `boards.act` with an action the
     brick does not have, with a `detail` that fails the action's schema, or on a closed board, is refused. A comment
     added from `comments` writes an `act` row whose `detail` is `{}`.
-13. `comms.send` with `board` of another thread is refused. The stored words of a send equal what the member typed.
+13. `comms.send` with `shows` naming a board of another thread is refused. The stored words of a send equal what the
+    member typed. In a thread with no `board_threads` row, every agent board operation and `boards.brief` is denied;
+    after one send with `shows`, they are allowed.
 
 **Blueprints**
 
