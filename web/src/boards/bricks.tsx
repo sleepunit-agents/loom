@@ -6,6 +6,7 @@ import { memberOperation } from '../data/operation';
 import { useDataQuery } from '../data/graphql';
 import { Trend } from './trend';
 import { Reply } from '../pair/reply';
+import { SessionLatestStep, SessionTrace } from './session-trace';
 import type { Fits, Form } from './layout';
 import { Pull } from './bricks-pull';
 import { Repository } from './bricks-repository';
@@ -239,8 +240,9 @@ type SessionJob = { id: string; title: string; state: string; queuedAt: string; 
 type SessionDetail = { brief: string | null; logTail: string | null; endedNote: string | null; claimedAt: string | null; endedAt: string | null };
 const running = (state: string) => state === 'queued' || state === 'starting' || state === 'running';
 const lasted = (from: string, to: number) => { const m = Math.max(0, Math.round((to - Date.parse(from)) / 60000)); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
-/** One session of agent work, by its conversation: the latest job there. Loom keeps no step-by-step trace for
- * work outside a thread, so this shows what it was asked, where it stands and which tools it has used. */
+/** One session of agent work, by its conversation: the latest job there. It shows what it was asked, where it
+ * stands and which tools it has used; and, for work handed off from the member's own thread, the steps its body
+ * reported, live (session-trace.tsx). */
 function Session({ params, form, act, raise }: { params: Params; form: Form; act: Act; raise: Raise }) {
   const conversation = words(params.session);
   const read = useDataQuery<{ jobs: SessionJob[]; cv: { agent: string; label: string | null; venue: string } | null }>(
@@ -282,8 +284,10 @@ function Session({ params, form, act, raise }: { params: Params; form: Form; act
           {detail?.endedNote && <div><dt>How it ended</dt><dd>{detail.endedNote}</dd></div>}
           {!running(job.state) && job.state !== 'done' && detail?.logTail && <div><dt>Last output</dt><dd><pre className="board-tail">{detail.logTail}</pre></dd></div>}
           <div><dt>Result</dt><dd className="text-muted-foreground">{job.state === 'done' ? 'Its answer is in the conversation.' : running(job.state) ? 'Its answer will arrive in the conversation.' : 'It gave no answer.'}</dd></div>
+          {read.data?.cv?.venue === 'handoff' && <div><dt>Steps</dt><dd><SessionTrace conversation={conversation} job={job.id} running={running(job.state)} /></dd></div>}
         </dl>
       )}
+      {form === 'side' && read.data?.cv?.venue === 'handoff' && <SessionLatestStep conversation={conversation} job={job.id} />}
       {running(job.state) && (
         <div className="board-line">
           {asking

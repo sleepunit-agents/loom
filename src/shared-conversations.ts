@@ -18,6 +18,7 @@ import { tempoCommandAllowed } from './shared-tempo-access.js';
 import { sharedSharing } from './shared-sharing.js';
 import { CommsMessages } from './core/conversations/messages.js';
 import { CommsQueries, commsQueryFields } from './core/conversations/comms-query.js';
+import { JobTraceQueries, jobTraceFields } from './core/conversations/job-trace.js';
 import { InboxQueries, inboxQueryFields, type ProposalTitles, type QuestionAsker } from './core/conversations/inbox-query.js';
 import { ConversationSummaries, conversationSummaryFields } from './core/conversations/summaries.js';
 import { registerConversationOperations } from './core/conversations/operations.js';
@@ -51,7 +52,7 @@ export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKe
   });
   return {
     service, queries, inbox, summaries, authorizeQuestion:questionPolicy.ask,
-    fields: { ...work.fields, ...commsQueryFields(queries), ...inboxQueryFields(inbox, discussions.agent), ...conversationSummaryFields(summaries) },
+    fields: { ...work.fields, ...commsQueryFields(queries), ...jobTraceFields(new JobTraceQueries(db, key, policy, now)), ...inboxQueryFields(inbox, discussions.agent), ...conversationSummaryFields(summaries) },
     install(operations: Operations) {
       work.install(operations);
       discussions.install(operations);

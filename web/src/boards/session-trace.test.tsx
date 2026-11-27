@@ -1,0 +1,82 @@
+/** The session brick's trace, drawn from fake data (docs/specs/boards.md, "Sessions"). */
+import { afterEach, expect, it, vi } from 'vitest';
+import { createElement as h } from 'react';
+// @ts-expect-error Renderer has no bundled declarations.
+import { act, create } from 'react-test-renderer';
+import type { TraceStep } from './session-trace';
+
+const f = vi.hoisted(() => ({ asked: [] as { document: string; variables: Record<string, unknown>; options?: { pause?: boolean } }[], venue: 'handoff', steps: [] as unknown[] }));
+vi.mock('../data/graphql', () => ({ useDataQuery: (document: string, variables: Record<string, unknown>, options?: { pause?: boolean }) => {
+  f.asked.push({ document, variables, options });
+  if (document.includes('BrickSessionJob')) return { status: 'live', data: { rows: [{ brief: 'Compare the fictional pumps', logTail: null, endedNote: null, claimedAt: '2026-11-27T10:00:00.000Z', endedAt: null }] } };
+  if (document.includes('BrickSessionTrace')) return { status: 'live', data: { steps: f.steps } };
+  if (document.includes('BrickSessionStep')) return { status: 'live', data: { steps: f.steps.slice(-1) } };
+  return { status: 'live', data: { jobs: [{ id: 'child-job', title: 'Compare pumps', state: 'running', queuedAt: '2026-11-27T10:00:00.000Z', usage: { model: 'fictional-model', harness: 'claude', tools: [{ name: 'Bash', count: 2 }] } }], cv: { agent: 'art', label: 'Compare pumps', venue: f.venue } } };
+} }));
+vi.mock('../data/operation', () => ({ memberOperation: vi.fn() }));
+import { brickView } from './bricks';
+import { traceEvents } from './session-trace';
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+// The work-trace cards' collapsible asks for a frame when it mounts; there is no browser here.
+vi.stubGlobal('requestAnimationFrame', (fn: () => void) => setTimeout(fn, 0));
+vi.stubGlobal('cancelAnimationFrame', (id: ReturnType<typeof setTimeout>) => clearTimeout(id));
+let tree: ReturnType<typeof create>;
+afterEach(async () => { await act(async () => tree?.unmount()); f.asked.length = 0; f.venue = 'handoff'; f.steps = []; });
+const call = '1'.repeat(24), other = '2'.repeat(24);
+const step = (seq: number, id: string, tool: string, cardState: TraceStep['cardState'], words: string | null): TraceStep =>
+  ({ seq, job: 'child-job', at: '2026-11-27T10:0' + seq + ':00.000Z', tool, cardState, clientId: `child-job:pair.${id}.-.${seq}`, words });
+const steps = [step(1, call, 'Terminal', 'running', 'ls house'), step(2, call, 'Terminal', 'done', 'notes.md'), step(3, other, 'Read', 'running', 'Read')];
+const draw = async (form: 'primary' | 'side' | 'compact') => {
+  await act(async () => { tree = create(h(brickView('session').Body, { params: { session: 'cv-child' }, form, act: () => {}, raise: () => {} })); });
+  return JSON.stringify(tree.toJSON());
+};
+type Drawn = string | { type: string; props: Record<string, unknown>; children: Drawn[] | null };
+const text = (node: Drawn): string => (typeof node === 'string' ? node : (node.children ?? []).map(text).join(''));
+const slots = (node: Drawn | Drawn[] | null, slot: string): Drawn[] =>
+  !node || typeof node === 'string' ? [] : Array.isArray(node) ? node.flatMap((n) => slots(n, slot))
+    : [...(node.props['data-slot'] === slot ? [node] : []), ...slots(node.children, slot)];
+const titles = () => slots(tree.toJSON(), 'trace-title').map(text);
+
+it('draws the handed-off job\'s steps in the big form, oldest first, beside the facts it already showed', async () => {
+  f.steps = steps;
+  const drawn = await draw('primary');
+  // A call and its result are one card; the newest step is last.
+  const log = tree.root.find((node: { props: Record<string, unknown> }) => node.props['data-session-trace'] === '');
+  expect(log.props.role).toBe('log');
+  expect(slots(tree.toJSON(), 'trace')).toHaveLength(2);
+  expect(titles()).toHaveLength(2);
+  expect(titles()[0]).toContain('ls house');
+  expect(titles()[1]).toBe('Read');
+  expect(slots(tree.toJSON(), 'trace-description').map(text)).toEqual(['done', 'running']);
+  // The facts are kept.
+  for (const kept of ['Asked', 'Compare the fictional pumps', 'Running on', 'fictional-model', 'Result', 'Steps', 'Stop…']) expect(drawn).toContain(kept);
+  const asked = f.asked.find((q) => q.document.includes('BrickSessionTrace'))!;
+  expect(asked.variables).toEqual({ c: 'cv-child', j: 'child-job', n: 100 });
+});
+
+it('says so when no step has been reported, and asks for no trace outside a handoff', async () => {
+  expect(await draw('primary')).toContain('No steps reported yet.');
+  await act(async () => tree.unmount());
+  f.asked.length = 0; f.venue = 'wake';
+  const drawn = await draw('primary');
+  expect(drawn).not.toContain('Steps');
+  expect(f.asked.some((q) => q.document.includes('sessionTrace'))).toBe(false);
+});
+
+it('gives the small form the latest step as one line, without asking for any words', async () => {
+  f.steps = steps;
+  const drawn = await draw('side');
+  expect(drawn).toContain('Latest step: ');
+  expect(tree.root.find((node: { props: Record<string, unknown> }) => node.props['data-session-step'] === '').children.join('')).toBe('Latest step: Read · running');
+  expect(f.asked.find((q) => q.document.includes('BrickSessionStep'))!.document).not.toContain('words');
+  expect(f.asked.some((q) => q.document.includes('BrickSessionTrace'))).toBe(false);
+  await act(async () => tree.unmount());
+  f.asked.length = 0;
+  await draw('compact');
+  expect(f.asked.some((q) => q.document.includes('sessionTrace'))).toBe(false);
+});
+
+it('hands the transcript\'s work-trace cards a step whose words are no longer kept', () => {
+  expect(traceEvents([step(1, call, 'Terminal', 'done', null)])).toEqual([{ thread: '', sender: '', kind: 'card', seq: 1, at: '2026-11-27T10:01:00.000Z', run: 'child-job', tool: 'Terminal', cardState: 'done', clientId: `child-job:pair.${call}.-.1`, words: null }]);
+});

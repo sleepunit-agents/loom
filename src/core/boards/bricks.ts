@@ -84,7 +84,7 @@ export const bricks: readonly Brick[] = [
     params: z.object({ approval: ref }).strict(), references: { approval: 'approval' }, linkKey: 'approval', actions: {} }),
   // One piece of agent work with its own conversation: what the agent handed off, or other work the member may read.
   brick({ name: 'session', big: true, flags: ['finished', 'failed', 'stopped'],
-    shows: 'A session of agent work: what it was asked, where it stands, what it has used. Its conversation id is what conversation.handoff returns.',
+    shows: 'A session of agent work: what it was asked, where it stands, what it has used and, when big, the steps it reports as it works. Its conversation id is what conversation.handoff returns.',
     params: z.object({ session: ref }).strict(), references: { session: 'session' }, linkKey: 'session',
     actions: { stop: { operation: 'runtime.jobStop', detail: none } } }),
 ];
