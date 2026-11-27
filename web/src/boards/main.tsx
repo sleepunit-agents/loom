@@ -84,8 +84,7 @@ function BoardView({ board, onRemove, onMaximize, onClose }: { board: Board; onR
               data-flagged={p.flagged || !!own[p.id]} onPointerEnter={() => looked(p)} onFocus={() => looked(p)}
               style={{ transform: `translate(${slot.x}px, ${slot.y}px)`, width: slot.w, height: slot.h }}>
               <header>
-                <h2>{p.view.title(p.values)}</h2>
-                <small className="font-mono">{p.view.sub(p.values)}</small>
+                <div className="board-names"><h2>{p.view.title(p.values)}</h2><small className="font-mono">{p.view.sub(p.values)}</small></div>
                 {(p.flagged || own[p.id]) && <span className="board-flag" role="status">{own[p.id] || 'Look here'}</span>}
                 {!board.closed && p.canBeBig && !p.big && <button type="button" className="board-maximize" aria-label={'Make ' + p.view.title(p.values) + ' the big one'} onClick={() => onMaximize(p.id)}>⤢</button>}
                 {!board.closed && <button type="button" className="board-remove" aria-label={'Remove ' + p.view.title(p.values)} onClick={() => onRemove(p.id)}>✕</button>}
