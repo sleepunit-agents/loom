@@ -67,8 +67,21 @@ _Avoid_: module, widget, card, component
 **Form**:
 one of the fixed ways a brick draws itself. **Primary**, **side** and **compact** are the forms a placement can take on
 a board. **Chip** is one line naming the brick and what it is about, used inside words, inside other bricks, and for
-folded placements. **Hover** is what pointing at a chip shows. Every brick has all five.
+folded placements. **Hover** is what pointing at a chip shows. Every brick has side, compact, chip and hover. Primary
+is optional: a brick that has it **can be big**. A brick may be small-only. No brick is big-only.
 _Avoid_: variant, size, view
+
+**Big**:
+the one placement on a board drawn in the primary form: the live placement of lowest rank whose brick can be big. A
+board whose bricks are all small-only has no big placement.
+
+**Flag**:
+a mark on a placement that says it changed and is worth a look. It moves nothing. A brick raises its own; the agent
+can raise one.
+
+**Session**:
+one piece of agent work with its own conversation and its jobs: what the agent hands off from the thread, or any other
+running work the member may read.
 
 **Board**:
 the second window: an ordered set of placed bricks inside one thread. It has an address. It is changed in place.
@@ -78,7 +91,7 @@ _Avoid_: view, page, canvas, workspace, context
 one brick on one board, with its parameters and its rank.
 
 **Rank**:
-a placement's position in its board's order, counted from 0. The placement at rank 0 is the board's **primary**. The
+a placement's position in its board's order, counted from 0. Rank decides which placement is big (see **Big**). The
 layout turns rank and the room available into a form and a rectangle. Nobody chooses a rectangle.
 _Avoid_: zone, core, secondary, tertiary (the owner's earlier words for what rank and screen size now decide)
 
@@ -96,8 +109,8 @@ a thread's open boards, left to right, in the order they last joined it.
    markup, a query, a style or a rectangle. Every parameter is a record reference, a choice from a fixed list, or a
    whole number in a stated range; a schema may mark a parameter optional. The only free text the agent gives a board
    is its title.
-2. **A new brick is a change to loom.** It arrives with all five forms, a fit for each of the three board forms, a
-   parameter schema with a default for every parameter that is not a record reference, its actions, its link key if it
+2. **A new brick is a change to loom.** It arrives with side, compact, chip and hover, and with primary if it can be
+   big; a fit for each board form it has; the changes it flags itself for; a parameter schema with a default for every parameter that is not a record reference, its actions, its link key if it
    has one, tests and a catalogue entry.
 3. **The board is the record of what is in the second window.** The page draws the board's placements and nothing
    else there. The address holds one id. The page keeps no board state in the query string, the fragment or the
@@ -106,13 +119,19 @@ a thread's open boards, left to right, in the order they last joined it.
    row, and the agent is handed those rows as sentences: at the start of its next job, or sooner in the result of its
    next board call.
 5. **The member decides and does not pilot.** A brick carries the actions loom already has for its record. The member
-   can also remove a placement, and can place a brick by clicking a chip.
+   can also remove a placement, place a brick by clicking a chip, and make a brick that can be big the big one.
 6. **A click never waits for a model.** Placing from a chip starts no job.
 7. **A change is drawn when it lands.** Each stored change to the board on screen is drawn at once, while the job that
    made it is still running.
 8. **Bricks are live.** A brick's data changes on screen when the records change, with no reload and no job.
 9. **The presence and the input are always on screen** on the page of a thread the member owns, at every width, with
    or without a board.
+10. **A flag never moves anything, and never starts a job.** What happens in loom and whether an agent is woken for
+    it is decided elsewhere and has nothing to do with this page. A session the agent handed off reports back to the
+    thread as loom already does; that is a reply, and the agent then decides whether the board changes.
+11. **The agent in the thread decides and dispatches.** It may look things up, run a command and use its harness's
+    own subagents for reading. Work that writes code or runs long is handed off as a session through loom, so that it
+    can be shown. This is judgment; no suite checks it.
 
 There is no note brick. What the agent has to say goes in the conversation.
 
@@ -133,13 +152,13 @@ board is always between one member and one agent. Two members never share one.
 
 **`board_placements`**: `board`; `id` (unique across all boards, never reused); `brick`; `params` (JSON, valid for that brick's schema, stored
 with every default filled in); `rank`; `placed_by_kind` (`agent` or `member`); `placed_at`; `removed_at` (null while
-live). Among a board's live placements the ranks are exactly 0 to n−1. No two live placements on a board have the same
+live); `flagged_at` (when the agent last flagged it, null once the member has seen it). Among a board's live placements the ranks are exactly 0 to n−1. No two live placements on a board have the same
 brick and the same params. A board may have no live placements. Removed placements stay as rows. Visibility follows the
 board.
 
 **`board_changes`**: `board`; `revision`; `seq` (order within one revision, from 0); `at`; `actor_kind` (`agent` or
-`member`); `change` (`open`, `place`, `remove`, `rank`, `title`, `close`, `reopen`, `act`); `placement` (for `place`,
-`remove`, `rank` and `act`); `from` and `to` (old and new rank for `rank`, old and new title for `title`, the rank taken in `to` for `place`,
+`member`); `change` (`open`, `place`, `remove`, `rank`, `title`, `close`, `reopen`, `act`, `maximize`, `flag`); `placement` (for `place`,
+`remove`, `rank`, `act`, `maximize` and `flag`; `maximize` also has `from` and `to`, the ranks traded); `from` and `to` (old and new rank for `rank`, old and new title for `title`, the rank taken in `to` for `place`,
 otherwise null). Placements shifted by another's `place`, `remove` or `rank` get no rows of their own; and for `act`: `action` (the name of one of the brick's actions) and `detail` (JSON matching that action's
 declared schema, which holds only choices and ids, for example `{"status":"closed"}`). Visibility follows the board.
 
@@ -184,6 +203,10 @@ the member may pass is under "For the member".
   - `remove {placement}`: live placements after it move up one.
   - `rank {placement, rank}`: rank from 0 to n−1; the ones between shift by one.
   - `title {title}`.
+  - `maximize {placement}`: refused unless the placement's brick can be big. It trades ranks with the board's big
+    placement and no other placement moves. With no big placement it moves to rank 0. On the big placement it is
+    refused.
+  - `flag {placement}`: sets `flagged_at`. It takes no words. Flagging a flagged placement sets the time again.
 
   A rank outside its range is refused. The changes are applied in order, in one revision; if any is refused, none is
   stored. A call on a closed board is refused.
@@ -211,8 +234,10 @@ Each is denied unless the caller is the thread's member.
 
 - `boards.open({thread, place})` → a board with an empty title holding that one placement, at revision 1, with an
   `open` row and a `place` row.
-- `boards.change` with `place` (no `rank`: it goes last) and `remove` only. A member `title`, `rank`, or `place` with
-  a `rank` is refused.
+- `boards.change` with `place` (no `rank`: it goes last), `remove` and `maximize` only. A member `title`, `rank`,
+  `flag`, or `place` with a `rank` is refused.
+- `boards.seen({board, placement})` → clears `flagged_at`. It writes no `board_changes` row and does not raise the
+  revision. The page calls it when the member points at or clicks a flagged placement.
 - `boards.close`, `boards.reopen`.
 - `boards.act({board, placement, action, detail})` → refused unless the placement is live on an open board, `action`
   is one of its brick's actions, and `detail` matches that action's schema. Writes an `act` row and raises the
@@ -258,6 +283,7 @@ board by id and the placement by brick and params:
 - `place`: "The member placed person(person=member:jonathan) on board B."
 - `remove`: "The member removed trend(project=loom, days=30) from board B."
 - `close`, `reopen`: "The member closed board B." / "The member reopened board B."
+- `maximize`: "The member made trend(project=loom, days=30) the big one on board B."
 - `act`: "The member used close on ticket(ticket=t-2441) on board B." An action whose detail is not empty
   ends ": " and the detail, as `answer` does: "…on board B: choice=yes."
 
@@ -274,7 +300,9 @@ Both are drawn as chips in the agent's words and in the member's, and not inside
 **Standing instructions.** The agent's dossier for this page tells it: build a new board one `boards.change` per brick
 so the member watches it come together; change the board on screen when the subject is the same and open a new one when
 it is not; remove what no longer serves; save a board worth returning to, and always when it finds itself building the
-same board a second time; and when no brick shows what is needed, say so and file a ticket for the brick. These are
+same board a second time; when no brick shows what is needed, say so and file a ticket for the brick; when the member
+has chosen the big one, flag before changing it, and change it only when it cannot wait; and hand off work that writes
+code or runs long, placing its `session` brick. These are
 judgment. No suite checks them. The owner judges them in the demo.
 
 ## The page
@@ -290,8 +318,9 @@ One page per thread. Its address is `/app/b/<board id>`, or `/app/t/<thread id>`
 - **The conversation.** Words and the work trace. The work trace is drawn in every Comms thread the member owns, not
   only the pairing thread.
 - **The board.** The layout is a pure function `layout(placements in rank order, fits, area) → for each placement a
-  form and a rectangle, or folded`. Rank 0 always gets the primary form and never folds; below its minimum width it
-  takes the full width. The rest get side, then compact, in rank order, as room allows. A placement there is no room
+  form and a rectangle, or folded`. The big placement gets the primary form and never folds; below its minimum width it
+  takes the full width. The rest get side, then compact, in rank order, as room allows. With no big placement, all of
+  them do. A placement there is no room
   for is **folded**: shown as its chip in one expandable row at the end of the board. The exact rule is the design
   pass's to write. Fixed here: it is pure, it reads only rank, fit and area, and the same input always gives the same
   output. A board with an empty title is headed by its primary's chip, and has no heading if it has no placements.
@@ -299,6 +328,15 @@ One page per thread. Its address is `/app/b/<board id>`, or `/app/t/<thread id>`
   rectangles without being redrawn. The page reads the board's `revision` with its placements and applies each
   revision's differences in one step, so everything that changed in one revision starts moving in the same frame. With reduced motion set, changes apply without
   movement.
+- **Big and small.** A small placement whose brick can be big has one control to maximize it. The big placement has
+  none: there is no minimize, because something else becomes big only by being chosen. A brick's small forms are their
+  own drawing of the same record, not the big form shrunk: `lanes` small is a count per lane and what is stuck.
+- **Flags.** A placement is flagged when its `flagged_at` is set, or when the page saw one of its brick's flagged
+  changes happen while it was open. A flag pulses once when it arrives and then stays as a quiet mark. It goes when
+  the member points at or clicks the placement, and a brick's own flag also goes when its condition ends (the check
+  passes again). A flagged placement that is folded is marked on its chip and the folded row is marked; it does not
+  unfold. A brick's own flag is the page's and is not stored: a page that was closed when the change happened shows
+  the record as it now is, with no flag.
 - **Chips.** Clicking a chip places that brick, with the params its key gives and defaults for the rest, last on the
   open board on screen. If that placement is already live, nothing is stored and it is brought into view. If the board
   on screen is closed, or there is none, the click opens a new board.
@@ -331,6 +369,29 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `agent` | `agent`: agent id | none | the agent id |
 | `question` | `item`: inbox item id | `answer {choice}`, by `inbox.answer` | the item id |
 | `approval` | `approval`: approval id | `approve {}`, `refuse {}`, both by `approvals.answer` | the approval id |
+| `session` | `session`: conversation id | `stop {}`, by `runtime.jobStop`; `say {}`, a message to it | the conversation id |
+
+| Brick | Can be big | Flags itself when |
+| --- | --- | --- |
+| `project` | yes | never |
+| `lanes` | yes | never |
+| `trend` | once its primary form is built: opened and closed per day over `days`, with the tickets behind a day | never |
+| `ticket` | yes | it is closed or reopened by someone else |
+| `comments` | yes | a comment arrives from someone else |
+| `pull` | not yet | a check fails; it is merged or closed |
+| `repository` | not yet | never |
+| `person`, `agent` | not yet | never |
+| `question`, `approval` | no | never: being on the board is the flag |
+| `session` | yes: its live transcript | it finishes, it fails, it waits on the member |
+
+**Sessions.** A job in the thread hands work off with `conversation.handoff` (a work role or a harness), which loom
+has today: it opens a child conversation for the same agent, member and project, and the child's result comes back to
+the thread as a reply that wakes the agent. `session` shows one such conversation, or any conversation with jobs that
+the member may read. Small: its label, the state of its latest job, how long it has run, its latest line of work. Big:
+its work trace, live. A harness's own subagents inside one job are not sessions; they are drawn in that job's work
+trace. Read from the code and not run, 2026-11-27. Not yet known, and to be settled before the brick is built: which
+read gives a member a handoff conversation's work trace (it has no thread of its own); whether a member can send words
+to one, which `say` needs; and whether `runtime.jobStop` lets the thread's member stop it.
 
 A brick with no link key cannot be written in words. Its chip, used when it is folded, reads as its name and its
 record parameter ("Lanes · loom"). A ticket's assignee is drawn as an `agent` chip or a `person` chip by the ticket's
@@ -438,6 +499,20 @@ the thread's member. No model is involved. Each check sets up its own board unle
     folded row.
 23. Recorded harness output for a job in a thread that is not the pairing thread produces work-trace cards.
 
+**Added 2026-11-27, not yet written as suites:**
+
+24. `maximize` on a small placement whose brick can be big trades its rank with the big placement's; every other
+    placement keeps its rank; one `maximize` row holds both ranks. On a small-only brick, and on the big placement, it
+    is refused. As the member it is allowed, and the agent's next brief has its sentence.
+25. With a small-only brick at rank 0 and a brick that can be big at rank 1, the layout gives the primary form to rank
+    1. With only small-only bricks, no placement has the primary form.
+26. Every brick in the catalogue has side, compact, chip and hover. The catalogue says which can be big.
+27. `flag` as the agent sets `flagged_at` and changes no rank. As the member it is refused. `boards.seen` as the
+    member clears it and leaves the revision as it was; as anyone else it is denied.
+28. No flag, the agent's or a brick's own, queues a job.
+29. On the page: a `pull` placement whose check fails while the page is open is marked, stays marked after the pulse,
+    and is unmarked when pointed at; a folded one is marked on its chip.
+
 ## The demo
 
 Run by the owner against the real household, after the checks pass. He judges it; nothing here is automated.
@@ -455,6 +530,15 @@ something unrelated, and a second board opens to the right and closes back to th
 2. **A board saves as it goes; a blueprint is a promotion.** The agent promotes, or the member asks.
 3. **The narrow screen** has an always-present bar for the agent, and the conversation opens from it as a sheet.
 4. **What leaves a board** is the agent's judgment, and the member's asking.
+
+## Decided by the owner, 2026-11-27
+
+5. **Big is a feature of the brick.** "anything with a big version must have a small one. the limitation has to be
+   what can maximize, not what can minimize." Either party may maximize.
+6. **The agent may change the big one after the member chose it**, by judgment, and has a quieter way to point: the
+   flag. A brick's own flag is silent: it wakes nobody.
+7. **The agent in the thread is the one who decides and dispatches.** Long work is a session handed off through loom
+   and shown as a brick; quick subagents for reading are fine and are shown in the conversation.
 
 ## Open
 
