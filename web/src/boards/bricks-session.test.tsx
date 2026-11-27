@@ -41,7 +41,7 @@ it('draws the Tools label and the count when the session reports one', async () 
   await draw();
   expect(labels()).toContain('Tools');
   // A zero count is left out; the one real count is drawn beside its tool.
-  const counts = tree.root.findAll((node: Node & { props: Record<string, unknown> }) => node.type === 'span' && node.props.className === 'board-tools');
+  const counts = tree.root.findAll((node: Node & { props: Record<string, unknown> }) => node.type === 'span' && node.props.className === 'board-tool-counts');
   expect(counts).toHaveLength(1);
   expect(text(counts[0])).toBe('Bash ×2');
 });
