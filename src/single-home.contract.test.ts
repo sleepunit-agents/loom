@@ -162,8 +162,11 @@ it('says how long a session\'s steps are kept once, on a clock of its own', () =
   expect(traceDeadline({ at, keepUntil: '2026-11-15T00:00:00.000Z' })).toBe(Date.parse('2026-11-15T00:00:00.000Z'));
   expect(traceDeadline({ at, keepUntil: '2028-01-01T00:00:00.000Z' })).toBe(Date.parse(until));
   expect(traceKept({ at, keepUntil: null }, at)).toBe(false);
-  // The number is written in retention.ts and nowhere else, and the trace asks nothing of the Comms keep time.
-  expect(sources('src').filter(file => /\bTRACE_KEEP_DAYS\s*=/.test(text(file)))).toEqual(['src/core/conversations/retention.ts']);
+  // The number is written once (trace-keep-days.ts, which retention.ts hands on), and the trace asks nothing of the Comms keep time.
+  expect(sources('src').filter(file => /\bTRACE_KEEP_DAYS\s*=/.test(text(file)))).toEqual(['src/core/conversations/trace-keep-days.ts']);
+  // Its arithmetic is retention.ts's alone: the constant's own file imports and computes nothing.
+  expect(text('src/core/conversations/trace-keep-days.ts')).not.toMatch(/^import |DAY_MS/m);
+  expect(sources('src').filter(file => !file.endsWith('.test.ts') && /\bTRACE_KEEP_DAYS\b/.test(text(file))).sort()).toEqual(['src/core/conversations/job-trace.ts', 'src/core/conversations/retention.ts', 'src/core/conversations/trace-keep-days.ts', 'src/proposal-words.ts']);
   expect(text('src/core/conversations/job-trace.ts')).not.toMatch(/commsKeepDays|comms-days|wordsDeadline|wordsKept|\b90\b/);
 });
 

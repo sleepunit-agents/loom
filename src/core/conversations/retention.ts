@@ -1,7 +1,9 @@
-/** The one statement of how long a message's words are kept. Every reader, the writers that stamp a
- * limit, and the sweep that erases ask here; none of them works a deadline out for itself. */
+/** The one statement of how long a message's words are kept, and of how long a handed-off session's work steps
+ * are (a clock of their own, below). Every reader, the writers that stamp a limit, and the sweep that erases ask
+ * here; none of them works a deadline out for itself. */
 import { DAY_MS } from '../day.js';
 import { COMMS_DAYS_MAX } from '../data/comms-days.js';
+import { TRACE_KEEP_DAYS } from './trace-keep-days.js';
 
 /** A keep time a household can have set: whole days, from 1 to the most Setup allows. */
 export const validKeepDays = (days: number): boolean => Number.isInteger(days) && days >= 1 && days <= COMMS_DAYS_MAX;
@@ -24,7 +26,7 @@ export const wordsKept = (message: { keepUntil: string | null; at: string }, day
 
 /** How many days a handed-off session's steps are kept (docs/specs/boards.md, "Sessions"). It is the trace's
  * own clock: the household's Comms keep time does not shorten or lengthen it. */
-export const TRACE_KEEP_DAYS = 90;
+export { TRACE_KEEP_DAYS };
 /** The limit stamped on a step as it is written. */
 export const traceKeepUntil = (at: string): string => keepUntilFor(at, TRACE_KEEP_DAYS);
 /** A step written at or before this is past the trace's age limit at `now`. */

@@ -2519,6 +2519,16 @@ export const jobTrace = sqliteTable('job_trace', {
   index('job_trace_keep_until_idx').on(t.keepUntil),
 ]);
 
+/** The tickets a handed-off session was said to be for (docs/specs/boards.md, "Sessions"): one row for each ticket
+ * the handing-off agent named in `conversation.handoff`. It holds no words and is read with the conversation. */
+export const conversationTasks = sqliteTable('conversation_tasks', {
+  conversation: text('conversation').notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+  task: text('task').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
+}, t => [
+  primaryKey({ columns: [t.conversation, t.task] }),
+  index('conversation_tasks_task_idx').on(t.task),
+]);
+
 // A board is the second window of one Comms thread: the bricks an agent placed there (docs/specs/boards.md).
 // It holds which bricks and their parameters, never the records they show or a conversation's words.
 export const blueprints = sqliteTable('blueprints', {
@@ -2613,7 +2623,7 @@ export const boardChanges = sqliteTable('board_changes', {
 
 export const plumbing = {
   blueprints, boardThreads, boards, boardPlacements, boardChanges,
-  messageFiles, jobTrace,
+  messageFiles, jobTrace, conversationTasks,
   projectClaimDirections, taskBacklogEvents,
   bridgePersonSightings,
   agentPostSources, agentPostThreads, agentPosts, agentPostNames, agentPostWorkRefs, agentPostWorkPending,
