@@ -92,7 +92,7 @@ function Ticket({ params, form }: { params: Params; form: Form }) {
         {form === 'primary' && t.why && <div><dt>Why</dt><dd><Reply words={t.why} /></dd></div>}
         {form === 'primary' && t.doneWhen && <div><dt>Done when</dt><dd><Reply words={t.doneWhen} /></dd></div>}
       </dl>
-      <div className="board-row">
+      <div className="board-line">
         <span className="board-state">{t.status.replaceAll('_', ' ')}</span>
         {t.project && <Chip place={{ brick: 'project', params: { project: t.project } }}>{t.project}</Chip>}
         {t.assignee ? actorChip(t.assigneeKind, t.assignee) : <span className="text-muted-foreground">Unassigned</span>}
@@ -110,7 +110,7 @@ function Project({ params }: { params: Params }) {
   return (
     <>
       {p.goal ? <Reply words={p.goal} /> : <p className="text-muted-foreground">No goal written.</p>}
-      <div className="board-row">
+      <div className="board-line">
         <span className="board-state">{p.lifecycle}</span>
         <Chip place={{ brick: 'lanes', params: { project: words(params.project) } }}>Lanes</Chip>
         <Chip place={{ brick: 'trend', params: { project: words(params.project), days: 30 } }}>Trend</Chip>
@@ -129,7 +129,7 @@ function Assigned({ who, kind }: { who: string; kind: 'member' | 'agent' }) {
   return rows.length ? (
     <>
       <p>{rows.length === 6 ? 'At least six' : rows.length} open ticket{rows.length === 1 ? '' : 's'}.</p>
-      <div className="board-row">{rows.map((t) => <span key={t.id} title={t.title}>{ticketChip(t.id)}</span>)}</div>
+      <div className="board-line">{rows.map((t) => <span key={t.id} title={t.title}>{ticketChip(t.id)}</span>)}</div>
     </>
   ) : <p className="text-muted-foreground">No open tickets.</p>;
 }
