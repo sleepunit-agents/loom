@@ -455,8 +455,11 @@ The spec is written to the first answer in each case.
 
 1. **Moving an agent.** Written as: not possible until export and import are built, and they are not built here.
    The other answer adds them after phase 4.
-2. **Four releases or one.** Written as: four phases, each its own release, so a problem is in one kind of data. A
-   household that skips to the last still moves them one at a time. The other answer ships all four together.
+2. **Four releases or one.** Decided by the owner, 2026-11-27: one release. All four phases ship together and run in
+   order in one start, each still its own verified move with its own `memory_moves` row, which is the path this spec
+   already defines for a household that skips releases. Not yet folded: "Phases" and the checks still speak of a
+   release per phase, and "A household that skips releases can be stranded" now describes every household, so the
+   way back from a refused later phase has to be designed, not just listed as given up.
 3. **How long renamed sources and copies are kept.** Written as: until a person deletes them. The other answer is a
    setting.
 4. **`memory.moveWithout`.** Written as: an owner may name a source that is known to be gone, and the phase then
