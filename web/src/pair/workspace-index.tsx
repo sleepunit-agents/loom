@@ -244,7 +244,7 @@ export function WorkspaceIndex({
     const entries = read.data && roster ? rosterEntries(list, read.data, known.contacts) : [];
     const matching = search
       ? entries.filter((e) =>
-          [e.title, e.meta, e.detail, e.view.kind === 'profile' && e.view.ref]
+          [e.title, e.meta, e.view.kind === 'profile' && e.view.ref]
             .filter(Boolean)
             .join(' ')
             .toLowerCase()
