@@ -4,6 +4,9 @@
 @import 'highlight.js/styles/github.css' (prefers-color-scheme: light);
 @import 'highlight.js/styles/github-dark.css' (prefers-color-scheme: dark);
 @source "./";
+/* The boards page wears this sheet; its own classes are read from where they are written. */
+@source "../boards/";
+@source "../contexts/";
 @font-face {
   font-family: 'Instrument Sans';
   src: url('../../../assets/fonts/instrument-sans-latin-wght-normal.woff2') format('woff2');
