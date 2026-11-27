@@ -7,6 +7,11 @@ import { useDataQuery } from '../data/graphql';
 import { Trend } from './trend';
 import { Reply } from '../pair/reply';
 import type { Fits, Form } from './layout';
+import { Pull } from './bricks-pull';
+import { Repository } from './bricks-repository';
+import { Question } from './bricks-question';
+import { Approval } from './bricks-approval';
+import { Contact } from './bricks-contact';
 
 export type Params = Record<string, string | number | undefined>;
 export type Place = { brick: string; params: Params };
@@ -24,7 +29,7 @@ export type Raise = (name: string) => void;
 
 /** Watches one value of a brick's record. When it changes while the page is open, and the change was not the
  * member's own doing here a moment ago, the brick flags itself with the name the change is given. */
-function useOwnFlag<T>(value: T | undefined, raise: Raise, name: (before: T, now: T) => string | null) {
+export function useOwnFlag<T>(value: T | undefined, raise: Raise, name: (before: T, now: T) => string | null) {
   const before = useRef<T | undefined>(undefined), mine = useRef(0);
   useEffect(() => {
     const was = before.current;
@@ -42,9 +47,9 @@ const fit = (primary: [number, number, number, number], side: number): Fits => (
   side: { min: 260, ideal: 360, max: 420, height: side },
   compact: { min: 220, ideal: 320, max: 420, height: 84 },
 });
-const words = (v: unknown) => (v === undefined || v === null ? '' : String(v));
-const Unavailable = ({ what }: { what: string }) => <p className="text-muted-foreground">This {what} is unavailable.</p>;
-const Loading = () => <p role="status" className="text-muted-foreground">Loading…</p>;
+export const words = (v: unknown) => (v === undefined || v === null ? '' : String(v));
+export const Unavailable = ({ what }: { what: string }) => <p className="text-muted-foreground">This {what} is unavailable.</p>;
+export const Loading = () => <p role="status" className="text-muted-foreground">Loading…</p>;
 
 /** A reference to another brick's record. Clicking it places that brick, at once, with no job. */
 export function Chip({ place, children }: { place: Place; children: ReactNode }) {
@@ -304,13 +309,13 @@ export const bricks: Record<string, BrickView> = {
     Body: ({ params, form }) => <Trend project={words(params.project)} days={Number(params.days) || 30} form={form} chip={ticketChip} /> },
   ticket: { fits: fit([460, 700, 820, 380], 230), title: () => 'Ticket', sub: (p) => words(p.ticket), Body: Ticket },
   person: { fits: fit([420, 640, 760, 260], 150), title: () => 'Person', sub: (p) => words(p.person),
-    Body: ({ params, form }) => { const [kind, id] = words(params.person).split(':'); return kind === 'member' ? <Assigned who={id} kind="member" form={form} /> : <NotDrawn params={params} />; } },
+    Body: ({ params, form }) => { const [kind, id] = words(params.person).split(':'); return kind === 'member' ? <Assigned who={id} kind="member" form={form} /> : <Contact slug={id} form={form} />; } },
   agent: { fits: fit([420, 640, 760, 260], 150), title: () => 'Agent', sub: (p) => words(p.agent), Body: ({ params, form }) => <Assigned who={words(params.agent)} kind="agent" form={form} /> },
   comments: { fits: fit([440, 680, 820, 420], 260), title: () => 'Comments', sub: (p) => words(p.ticket), Body: Comments },
   session: { fits: fit([440, 680, 820, 360], 170), title: () => 'Session', sub: (p) => words(p.session).slice(0, 11), Body: Session },
-  pull: later('Pull request', 'change'),
-  repository: later('Repository', 'repository'),
-  question: later('Question', 'item'),
-  approval: later('Approval', 'approval'),
+  pull: { fits: fit([440, 680, 820, 380], 210), title: () => 'Pull request', sub: (p) => words(p.change), Body: Pull },
+  repository: { fits: fit([440, 680, 820, 360], 170), title: () => 'Repository', sub: (p) => [words(p.repository), words(p.project)].filter(Boolean).join(' · '), Body: Repository },
+  question: { fits: fit([420, 640, 760, 300], 250), title: () => 'Question', sub: (p) => words(p.item), Body: Question },
+  approval: { fits: fit([420, 640, 760, 300], 250), title: () => 'Approval', sub: (p) => words(p.approval), Body: Approval },
 };
 export const brickView = (name: string): BrickView => bricks[name] ?? later(name, '');
