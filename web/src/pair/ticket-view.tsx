@@ -254,16 +254,6 @@ function SecondaryPanel({
           renderList(openRow)
         ) : (
           <>
-            <ListPager
-              name={group.name}
-              page={page}
-              size={listPageSize}
-              count={rows.length}
-              pending={remote?.pending}
-              total={total}
-              hasNext={hasNext}
-              update={update}
-            />
             {remote?.status && <p role="status">{remote.status}</p>}
             <ul className="divide-y" aria-busy={remote?.pending} inert={remote?.pending}>
               {rows.map((row) => (
@@ -283,6 +273,16 @@ function SecondaryPanel({
                 </li>
               ))}
             </ul>
+            <ListPager
+              name={group.name}
+              page={page}
+              size={listPageSize}
+              count={rows.length}
+              pending={remote?.pending}
+              total={total}
+              hasNext={hasNext}
+              update={update}
+            />
           </>
         )}
       </div>
@@ -354,15 +354,6 @@ function BoardPanel({
       work={work}
       renderList={(open) => (
         <>
-          <ListPager
-            name="Board"
-            page={state.page}
-            pending={read.settling}
-            size={boardPageSize}
-            count={rows.length}
-            hasNext={tickets.length > boardPageSize}
-            update={update}
-          />
           {read.status !== 'live' ? (
             <p role="status">{read.status === 'loading' ? 'Opening board…' : 'Board unavailable.'}</p>
           ) : rows.length === 0 ? (
@@ -399,6 +390,15 @@ function BoardPanel({
               ))}
             </div>
           )}
+          <ListPager
+            name="Board"
+            page={state.page}
+            pending={read.settling}
+            size={boardPageSize}
+            count={rows.length}
+            hasNext={tickets.length > boardPageSize}
+            update={update}
+          />
         </>
       )}
     />
