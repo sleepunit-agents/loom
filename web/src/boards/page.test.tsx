@@ -153,11 +153,11 @@ describe('the board', () => {
   });
   it('with no title, is headed by the big brick\'s name and reference', async () => {
     const root = await one([agent(), ticket({ big: true })]);
-    expect(text(root.findByType('h1'))).toBe('Ticket · t-7');
+    expect(text(root.findByType('h1'))).toBe('Ticket');
   });
   it('with no title and nothing big, is headed by its first placement', async () => {
     const root = await one([agent(), placed('person', { person: 'member:sam' }, { canBeBig: false })]);
-    expect(text(root.findByType('h1'))).toBe('Agent · art');
+    expect(text(root.findByType('h1'))).toBe('Agent');
   });
   it('has no heading when it has no placements', async () => {
     const root = await one([]);
@@ -426,13 +426,13 @@ describe('the trail', () => {
     const root = await draw([first, second], { path: '/app/b/b-2' });
     await feed({ boards: [first, { ...second, closed: true }] });
     expect(location.pathname).toBe('/app/b/b-2');
-    expect(text(root.findByType('h1'))).toBe('Ticket · t-7');
+    expect(text(root.findByType('h1'))).toBe('Ticket');
     expect(root.findAll((n) => n.type === 'header' && n.findAllByType('h1').length > 0)[0].findAllByType('button').map(text)).toEqual(['Reopen']);
   });
   it('a closed board that is not the one in the address gives way to the last open one', async () => {
     const root = await draw([board('b-1', [lanes({ big: true })]), board('b-2', [ticket({ big: true })], { closed: true })]);
     expect(location.pathname).toBe('/app/b/b-1');
-    expect(root.findAllByType('h1').map(text)).toEqual(['Lanes · garden']);
+    expect(root.findAllByType('h1').map(text)).toEqual(['Lanes']);
   });
 });
 

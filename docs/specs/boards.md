@@ -354,7 +354,7 @@ ids, making it with `comms.open` if it does not exist.
   them do. A placement there is no room
   for is **folded**: shown as its chip in one expandable row at the end of the board. The exact rule is the design
   pass's to write. Fixed here: it is pure, it reads only rank, fit and area, and the same input always gives the same
-  output. A board with an empty title is headed by its primary's chip, and has no heading if it has no placements.
+  output. A board with an empty title is headed by the name of its big brick, or of its first placement if none is big, without the reference; it has no heading if it has no placements.
 - **Motion.** Placements are keyed by id. One that appears enters, one that goes leaves, the rest move to their new
   rectangles without being redrawn. The page reads the board's `revision` with its placements and applies each
   revision's differences in one step, so everything that changed in one revision starts moving in the same frame. With reduced motion set, changes apply without
