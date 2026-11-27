@@ -223,21 +223,21 @@ it('offers boards only in a thread whose member has the second window', async ()
 
 it('lists every brick for a body and for a member', async () => {
   const f = fixture();
-  expect((await f.agent('bricks.catalogue', {})).value.bricks).toHaveLength(12);
+  expect((await f.agent('bricks.catalogue', {})).value.bricks).toHaveLength(23);
   expect((await f.member('bricks.catalogue', {})).value.bricks[2]).toMatchObject({ name: 'trend', linkKey: null });
 });
 
 it('lets either party maximize, tells the agent, and keeps flags to the agent (checks 24, 27, 28)', async () => {
   const f = fixture(), { board, placements } = await pulse(f);
   const ticket = (await f.agent('boards.change', { board, changes: [place('ticket', { ticket: 't-1' })] })).value.placements[2].placement as string;
-  const person = (await f.agent('boards.change', { board, changes: [place('person', { person: 'member:jonathan' })] })).value.placements[3].placement as string;
+  const person = (await f.agent('boards.change', { board, changes: [place('question', { item: 'i-9' })] })).value.placements[3].placement as string;
   expect((await f.member('boards.change', { board, changes: [{ change: 'maximize', placement: person }] })).ok).toBe(false);
   expect((await f.member('boards.change', { board, changes: [{ change: 'maximize', placement: ticket }] })).ok).toBe(true);
   const woken = f.woken();
   expect((await f.member('boards.change', { board, changes: [{ change: 'flag', placement: ticket }] })).ok).toBe(false);
   const flagged = await f.agent('boards.change', { board, changes: [{ change: 'flag', placement: placements[1].placement }] });
   expect(flagged.value.meanwhile).toEqual([`The member made ticket(ticket=t-1) the big one on board ${board}.`]);
-  expect(flagged.value.placements).toMatchObject([{ brick: 'ticket', rank: 0, flagged: false }, { brick: 'lanes', rank: 1 }, { brick: 'trend', rank: 2, flagged: true }, { brick: 'person', rank: 3 }]);
+  expect(flagged.value.placements).toMatchObject([{ brick: 'ticket', rank: 0, flagged: false }, { brick: 'lanes', rank: 1 }, { brick: 'trend', rank: 2, flagged: true }, { brick: 'question', rank: 3 }]);
   const revision = f.store.row(board)!.revision;
   expect((await f.stranger('boards.seen', { board, placement: placements[1].placement })).ok).toBe(false);
   expect((await f.agent('boards.seen', { board, placement: placements[1].placement })).ok).toBe(false);
@@ -245,4 +245,49 @@ it('lets either party maximize, tells the agent, and keeps flags to the agent (c
   expect(f.db.select().from(boardPlacements).all().every((p) => p.flaggedAt === null)).toBe(true);
   expect(f.store.row(board)!.revision).toBe(revision);
   expect(f.woken()).toBeGreaterThan(woken); // live reads re-run; no job is queued by any of it
+});
+
+it('places the inbox and approvals lists with their defaults and logs only the actions each has', async () => {
+  const f = fixture(), { board } = await pulse(f);
+  const placed = (await f.agent('boards.change', { board, changes: [place('inbox', {}), place('approvals', { state: 'answered' }), place('approval', { approval: 'a-7' }), place('question', { item: 'i-7' })] })).value.placements as { placement: string; brick: string; params: unknown }[];
+  const [inbox, approvals, approval, question] = placed.slice(2);
+  expect([inbox, approvals].map((p) => [p.brick, p.params])).toEqual([['inbox', { folder: 'needs' }], ['approvals', { state: 'answered' }]]);
+  expect((await f.agent('boards.change', { board, changes: [place('inbox', { folder: 'agent:art' })] })).ok).toBe(false);
+  expect((await f.agent('boards.change', { board, changes: [place('approvals', { state: 'everything, and approve it' })] })).ok).toBe(false);
+  for (const action of ['read', 'dismissResult']) {
+    expect((await f.member('boards.act', { board, placement: inbox.placement, action, detail: {} })).ok, action).toBe(true);
+    expect((await f.member('boards.act', { board, placement: inbox.placement, action, detail: { item: 'I typed this' } })).ok, action).toBe(false);
+    expect((await f.agent('boards.act', { board, placement: inbox.placement, action, detail: {} })).ok, action).toBe(false);
+  }
+  // The list of approvals answers nothing, so it has no action at all.
+  for (const action of ['approve', 'refuse', 'always', 'read'])
+    expect((await f.member('boards.act', { board, placement: approvals.placement, action, detail: {} })).ok, action).toBe(false);
+  expect((await f.member('boards.act', { board, placement: approval.placement, action: 'always', detail: {} })).ok).toBe(true);
+  expect((await f.member('boards.act', { board, placement: approval.placement, action: 'always', detail: { project: 'I typed this' } })).ok).toBe(false);
+  expect((await f.agent('boards.act', { board, placement: approval.placement, action: 'always', detail: {} })).ok).toBe(false);
+  expect((await f.member('boards.act', { board, placement: question.placement, action: 'volume', detail: { volume: 'mute' } })).ok).toBe(true);
+  expect((await f.member('boards.act', { board, placement: question.placement, action: 'volume', detail: { volume: 'I typed this' } })).ok).toBe(false);
+  const brief = f.store.takeBrief('th:mine');
+  expect(brief).toContain(`The member used read on inbox(folder=needs) on board ${board}.`);
+  expect(brief).toContain(`The member used always on approval(approval=a-7) on board ${board}.`);
+  expect(brief).toContain(`The member used volume on question(item=i-7) on board ${board}: volume=mute.`);
+  expect(brief).not.toContain('I typed this');
+});
+
+it("logs the Work bricks' actions for the member alone, with a fixed choice or nothing in the detail", async () => {
+  const f = fixture(), { board } = await pulse(f);
+  const placed = (await f.agent('boards.change', { board, changes: [place('ticket', { ticket: 't-7' }), place('new-ticket', { project: 'loom' }), place('backlog', { project: 'loom' }), place('unfiled', {})] })).value.placements as { placement: string }[];
+  const [ticket, filing, backlog, unfiled] = placed.slice(-4).map((p) => p.placement);
+  for (const [placement, action, detail] of [[ticket, 'edit', {}], [ticket, 'link', { type: 'parent-child' }], [ticket, 'unlink', { type: 'blocks' }], [filing, 'create', {}], [backlog, 'priority', { priority: '1' }], [unfiled, 'project', {}]] as const) {
+    expect((await f.member('boards.act', { board, placement, action, detail })).ok, action).toBe(true);
+    expect((await f.agent('boards.act', { board, placement, action, detail })).ok, action).toBe(false);
+    expect((await f.member('boards.act', { board, placement, action, detail: { ...detail, title: 'I typed this' } })).ok, action).toBe(false);
+  }
+  expect((await f.member('boards.act', { board, placement: backlog, action: 'priority', detail: { priority: 'I typed this' } })).ok).toBe(false);
+  expect((await f.member('boards.act', { board, placement: ticket, action: 'link', detail: { type: 'I typed this' } })).ok).toBe(false);
+  const brief = f.store.takeBrief('th:mine');
+  expect(brief).toContain(`The member used create on new-ticket(project=loom) on board ${board}.`);
+  expect(brief).toContain(`The member used priority on backlog(project=loom) on board ${board}: priority=1.`);
+  expect(brief).toContain(`The member used unlink on ticket(ticket=t-7) on board ${board}: type=blocks.`);
+  expect(brief).not.toContain('I typed this');
 });

@@ -40,6 +40,11 @@ function data(over: Record<string, Answer> = {}) {
     BrickAssigned: live({ rows: [{ id: 't-7', title: 'Mend the gate', status: 'open' }, { id: 't-8', title: 'Oil the latch', status: 'open' }] }),
     BrickSession: live({ jobs: [{ ...job, id: 'j-0', title: 'An earlier job', state: 'done', queuedAt: iso(2) }, job], cv: { agent: 'art', label: 'Fence', venue: 'loom' } }),
     BrickSessionJob: live({ rows: [{ brief: 'Walk the fence line.', logTail: 'last line', endedNote: null, claimedAt: job.queuedAt, endedAt: null }] }),
+    // What the agent brick reads beside its tickets (its own suite is bricks-agent.test.tsx).
+    DeskAgentProfiles: live({ agents: [{ id: 'art', about: 'Keeps the garden.', aboutAskedAt: null }] }),
+    DeskAgentStatus: live({ agentStatus: [] }), DeskDoing: live({ agentDoing: { items: [], more: 0, claimed: 0 } }), DeskDoingAll: live({ agentDoing: { items: [], more: 0, claimed: 0 } }),
+    DeskWaitingCounts: live({ homeComms: { member: 'sam' }, inboxFolders: { needs: 0, agents: [] } }),
+    DeskHomeComms: live({ homeComms: { member: 'sam', agents: ['art'], summaries: [] } }), BrickAgentJobs: live({ jobs: [] }),
     ...over,
   };
 }
@@ -94,8 +99,8 @@ describe('every drawn brick', () => {
       expect(text((await draw(brick, params, form)).root.findAllByType('p')[0])).toMatch(/^This \w+ is unavailable\.$/);
     }
   });
-  it('the registry holds the twelve bricks of the spec, eight of them drawn', () => {
-    expect(Object.keys(bricks).sort()).toEqual(['agent', 'approval', 'comments', 'lanes', 'person', 'project', 'pull', 'question', 'repository', 'session', 'ticket', 'trend']);
+  it('the registry holds the bricks of the spec, eight of them drawn here', () => {
+    expect(Object.keys(bricks).sort()).toEqual(['activity', 'agent', 'agents', 'approval', 'approvals', 'backlog', 'comments', 'inbox', 'knowledge', 'knowledge-page', 'lanes', 'new-ticket', 'people', 'person', 'project', 'pull', 'question', 'repository', 'session', 'threads', 'ticket', 'trend', 'unfiled']);
   });
 });
 
@@ -304,16 +309,17 @@ describe('person and agent', () => {
     await draw('person', { person: 'member:sam' }, 'side');
     expect(f.queries.at(-1)).toMatchObject({ variables: { ref: 'sam' } });
     expect(f.queries.at(-1)!.query).toContain('assigneeKind:{eq:member}');
-    await draw('agent', { agent: 'art' }, 'side');
-    expect(f.queries.at(-1)).toMatchObject({ variables: { ref: 'art' } });
-    expect(f.queries.at(-1)!.query).toContain('assigneeKind:{eq:agent}');
     expect(text(tree!.root.findAllByType('p')[0])).toBe('2 open tickets.');
+    await draw('agent', { agent: 'art' }, 'side');
+    expect(f.queries.find((q) => q.query.includes('assigneeKind:{eq:agent}'))).toMatchObject({ variables: { ref: 'art' } });
+    expect(tree!.root.findAllByType('p').map(text)).toContain('2 open tickets.');
     expect(tree!.root.findAllByType('button').map((b) => JSON.parse(b.props['data-place']))).toEqual(['t-7', 't-8'].map((ticket) => ({ brick: 'ticket', params: { ticket } })));
   });
   it('says so when there are none', async () => {
     data({ BrickAssigned: live({ rows: [] }) });
-    expect(text((await draw('agent', { agent: 'art' }, 'compact')).root.findAllByType('p')[0])).toBe('No open tickets');
-    expect(text((await draw('agent', { agent: 'art' }, 'side')).root.findAllByType('p')[0])).toBe('No open tickets.');
+    expect(text((await draw('person', { person: 'member:sam' }, 'compact')).root.findAllByType('p')[0])).toBe('No open tickets');
+    expect(text((await draw('person', { person: 'member:sam' }, 'side')).root.findAllByType('p')[0])).toBe('No open tickets.');
+    expect((await draw('agent', { agent: 'art' }, 'side')).root.findAllByType('p').map(text)).toContain('No open tickets.');
   });
 });
 

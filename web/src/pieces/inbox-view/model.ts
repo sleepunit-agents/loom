@@ -11,6 +11,23 @@ export interface InboxItem {
   body?: InboxBody | null; read: boolean; refs: readonly string[];
   answer?: string | null; answerText?: string | null; answeredBy?: string | null; answeredAt?: string | null; resolution?: string | null;
 }
+/** The Inbox's fixed folders and their words, in the order they are listed. The first holds what waits on the member. */
+export const folderWords = [['needs', 'Needs you'], ['alerts', 'Alerts'], ['answered', 'Answered'], ['fyi', 'FYI'], ['all', 'All items']] as const;
+/** The folder of this person's own actions that failed. It lists outcomes, never items. */
+export const errorsFolder = ['errors', 'Errors'] as const;
+/** The outcome of something this person did. */
+export interface InboxActionResult {
+  id: string; at: string; ok: boolean; text: string; page?: string | null; readAt?: string | null;
+}
+export interface InboxResultsSnapshot {
+  status: InboxSnapshot['status']; results: readonly InboxActionResult[];
+}
+/** The undismissed outcomes of a live query; `errorsOnly` keeps the ones that failed. */
+export function currentNotices(snapshot: InboxResultsSnapshot | undefined, errorsOnly?: boolean): InboxActionResult[] {
+  return snapshot?.status === 'live' ? snapshot.results.filter(row => !row.readAt && (!errorsOnly || !row.ok)) : [];
+}
+/** Which folders list this person's outcomes among their rows. */
+export const noticeFolder = (folder: string) => folder === 'fyi' || folder === 'errors' || folder === 'all';
 export interface InboxFolders { needs: number; alerts: number; answered: number; fyi: number; all: number; agents: readonly { id: string; count: number }[] }
 /** `settling`: the rows and counts are the previous folder's, search's or page's, shown while the next loads.
  * `folder`: the folder the rows were read for, where the reading says; while settling it is still the last one. */
@@ -24,6 +41,8 @@ export interface InboxActions {
   /** Where a reference (a task or approval id) opens, when the app knows; undefined leaves it a plain chip. */
   openRef?(ref: string): (() => void) | undefined;
 }
+/** A link an item carries is opened only when it is a web address or a path of this site. */
+export const safeLink = (value?: string | null) => value && (/^https?:\/\//i.test(value) || /^\/(?!\/)/.test(value)) ? value : undefined;
 // An approval request owns its question. A thread can ask a different question about
 // that same approval, and a decision notice reports the answer in its own words.
 export function approvalRequestId(item: InboxItem): string | undefined {

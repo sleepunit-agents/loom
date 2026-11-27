@@ -2,6 +2,7 @@ import { NativeSelect } from '../../kit/native-select';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Actions, Button, Field, Fields, Input, Textarea } from '../../kit';
 import type { SharedTask, SharedTaskLink, TaskAction } from './shared-view';
+import { taskDefaultPriority, taskPriorities, taskTypes } from './words';
 
 type Person = { kind: 'member' | 'agent'; id: string };
 type Summary = Pick<SharedTask, 'title' | 'goal' | 'why' | 'doneWhen' | 'description' | 'priority' | 'project'>;
@@ -36,8 +37,8 @@ export interface TaskFormProps {
 export const taskFormTitles: Partial<Record<TaskAction, string>> = { create: 'Create task', edit: 'Edit task', priority: 'Set priority', project: 'Set project', parent: 'Parent', link: 'Blocked by', ask: 'Ask a person', close: 'Close task', comment: 'Add comment' };
 /** The words on each form's one filled button. */
 const submits: Partial<Record<TaskAction, string>> = { create: 'Create task', edit: 'Save changes', priority: 'Set priority', project: 'Set project', parent: 'Set parent', link: 'Add blocker', ask: 'Ask', close: 'Close task', comment: 'Add comment' };
-const priorities = ['P0 · most urgent', 'P1', 'P2', 'P3', 'P4 · least urgent'];
-const types: Record<SharedTask['type'], string> = { task: 'Task', bug: 'Bug', feature: 'Feature', epic: 'Epic' };
+const priorities = taskPriorities;
+const types: Record<SharedTask['type'], string> = taskTypes;
 /** Drawn in the reader by SharedTasks when act() opens one: under the task's actions, or in the reader's place for
  * Create task. Escape and Cancel close it. Snapshot loss discards drafts. */
 export function SharedTaskForm(props: TaskFormProps) {
@@ -48,7 +49,7 @@ function Draft(p: TaskFormProps) {
   const t = p.task;
   const [title, setTitle] = useState(t?.title ?? ''), [goal, setGoal] = useState(t?.goal ?? ''), [why, setWhy] = useState(t?.why ?? '');
   const [doneWhen, setDoneWhen] = useState(t?.doneWhen ?? ''), [description, setDescription] = useState(t?.description ?? '');
-  const [priority, setPriority] = useState(t?.priority ?? 2), [project, setProject] = useState(t?.project ?? (p.action==='create' ? p.initialProject : '') ?? '');
+  const [priority, setPriority] = useState(t?.priority ?? taskDefaultPriority), [project, setProject] = useState(t?.project ?? (p.action==='create' ? p.initialProject : '') ?? '');
   const [type, setType] = useState<SharedTask['type']>('task'), [owner, setOwner] = useState('household');
   const [text, setText] = useState(''), [related, setRelated] = useState('');
   const [to, setTo] = useState(''), [ask, setAsk] = useState(t?.ask ?? ''), [ifYes, setIfYes] = useState(t?.ifYes ?? ''), [ifNo, setIfNo] = useState(t?.ifNo ?? '');

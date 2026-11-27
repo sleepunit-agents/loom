@@ -8,14 +8,16 @@
  * own logic (web/src/pieces/approval-view/answering.ts). This file is the markup.
  *
  * The compact form is one line and answers nothing: it reads the request and nothing else. The desktop's standing
- * answer for a merge ("Always for <project>") is not offered here.
+ * answer for a merge ("Always for <project>") is offered under the desktop's own rule for it (useStandingAnswer in
+ * web/src/data/work-approvals.ts) and, being a standing permission, only as a question first: the press asks, and
+ * a second press sends `approvals.always` (the two steps are the shared hook's, with askStanding).
  *
- * The board is told that the member allowed or denied, after `approvals.answer` took the answer, and nothing more:
- * a reason typed here goes to `approvals.answer` and never to `boards.act`. */
+ * The board is told that the member allowed, denied or gave the standing answer, after loom took it, and nothing
+ * more: a reason typed here goes to `approvals.answer` and never to `boards.act`. */
 import { useDataQuery } from '../data/graphql';
 import { inlineApprovalQuery, type ApprovalsResult } from '../data/work-query';
-import { ownerApprovalActions, useProposalNow, useViewer, useWorkAccess } from '../data/work-approvals';
-import { answerKey, approvalReading, cautionWords, forWhom, reasonLimit, secondYesWords, useAnswering, type ApprovalActions, type ChangeRow, type ChangeWords } from '../pieces/approval-view/answering';
+import { ownerApprovalActions, useProposalNow, useStandingAnswer, useViewer, useWorkAccess } from '../data/work-approvals';
+import { answerKey, approvalReading, cautionWords, forWhom, reasonLimit, secondYesWords, standingWords, useAnswering, type ApprovalActions, type ChangeRow, type ChangeWords } from '../pieces/approval-view/answering';
 import { approvalTitle, recordWord, type Approval as Row, type ApprovalSnapshot } from '../pieces/approval-view/model';
 import { tempoChangeWords } from '../pieces/tempo/change';
 import { measuringChangeWords } from '../pieces/measuring/change';
@@ -33,8 +35,8 @@ const Values = ({ rows }: { rows: readonly ChangeRow[] }) => <dl>{rows.map((row)
 /** Allow and Deny, drawn from the shared steps. Keyed by the reading it answers (answerKey): a request read again
  * in a new version starts over. */
 function Answer({ approval, actions }: { approval: Row; actions?: ApprovalActions }) {
-  const answer = useAnswering(approval, actions), busy = answer.busy;
-  const caution = cautionWords(approval);
+  const answer = useAnswering(approval, actions, { askStanding: true }), busy = answer.busy;
+  const caution = cautionWords(approval), always = answer.always;
   return (
     <>
       {!answer.allowed && caution && <p role="note" className="board-line">{caution}</p>}
@@ -52,8 +54,16 @@ function Answer({ approval, actions }: { approval: Row; actions?: ApprovalAction
                   <button type="button" className="board-action" disabled={busy} onClick={answer.cancel}>Cancel</button>
                 </>
               : <button type="button" className="board-action" disabled={busy} onClick={answer.allow}>Allow</button>}
+            {always && !always.asking && <button type="button" className="board-action" disabled={busy} onClick={always.ask}>{always.label}…</button>}
             <button type="button" className="board-action" disabled={busy} onClick={answer.deny}>Deny</button>
           </div>
+          {always?.asking && (
+            <div className="board-line" role="group" aria-label="Standing answer">
+              <p>{always.label}? {standingWords}</p>
+              <button type="button" className="board-action" disabled={busy} onClick={always.run}>Yes, always allow</button>
+              <button type="button" className="board-action" disabled={busy} onClick={always.cancel}>Cancel</button>
+            </div>
+          )}
         </>
       )}
       {busy && <p role="status" className="text-muted-foreground">Saving answer…</p>}
@@ -64,14 +74,16 @@ function Answer({ approval, actions }: { approval: Row; actions?: ApprovalAction
 
 /** The primary and side forms. Only these ask loom whether the member may answer. */
 function Card({ stored, record, form, act }: { stored: Row; record: ApprovalSnapshot['record']; form: Form; act: Act }) {
-  const owner = useWorkAccess().owner, viewer = useViewer();
+  const access = useWorkAccess(), owner = access.owner, viewer = useViewer();
   // For an owner, a household change is read as it stands now, and read again when the window is looked at, every
   // minute, and after a refused Allow. The row drawn below is the one that reading produced, version and all.
   const { snapshot, refresh } = useProposalNow({ status: 'live', approvals: [stored], rules: [], notices: [], record, timezone: '' }, stored.id, owner);
   const a = snapshot.approvals[0];
-  const commands = ownerApprovalActions(owner);
+  const commands = ownerApprovalActions(owner, useStandingAnswer(a, access));
+  const standing = commands?.always;
   const actions: ApprovalActions | undefined = commands && {
     refreshProposal: refresh,
+    ...(standing ? { always: { ...standing, run: async (id: string) => { await standing.run(id); act('always', {}); } } } : {}),
     allow: async (...sent) => { await commands.allow(...sent); act('approve', {}); },
     deny: async (...sent) => { await commands.deny(...sent); act('refuse', {}); },
   };

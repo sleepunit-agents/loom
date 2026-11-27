@@ -80,7 +80,8 @@ const placed = (brick: string, params: object, over: Partial<Made> = {}): Made =
 const board = (id: string, placements: Made[], over: object = {}) => ({ id, thread, title: '', revision: 1, closed: false, trailAt: '2026-11-27T10:00:0' + id.at(-1) + 'Z', placements: placements.map((p, rank) => ({ ...p, rank })), ...over });
 const lanes = (over?: Partial<Made>) => placed('lanes', { project: 'garden' }, over);
 const ticket = (over?: Partial<Made>) => placed('ticket', { ticket: 't-7' }, over);
-const agent = (over?: Partial<Made>) => placed('agent', { agent: 'art' }, { canBeBig: false, ...over });
+// A brick the catalogue gives no big form: the question.
+const question = (over?: Partial<Made>) => placed('question', { item: 'in-3' }, { canBeBig: false, ...over });
 
 let tree: { root: Node; unmount(): void } | undefined;
 /** Change what the data hook answers, as a live read does. */
@@ -117,16 +118,16 @@ const one = (placements: Made[], over: object = {}, at: Parameters<typeof draw>[
 
 describe('the board', () => {
   it('draws the big placement in the primary form and the others small', async () => {
-    await one([lanes({ big: true }), ticket(), agent()]);
+    await one([lanes({ big: true }), ticket(), question()]);
     expect(forms()).toEqual(['primary', 'side', 'side']);
     expect(chips()).toEqual([]);
   });
   it('takes the big one from the board, not from the order', async () => {
-    await one([agent(), ticket({ big: true }), lanes()]);
+    await one([question(), ticket({ big: true }), lanes()]);
     expect(forms()).toEqual(['side', 'primary', 'side']);
   });
   it('gives a small placement the compact form when the side form has no room', async () => {
-    await one([lanes({ big: true }), ticket(), agent(), placed('comments', { ticket: 't-7' })], {}, { area: { w: 1200, h: 420 } });
+    await one([lanes({ big: true }), ticket(), question(), placed('comments', { ticket: 't-7' })], {}, { area: { w: 1200, h: 420 } });
     expect(forms()[0]).toBe('primary');
     expect(forms().slice(1).every((form) => form === 'side' || form === 'compact')).toBe(true);
     expect(forms()).toContain('compact');
@@ -134,13 +135,13 @@ describe('the board', () => {
     expect(compact.findAll((n) => n.props.className === 'board-brief')).toHaveLength(1);
   });
   it('draws no placement in the primary form when none is big', async () => {
-    await one([agent(), placed('person', { person: 'member:sam' }, { canBeBig: false })]);
+    await one([question(), placed('approval', { approval: 'ap-4' }, { canBeBig: false })]);
     expect(forms()).toEqual(['side', 'side']);
   });
   it('shows a placement with no room as its chip in the folded row', async () => {
-    const root = await one([lanes({ big: true }), ticket(), agent()], {}, { area: { w: 500, h: 700 } });
+    const root = await one([lanes({ big: true }), ticket(), question()], {}, { area: { w: 500, h: 700 } });
     expect(forms()).toEqual(['primary']);
-    expect(chips().map(text)).toEqual(['Ticket · t-7', 'Agent · art']);
+    expect(chips().map(text)).toEqual(['Ticket · t-7', 'Question · in-3']);
     expect(text(root.findAll((n) => n.props.className === 'boards-folded')[0])).toContain('Also here');
   });
   it('says nothing in the folded row when nothing is folded', async () => {
@@ -152,12 +153,12 @@ describe('the board', () => {
     expect(text(root.findByType('h1'))).toBe('The garden this week');
   });
   it('with no title, is headed by the big brick\'s name and reference', async () => {
-    const root = await one([agent(), ticket({ big: true })]);
+    const root = await one([question(), ticket({ big: true })]);
     expect(text(root.findByType('h1'))).toBe('Ticket');
   });
   it('with no title and nothing big, is headed by its first placement', async () => {
-    const root = await one([agent(), placed('person', { person: 'member:sam' }, { canBeBig: false })]);
-    expect(text(root.findByType('h1'))).toBe('Agent');
+    const root = await one([question(), placed('approval', { approval: 'ap-4' }, { canBeBig: false })]);
+    expect(text(root.findByType('h1'))).toBe('Question');
   });
   it('has no heading when it has no placements', async () => {
     const root = await one([]);
@@ -177,12 +178,12 @@ describe('maximize', () => {
     expect(called('boards.change')).toEqual([{ board: 'b-1', changes: [{ change: 'maximize', placement: small.id }] }]);
   });
   it('the big placement has none, and neither has a small-only brick', async () => {
-    await one([lanes({ big: true }), agent()]);
+    await one([lanes({ big: true }), question()]);
     expect(articles().map((a) => control(a).length)).toEqual([0, 0]);
   });
   it('a folded chip of a brick that can be big maximizes it; a small-only one is not a control', async () => {
     const small = ticket();
-    await one([lanes({ big: true }), small, agent()], {}, { area: { w: 500, h: 700 } });
+    await one([lanes({ big: true }), small, question()], {}, { area: { w: 500, h: 700 } });
     expect(chips().map((c) => c.type)).toEqual(['button', 'span']);
     expect(chips()[1].props.onClick).toBeUndefined();
     await act(async () => chips()[0].props.onClick());
@@ -209,7 +210,7 @@ describe('remove, close and a closed board', () => {
     expect(articles().map((a) => (a.children[1] as Node).props.inert)).toEqual([false, false]);
   });
   it('a closed board has Reopen, no remove or maximize controls, and its bricks are inert', async () => {
-    const root = await one([lanes({ big: true }), ticket(), agent()], { closed: true }, { path: '/app/b/b-1' });
+    const root = await one([lanes({ big: true }), ticket(), question()], { closed: true }, { path: '/app/b/b-1' });
     expect(forms()).toEqual(['primary', 'side', 'side']);
     const head = root.findAll((n) => n.type === 'header' && n.findAllByType('h1').length > 0)[0];
     expect(head.findAllByType('button').map(text)).toEqual(['Reopen']);
@@ -272,7 +273,7 @@ describe('flags', () => {
   });
   it('a folded flagged placement marks its chip and the folded row, and stays folded', async () => {
     const flagged = ticket({ flagged: true });
-    const root = await one([lanes({ big: true }), flagged, agent()], {}, { area: { w: 500, h: 700 } });
+    const root = await one([lanes({ big: true }), flagged, question()], {}, { area: { w: 500, h: 700 } });
     expect(forms()).toEqual(['primary']);
     expect(chips().map((c) => c.props['data-flagged'])).toEqual([true, false]);
     expect(root.findAll((n) => n.props.className === 'boards-folded')[0].props['data-flagged']).toBe(true);
@@ -379,7 +380,9 @@ describe('names', () => {
     const params: Record<string, Record<string, string | number>> = {
       project: { project: 'garden-proj' }, lanes: { project: 'garden-proj' }, trend: { project: 'garden-proj', days: 30 }, ticket: { ticket: 't-7' },
       comments: { ticket: 't-7' }, person: { person: 'member:sam' }, agent: { agent: 'art-agent' }, session: { session: 'cv-fence-0001' },
-      pull: { change: 'ch-9' }, repository: { repository: 'loom-repo' }, question: { item: 'in-3' }, approval: { approval: 'ap-4' }, mystery: { thing: 'x-1' },
+      pull: { change: 'ch-9' }, repository: { repository: 'loom-repo' }, question: { item: 'in-3' }, approval: { approval: 'ap-4' }, inbox: { folder: 'needs' }, approvals: { state: 'pending' }, threads: { scope: 'archived' }, agents: {}, mystery: { thing: 'x-1' },
+      'new-ticket': { project: 'garden-proj' }, backlog: { project: 'garden-proj' }, unfiled: {},
+      'knowledge-page': { page: 'pump-page' }, knowledge: { show: 'due', domain: 'pond-topic' }, people: { folder: 'agent' }, activity: { days: 7 },
     };
     expect(Object.keys(params)).toEqual(expect.arrayContaining(Object.keys(bricks)));
     const placements = Object.entries(params).map(([brick, p], i) => placed(brick, p, { big: i === 0 }));
@@ -397,7 +400,7 @@ describe('names', () => {
       const small = names.findAllByType('small');
       expect(small).toHaveLength(1);
       expect(small[0].props.className).toBe('font-mono');
-      if (brick !== 'mystery') expect(text(small[0])).toContain(String(Object.values(p)[0]).slice(0, 11));
+      if (brick !== 'mystery' && Object.keys(p).length) expect(text(small[0])).toContain(String(Object.values(p)[0]).slice(0, 11));
       // The controls are named by the brick too, never by its reference.
       for (const control of (a.children[0] as Node).findAllByType('button')) for (const value of values) expect(control.props['aria-label']).not.toContain(value);
     });

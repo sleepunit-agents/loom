@@ -1,7 +1,8 @@
 import { archivedQuestionFields, type ArchivedQuestion } from './archived-questions';
 import type { QuerySelection } from '../../data/graphql/selection';
 import type { CommsMessage, CommsThread } from '../comms-view/model';
-export const threadFields = 'id conversation venue title agent project member pinned archivedAt lastAt readSeq working stopRequested';
+import { threadFields } from './thread-fields';
+export { threadFields };
 export const messageFields = 'thread seq kind sender clientId at words wordsKeepUntil inboxItem verdict tool cardState delivery notice { error attempt settled retryAt } stepInfo { exit limit parent t0 t1 } stepDetails { detail body result items { text state } }';
 export const commsQuery = `query Comms($archived:Boolean!,$search:String!,$offset:Int!){
  homeComms { member agents }

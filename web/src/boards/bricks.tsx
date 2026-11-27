@@ -13,6 +13,21 @@ import { Repository } from './bricks-repository';
 import { Question } from './bricks-question';
 import { Approval } from './bricks-approval';
 import { Contact } from './bricks-contact';
+import { Inbox } from './bricks-inbox';
+import { Approvals } from './bricks-approvals';
+import { TicketMore } from './bricks-ticket-edit';
+import { NewTicket } from './bricks-new-ticket';
+import { Backlog } from './bricks-backlog';
+import { Unfiled } from './bricks-unfiled';
+import { Lanes } from './bricks-lanes';
+import { Project } from './bricks-project';
+import { KnowledgePage } from './bricks-knowledge-page';
+import { Knowledge } from './bricks-knowledge';
+import { People } from './bricks-people';
+import { Activity } from './bricks-activity';
+import { Threads } from './bricks-threads';
+import { Agent } from './bricks-agent';
+import { Agents } from './bricks-agents';
 
 export type Params = Record<string, string | number | undefined>;
 export type Place = { brick: string; params: Params };
@@ -66,41 +81,6 @@ function actorChip(kind: string | null | undefined, id: string) {
   return kind === 'agent'
     ? <Chip place={{ brick: 'agent', params: { agent: id } }}>{id}</Chip>
     : <Chip place={{ brick: 'person', params: { person: 'member:' + id } }}>{id}</Chip>;
-}
-
-type Lane = { id: string; title: string; lane: string; reason: string | null; assignee: string | null };
-function Lanes({ params, form }: { params: Params; form: Form }) {
-  const read = useDataQuery<{ projectBoardTickets: Lane[] }>(
-    'query BrickLanes($project:String!){projectBoardTickets(project:$project,offset:0,limit:60){id title lane reason assignee}}',
-    { project: words(params.project) }, { keep: true });
-  if (read.status === 'loading') return <Loading />;
-  if (read.status !== 'live' || !read.data) return <Unavailable what="project" />;
-  const cap = form === 'primary' ? 8 : 3;
-  const count = (lane: string) => read.data!.projectBoardTickets.filter((t) => t.lane === lane).length;
-  if (form === 'compact') return <p className="board-brief">{count('Working')} working · {count('Verifying')} verifying · {count('Waiting')} waiting</p>;
-  return (
-    <div className="board-lanes">
-      {['Working', 'Verifying', 'Waiting'].map((lane) => {
-        const rows = read.data!.projectBoardTickets.filter((t) => t.lane === lane);
-        return (
-          <section key={lane} aria-label={lane} data-empty={rows.length === 0}>
-            <h3><span>{lane}</span><span>{rows.length}</span></h3>
-            <ul>
-              {rows.slice(0, cap).map((t) => (
-                <li key={t.id}>
-                  <button type="button" className="board-ticket" data-flip={'tk-' + t.id} data-place={JSON.stringify({ brick: 'ticket', params: { ticket: t.id } })}>
-                    {t.title}
-                    <small><span className="font-mono">{t.id}</span>{t.reason ? ' · ' + t.reason : ''}</small>
-                  </button>
-                </li>
-              ))}
-              {rows.length > cap && <li className="text-xs text-muted-foreground">and {rows.length - cap} more</li>}
-            </ul>
-          </section>
-        );
-      })}
-    </div>
-  );
 }
 
 type Task = { id: string; title: string; status: string; assignee: string | null; assigneeKind: string | null; goal: string | null; why: string | null; doneWhen: string | null; project: string | null };
@@ -172,6 +152,7 @@ function Ticket({ params, form, act, raise }: { params: Params; form: Form; act:
         {t.assignee ? actorChip(t.assigneeKind, t.assignee) : <span className="text-muted-foreground">Unassigned</span>}
         <Chip place={{ brick: 'comments', params: { ticket: id } }}>Comments</Chip>
       </div>
+      <TicketMore id={id} form={form} act={act} />
       <div className="board-line">
         {t.status === 'closed'
           ? <button type="button" className="board-action" disabled={busy} onClick={() => void run('reopen', { id })}>Reopen</button>
@@ -231,26 +212,7 @@ function Comments({ params, form, act, raise }: { params: Params; form: Form; ac
   );
 }
 
-function Project({ params, form }: { params: Params; form: Form }) {
-  const read = useDataQuery<{ project: { name: string; goal: string | null; lifecycle: string } | null }>(
-    'query BrickProject($id:String!){project:projectsSingle(where:{id:{eq:$id}}){name goal lifecycle}}', { id: words(params.project) }, { keep: true });
-  const p = read.data?.project;
-  if (read.status === 'loading') return <Loading />;
-  if (read.status !== 'live' || !p) return <Unavailable what="project" />;
-  if (form === 'compact') return <p className="board-brief"><span className="board-state">{p.lifecycle}</span> {p.goal || p.name}</p>;
-  return (
-    <>
-      {p.goal ? <Reply words={p.goal} /> : <p className="text-muted-foreground">No goal written.</p>}
-      <div className="board-line">
-        <span className="board-state">{p.lifecycle}</span>
-        <Chip place={{ brick: 'lanes', params: { project: words(params.project) } }}>Lanes</Chip>
-        <Chip place={{ brick: 'trend', params: { project: words(params.project), days: 30 } }}>Trend</Chip>
-      </div>
-    </>
-  );
-}
-
-function Assigned({ who, kind, form }: { who: string; kind: 'member' | 'agent'; form?: Form }) {
+export function Assigned({ who, kind, form }: { who: string; kind: 'member' | 'agent'; form?: Form }) {
   const read = useDataQuery<{ rows: { id: string; title: string; status: string }[] }>(
     `query BrickAssigned($ref:String!){rows:tasks(where:{assignee:{eq:$ref},assigneeKind:{eq:${kind}},status:{ne:closed}},orderBy:{changedAt:{direction:desc,priority:0}},limit:6){id title status}}`,
     { ref: who }, { keep: true });
@@ -342,14 +304,25 @@ export const bricks: Record<string, BrickView> = {
   trend: { fits: fit([460, 720, 860, 360], 232), title: () => 'Opened and closed', sub: (p) => `${words(p.project)} · ${words(p.days)} days`,
     Body: ({ params, form }) => <Trend project={words(params.project)} days={Number(params.days) || 30} form={form} chip={ticketChip} /> },
   ticket: { fits: fit([460, 700, 820, 380], 230), title: () => 'Ticket', sub: (p) => words(p.ticket), Body: Ticket },
-  person: { fits: fit([420, 640, 760, 260], 150), title: () => 'Person', sub: (p) => words(p.person),
-    Body: ({ params, form }) => { const [kind, id] = words(params.person).split(':'); return kind === 'member' ? <Assigned who={id} kind="member" form={form} /> : <Contact slug={id} form={form} />; } },
-  agent: { fits: fit([420, 640, 760, 260], 150), title: () => 'Agent', sub: (p) => words(p.agent), Body: ({ params, form }) => <Assigned who={words(params.agent)} kind="agent" form={form} /> },
+  person: { fits: fit([440, 680, 820, 460], 210), title: () => 'Person', sub: (p) => words(p.person),
+    Body: ({ params, form }) => { const [kind, id] = words(params.person).split(':'); return <Contact slug={id} form={form} tickets={kind === 'member' ? <Assigned who={id} kind="member" form={form} /> : undefined} />; } },
+  agent: { fits: fit([440, 680, 820, 460], 320), title: () => 'Agent', sub: (p) => words(p.agent), Body: Agent },
   comments: { fits: fit([440, 680, 820, 420], 260), title: () => 'Comments', sub: (p) => words(p.ticket), Body: Comments },
   session: { fits: fit([440, 680, 820, 360], 170), title: () => 'Session', sub: (p) => words(p.session).slice(0, 11), Body: Session },
   pull: { fits: fit([440, 680, 820, 380], 210), title: () => 'Pull request', sub: (p) => words(p.change), Body: Pull },
   repository: { fits: fit([440, 680, 820, 360], 170), title: () => 'Repository', sub: (p) => [words(p.repository), words(p.project)].filter(Boolean).join(' · '), Body: Repository },
   question: { fits: fit([420, 640, 760, 300], 250), title: () => 'Question', sub: (p) => words(p.item), Body: Question },
   approval: { fits: fit([420, 640, 760, 300], 250), title: () => 'Approval', sub: (p) => words(p.approval), Body: Approval },
+  inbox: { fits: fit([460, 700, 860, 480], 260), title: () => 'Inbox', sub: (p) => words(p.folder), Body: Inbox },
+  approvals: { fits: fit([460, 700, 860, 480], 260), title: () => 'Approvals', sub: (p) => words(p.state), Body: Approvals },
+  'new-ticket': { fits: fit([440, 680, 820, 520], 300), title: () => 'New ticket', sub: (p) => words(p.project), Body: NewTicket },
+  backlog: { fits: fit([440, 680, 820, 420], 260), title: () => 'Backlog', sub: (p) => words(p.project), Body: Backlog },
+  unfiled: { fits: fit([440, 680, 820, 420], 260), title: () => 'Unfiled tickets', sub: () => '', Body: Unfiled },
+  'knowledge-page': { fits: fit([460, 720, 860, 520], 250), title: () => 'Knowledge page', sub: (p) => words(p.page), Body: KnowledgePage },
+  knowledge: { fits: fit([460, 720, 860, 520], 250), title: () => 'Knowledge', sub: (p) => [words(p.show), words(p.domain)].filter(Boolean).join(' · '), Body: Knowledge },
+  people: { fits: fit([440, 680, 820, 480], 250), title: () => 'People', sub: (p) => words(p.folder), Body: People },
+  activity: { fits: fit([460, 720, 860, 520], 250), title: () => 'Activity', sub: (p) => (Number(p.days) === 1 ? '1 day' : `${words(p.days)} days`), Body: Activity },
+  threads: { fits: fit([440, 680, 820, 420], 260), title: () => 'Conversations', sub: (p) => words(p.scope), Body: Threads },
+  agents: { fits: fit([420, 640, 760, 260], 190), title: () => 'Agents', sub: () => '', Body: Agents },
 };
 export const brickView = (name: string): BrickView => bricks[name] ?? later(name, '');

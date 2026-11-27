@@ -285,3 +285,26 @@ it('offers a standing answer only for the very request the composition names', a
   expect(sent.allow).not.toHaveBeenCalled();
   expect(now.allowed).toBe(false);
 });
+
+it('sends a standing answer only as the yes to its question, for a view that asks first', async () => {
+  function Asking(props: { approval: Approval; actions?: ApprovalActions }) { now = useAnswering(props.approval, props.actions, { askStanding: true }); return null; }
+  const run = vi.fn(async () => {}), sent = commands();
+  await act(async () => { tree?.unmount(); tree = create(h(Asking, { approval: base, actions: { ...sent, always: { approval: 'a-1', label: 'Always for pond', run } } })); });
+  // A press that was not asked about sends nothing.
+  await step(() => now.always!.run());
+  expect(run).not.toHaveBeenCalled();
+  expect(now.always).toMatchObject({ label: 'Always for pond', asking: false });
+  await step(() => now.always!.ask());
+  expect(now.always!.asking).toBe(true);
+  expect(run).not.toHaveBeenCalled();
+  await step(() => now.always!.cancel());
+  expect(now.always!.asking).toBe(false);
+  await step(() => now.always!.run());
+  expect(run).not.toHaveBeenCalled();
+  await step(() => now.always!.ask());
+  await step(() => now.always!.run());
+  expect(run).toHaveBeenCalledExactlyOnceWith('a-1');
+  // The question does not stay open for a second send.
+  expect(now.always!.asking).toBe(false);
+  expect(sent.allow).not.toHaveBeenCalled();
+});

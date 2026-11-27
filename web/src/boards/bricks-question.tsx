@@ -1,12 +1,17 @@
 /** The `question` brick: one Inbox item waiting on the member, read with the Inbox's own selection and answered
  * with the Inbox's own action (pieces/attention/inbox-query.ts), under the rule the desktop's reader answers by
  * (pieces/inbox-view/index.tsx): the item waits, takes an answer, has its words, the member may answer it, and it
- * is not one that is answered somewhere else. The board is told which answer was chosen and never the words. */
+ * is not one that is answered somewhere else. The board is told which answer was chosen and never the words.
+ *
+ * It also shows what the desktop's opened item shows around the answer: a household change's approval by its plain
+ * title, the linked page, everything the item is about, and how loudly it is shown ("Notify", by `inbox.volume`,
+ * for an item the member may set it on). */
 import { useRef, useState, type FormEvent } from 'react';
 import { useDataQuery } from '../data/graphql';
-import { answerInboxItem, inboxItemQuery, retainedInboxItem } from '../pieces/attention/inbox-query';
+import { answerInboxItem, inboxItemQuery, retainedInboxItem, useInboxItemWords } from '../pieces/attention/inbox-query';
+import { memberOperation } from '../data/operation';
 import { useDeadline } from '../pieces/comms/use-deadline';
-import { answerWord, from, managed, stateWord, when, type InboxAnswer, type InboxItem } from '../pieces/inbox-view/model';
+import { answerWord, from, managed, safeLink, stateWord, volumeNote, volumeWords, when, type InboxAnswer, type InboxItem } from '../pieces/inbox-view/model';
 import { Chip, Loading, Unavailable, ticketChip, words, type Act, type Params } from './bricks';
 import type { Form } from './layout';
 
@@ -14,8 +19,10 @@ import type { Form } from './layout';
 function about(ref: string) {
   if (/^t-[1-9]\d*$/.test(ref)) return <span key={ref}>{ticketChip(ref)}</span>;
   if (/^a-[A-Za-z0-9-]+$/.test(ref)) return <Chip key={ref} place={{ brick: 'approval', params: { approval: ref } }}>Approval</Chip>;
-  return null;
+  return <span key={ref} className="font-mono">{ref}</span>;
 }
+/** How loudly an item is shown, in the order the Inbox lists the choices. */
+export const volumes = Object.keys(volumeWords) as InboxItem['volume'][];
 
 export function Question({ params, form, act }: { params: Params; form: Form; act: Act }) {
   const id = words(params.item);
@@ -24,6 +31,7 @@ export function Question({ params, form, act }: { params: Params; form: Form; ac
   const now = useDeadline(stored ? [stored.bodyKeepUntil, stored.answerKeepUntil] : []);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [draft, setDraft] = useState('');
   const lock = useRef(false);
+  const plain = useInboxItemWords(stored ? [stored] : []);
   if (read.status === 'loading') return <Loading />;
   if (read.status !== 'live' || !stored) return <Unavailable what="question" />;
   const item = retainedInboxItem(stored, now);
@@ -36,7 +44,15 @@ export function Question({ params, form, act }: { params: Params; form: Form; ac
     catch { setError('Could not save. Try again.'); }
     finally { lock.current = false; setBusy(false); }
   }
-  const said = item.body?.words ?? 'Message words are unavailable';
+  async function notify(volume: InboxItem['volume']) {
+    if (lock.current || volume === item.volume || !item.canSetVolume) return;
+    lock.current = true; setBusy(true); setError('');
+    try { await memberOperation('inbox.volume', { item: id, volume }); act('volume', { volume }); }
+    catch { setError('Could not save. Try again.'); }
+    finally { lock.current = false; setBusy(false); }
+  }
+  const said = plain(item) ?? item.body?.words ?? 'Message words are unavailable';
+  const link = safeLink(item.body?.link);
   if (form === 'compact') return <p className="board-brief"><span className="board-state">{item.answer ? answerWord(item.answer) : stateWord(item)}</span> {said}</p>;
   const record = (e: FormEvent) => { e.preventDefault(); void answer('words', draft); };
   const waitsOn = item.waitsOnKind === 'approval' && item.waitsOnId ? about(item.waitsOnId) : item.waitsOnKind === 'task' && item.waitsOnId ? about(item.waitsOnId) : null;
@@ -81,6 +97,14 @@ export function Question({ params, form, act }: { params: Params; form: Form; ac
         </dl>
       )}
       {item.resolution && <p className="board-line text-muted-foreground">{item.resolution}</p>}
+      {link && <p className="board-line"><a href={link} target="_blank" rel="noreferrer">Open linked page</a></p>}
+      {item.canSetVolume && (
+        <div className="board-line" role="group" aria-label="Notify">
+          <span className="text-muted-foreground">Notify</span>
+          {volumes.map((volume) => <button key={volume} type="button" className="board-action" aria-pressed={volume === item.volume} disabled={busy || volume === item.volume} onClick={() => void notify(volume)}>{volumeWords[volume]}</button>)}
+          {item.volume !== 'full' && <span className="text-muted-foreground">{volumeNote[item.volume]}{item.quietUntil ? ` · back to normal ${when(item.quietUntil)}` : ''}</span>}
+        </div>
+      )}
       {error && <p role="alert" className="text-destructive">{error}</p>}
     </>
   );

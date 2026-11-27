@@ -16,6 +16,9 @@ import { emptyTail, threadId, TranscriptPage, type ThreadTail } from '../pair/tr
 import { brickView, type Params, type Place } from './bricks';
 import { layout, type Slot } from './layout';
 import { buildChanged } from './build';
+import { AgentFace } from './agent-face';
+import { useAgentNames } from './agents-data';
+import { ThreadHead, ThreadSwitch } from './threads';
 import { wearMotion } from '../access';
 import '../pair/screen.css';
 import './board.css';
@@ -33,6 +36,11 @@ function address(): { board?: string; thread?: string } {
   return kind === 'b' && id ? { board: decodeURIComponent(id) } : kind === 't' && id ? { thread: decodeURIComponent(id) } : {};
 }
 const go = (path: string, replace = false) => { if (location.pathname !== path) history[replace ? 'replaceState' : 'pushState'](null, '', path); };
+/** Going to another thread or board from inside the page: the address changes, and whoever resolves it is told. */
+const moved = new Set<() => void>();
+const visit = (path: string) => { go(path); for (const tell of [...moved]) tell(); };
+/** Where the member went, once it is known to be in this page's thread. A new one each time they go. */
+type At = { board?: string };
 
 function BoardView({ board, onRemove, onMaximize, onClose }: { board: Board; onRemove(id: string): void; onMaximize(id: string): void; onClose(): void }) {
   const field = useRef<HTMLDivElement>(null);
@@ -106,7 +114,7 @@ function BoardView({ board, onRemove, onMaximize, onClose }: { board: Board; onR
   );
 }
 
-export function Page({ member, thread, agent }: { member: string; thread: string; agent: string }) {
+export function Page({ member, thread, agent, at, exists = false }: { member: string; thread: string; agent: string; at?: At; /** The thread is already there: it was read. */ exists?: boolean }) {
   const read = useDataQuery<{ threadBoards: Board[] }>(`query ThreadBoards($thread:String!){threadBoards(thread:$thread){${boardFields}}}`, { thread }, { keep: true });
   const all = read.data?.threadBoards ?? [];
   const trail = all.filter((b) => !b.closed);
@@ -123,11 +131,14 @@ export function Page({ member, thread, agent }: { member: string; thread: string
     if (read.status !== 'live') return;
     go(shown ? '/app/b/' + encodeURIComponent(shown.id) : '/app/t/' + encodeURIComponent(thread), !wanted);
   }, [read.status, shown?.id, thread, wanted]);
+  // Back, forward and the list of conversations: the address is resolved above (Resolve), which hands down a new
+  // `at` when it names this thread or one of its boards. Drawn alone, the page reads the address itself.
   useEffect(() => {
+    if (at) return want(at.board);
     const back = () => want(address().board);
     addEventListener('popstate', back);
     return () => removeEventListener('popstate', back);
-  }, []);
+  }, [at]);
   const column = shown && !shown.closed ? trail.findIndex((b) => b.id === shown.id) : 0;
   const drawn = shown?.closed ? [shown] : trail;
 
@@ -137,15 +148,28 @@ export function Page({ member, thread, agent }: { member: string; thread: string
     else void memberOperation('boards.open', { thread, place: p }).catch(() => {});
   }, [shown, thread, change]);
 
-  const [ready, setReady] = useState(false), [tail, setTail] = useState<ThreadTail>(emptyTail);
+  const [ready, setReady] = useState(exists), [tail, setTail] = useState<ThreadTail>(emptyTail);
   const [words, setWords] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [sheet, setSheet] = useState(false);
   useEffect(() => {
+    if (exists) return;
     let live = true;
     memberOperation('comms.open', { thread, agent, title: 'Boards' }, thread.slice(3))
       .then(() => live && setReady(true)).catch(() => live && setError('Could not open the conversation.'));
     return () => { live = false; };
-  }, [thread, agent]);
+  }, [thread, agent, exists]);
+  // Read, as Comms marks it: the conversation is on screen (not a closed sheet, not a hidden tab) and holds
+  // something after the member's read mark. This is what makes "unread" in the list of conversations mean something.
+  const log = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const mark = () => {
+      if (ready && tail.status === 'live' && tail.last > tail.read && document.visibilityState !== 'hidden' && (log.current?.clientHeight ?? 0) > 0)
+        void memberOperation('comms.change', { thread, change: 'read', seq: tail.last }).catch(() => {});
+    };
+    mark();
+    document.addEventListener?.('visibilitychange', mark);
+    return () => document.removeEventListener?.('visibilitychange', mark);
+  }, [ready, thread, tail.status, tail.last, tail.read, sheet]);
   const sending = useRef(false);
   async function send(e: FormEvent) {
     e.preventDefault();
@@ -167,7 +191,7 @@ export function Page({ member, thread, agent }: { member: string; thread: string
   useEffect(() => { if (stale && !words.trim() && !busy) location.reload(); }, [stale, words, busy]);
   const mood: FaceState = error ? 'error' : !ready || tail.status === 'connecting' ? 'thinking' : tail.working ? 'working' : tail.update ? 'talking' : 'idle';
   const status = error || (!ready ? 'Connecting…' : tail.working ? (tail.tool ? 'Working · ' + tail.tool.split(' → ').at(-1) : 'Working') : tail.update ? 'Has a reply for you' : 'Here when you need me.');
-  const name = agent === 'art' ? 'Art' : agent;
+  const name = useAgentNames()(agent);
 
   return (
     <main className="boards-page pair-workspace" data-board={drawn.length > 0}
@@ -192,11 +216,15 @@ export function Page({ member, thread, agent }: { member: string; thread: string
         </section>
       )}
       <section className="boards-talk" aria-label="Conversation" data-sheet={sheet} data-empty={!tail.last}>
-        <button type="button" className="boards-presence" aria-expanded={sheet} onClick={() => setSheet((open) => !open)}>
-          {agent === 'art' && <span className="boards-face" aria-hidden="true"><Portrait className="art-portrait shrink-0" state={mood} /></span>}
-          <span className="min-w-0"><span className="block font-semibold">{name}</span><span role="status" className="block text-sm text-muted-foreground">{status}</span></span>
-        </button>
-        <div className="boards-log">
+        <div className="boards-top">
+          <button type="button" className="boards-presence" aria-expanded={sheet} onClick={() => setSheet((open) => !open)}>
+            {agent === 'art' ? <span className="boards-face" aria-hidden="true"><Portrait className="art-portrait shrink-0" state={mood} /></span> : <AgentFace agent={agent} state={mood} />}
+            <span className="min-w-0"><span className="block font-semibold">{name}</span><span role="status" className="block text-sm text-muted-foreground">{status}</span></span>
+          </button>
+          <ThreadSwitch thread={thread} visit={visit} />
+        </div>
+        <ThreadHead thread={thread} member={member} />
+        <div className="boards-log" ref={log}>
           <MessageScrollerProvider defaultScrollPosition="end" autoScroll>
             <MessageScroller>
               <MessageScrollerViewport preserveScrollOnPrepend aria-label="Conversation history">
@@ -222,24 +250,38 @@ export function Page({ member, thread, agent }: { member: string; thread: string
   );
 }
 
-/** Finds the thread the address names, or the member's own boards thread with the household's first agent. */
-function Resolve({ member }: { member: string }) {
-  const at = address();
+/** Finds the thread the address names, or the member's own boards thread with the household's first agent. The
+ * address is read again when the member goes back or forward or chooses another conversation. While the new address
+ * is being resolved the page on screen stays as it is, untold: it is replaced only by another thread's page, and a
+ * board of its own thread is handed to it. */
+export function Resolve({ member }: { member: string }) {
+  const [at, setAt] = useState(address);
+  useEffect(() => {
+    const read = () => setAt(address());
+    moved.add(read); addEventListener('popstate', read);
+    return () => { moved.delete(read); removeEventListener('popstate', read); };
+  }, []);
   const home = useDataQuery<{ homeComms: { agents: string[] } | null }>('query BoardsHome{homeComms{agents}}');
   const board = useDataQuery<{ board: { thread: string } | null }>('query BoardThread($id:String!){board(id:$id){thread}}', { id: at.board ?? '' }, { pause: !at.board });
+  const boardThread = at.board ? board.data?.board?.thread : undefined;
+  const wanted = at.thread ?? boardThread;
   const named = useDataQuery<{ thread: { id: string; agent: string } | null }>('query BoardsThread($id:String!){thread:commsThread(id:$id){id agent}}',
-    { id: at.thread ?? board.data?.board?.thread ?? '' }, { pause: !(at.thread ?? board.data?.board?.thread) });
-  if (home.status === 'loading' || (at.board && board.status === 'loading')) return <p role="status" className="p-6">Opening…</p>;
-  if (at.board && !board.data?.board) return <p role="status" className="p-6">There is nothing here.</p>;
-  const wanted = at.thread ?? board.data?.board?.thread;
+    { id: wanted ?? '' }, { pause: !wanted });
+  const shown = useRef<{ thread: string; agent: string; exists: boolean; at: At } | null>(null);
+  const none = (words: string) => { shown.current = null; return <p role="status" className="p-6">{words}</p>; };
+  const waiting = () => (shown.current ? <Page key={shown.current.thread} member={member} {...shown.current} /> : <p role="status" className="p-6">Opening…</p>);
+  if (home.status === 'loading' || (at.board && board.status === 'loading')) return waiting();
+  if (at.board && !boardThread) return none('There is nothing here.');
   if (wanted) {
-    if (named.status === 'loading') return <p role="status" className="p-6">Opening…</p>;
-    if (!named.data?.thread) return <p role="status" className="p-6">There is nothing here.</p>;
-    return <Page key={wanted} member={member} thread={wanted} agent={named.data.thread.agent} />;
+    if (named.status === 'loading') return waiting();
+    if (named.data?.thread?.id !== wanted) return none('There is nothing here.');
+    if (shown.current?.at !== at) shown.current = { thread: wanted, agent: named.data.thread.agent, exists: true, at };
+  } else {
+    const agent = home.data?.homeComms?.agents[0];
+    if (!agent) return none('No agent is available.');
+    if (shown.current?.at !== at) shown.current = { thread: threadId('th:board-', [member, agent]), agent, exists: false, at };
   }
-  const agent = home.data?.homeComms?.agents[0];
-  if (!agent) return <p role="status" className="p-6">No agent is available.</p>;
-  return <Page member={member} thread={threadId('th:board-', [member, agent])} agent={agent} />;
+  return <Page key={shown.current!.thread} member={member} {...shown.current!} />;
 }
 
 function App() {

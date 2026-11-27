@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import type { ApprovalActions } from '../pieces/approval-view/answering';
 import type { ApprovalSnapshot } from '../pieces/approval-view/model';
 import { useDataQuery } from './graphql';
-import { alwaysLabel, sendWorkAlways, type WorkAlwaysInput, type RulePerson } from './work-always';
+import { alwaysInput, alwaysLabel, sendWorkAlways, type CurrentChange, type MergeRequest, type WorkAlwaysInput, type RulePerson } from './work-always';
 import { sendWorkAnswer } from './work-answer';
 import { readProposal, type ProposalNow } from './work-proposal';
 
@@ -21,6 +21,20 @@ export function useWorkAccess() {
 /** The commands, for a member who may answer and for nobody else. */
 export function ownerApprovalActions(owner: boolean, standing?:WorkAlwaysInput): ApprovalActions | undefined {
   return owner ? {...(standing?{always:{approval:standing.approval,label:alwaysLabel(standing),run:async(id:string)=>{if(id!==standing.approval)throw Error('Approval changed');await sendWorkAlways(standing);}}}:{}),allow:(id,confirm,review)=>sendWorkAnswer({piece:'approvals',id,answer:'allow',...(review?{review}:{}),...(confirm?{confirm:true as const}:{})}),deny:(id,reason)=>sendWorkAnswer({piece:'approvals',id,answer:'deny',reason})} : undefined;
+}
+const approvalChangeQuery = `query ApprovalChange($id: String!, $head: String!) {
+  changes(where: {id: {eq: $id}, headCommit: {eq: $head}}, limit: 1) { id state agent project headCommit }
+}`;
+/** The standing answer ("Always for <project>") for the open request, or none. It is offered to a member who may
+ * answer, for a waiting merge request of an agent's own, whose pull request loom reads as still open at the very
+ * commit the request names, in the request's project, for a person of the household (./work-always.ts, alwaysInput).
+ * The server binds every field again (approvals.always). */
+export function useStandingAnswer(card: MergeRequest | undefined, access: { owner: boolean; members: readonly RulePerson[] }): WorkAlwaysInput | undefined {
+  const target = access.owner && card?.kind === 'merge' && card.state === 'pending' && card.operation === null
+    ? /^(.+)@([a-f0-9]{40})$/u.exec(card.target) : null;
+  const change = useDataQuery<{changes:CurrentChange[]}>(
+    approvalChangeQuery, {id: target?.[1] ?? '', head: target?.[2] ?? ''}, {pause: !target});
+  return alwaysInput(card, target && change.status === 'live' ? change.data?.changes ?? [] : [], access.members);
 }
 
 /** Read the owner preview for the open card and discard results when it closes or changes. */

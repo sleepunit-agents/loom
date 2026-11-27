@@ -40,6 +40,8 @@ beforeEach(() => {
     if (name === 'InlineApproval') return { status: 'live', data: { approvals: world.row ? [world.row] : [], approvalRecord: world.record } };
     if (name === 'WorkAnswerOwner') return typeof world.owner === 'string' ? { status: world.owner } : { status: 'live', data: { workAnswerOwner: world.owner, workChangesRefresh: false, members: [] } };
     if (name === 'WorkViewer') return { status: 'live', data: { homeComms: { member: world.viewer } } };
+    // The standing answer's read of the pull request (paused for everything but a waiting merge); it is answered in bricks-approval-always.test.tsx.
+    if (name === 'ApprovalChange') return { status: 'live', data: { changes: [] } };
     throw new Error('A read the approval brick should not make: ' + name);
   });
   vi.stubGlobal('fetch', async (url: string, init: { body: string }) => {

@@ -24,7 +24,7 @@ function position(ask:string|null, blocker:string|undefined, linked:Change[]) {
 export function workBoardFields(db:DataDatabase):GraphQLFieldConfigMap<unknown,{viewer:Viewer}> {
   const text=new GraphQLNonNull(GraphQLString);
   const card=new GraphQLObjectType({name:'ProjectBoardTicket',fields:{
-    id:{type:text},project:{type:text},title:{type:text},assignee:{type:GraphQLString},lane:{type:text},reason:{type:GraphQLString},
+    id:{type:text},project:{type:text},title:{type:text},assignee:{type:GraphQLString},priority:{type:new GraphQLNonNull(GraphQLInt)},lane:{type:text},reason:{type:GraphQLString},
   }});
   return {projectBoardTickets:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(card))),
     args:{project:{type:text},epic:{type:GraphQLString},finished:{type:GraphQLBoolean,defaultValue:false},offset:{type:GraphQLInt,defaultValue:0},limit:{type:GraphQLInt,defaultValue:51}},
@@ -42,7 +42,7 @@ export function workBoardFields(db:DataDatabase):GraphQLFieldConfigMap<unknown,{
       const tickets = and(eq(tasks.project,project),visibleTasks,ne(tasks.type,'epic'),
         children && inArray(tasks.id,children));
       if (finished) {
-        return db.select({id:tasks.id,title:tasks.title,project:tasks.project,assignee:tasks.assignee,closeReason:tasks.closeReason})
+        return db.select({id:tasks.id,title:tasks.title,project:tasks.project,assignee:tasks.assignee,priority:tasks.priority,closeReason:tasks.closeReason})
           .from(tasks).where(and(tickets,eq(tasks.status,'closed')))
           .orderBy(desc(tasks.closedAt),asc(tasks.id)).limit(limit).offset(offset).all()
           .map(({closeReason,...row})=>({...row,lane:'Finished',reason:closeReason==='cancelled' ? 'Cancelled' : 'Ticket closed'}));
@@ -50,7 +50,7 @@ export function workBoardFields(db:DataDatabase):GraphQLFieldConfigMap<unknown,{
       const allowedLinks=scope.changeTasks(getTableColumns(changeTasks));
       const activeChanges=db.select({task:changeTasks.task}).from(changeTasks).innerJoin(changes,eq(changes.id,changeTasks.change))
         .where(and(allowedLinks,eq(changes.state,'open')));
-      const page=db.select({id:tasks.id,title:tasks.title,project:tasks.project,assignee:tasks.assignee,ask:tasks.ask}).from(tasks)
+      const page=db.select({id:tasks.id,title:tasks.title,project:tasks.project,assignee:tasks.assignee,priority:tasks.priority,ask:tasks.ask}).from(tasks)
         .where(and(tickets,ne(tasks.status,'closed'),
           sql`not ${taskShelved(tasks)}`,or(eq(tasks.status,'in_progress'),isNotNull(tasks.ask),inArray(tasks.id,activeChanges))))
         .orderBy(asc(tasks.priority),asc(tasks.position),asc(tasks.id)).limit(limit).offset(offset).all();

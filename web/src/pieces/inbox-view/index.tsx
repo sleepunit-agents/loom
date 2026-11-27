@@ -7,9 +7,8 @@ export { AnswerSection } from './answer';
 export type { InboxActionResult, InboxResultsSnapshot } from './outcomes';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Split, Row, Empty, Error, Loading, Actions, LinkButton, Search, Pager, Reader, Meta, Title, Facts, Fact, Section, Body, Foot, Chips, Chip, type SplitFolder } from '../../kit';
-import { approvalRequestId, managed, rows, from, stateWord, answerWord, sourceLabel, volumeWords, volumeNote, when, type InboxActions, type InboxAnswer, type InboxItem, type InboxSnapshot } from './model';
+import { approvalRequestId, safeLink, errorsFolder, folderWords, noticeFolder, managed, rows, from, stateWord, answerWord, sourceLabel, volumeWords, volumeNote, when, type InboxActions, type InboxAnswer, type InboxItem, type InboxSnapshot } from './model';
 export type { InboxActions, InboxItem, InboxSnapshot } from './model';
-const safeLink = (value?: string | null) => value && (/^https?:\/\//i.test(value) || /^\/(?!\/)/.test(value)) ? value : undefined;
 
 /** What an open item does, wherever it is drawn: it is marked read once, and one answer or one change of how
  * loudly it is shown is sent at a time. Mutations belong to the authenticated operation client supplied by composition. */
@@ -132,7 +131,7 @@ export function InboxView({ snapshot, selected, select, detail, actions, results
   const shown = drawn === 'errors' ? [] : rows(display, drawn, navigation ? '' : query);
   const live = snapshot.status === 'live';
   // Outcomes of this person's own actions sit in the list as quiet rows, in time order with the items around them.
-  const notices = live && (drawn === 'fyi' || drawn === 'errors' || drawn === 'all') ? currentNotices(results, drawn === 'errors') : [];
+  const notices = live && noticeFolder(drawn) ? currentNotices(results, drawn === 'errors') : [];
   const entries = [...shown.map(row => ({ at: row.at, id: row.id, row, notice: undefined })), ...notices.map(notice => ({ at: notice.at, id: `notice:${notice.id}`, row: undefined, notice }))]
     .sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
   const item = live ? (detail ? detail.status === 'live' && detail.item?.id === selected ? detail.item : undefined : snapshot.items.find(row => row.id === selected)) : undefined;
@@ -142,8 +141,8 @@ export function InboxView({ snapshot, selected, select, detail, actions, results
     return row.volume === 'dim' ? title.trimStart().split(/[\r\n]/, 1)[0] || fallback : title;
   };
   const folders: SplitFolder[] = [
-    ...[['needs', 'Needs you'], ['alerts', 'Alerts'], ['answered', 'Answered'], ['fyi', 'FYI'], ['all', 'All items']].map(([id, label]) => ({ id, label, count: live && snapshot.folders ? snapshot.folders[id as 'needs' | 'alerts' | 'answered' | 'fyi' | 'all'] : rows(display, id, '').length })),
-    { id: 'errors', label: 'Errors', count: currentNotices(live ? results : undefined, true).length },
+    ...folderWords.map(([id, label]) => ({ id, label, count: live && snapshot.folders ? snapshot.folders[id] : rows(display, id, '').length })),
+    { id: errorsFolder[0], label: errorsFolder[1], count: currentNotices(live ? results : undefined, true).length },
     { heading: 'By agent' }, ...(live && snapshot.folders ? snapshot.folders.agents : [...new Set(live ? display.items.flatMap(row => row.agent ? [row.agent] : []) : [])].sort().map(id => ({ id, count: rows(display, `agent:${id}`, '').length })))
       .map(agent => ({ id: `agent:${agent.id}`, label: agent.id, count: agent.count })),
   ];

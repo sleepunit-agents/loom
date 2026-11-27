@@ -112,7 +112,7 @@ a thread's open boards, left to right, in the order they last joined it.
    id and nothing else: an ASCII letter or digit, then up to 119 of ASCII letters, digits and `: . _ / @ -`; a ticket
    is `t-` and a number; a person is `member:` or `contact:` and a lowercase slug; a change is `github:`, the
    repository as lowercase `owner/repo`, `#` and a number, which is how loom writes a change's id, and the only
-   reference that may hold a `#`. It is checked for shape only, so
+   reference that may hold a `#`; a knowledge page is its slug, which may be 200 long and holds no `:` or `@`. It is checked for shape only, so
    it may name no record, and it is shown only as an id (see "Names" under "The page"). The only free text the agent
    gives a board is its title. Known limit: an id-shaped string such as `contact:call-me` is still accepted and is
    shown, small and in monospace, beside a brick that says it is unavailable.
@@ -174,7 +174,7 @@ shifted by another's `place`, `remove`, `rank` or `maximize` get no rows of thei
 
 **`blueprints`**: `id`; `agent`; `name` (unique per agent, at most 80 characters); `description` (at most 300
 characters); `parameters` (JSON: a list of `{name, kind}` in order of first use in the design; kind is one of `session`, `project`,
-`ticket`, `change`, `repository`, `person`, `agent`, `inbox item`, `approval`);
+`ticket`, `change`, `repository`, `person`, `agent`, `inbox item`, `approval`, `knowledge page`, `knowledge topic`);
 `design` (JSON: an ordered list of `{brick, params}` in rank order, where a record-reference param's value is either
 fixed or `{"open": "<parameter name>"}`); `created_at`; `used_at`; `uses`. A blueprint is readable and usable by its
 agent in any of that agent's threads. No member reads `blueprints`.
@@ -391,8 +391,20 @@ ids, making it with `comms.open` if it does not exist.
   it. Its bricks are drawn and do nothing: no action, no chip, no input in them responds.
 - **Not yours.** A board or thread id that does not exist, or that the member may not read, draws one line saying
   there is nothing here, and no presence and no input.
-- **Threads.** The switcher from the branch is kept as it is. Renaming and archiving a thread are not part of this
-  spec.
+- **Threads (built 2026-11-27).** A control beside the presence, and the desktop launcher's keys (Ctrl+Space, a
+  double tap of Shift), open a list of the member's open threads: Comms' own rows in Comms' order (pinned, then most
+  recent; its first fifty), each with its title, its agent, "Working" and "Unread". Arrow keys move, Enter chooses,
+  Escape closes. Choosing one pushes `/app/t/<thread id>`; back and forward are resolved again, and a board of the
+  thread on screen is handed to the page without redrawing the conversation. The list ends with "New conversation
+  with" each agent the member may give work to (`homeComms.agents`), which makes a thread as Comms' "New" does
+  (`comms.open` with a new id and no title) and goes to it. A thread that was read is not opened again with
+  `comms.open`. The presence is the thread's own agent: its directory name and, for any agent but Art, its face
+  drawn still from `agents.markBg/faceShape/faceEyes` and the desktop's face shapes. Under the presence is the
+  thread's title; the member whose thread it is can rename it and archive it (asked first) or restore it, by
+  `comms.change`. The page marks the thread read (`comms.change`, `read`) when its conversation is on screen in a
+  visible tab and holds something after the read mark, as Comms does; "Unread" in the list is Home's rule, a reply
+  from the thread's agent after that mark, served as `unread` on a Comms thread row. Nothing about the thread or
+  board shown is in a query string, a fragment or storage.
 
 ## A restart
 
@@ -426,10 +438,23 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `pull` | `change`: change id, `github:owner/repo#number` | none: a merge is answered through its approval, on the desktop | the change id |
 | `repository` | `repository`: `owner/repo`, in any spelling `project_repositories` holds (a leading `github:`, capitals and a trailing `.git` are dropped); `project`: project id, optional | none | the repository id |
 | `person` | `person`: `member:<member id>` or `contact:<contact slug>` | none | the same string |
-| `agent` | `agent`: agent id | none | the agent id |
-| `question` | `item`: inbox item id | `answer {answer}`, by `inbox.answer`; `answer` is one of `yes`, `no`, `words`, `done`, `dismiss` | the item id |
-| `approval` | `approval`: approval id | `approve {}`, `refuse {}`, each after `approvals.answer` took the answer; a reason for denying goes to `approvals.answer` and never to the board | the approval id |
+| `agent` | `agent`: agent id | `stop {}`, by `runtime.jobStop` on one of its running jobs, after asking | the agent id |
+| `question` | `item`: inbox item id | `answer {answer}`, by `inbox.answer`; `answer` is one of `yes`, `no`, `words`, `done`, `dismiss`. `volume {volume}`, by `inbox.volume`; `volume` is one of `full`, `dim`, `mute` | the item id |
+| `approval` | `approval`: approval id | `approve {}`, `refuse {}`, each after `approvals.answer` took the answer; a reason for denying goes to `approvals.answer` and never to the board. `always {}`, after `approvals.always` took the standing answer | the approval id |
 | `session` | `session`: conversation id | `stop {}`, by `runtime.jobStop` | the conversation id |
+| `inbox` | `folder`: one of `needs`, `alerts`, `answered`, `fyi`, `all`, `errors`, default `needs` (what waits on the member). No record reference | `read {}`, by `inbox.read`; `dismissResult {}`, by `inbox.dismissResult` | none |
+| `approvals` | `state`: `pending` or `answered`, default `pending`. No record reference | none: a request is answered in its `approval` brick | none |
+| `ticket`, added 2026-11-27 | as above | also `edit {}`, `link {type}`, `unlink {type}`, each the `tasks.command` action of that name; `type` is `blocks` or `parent-child` | as above |
+| `lanes`, added 2026-11-27 | as above | `pause {}`, `resume {}`, each after `work.setProjectClaims` took it | none |
+| `new-ticket` | `project`: project id | `create {}`, by `tasks.command` `create` | none |
+| `backlog` | `project`: project id | `priority {priority}`, by `tasks.command` `edit` with the priority alone; `priority` is one of `0` to `4` | none |
+| `unfiled` | none | `project {}`, by `tasks.command` `edit` with the project alone | none |
+| `knowledge-page` | `page`: a knowledge page's slug: a letter or digit, then up to 199 of letters, digits and `. _ / -` | `verify {}` by `mind.knowledgeVerify`, `recheck {}` by `mind.knowledgeRecheck`, `annotate {kind}` by `mind.knowledgeAnnotate`; `kind` is one of `note`, `outdated`, `intent`, `no-longer-owned`, `in-use`; the words go to the operation and never to the board | the page slug |
+| `knowledge` | `show`: `all`, `recent` or `due`, default `all`; `domain`: a topic, optional: a lowercase letter or digit, then up to 119 of lowercase letters, digits and `. _ / -`. No parameter holds words to search for | `add {}`, by `mind.knowledgeAdd` | none |
+| `people` | `folder`: `all`, `person` or `agent`, default `all`. No parameter holds words to search for | `add {}`, by `mind.personAdd` | none |
+| `activity` | `days`: 1, 7 or 30, default 1 | none | none |
+| `threads` | `scope`: `open` or `archived` (Comms' two folders), default `open` | none | none |
+| `agents` | none | none | none |
 
 | Brick | Can be big | Flags itself when |
 | --- | --- | --- |
@@ -438,12 +463,45 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `trend` | yes: opened and closed per day over `days`, and a picked day lists its tickets | never |
 | `ticket` | yes: also why and done when, and "Sessions", the sessions handed off for it, newest first, each a `session` chip with its title, state and when; small, a line counting them when there are any; folded, unchanged | it is closed or reopened by someone else |
 | `comments` | yes | a comment arrives from someone else |
-| `person` (a member or a contact), `agent` | not yet | never |
+| `person` (a member or a contact) | yes: what People's reader shows (see below) | never |
+| `agent` | yes: everything it is doing and its last thirty jobs | it starts waiting on the member (a question of its own joins the Inbox's "needs you" when none was there) |
 | `pull` | yes: also its branch and author, its failing and running checks by name, the people on it, whether it can be merged, its tickets with their titles | its checks go to failing, it is merged, it is closed |
 | `repository` | yes: each open pull request with its title and where it stands | never |
 | `question` | no | never: being on the board is the flag |
 | `approval` | no: the page has a primary form for it, with the record's history, but the catalogue does not let it be big, so a board draws it side or compact | never: being on the board is the flag |
 | `session` | yes: what it was asked, its state, the tools it has used, how it ended, and its steps as they are reported; "Its steps are no longer kept." once every step's words have been erased | it finishes, it fails, it is stopped by someone else |
+| `inbox` | yes: every folder's count, and up to fifty of the folder's items newest first, each with its words as a chip that places its `question` brick, who asked, when, its state, read or unread, and Mark read on an unread one; the outcomes of the member's own actions where the Inbox lists them, each with Dismiss; Newer and Older for a longer folder. Small: the folder's count and its first four items as chips. Folded: one line of counts | more waits on the member than before (the count of `needs` goes up) |
+| `approvals` | yes: every pending request oldest first, or every answered one newest first, each with its title as a chip that places its `approval` brick, its state, kind, agent, project, when it was asked, why, what it allows and, once answered, who answered. Small: the count and the first four as chips. Folded: one line of counts | a new request is waiting (the count of pending goes up) |
+| `ticket`, added 2026-11-27 | yes: also its description, its linked tickets with their titles, and the Edit and Links forms; small, its priority, who filed it, why it closed and its links as chips | as above; an edit or a link flags nothing |
+| `lanes`, added 2026-11-27 | yes: also how many of the project's questions wait on the member, and each agent's new claims with pause and resume | never |
+| `project`, added 2026-11-27 | yes: also its name, what each agent calls it, and its repositories | never |
+| `new-ticket` | yes: every field of the desktop's Create task form; small, title, goal and why with that form's defaults; folded, "File a ticket in <project name>" | never |
+| `backlog` | yes: thirty tickets, and each one's priority can be set; small, six | never |
+| `unfiled` | yes: the first fifty, and each can be filed into a project; small, six | never |
+| `knowledge-page` | yes: the whole page, its checks, annotations, sources, the pages it links to and that cite it, and the annotation form | never |
+| `knowledge` | yes: up to 40 pages, the search box, the topics, "Add a fact" | never |
+| `people` | yes: up to 60 cards with who knows each, the search box, "Add a person" | never |
+| `activity` | yes: the range by day, and an entry opened in place | never |
+| `threads` | yes: every row of Comms' first page, with when each was last used | never |
+| `agents` | no | never |
+
+**The conversations and agents bricks, 2026-11-27.** Each reads what the desktop's Comms, Home and Agents apps read.
+
+- `threads`: the list the page's own switcher reads (`commsThreads` for the member, one folder, with `unread`), each
+  row an ordinary link to `/app/t/<thread id>` with the agent's name and "Working" and "Unread". Side: the first six
+  and how many more. Compact: one line of counts. Comms' search, its later pages and pinning are not on it.
+- `agent`: Home's card for one agent. Its directory name; its state line in Home's words (Working, Waiting, Quiet,
+  Unavailable, and how many of its questions need the member); its own report (`agentStatus.work`); its description
+  (`agents.about`); what it is doing now (`agentDoing`, in Home's sentences; the desktop's addresses for those are
+  not drawn); its jobs (`jobHistory`: side, up to three running and the two latest ended; big, the last thirty), each
+  a `session` chip where the job has a conversation, a running one with Stop (asked first, `runtime.jobStop` with
+  `write-off`, as the `session` brick); its open tickets as `ticket` chips; and a link to its conversation with an
+  unread reply, else its latest (`homeComms.summaries`), for an agent the member may give work to. Not drawn: an
+  agent's private-machine jobs, its posts, its last steps, and the machine a job ran on. `currentJobs` is not read:
+  `jobHistory` holds the running jobs too, with their conversations.
+- `agents`: Home's roster (the member's own agents, in its order), one line each: the name as an `agent` chip, the
+  state line, the first thing it is doing and how many more. Compact: how many agents, how many have work in hand
+  (`agentsAtWork`, the desktop bar's read) and how many wait on the member.
 
 **What the five bricks drawn on 2026-11-27 show.** Each reads what the desktop reads for the same record, and says
 it in the desktop's words.
@@ -490,17 +548,147 @@ it in the desktop's words.
   - **Answered.** Once the request no longer waits, whoever answered it, the brick shows the state and who
     answered, and no control. The compact form is one line with no control in any state, and does not ask loom
     whether the member may answer.
-  - **Not on the brick.** The desktop's standing answer for a merge ("Always for <project>"), the desktop's
-    display names for agents (the brick shows ids as chips), and the household's time zone (times are in the
-    device's). After `approvals.answer` succeeds the board is told `approve` or `refuse` with an empty detail.
+  - **Always.** The desktop's standing answer for a merge ("Always for <project>") is offered where the desktop
+    offers it, by the one rule both use (`useStandingAnswer` in `web/src/data/work-approvals.ts`): to a member who
+    may answer, for a waiting merge request with a project, made for a member of the household, whose pull request
+    loom reads as open, the same agent's, in the same project, at the commit the request names. The brick asks
+    first: the press says what a standing rule is and sends nothing; "Yes, always allow" sends `approvals.always`
+    and Cancel takes the question back. The two steps are the shared hook's (`askStanding`). The desktop sends on
+    one press, as before.
+  - **Not on the brick.** The desktop's display names for agents (the brick shows ids as chips), and the
+    household's time zone (times are in the device's). After `approvals.answer` succeeds the board is told
+    `approve` or `refuse`, and after `approvals.always` succeeds `always`, each with an empty detail.
+- `question` also shows what the desktop's opened item shows around the answer: the approval of a household change
+  by its plain title in place of the words stored with the item, "Open linked page" for a web address or a path of
+  this site, everything the item is about (a chip for a ticket or an approval, the id for anything else), and
+  "Notify" (Normal, Quiet, Hidden, by `inbox.volume`) for an item the member may set it on, with what the chosen
+  one means and when it ends. Not on the brick: marking the item read when it is opened (the `inbox` brick has
+  Mark read), "Discuss with <agent>" (`inbox.discuss` opens a Comms thread, which this page has no brick for), the
+  answer to a task's question and to a machine asking to join (both are answered where they were asked), and the
+  household's time zone.
+- `inbox`: the Inbox's own selection (`inboxSelection` in `web/src/pieces/attention/inbox-query.ts`) and its own
+  rules for which rows a folder holds, their order and their words (`web/src/pieces/inbox-view/model.ts`). Not on
+  the brick: the search, a folder for one agent (neither is a choice from a fixed list), the link from an outcome
+  to the desktop page it happened on, and answering, which is the `question` brick's.
+- `approvals`: the desktop's own selection (`approvalsQuery`) and its rule for the two lists
+  (`rows` in `web/src/pieces/approval-view/model.ts`). A household change is listed by its title, reason, state and
+  agent; who answered it is not said, as on the desktop for a member with no reading of it. Not on the brick: the
+  search, the standing rules and the reported steps, which are the desktop's other two folders.
 - `person` with `contact:<slug>`: the shared card People opens (`memoryPerson`, id `commons:<slug>`): name, summary,
-  how to reach them, linked projects. Relationship cards, evidence, sightings and conversations are People's and are
-  not on the brick. A member is drawn as before, by their open tickets.
+  how to reach them, linked projects. A member is drawn by their open tickets. Since made fuller: see "What loom
+  knows" below.
+
+**Work written from the board, 2026-11-27.** Every write below is the desktop's own `tasks.command`, sent through
+the desktop's door for it (`web/src/data/task-command.ts`, which now also hands back loom's answer), with the input
+the desktop's form sends. What a member types goes to that command; `boards.act` gets the action's name and at most
+one fixed choice. A refusal shows loom's words, keeps the form and tells the board nothing. The page has no native
+picker, so a fixed choice is a row of buttons and another ticket is typed by id, with the tickets the member may
+read offered as they type; an id that is not one of them is not sent.
+
+- `ticket`: beside what it showed, its priority, who filed it and when, why it was closed, and its parent, children,
+  blockers and the tickets it blocks as `ticket` chips (a linked ticket the member may not read is its id and no
+  chip). The big form has Edit (title, goal, why, done when, description, priority, project: `edit` with all seven,
+  refused on the page while title, goal or why is empty) and Links (Parent and Blocked by: `link` and `unlink`; a
+  ticket with a parent is offered no second one). Not on the brick: Ask a person and Promote to epic, the ticket's
+  story (comments are the `comments` brick), its pull requests and reviews, and the desktop's display names.
+- `new-ticket`: the desktop's Create task form for the brick's project: title, goal, why, done when, description,
+  priority, type, owner (the household, a member or an agent in use) and parent. After filing it shows the new
+  ticket as a chip and clears. It does not record a conversation as the ticket's source.
+- `backlog`: the project's tickets that are open, not shelved with a retired project and not on the project's board
+  (`projectBoardTickets`, at most 100 read), in the desktop backlog's order: priority, hand-kept position, id. The
+  big form sets a priority with the desktop's Set priority. It has no search, folders or reordering by hand.
+- `unfiled`: the first page of the desktop's Unfiled view (its selection, `workUnfiledQuery`): tickets under no
+  project, latest change first, closed ones included. The big form files one into a project with the desktop's Set
+  project. It has no further pages.
+- `lanes`: each card also says its priority and who has it; why it waits was already there. `projectBoardTickets`
+  gained `priority` for this (the same rows, to the same readers). The big form adds "Needs you · n" from
+  `inboxProjectNeeds` when n is above zero, and, from `projectClaimStates`, each agent whose claims the member may
+  direct with whether it takes new tickets there; Pause and Resume ask first and then call `work.setProjectClaims`
+  with the revision on screen. The board is told `pause` or `resume`, not which agent. Not on the brick: the
+  desktop board's epic filter, its recently finished lane and its pages; the questions themselves (the line is a
+  count).
+- `project`: its goal and lifecycle, its members as `person` chips (the project's own member rows) and its agents
+  as `agent` chips (those in `projectClaimStates` and those with a card for it in `workProjectContributions`). The
+  big form adds its name, each agent's card for it (name, goal, summary) and the repositories that card names
+  (`memoryProject`), each a `repository` chip in this project. Loom still gives a member no read of
+  `project_repositories`, so a repository bound to the project that no agent's card names is not shown. It has no
+  action; the desktop's project discussion and notes are not on it.
 
 **Still not drawn, 2026-11-27.** No brick has a hover form. Writing a brick in words as `[label](loom:<brick>/<key>)`
-is not built; only a bare ticket id becomes a chip. A merge cannot be answered from its `pull` brick; its approval can, from the `approval` brick. Not
-checked: whether `memoryPerson` updates live as rule 8 requires (open question 1). None of the five has been looked
+is not built; only a bare ticket id becomes a chip. A merge cannot be answered from its `pull` brick; its approval can, from the `approval` brick.
+Whether `memoryPerson` updates live is answered under "What loom knows" below. None of the five has been looked
 at in a browser: they are drawn with the classes the other bricks use, and their look is unjudged.
+
+**What loom knows, on the board (2026-11-27).** Four bricks and a fuller `person` show what the desktop's Knowledge,
+People and Activity apps show. Each reads with the desktop's own selections (`web/src/memory/queries.ts`), says it
+in the desktop's words (`web/src/pieces/knowledge/model.ts`, `people/model.ts`, `activity/model.ts`, all three plain
+modules the boards bundle now lists by path) and calls the operations the desktop calls with the inputs it sends.
+No read, operation or table was added.
+
+- `knowledge-page`: `memoryKnowledgePage`. Title, topic (a `knowledge` chip), "Fresh", "Getting old" or "Due a
+  check" as loom works it out, when it was verified or written, and its words drawn as a reply is. A `[[slug]]` link
+  in the words is drawn as its label, and the pages linked are `knowledge-page` chips under the words. Big: also how
+  often it is checked and who checked it last, the recent checks and annotations, the sources (a source's link opens
+  in a new tab), the pages that cite it as chips, how it was sourced and who wrote it. "Still true"
+  (`mind.knowledgeVerify {slug}`) and "Check again" (`mind.knowledgeRecheck {slug}`) are on the big and the side
+  form, each enabled only where `memoryKnowledgeAccess` says the member may; until that read answers there is no
+  control. Big, a member who may add has the annotation form: one of the five kinds, as buttons, and words
+  (`mind.knowledgeAnnotate {slug, kind, words}`). Side: the title, the state and the first three lines. The
+  desktop's reader does not show a page's earlier versions, and neither does the brick. Times are in the device's
+  zone, not the household's.
+- `knowledge`: `memoryKnowledge`, filtered and ordered as Knowledge's lists are (all and recently verified newest
+  first, due by the oldest check first), within `domain` and the topics under it when one is given. Each page is a
+  `knowledge-page` chip with its state. A count of pages due a check is a chip that places the brick with
+  `show: due`. Big: Knowledge's topics as chips that place the brick for one topic; a search box whose words are
+  held by the drawn brick, sent to `memoryKnowledgeSearch` (within `domain` when given, 30 results) when the member
+  presses Search, and never stored, never a parameter and never told to the board; and, for a member
+  `memoryKnowledgeAccess` lets add, "Add a fact" (`mind.knowledgeAdd {title, domain, body, source}`), after which the
+  new page is offered as a chip. The desktop's search box filters titles and topics as the member types; the brick's
+  asks loom's search, which also reads the pages' words and needs every word to match.
+- `person`, fuller. A contact (`contact:<slug>`): the shared card, and from the directory People lists
+  (`memoryPeople`) the relationship cards of the agents this member may read. Small: name, summary, where they are
+  reached, the agents that know them as `agent` chips, linked projects as `project` chips. Big, as People's reader:
+  a merge that led here, what a member owns, each address as People links it with its state, when it was verified
+  and its source, where they were last seen, the card's facts, each agent's relationship card (summary, how old it
+  is, its facts, the permissions it records and "These records do not grant access.", and the notes behind it, each
+  folded under its title), linked projects, the member's own conversations with them as `session` chips, and
+  "Contact details and relationship notes do not grant access.". A member (`member:<id>`): the same card when there
+  is a shared card under their member id, which is how loom marks a member's card, and under it their open tickets
+  as before; with no card, their open tickets alone. The brick has no action, like People's reader.
+  Known limits: a linked project is an agent's project card, and its chip places `project` with the card's slug,
+  which is the loom project's id only where they were named alike; a conversation with no job the member may read
+  draws `session` as unavailable. The desktop's links to Sharing are not on the brick.
+- `people`: `memoryPeople` and `memoryPeopleAccess`, grouped, ordered and searched by People's own function. Each
+  person is a `person` chip (`member:<slug>` for a card that says what a member owns, otherwise `contact:<slug>`),
+  each agent an `agent` chip, with "Stale contact details" where People says it. Big: who knows each, a search box
+  that filters the list as the member types (inside the drawn brick; nothing is sent, stored or told to the board),
+  and for a member loom lets add, "Add a person" (`mind.personAdd {name, summary, channel, handle}`, the channel
+  chosen from the operation's six), after which the person is offered as a chip; otherwise People's hint about the
+  default agent. The desktop's "Known to agent" filter is not on the brick.
+- `activity`: `memoryActivityAccess` for the household's day, zone and the three-day windows Activity reads, then
+  `memoryActivity` for as many windows as the range needs (1, 3 or 10), keeping the newest `days` days. Each row:
+  time in the household's zone, the agent as a chip, the title, "Work done" or "System", and a `ticket` chip for
+  each ticket id in its title or line. Big: grouped by day, with where it happened and "with you"; a row's title
+  opens that entry in place (`memoryActivityEntry`): what it needs, what was asked, what happened, what was decided
+  or shipped, its tickets as `ticket` chips and its pull requests as `pull` chips where the link names a change loom
+  could hold (a GitHub pull request address or loom's own change address), any other link as a link that opens in a
+  new tab if Activity would follow it, its last eight steps, and Activity's lines for a source that is missing.
+  Read-only, and it never flags. Not on the brick: Activity's filters by who, where and what, its hour strip, the
+  agents' faces, and "Earlier in this conversation".
+
+A slug or id that is not shaped like a reference (a page slug with a space, say) is drawn as words with no chip,
+because no board could hold it.
+
+**Are they live (rule 8)?** Yes, for every change loom makes. These reads are fields of the same live query layer
+as the tables, and loom reruns every live read after each committed operation, whichever store it wrote
+(`src/shared-root.ts`: the operations' commit signal goes to `installMemorySignals`, which calls the data layer's
+`changed()`), and at each time a page's state, a contact detail or the household's day turns over
+(`nextDeadline`). So a check, an annotation, a new page or person, by this member, another member or an agent,
+is drawn with no reload: `src/shared-memory-socket.test.ts`, `src/shared-memory.test.ts` and
+`src/shared-startup.test.ts` hold this for `memoryKnowledgePage`, `memoryPerson`, `memoryActivity` and a
+`mind.knowledgeAdd` over HTTP. The one case that is not immediate: a program other than loom writing a memory
+file directly. Loom is not told, and the bricks show it at the next committed operation of any kind or the next
+deadline. Nothing was added to the bricks for this; the page's own tests use a fake data hook and do not test it.
 
 **Sessions.** A job in the thread hands work off with `conversation.handoff` (a work role or a harness), which loom
 has today: it opens a child conversation for the same agent, member and project and returns that conversation's id,
@@ -748,6 +936,14 @@ the thread's member. No model is involved. Each check sets up its own board unle
 3 to 6, 7 (operations only), 8 to 12, 14 to 17 (operations only), 20 (the catalogue only), 24, 26, 27, 28. In
 `web/src/boards/layout.test.ts`: 25 and the layout's rules. In `src/runtime/body-program.test.ts`: 29. In
 `web/src/boards/trend.test.ts` and `build.test.ts`: the trend's days and the new-build test.
+In `web/src/boards/threads.test.tsx`: the list of conversations (closed until asked for, Comms' order, working and
+unread, the launcher's keys, arrows, Enter and Escape, a new conversation and its retry), the thread's title, rename
+and archive (asked first), the presence of the thread's own agent, marking read, and the address across threads
+(one id, nothing stored, back and forward, a board of the same thread keeps what was typed, not yours). In
+`bricks-threads.test.tsx` and `bricks-agent.test.tsx`: the `threads`, `agent` and `agents` bricks in every form,
+their loading and unavailable lines, the agent's stop (asked first, `runtime.jobStop`, nothing in the detail) and its
+flag. In `agents-queries.test.ts`: their own selections against the fields loom serves. In
+`src/core/conversations/comms-query.test.ts`: `unread` on a thread row.
 
 A session's steps have their own suites, outside the numbered checks: `src/shared-session-trace.test.ts` (kept,
 sealed, read by the thread's member alone and not by a full owner, absent from the thread, the relay unchanged; a
@@ -774,6 +970,21 @@ or a harness (the suite hands off to a peer agent; the link is written by the sa
 listing test builds role-shaped conversations by hand); the page's `ticketSessions` selection against a running
 server; live redrawing when a link or a job changes; anything in a browser; a real agent choosing to name a ticket.
 
+What loom knows, each brick in its own file with a fake data hook and a fake `fetch`: `bricks-knowledge-page.test.tsx`
+(all three forms, unavailable and loading, the heading rule, the chips, verify and recheck reaching
+`/api/mind/knowledgeVerify` and `knowledgeRecheck` with the slug and then `boards.act` with an empty detail, an
+annotation reaching `/api/mind/knowledgeAnnotate` with its kind and trimmed words while the board is told the kind
+alone, a failed call reporting nothing, and no control beyond what loom says the member may do),
+`bricks-knowledge.test.tsx` (the lists and their order, one topic, the forms, the search asking
+`memoryKnowledgeSearch` only on Search and reaching no act, the add reaching `/api/mind/knowledgeAdd` with what
+Knowledge sends, who is offered it), `bricks-person.test.tsx` (a contact big and small, the empty lines, a member
+with and without a card, the compact member form not asking for the card), `bricks-people.test.tsx` (the directory,
+the folders, the search sending nothing, the add reaching `/api/mind/personAdd`, People's hint) and
+`bricks-activity.test.tsx` (the rows and their chips, the windows asked for each range and the days kept, an opened
+entry and its chips and links, the missing-source lines, and nothing ever sent). `src/core/boards/model.test.ts`
+holds the five catalogue entries: the shapes refused, no parameter for search words, the actions and their details,
+which can be big. Not tested: any of them against a running server or in a browser.
+
 In `web/src/boards/bricks-drawn.test.tsx`, with a fake data hook and a fake `fetch`: for `pull`, `repository`,
 `question`, `approval` and a contact, all three forms, the compact form as one line, the unavailable and loading
 lines, the heading rule, a pull request's own flag being raised, a question's answers reaching `/api/inbox/answer`
@@ -793,6 +1004,47 @@ elsewhere; and `boards.act` told `approve` or `refuse` with an empty detail and 
 approval suites pass unchanged. Not tested: the page in a browser, `approvals.answer` itself from the board (its
 own suites cover it from the desktop's door), the reading being asked again on window focus and every minute
 (the tests have no window), and how any of it looks.
+
+The standing answer: `answering.test.tsx` (with `askStanding` a send that was not asked about does nothing, Cancel
+takes the question back, and the yes sends once) and `web/src/boards/bricks-approval-always.test.tsx` (it is
+offered in the big and small forms for exactly the desktop's case and for none of sixteen others; the first press
+and Cancel send nothing; the yes sends `/api/approvals/always` with the request, the pull request, its commit, the
+project and the person, then `boards.act` `always` with an empty detail; a refusal tells the board nothing). The
+desktop's suites pass unchanged. Not tested: `approvals.always` itself from the board (its own suite covers it).
+
+The two lists and the question's additions, each over a fake data hook and a fake `fetch`.
+`web/src/boards/bricks-inbox.test.tsx`: the selection asked for each folder and for none; rows newest first with
+words, who, when, state and a `question` chip; a quiet item as one line and a hidden one left out; the three
+forms, the compact one as one line with no control; loading and unavailable; the heading rule; Mark read reaching
+`/api/inbox/read` and Dismiss `/api/inbox/dismissResult`, each then `boards.act` with an empty detail, and nothing
+told when the write fails; the outcomes listed in FYI, All items and Errors only; paging by fifty; a household
+change's approval said by its plain title; the flag raised only when the count of `needs` rises.
+`web/src/boards/bricks-approvals.test.tsx`: pending oldest first and answered newest first with what, why, agent,
+target, outcome and who; a household change without its stored words; no control and no handler in any form; the
+three forms; loading and unavailable; the heading rule; the flag raised only when the pending count rises.
+`web/src/boards/bricks-question-more.test.tsx`: the linked page for a safe address only; what the item is about;
+the plain title; Notify reaching `/api/inbox/volume` and then `boards.act` with the volume, only where the member
+may set it. `model.test.ts` and `operations.test.ts`: the two bricks' parameters refusing anything off their lists,
+their actions and empty details, that both can be big, and their flags. Not tested: either list against a running
+server or in a browser, and live redrawing when an item or a request arrives.
+
+Work written from the board: in `model.test.ts` and `operations.test.ts`, the three new bricks' parameters (a
+project, or nothing for `unfiled`; anything else refused), that each can be big and flags nothing, every new action
+with an empty detail or its one fixed choice and every typed word refused, the choices held to `tasks.command`'s
+own lists, and the sentences the agent is told. In `src/core/data/work-board.test.ts`: a card's priority and
+assignee, for a reader of the project and for no one else. In `web/src/boards/bricks-ticket-edit.test.tsx`,
+`bricks-new-ticket.test.tsx`, `bricks-backlog.test.tsx`, `bricks-unfiled.test.tsx`, `bricks-lanes.test.tsx` and
+`bricks-project.test.tsx`, with a fake data hook and a fake `fetch`: each brick's three forms from fake data, the
+compact form as one line with no control, the unavailable and loading lines, the headings, what is listed and in
+what order, the chips, each action's exact request to `/api/tasks/command` or `/api/work/setProjectClaims`
+followed by `boards.act` with nothing typed in its detail, a pause asking before it sends, an empty title or an
+unknown ticket id not being sent, and a refusal showing loom's words and reporting nothing. In
+`bricks-work-queries.test.ts`: the new selections, the desktop's unfiled selection and its choices run against the
+generated schema, with the backlog's order. The desktop's Tasks and task-command suites pass unchanged. Not tested:
+any of it in a browser or against a running server, `projectBoardTickets`, `inboxProjectNeeds`, `projectClaimStates`,
+`workProjectContributions` and `memoryProject` as the page selects them (they are not in the generated schema the
+query suite builds; the names and fields are the desktop's), live redrawing after a write, the suggestions list of
+the ticket field, and how any of it looks.
 
 In `web/src/boards/bricks.test.tsx` and `page.test.tsx`, the page drawn by a test renderer, with no browser: the data
 hook, the operations, the conversation, and the window's location, history and storage are fakes, and the layout is
@@ -867,6 +1119,7 @@ something unrelated, and a second board opens to the right and closes back to th
    query some of them: `src/transport/memory-queries.ts` joins knowledge pages, knowledge search, people and identity
    into the same query layer every page reads (`memoryKnowledge`, `memoryKnowledgePage`, `memoryKnowledgeSearch`,
    `memoryPeople`, `memoryPerson`). So `knowledge` and a fuller `person` can be bricks by rule 2 with no new read path.
-   Not checked: whether those fields update live as rule 8 requires, and whether an agent's own memories (as opposed
+   Answered 2026-11-27 for the first question: they are live for every change loom makes (see "What loom knows").
+   Still not checked: whether an agent's own memories (as opposed
    to shared knowledge) are exposed at all. Written as: not in the first set; those two questions are answered before
    the bricks are specified.

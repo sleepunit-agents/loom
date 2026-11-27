@@ -4,7 +4,7 @@ import type {Change} from '../pieces/change-view/model';
 export interface WorkAlwaysInput {approval:string;change:string;head:string;project:string;person:string}
 export interface MergeRequest {id:string;kind:string;target:string;state:string;agent:string;project:string|null;actingFor?:string;operation?:string|null}
 export interface RulePerson {id:string;role:string}
-type CurrentChange=Pick<Change,'id'|'state'|'agent'|'project'|'headCommit'>;
+export type CurrentChange=Pick<Change,'id'|'state'|'agent'|'project'|'headCommit'>;
 /** Presentation only: the server rebinds every field to current shared records. */
 export function alwaysInput(card:MergeRequest|undefined,changes:readonly CurrentChange[],people:readonly RulePerson[]):WorkAlwaysInput|undefined{
  if(!card||card.kind!=='merge'||card.state!=='pending'||card.operation!==null||!card.project||!card.actingFor||['unknown','?'].includes(card.actingFor))return;
