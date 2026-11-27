@@ -10,7 +10,7 @@ import { ExecutionDrain } from './execution.js';
 import { DOOR_REQUEST_BYTES } from './http.js';
 import { readDeadline } from './read-lease.js';
 import { DataLive, type MeasureRead } from './live.js';
-import { dataSubscriptions } from './subscriptions.js';
+import { dataSubscriptions, NamedSelections } from './subscriptions.js';
 
 /** Standard graphql-transport-ws on /graphql. Authentication belongs to the
  * composition's existing session/token resolver, never connectionParams or an
@@ -27,6 +27,8 @@ export function dataSocket(options: {
   const ws = new WebSocketServer({ noServer: true, maxPayload: DOOR_REQUEST_BYTES, handleProtocols: protocols => protocols.has('graphql-transport-ws') ? 'graphql-transport-ws' : false });
   const admitted = new WeakMap<WebSocket, Authentication>();
   const schemas = new WeakMap<WebSocket, { source: GraphQLSchema; tracked: GraphQLSchema }>();
+  // What each socket's client named of its own selections, to ask for them now (./subscriptions.ts).
+  const named = new WeakMap<WebSocket, NamedSelections>();
   const frames = new WeakMap<object, { socket: WebSocket; version: number | undefined; until: number | undefined }>();
   const serializing = new WeakMap<WebSocket, { version: number | undefined; until: number | undefined }[]>();
   const cleanups = new Map<WebSocket, () => void>();
@@ -57,7 +59,9 @@ export function dataSocket(options: {
       const source = options.schema(auth.viewer);
       const previous = schemas.get(ctx.extra.socket);
       if (previous?.source === source) return previous.tracked;
-      const schema = dataSubscriptions(source, options.live, () => !stopping && auth.valid(), () => !stopping);
+      let names = named.get(ctx.extra.socket);
+      if (!names) named.set(ctx.extra.socket, names = new NamedSelections());
+      const schema = dataSubscriptions(source, options.live, () => !stopping && auth.valid(), () => !stopping, names);
       const tracked = executions.schema(schema, () => !stopping);
       schemas.set(ctx.extra.socket, { source, tracked });
       return tracked;
