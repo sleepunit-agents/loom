@@ -1343,6 +1343,26 @@ presence implementation here. See `src/pieces/bridges/presence.ts`.
   (`rules.inboxVolume` for the third, whose body half is `forItsMember`).
 - Would change it: any use of such a viewer to allow, read or write something. `addressee` says so.
 
+### A handed-off session's work steps outlive the Comms keep time
+- **What.** The household's keep time (`comms_days`, 14 days at most) erases a message's words. It does not
+  cover the work steps of a session handed off from a member's thread (`job_trace`): those are kept 90 days
+  from when each was written, whatever the keep time is set to. A step holds the command a session ran and
+  what it printed, the lines of a file it read, a subagent's brief and answer, so it can hold anything the
+  session read or printed, and it stays after the thread's own words and the relayed result are gone.
+- **Where.** `src/core/conversations/trace-keep-days.ts` (the number), `retention.ts` (every deadline),
+  `job-trace.ts` (stamp, sweep, read). docs/specs/boards.md, "Sessions".
+- **Why accepted.** The owner's decision, 2026-11-27, made knowing what a step can hold: "record things period,
+  because we might want to review the session that made something later on... if we look at a closed ticket,
+  having the session that made it makes sense to me. at least for a while." and "90 sounds good". The steps
+  are sealed at rest with the household's words key, as a message's words are. Only the member of the
+  originating thread reads them: not another member, not a household owner who is not that member, not an
+  agent. At 90 days the words are erased from the row, not hidden. Deleting the thread deletes the rows at
+  once. The body replaces the secrets it holds and anything shaped like a token before a step is reported.
+  The settings card that changes the keep time says that the steps are not covered by it.
+- **What would change the answer.** A household that needs one keep time for every word loom holds, or a
+  finding that a step's redaction misses something that matters. Then cap the trace at the Comms keep time
+  again (one constant and one function in `retention.ts`), or make the 90 days a household setting.
+
 ## Stored data
 
 ### Upgrade step 6 removed three kinds of existing data

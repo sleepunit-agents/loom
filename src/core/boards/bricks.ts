@@ -51,7 +51,7 @@ export const bricks: readonly Brick[] = [
   brick({ name: 'trend', big: true, shows: 'Tickets opened and closed per day in a project.',
     params: z.object({ project: ref, days: z.union([z.literal(7), z.literal(30), z.literal(90)]).default(30) }).strict(),
     references: { project: 'project' }, actions: {} }),
-  brick({ name: 'ticket', big: true, flags: ['closed', 'reopened'], shows: 'One ticket: goal, why, done when, status, who has it.',
+  brick({ name: 'ticket', big: true, flags: ['closed', 'reopened'], shows: 'One ticket: goal, why, done when, status, who has it and, when big, the sessions handed off for it (those whose conversation.handoff named it in tickets).',
     params: z.object({ ticket }).strict(), references: { ticket: 'ticket' }, linkKey: 'ticket',
     // What tasks.command offers a member on one ticket. A close takes a reason in words; the words go to the
     // ticket and never to the board, so every detail here is empty.
