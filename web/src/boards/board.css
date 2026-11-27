@@ -110,9 +110,9 @@
 .boards-page[data-board='false'] .boards-talk[data-empty='true'] .boards-log { display: none; }
 .boards-page[data-board='false'] .boards-log { flex: 0 1 auto; max-height: 55dvh; }
 .boards-presence { display: flex; align-items: center; gap: .75rem; padding: 1rem 1.25rem .75rem; text-align: left; }
-/* Art's sprite is one 56 by 84 cell holding a bust about 32 by 44, centred near (32, 46). The frame shows the bust. */
-.boards-presence .boards-face { flex: none; position: relative; width: 48px; height: 48px; border-radius: 12px; overflow: hidden; background: var(--popover); border: 1px solid var(--surface-edge); }
-.boards-presence .boards-face .art-portrait { position: absolute; left: -8px; top: -22px; zoom: 1; }
+/* Art's sprite is one 56 by 84 cell holding a bust about 33 by 43, centred near (28, 43). The frame shows the bust. */
+.boards-presence .boards-face { flex: none; position: relative; width: 52px; height: 52px; border-radius: 12px; overflow: hidden; background: var(--popover); border: 1px solid var(--surface-edge); }
+.boards-presence .boards-face .art-portrait { position: absolute; left: -2px; top: -17px; zoom: 1; }
 .boards-log { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .boards-ask { padding: .75rem 1.25rem 1.25rem; }
 .boards-page[data-board='false'] .boards-ask textarea { font-size: 1.15rem; }

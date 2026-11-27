@@ -185,9 +185,9 @@ describe('big and small, and flags (checks 24 to 27)', () => {
     { change: 'place', brick: 'agent', params: { agent: 'art' } },
     { change: 'place', brick: 'ticket', params: { ticket: 't-1' } },
   ]).board;
-  it('trades the maximized placement with the big one and moves nothing else', () => {
+  it('puts the maximized placement in the big one\'s place, and the old big one first among the small', () => {
     const next = applyChanges(three(), [{ change: 'maximize', placement: 'p3' }], 'member', ids());
-    expect(live(next.board).map((p) => [p.brick, p.rank])).toEqual([['ticket', 0], ['agent', 1], ['lanes', 2]]);
+    expect(live(next.board).map((p) => [p.brick, p.rank])).toEqual([['ticket', 0], ['lanes', 1], ['agent', 2]]);
     expect(next.rows).toMatchObject([{ change: 'maximize', actorKind: 'member', placement: 'p3', from: 2, to: 0 }]);
     expect(changeSentences(next.board, next.rows)).toEqual(['The member made ticket(ticket=t-1) the big one on board b1.']);
   });

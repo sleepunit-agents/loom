@@ -216,7 +216,7 @@ it('lets either party maximize, tells the agent, and keeps flags to the agent (c
   expect((await f.member('boards.change', { board, changes: [{ change: 'flag', placement: ticket }] })).ok).toBe(false);
   const flagged = await f.agent('boards.change', { board, changes: [{ change: 'flag', placement: placements[1].placement }] });
   expect(flagged.value.meanwhile).toEqual([`The member made ticket(ticket=t-1) the big one on board ${board}.`]);
-  expect(flagged.value.placements).toMatchObject([{ brick: 'ticket', rank: 0, flagged: false }, { brick: 'trend', rank: 1, flagged: true }, { brick: 'lanes', rank: 2 }, { brick: 'person', rank: 3 }]);
+  expect(flagged.value.placements).toMatchObject([{ brick: 'ticket', rank: 0, flagged: false }, { brick: 'lanes', rank: 1 }, { brick: 'trend', rank: 2, flagged: true }, { brick: 'person', rank: 3 }]);
   const revision = f.store.row(board)!.revision;
   expect((await f.stranger('boards.seen', { board, placement: placements[1].placement })).ok).toBe(false);
   expect((await f.agent('boards.seen', { board, placement: placements[1].placement })).ok).toBe(false);

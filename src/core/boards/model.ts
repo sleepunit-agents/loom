@@ -127,16 +127,12 @@ export function applyChanges(
       const list = order();
       const big = bigOf(list);
       if (big === p) throw new Refused('That placement is already the big one.');
+      // It takes the big one's place, and the one that was big is first among the small: what was just in
+      // front of the member stays nearest. The rest keep their order.
       const from = p.rank;
-      if (big) {
-        // A trade: nothing else on the board moves.
-        p.rank = big.rank;
-        big.rank = from;
-      } else {
-        list.splice(from, 1);
-        list.unshift(p);
-        renumber(list);
-      }
+      list.splice(from, 1);
+      list.splice(big ? list.indexOf(big) : 0, 0, p);
+      renumber(list);
       row({ change: 'maximize', placement: p.id, from, to: p.rank });
     } else if (c.change === 'flag') {
       if (actorKind === 'member') throw new Refused('A member does not flag. Flags are how the board points things out to them.');
