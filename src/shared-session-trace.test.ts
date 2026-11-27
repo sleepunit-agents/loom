@@ -2,9 +2,11 @@
  * handoff conversation reports a step, loom keeps it beside that conversation, and only the member of the
  * originating thread reads it. All people and words are fictional. */
 import { afterEach, expect, it } from 'vitest';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import * as s from './core/data/schema.js';
 import { reviewPlace } from './core/conversations/review-place.js';
+import { JobTraceQueries } from './core/conversations/job-trace.js';
+import { TRACE_KEEP_DAYS } from './core/conversations/retention.js';
 import { bodyFixture, bodyCredentials, credentialHash } from '../test/fixtures/conversation-body.js';
 
 const clean: (() => void | Promise<void>)[] = [];
@@ -49,7 +51,7 @@ it('keeps a handed-off job\'s step beside its conversation, sealed, and out of t
   const rows = f.db.select().from(s.jobTrace).all();
   expect(rows).toMatchObject([{ conversation: f.child, seq: 1, job: 'child-job', tool: 'Terminal', cardState: 'done', clientId: 'child-job:step-1' }, { seq: 2, tool: 'Read', cardState: 'running' }]);
   expect(await f.key.open(rows[0].words!)).toBe(step.words);
-  expect(rows[0].keepUntil).toBe(new Date(f.clock.now() + 14 * 86400000).toISOString());
+  expect(rows[0].keepUntil).toBe(new Date(f.clock.now() + TRACE_KEEP_DAYS * 86400000).toISOString());
   expect(f.db.$client.serialize().includes(Buffer.from(step.words))).toBe(false);
   // A step's state is not edited afterwards: the body reports each state as a step of its own.
   expect((await f.call('cardState', { clientId: 'step-1', cardState: 'failed' }, 'edit', childToken)).status).toBe(404);
@@ -68,8 +70,8 @@ it('shows the trace to the member of the originating thread and to nobody else',
   const mine = await f.trace(bodyCredentials.member);
   expect(mine.errors).toBeUndefined();
   expect(mine.data!.sessionTrace).toEqual([
-    { seq: 1, job: 'child-job', tool: 'Terminal', cardState: 'done', words: step.words, wordsKeepUntil: new Date(f.clock.now() + 14 * 86400000).toISOString() },
-    { seq: 2, job: 'child-job', tool: 'Read', cardState: 'running', words: 'Second step', wordsKeepUntil: new Date(f.clock.now() + 14 * 86400000).toISOString() },
+    { seq: 1, job: 'child-job', tool: 'Terminal', cardState: 'done', words: step.words, wordsKeepUntil: new Date(f.clock.now() + TRACE_KEEP_DAYS * 86400000).toISOString() },
+    { seq: 2, job: 'child-job', tool: 'Read', cardState: 'running', words: 'Second step', wordsKeepUntil: new Date(f.clock.now() + TRACE_KEEP_DAYS * 86400000).toISOString() },
   ]);
   // The latest step alone, without opening any words, and one job's steps.
   expect((await f.query(`{sessionTrace(conversation:${JSON.stringify(f.child)},limit:1){seq tool}}`, bodyCredentials.member)).data).toEqual({ sessionTrace: [{ seq: 2, tool: 'Read' }] });
@@ -111,19 +113,56 @@ it('keeps no trace for a handoff with no originating thread, or one whose thread
   expect(f.db.select().from(s.jobTrace).all()).toEqual([]);
 });
 
-it('erases the trace\'s words at the keep time a message\'s are, and removes it with the originating thread', async () => {
+it('keeps a step 90 days from when it was written, whatever the Comms keep time, and removes it with the originating thread', async () => {
+  const day = 86400000;
+  for (const commsDays of [1, 14]) {
+    const f = await fixture();
+    // The clock moves for months with no worker reporting; this is about the words, not a silent job (as in the handoff suite).
+    f.root.services.runtime.close();
+    f.root.writes.run(() => f.db.insert(s.household).values({ commsDays }).run());
+    const written = f.clock.now();
+    expect((await f.report(step, 'one')).status).toBe(200);
+    expect((await f.report({ kind: 'reply', clientId: 'review-result', words: 'PRIVATE FINDINGS', model: 'reviewer' }, 'reply')).status).toBe(200);
+    expect(f.db.select().from(s.jobTrace).get()?.keepUntil).toBe(new Date(written + TRACE_KEEP_DAYS * day).toISOString());
+    // The chat's own words still go at the Comms keep time; the step does not go with them.
+    expect(f.db.select().from(s.messages).get()?.keepUntil).toBe(new Date(written + commsDays * day).toISOString());
+    f.clock.advance(commsDays * day);
+    expect(f.db.select().from(s.messages).all()).toMatchObject([{ kind: 'reply', words: null }]);
+    expect((await f.trace(bodyCredentials.member)).data!.sessionTrace[0].words).toBe(step.words);
+    // Day 89, and the last millisecond before day 90: still read, with its words.
+    f.clock.advance(89 * day - commsDays * day);
+    expect((await f.trace(bodyCredentials.member)).data!.sessionTrace).toMatchObject([{ seq: 1, words: step.words, wordsKeepUntil: new Date(written + TRACE_KEEP_DAYS * day).toISOString() }]);
+    f.clock.advance(day - 1);
+    expect((await f.trace(bodyCredentials.member)).data!.sessionTrace[0].words).toBe(step.words);
+    // A read at day 90 gives no words even where the sweep has not run yet.
+    const late = new JobTraceQueries(f.db, f.key, () => sql`1`, () => new Date(written + TRACE_KEEP_DAYS * day).toISOString());
+    const viewer = { kind: 'member', id: 'alice' } as Parameters<JobTraceQueries['steps']>[0];
+    expect(f.db.select().from(s.jobTrace).get()?.words).not.toBeNull();
+    expect(await late.opened(viewer, { conversation: f.child }, () => {})).toMatchObject([{ seq: 1, text: null }]);
+    expect(late.keepUntil(f.db.select().from(s.jobTrace).get()!)).toBeNull();
+    // At day 90 loom's own sweep erases the words; the step's name, state and time stay.
+    f.clock.advance(1);
+    expect(f.db.select().from(s.jobTrace).all()).toMatchObject([{ seq: 1, tool: 'Terminal', cardState: 'done', words: null }]);
+    expect((await f.trace(bodyCredentials.member)).data).toEqual({ sessionTrace: [{ seq: 1, job: 'child-job', tool: 'Terminal', cardState: 'done', words: null, wordsKeepUntil: null }] });
+    f.root.writes.run(() => f.root.services.comms!.delete(f.thread.id));
+    expect(f.db.select().from(s.jobTrace).all()).toEqual([]);
+  }
+});
+
+it('removes a kept trace when its originating thread is deleted, and keeps a stored earlier limit', async () => {
   const f = await fixture();
-  // The clock moves a day with no worker reporting; this is about the words, not a silent job (as in the handoff suite).
   f.root.services.runtime.close();
-  f.root.writes.run(() => f.db.insert(s.household).values({ commsDays: 1 }).run());
   expect((await f.report(step, 'one')).status).toBe(200);
-  expect(f.db.select().from(s.jobTrace).get()?.keepUntil).toBe(new Date(f.clock.now() + 86400000).toISOString());
-  f.clock.advance(86400000 - 1);
-  expect((await f.trace(bodyCredentials.member)).data!.sessionTrace[0].words).toBe(step.words);
-  // At the keep time loom's own sweep erases the words; the step's name, state and time stay.
-  f.clock.advance(1);
-  expect(f.db.select().from(s.jobTrace).all()).toMatchObject([{ seq: 1, tool: 'Terminal', cardState: 'done', words: null }]);
-  expect((await f.trace(bodyCredentials.member)).data).toEqual({ sessionTrace: [{ seq: 1, job: 'child-job', tool: 'Terminal', cardState: 'done', words: null, wordsKeepUntil: null }] });
+  expect((await f.report({ ...step, clientId: 'step-2' }, 'two')).status).toBe(200);
+  // A row stored before this rule keeps the limit it was stamped with: nothing is backfilled.
+  const early = new Date(f.clock.now() + 86400000).toISOString();
+  f.root.writes.run(() => f.db.update(s.jobTrace).set({ keepUntil: early }).where(eq(s.jobTrace.seq, 1)).run());
+  f.clock.advance(86400000);
+  expect((await f.trace(bodyCredentials.member, 'seq words')).data).toEqual({ sessionTrace: [{ seq: 1, words: null }, { seq: 2, words: step.words }] });
+  // Archiving the thread ends nothing that is already kept; deleting it removes the rows.
+  f.root.writes.run(() => f.db.update(s.threads).set({ archivedAt: new Date(f.clock.now()).toISOString() }).where(eq(s.threads.id, f.thread.id)).run());
+  expect((await f.trace(bodyCredentials.member, 'seq words')).data).toEqual({ sessionTrace: [{ seq: 1, words: null }, { seq: 2, words: step.words }] });
   f.root.writes.run(() => f.root.services.comms!.delete(f.thread.id));
   expect(f.db.select().from(s.jobTrace).all()).toEqual([]);
+  expect((await f.trace(bodyCredentials.member)).data).toEqual({ sessionTrace: [] });
 });

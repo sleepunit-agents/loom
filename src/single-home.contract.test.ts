@@ -9,7 +9,7 @@ import { canonicalRepository, repositoryKey, tasksCited } from './pieces/changes
 import { agentInput, settingsInput } from './apps/household.js';
 import { COMMIT, mergeTargetFor, parseMergeTarget } from './apps/merge-target.js';
 import { COMMS_DAYS_MAX, commsKeepDays } from './core/data/comms-days.js';
-import { keepUntilFor, validKeepDays, wordsDeadline, wordsKept } from './core/conversations/retention.js';
+import { TRACE_KEEP_DAYS, keepUntilFor, traceCutoff, traceDeadline, traceKeepUntil, traceKept, validKeepDays, wordsDeadline, wordsKept } from './core/conversations/retention.js';
 import { createDataSchema } from './core/data/database.js';
 import { privateOrigin } from './core/private-origin.js';
 import { agents, household, measuringSettings, members, tempoSettings } from './core/data/schema.js';
@@ -148,6 +148,23 @@ it('checks a Comms keep time, and works out when words stop being kept, in one p
   const own = /\b(days|keep|count)\s*(<=?|>=?)\s*\d|\b(days|keep)\s*\*\s*86_?400_?000/;
   const copies = sources('src/core/conversations').filter(file => file !== 'src/core/conversations/retention.ts' && own.test(text(file)));
   expect(copies).toEqual([]);
+});
+
+it('says how long a session\'s steps are kept once, on a clock of its own', () => {
+  expect(TRACE_KEEP_DAYS).toBe(90);
+  const at = '2026-11-01T00:00:00.000Z', until = '2027-01-30T00:00:00.000Z', step = { at, keepUntil: until };
+  expect(traceKeepUntil(at)).toBe(until);
+  expect(traceDeadline(step)).toBe(Date.parse(until));
+  expect(traceKept(step, '2027-01-29T23:59:59.999Z')).toBe(true);
+  expect(traceKept(step, until)).toBe(false);
+  expect(traceCutoff(until)).toBe(at);
+  // A limit stamped earlier (a row from before this rule) still ends it early; one stamped later does not extend it.
+  expect(traceDeadline({ at, keepUntil: '2026-11-15T00:00:00.000Z' })).toBe(Date.parse('2026-11-15T00:00:00.000Z'));
+  expect(traceDeadline({ at, keepUntil: '2028-01-01T00:00:00.000Z' })).toBe(Date.parse(until));
+  expect(traceKept({ at, keepUntil: null }, at)).toBe(false);
+  // The number is written in retention.ts and nowhere else, and the trace asks nothing of the Comms keep time.
+  expect(sources('src').filter(file => /\bTRACE_KEEP_DAYS\s*=/.test(text(file)))).toEqual(['src/core/conversations/retention.ts']);
+  expect(text('src/core/conversations/job-trace.ts')).not.toMatch(/commsKeepDays|comms-days|wordsDeadline|wordsKept|\b90\b/);
 });
 
 it('takes an agent\'s face choices from the schema, and the app draws the same ones', () => {

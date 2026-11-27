@@ -2499,7 +2499,7 @@ export const expireMessageFiles = 'CREATE TRIGGER message_files_expire AFTER UPD
 
 /** The work trace of a handed-off job (docs/specs/boards.md, "Sessions"): one row for each step its body reports.
  * It hangs off the child conversation, which has no thread. `words` is sealed with the household's words key and
- * erased at the keep time a message's words are (core/conversations/job-trace.ts). */
+ * erased on the trace's own clock, 90 days after the step was written (core/conversations/retention.ts). */
 export const jobTrace = sqliteTable('job_trace', {
   conversation: text('conversation').notNull().references(() => conversations.id),
   seq: integer('seq').notNull(),
