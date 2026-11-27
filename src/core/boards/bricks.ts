@@ -41,9 +41,13 @@ export const bricks: readonly Brick[] = [
     references: { project: 'project' }, actions: {} }),
   brick({ name: 'ticket', shows: 'One ticket: goal, why, done when, status, who has it.',
     params: z.object({ ticket }).strict(), references: { ticket: 'ticket' }, linkKey: 'ticket',
+    // What tasks.command offers a member on one ticket. A close takes a reason in words; the words go to the
+    // ticket and never to the board, so every detail here is empty.
     actions: {
-      'set status': { operation: 'tasks.command', detail: z.object({ status: z.enum(['open', 'in_progress', 'closed']) }).strict() },
-      assign: { operation: 'tasks.command', detail: z.object({ assignee_kind: z.enum(['member', 'agent']), assignee: ref }).strict() },
+      claim: { operation: 'tasks.command', detail: none },
+      unclaim: { operation: 'tasks.command', detail: none },
+      close: { operation: 'tasks.command', detail: none },
+      reopen: { operation: 'tasks.command', detail: none },
     } }),
   brick({ name: 'comments', shows: "A ticket's comments, newest first.",
     params: z.object({ ticket }).strict(), references: { ticket: 'ticket' },

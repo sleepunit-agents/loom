@@ -42,6 +42,13 @@
 .board-chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted-foreground); }
 .board-line { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: .8rem; }
 .board-state { font-size: .8rem; border-radius: 999px; padding: .05rem .55rem; background: var(--secondary); color: var(--secondary-foreground); }
+.board-lead { color: var(--foreground); font-weight: 500; margin-bottom: .6rem; }
+.board-action { font-size: .84rem; border: 1px solid var(--surface-edge); border-radius: 8px; padding: .15rem .6rem; color: var(--foreground); background: var(--popover); }
+.board-action:hover:enabled { border-color: var(--ring); }
+.board-action:disabled { opacity: .45; }
+.board-input { flex: 1; min-width: 8rem; font-size: .88rem; border: 1px solid var(--surface-edge); border-radius: 8px; padding: .2rem .5rem; background: var(--popover); color: var(--foreground); }
+.board-notes { display: grid; gap: .7rem; margin-top: .8rem; }
+.board-notes small { display: block; color: var(--muted-foreground); font-size: .78rem; }
 .board-placement dl { display: grid; gap: .6rem; }
 .board-placement dt { font-size: .76rem; letter-spacing: .04em; text-transform: uppercase; color: var(--muted-foreground); }
 .board-placement dd { color: var(--foreground); }

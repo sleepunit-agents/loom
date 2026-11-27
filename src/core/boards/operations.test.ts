@@ -140,13 +140,13 @@ it('hands a job its brief once, naming boards and placements by id (checks 9, 11
 it("logs a brick's action only for an action the brick has (check 12)", async () => {
   const f = fixture(), { board } = await pulse(f);
   const ticket = (await f.agent('boards.change', { board, changes: [place('ticket', { ticket: 't-2441' })] })).value.placements[2].placement;
-  expect(await f.member('boards.act', { board, placement: ticket, action: 'set status', detail: { status: 'closed' } })).toMatchObject({ ok: true, value: { revision: 5 } });
+  expect(await f.member('boards.act', { board, placement: ticket, action: 'close', detail: {} })).toMatchObject({ ok: true, value: { revision: 5 } });
   expect((await f.member('boards.act', { board, placement: ticket, action: 'delete', detail: {} })).ok).toBe(false);
-  expect((await f.member('boards.act', { board, placement: ticket, action: 'set status', detail: { status: 'closed', words: 'secret' } })).ok).toBe(false);
-  expect((await f.agent('boards.act', { board, placement: ticket, action: 'set status', detail: { status: 'open' } })).ok).toBe(false);
-  expect(f.store.takeBrief('th:mine')).toContain(`The member used set status on ticket(ticket=t-2441) on board ${board}: status=closed.`);
+  expect((await f.member('boards.act', { board, placement: ticket, action: 'close', detail: { reason: 'secret' } })).ok).toBe(false);
+  expect((await f.agent('boards.act', { board, placement: ticket, action: 'reopen', detail: {} })).ok).toBe(false);
+  expect(f.store.takeBrief('th:mine')).toContain(`The member used close on ticket(ticket=t-2441) on board ${board}.`);
   await f.member('boards.close', { board });
-  expect((await f.member('boards.act', { board, placement: ticket, action: 'set status', detail: { status: 'open' } })).ok).toBe(false);
+  expect((await f.member('boards.act', { board, placement: ticket, action: 'reopen', detail: {} })).ok).toBe(false);
 });
 
 it('saves a blueprint, opens it for another project in one revision, and replaces it by name (checks 14, 15)', async () => {

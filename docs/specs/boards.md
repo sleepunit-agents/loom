@@ -258,8 +258,8 @@ board by id and the placement by brick and params:
 - `place`: "The member placed person(person=member:jonathan) on board B."
 - `remove`: "The member removed trend(project=loom, days=30) from board B."
 - `close`, `reopen`: "The member closed board B." / "The member reopened board B."
-- `act`: "The member used set status on ticket(ticket=t-2441) on board B: status=closed." With an empty `detail`
-  the sentence ends at the board's id.
+- `act`: "The member used close on ticket(ticket=t-2441) on board B." An action whose detail is not empty
+  ends ": " and the detail, as `answer` does: "…on board B: choice=yes."
 
 With no shown board the text says so. Apart from a board's title, everything in the text is an id, a brick name, a
 choice or a whole number. If a job dies
@@ -323,7 +323,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `project` | `project`: project id | none | the project id |
 | `lanes` | `project`: project id | none | none |
 | `trend` | `project`: project id; `days`: 7, 30 or 90, default 30 | none | none |
-| `ticket` | `ticket`: ticket id | `set status {status}`, `assign {assignee_kind, assignee}`, both by `tasks.command` | the ticket id |
+| `ticket` | `ticket`: ticket id | `claim {}`, `unclaim {}`, `close {}`, `reopen {}`, each the `tasks.command` action of that name | the ticket id |
 | `comments` | `ticket`: ticket id | `comment {}`, by `tasks.command` | none |
 | `pull` | `change`: change id | none | the change id |
 | `repository` | `repository`: repository id as `project_repositories` stores it; `project`: project id, optional | none | the repository id |
@@ -334,8 +334,9 @@ The first demo is "everything about a project", and the set is what that pulls i
 
 A brick with no link key cannot be written in words. Its chip, used when it is folded, reads as its name and its
 record parameter ("Lanes · loom"). A ticket's assignee is drawn as an `agent` chip or a `person` chip by the ticket's
-`assignee_kind`. `trend` draws tickets opened and tickets closed per day. `comments` is the one brick whose action
-takes words; the words go to `tasks.command` and are not stored on the board, so its `detail` is empty. Pausing an
+`assignee_kind`. `trend` draws tickets opened and tickets closed per day. A ticket's status is not set freely: loom has claim,
+unclaim, close and reopen, and those are the brick's actions. Closing a ticket and commenting take words; the words go
+to `tasks.command` and are not stored on the board, so those details are empty. Pausing an
 agent's claims is per project today (`work.setProjectClaims`) and is left for a later brick.
 
 `lanes`, `trend`, `ticket`, `pull`, `person` and `repository` have working code in the branch to start from
@@ -391,8 +392,8 @@ the thread's member. No model is involved. Each check sets up its own board unle
     sentence, and a following `boards.brief` does not.
 11. A member change on a board that is not the shown one appears in `boards.brief` as a sentence naming that board.
     With an empty trail the text says no board is open.
-12. As the member: set a ticket's status from its brick. The ticket changes through `tasks.command`, an `act` row is
-    written, and the brief has the act sentence with the ticket id and the status. `boards.act` with an action the
+12. As the member: close a ticket from its brick. The ticket changes through `tasks.command`, an `act` row is
+    written, and the brief has the act sentence with the ticket id. `boards.act` with an action the
     brick does not have, with a `detail` that fails the action's schema, or on a closed board, is refused. A comment
     added from `comments` writes an `act` row whose `detail` is `{}`.
 13. `comms.send` with `shows` naming a board of another thread is refused. The stored words of a send equal what the

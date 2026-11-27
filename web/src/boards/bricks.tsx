@@ -1,7 +1,8 @@
 /** How each brick draws itself (docs/specs/boards.md, "The first bricks"). A brick reads its own data, live, as
  * the member looking, and takes only the parameters the server already checked. Three forms are drawn by Body;
  * the chip and the hover are the same words in one line. */
-import type { ReactNode } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
+import { memberOperation } from '../data/operation';
 import { useDataQuery } from '../data/graphql';
 import ProjectTrends from '../pair/project-trends';
 import { Reply } from '../pair/reply';
@@ -78,15 +79,32 @@ function Lanes({ params, form }: { params: Params; form: Form }) {
 }
 
 type Task = { id: string; title: string; status: string; assignee: string | null; assigneeKind: string | null; goal: string | null; why: string | null; doneWhen: string | null; project: string | null };
-function Ticket({ params, form }: { params: Params; form: Form }) {
+/** One of loom's own ticket commands, then the report to the board that the member used it. */
+function useTicketAction(act: Act) {
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  async function run(action: string, input: Record<string, unknown>) {
+    if (busy) return false;
+    setBusy(true); setError('');
+    try { await memberOperation('tasks.command', { action, ...input }); act(action, {}); return true; }
+    catch { setError('That did not save.'); return false; }
+    finally { setBusy(false); }
+  }
+  return { busy, error, run };
+}
+function Ticket({ params, form, act }: { params: Params; form: Form; act: Act }) {
+  const id = words(params.ticket);
   const read = useDataQuery<{ ticket: Task | null }>(
     'query BrickTicket($id:String!){ticket:tasksSingle(where:{id:{eq:$id}}){id title status assignee assigneeKind goal why doneWhen project}}',
-    { id: words(params.ticket) }, { keep: true });
+    { id }, { keep: true });
+  const { busy, error, run } = useTicketAction(act);
+  const [closing, setClosing] = useState(false), [reason, setReason] = useState('');
   const t = read.data?.ticket;
   if (read.status === 'loading') return <Loading />;
   if (read.status !== 'live' || !t) return <Unavailable what="ticket" />;
+  const close = async (e: FormEvent) => { e.preventDefault(); if (reason.trim() && await run('close', { id, reason: reason.trim() })) { setClosing(false); setReason(''); } };
   return (
     <>
+      <p className="board-lead">{t.title}</p>
       <dl>
         {t.goal && <div><dt>Goal</dt><dd><Reply words={t.goal} /></dd></div>}
         {form === 'primary' && t.why && <div><dt>Why</dt><dd><Reply words={t.why} /></dd></div>}
@@ -96,7 +114,60 @@ function Ticket({ params, form }: { params: Params; form: Form }) {
         <span className="board-state">{t.status.replaceAll('_', ' ')}</span>
         {t.project && <Chip place={{ brick: 'project', params: { project: t.project } }}>{t.project}</Chip>}
         {t.assignee ? actorChip(t.assigneeKind, t.assignee) : <span className="text-muted-foreground">Unassigned</span>}
+        <Chip place={{ brick: 'comments', params: { ticket: id } }}>Comments</Chip>
       </div>
+      <div className="board-line">
+        {t.status === 'closed'
+          ? <button type="button" className="board-action" disabled={busy} onClick={() => void run('reopen', { id })}>Reopen</button>
+          : <>
+              {!t.assignee && <button type="button" className="board-action" disabled={busy} onClick={() => void run('claim', { id })}>Claim</button>}
+              {t.assignee && <button type="button" className="board-action" disabled={busy} onClick={() => void run('unclaim', { id })}>Release</button>}
+              {!closing && <button type="button" className="board-action" disabled={busy} onClick={() => setClosing(true)}>Close…</button>}
+            </>}
+      </div>
+      {closing && (
+        <form className="board-line" onSubmit={(e) => void close(e)}>
+          <input className="board-input" aria-label="Why it is closed" placeholder="Why is it closed?" value={reason} autoFocus onChange={(e) => setReason(e.target.value)} />
+          <button type="submit" className="board-action" disabled={busy || !reason.trim()}>Close ticket</button>
+          <button type="button" className="board-action" onClick={() => setClosing(false)}>Cancel</button>
+        </form>
+      )}
+      {error && <p role="alert" className="text-destructive">{error}</p>}
+    </>
+  );
+}
+
+type Note = { seq: number; text: string; actor: string; at: string };
+function Comments({ params, form, act }: { params: Params; form: Form; act: Act }) {
+  const id = words(params.ticket);
+  const read = useDataQuery<{ ticket: { title: string; taskCommentsByTask: Note[] } | null }>(
+    'query BrickComments($id:String!){ticket:tasksSingle(where:{id:{eq:$id}}){title taskCommentsByTask(orderBy:{seq:{direction:desc,priority:0}}){seq text actor at}}}',
+    { id }, { keep: true });
+  const { busy, error, run } = useTicketAction(act);
+  const [text, setText] = useState('');
+  const t = read.data?.ticket;
+  if (read.status === 'loading') return <Loading />;
+  if (read.status !== 'live' || !t) return <Unavailable what="ticket" />;
+  const add = async (e: FormEvent) => { e.preventDefault(); if (text.trim() && await run('comment', { id, text: text.trim() })) setText(''); };
+  const notes = t.taskCommentsByTask.slice(0, form === 'primary' ? 30 : 4);
+  return (
+    <>
+      <p className="board-lead">{t.title}</p>
+      <form className="board-line" onSubmit={(e) => void add(e)}>
+        <input className="board-input" aria-label="Add a comment" placeholder="Add a comment…" value={text} onChange={(e) => setText(e.target.value)} />
+        <button type="submit" className="board-action" disabled={busy || !text.trim()}>Add</button>
+      </form>
+      {error && <p role="alert" className="text-destructive">{error}</p>}
+      {notes.length ? (
+        <ol className="board-notes">
+          {notes.map((n) => (
+            <li key={n.seq}>
+              <small>{n.actor} · {new Date(n.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</small>
+              <Reply words={n.text} />
+            </li>
+          ))}
+        </ol>
+      ) : <p className="text-muted-foreground">No comments yet.</p>}
     </>
   );
 }
@@ -149,7 +220,7 @@ export const bricks: Record<string, BrickView> = {
   person: { fits: fit([420, 640, 760, 260], 150), title: (p) => words(p.person).split(':')[1] || 'Person', sub: (p) => words(p.person).split(':')[0],
     Body: ({ params }) => { const [kind, id] = words(params.person).split(':'); return kind === 'member' ? <Assigned who={id} kind="member" /> : <NotDrawn params={params} />; } },
   agent: { fits: fit([420, 640, 760, 260], 150), title: (p) => words(p.agent), sub: () => 'agent', Body: ({ params }) => <Assigned who={words(params.agent)} kind="agent" /> },
-  comments: later('Comments', 'ticket'),
+  comments: { fits: fit([440, 680, 820, 420], 260), title: () => 'Comments', sub: (p) => words(p.ticket), Body: Comments },
   pull: later('Pull request', 'change'),
   repository: later('Repository', 'repository'),
   question: later('Question', 'item'),

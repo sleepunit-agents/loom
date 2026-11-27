@@ -106,17 +106,18 @@ describe('what the agent is told (checks 9, 11, 12)', () => {
     const own = agent(board, [{ change: 'remove', placement: 'p2' }]);
     expect(changeSentences(own.board, own.rows)).toEqual([]);
   });
-  it('tells an action with its detail, and a comment with none', () => {
-    const row = actRow(board, 'p3', 'set status', { status: 'closed' });
+  it('tells an action, and refuses one the brick does not have or a detail it does not declare', () => {
+    const row = actRow(board, 'p3', 'close', {});
     expect(row.revision).toBe(board.revision + 1);
-    expect(changeSentences(board, [row])).toEqual(['The member used set status on ticket(ticket=t-2441) on board b1: status=closed.']);
+    expect(changeSentences(board, [row])).toEqual(['The member used close on ticket(ticket=t-2441) on board b1.']);
+    // A detail, where an action declares one, is told after a colon.
+    expect(changeSentences(board, [{ ...row, detail: { choice: 'yes' } }])).toEqual(['The member used close on ticket(ticket=t-2441) on board b1: choice=yes.']);
     const commented = agent(board, [{ change: 'place', brick: 'comments', params: { ticket: 't-2441' } }], () => 'p4');
     expect(changeSentences(commented.board, [actRow(commented.board, 'p4', 'comment', {})]))
       .toEqual(['The member used comment on comments(ticket=t-2441) on board b1.']);
     expect(() => actRow(board, 'p3', 'delete', {})).toThrow(Refused);
-    expect(() => actRow(board, 'p3', 'set status', { status: 'gone' })).toThrow(Refused);
-    expect(() => actRow(board, 'p3', 'set status', { status: 'closed', words: 'x' })).toThrow(Refused);
-    expect(() => actRow({ ...board, closed: true }, 'p3', 'set status', { status: 'closed' })).toThrow(Refused);
+    expect(() => actRow(board, 'p3', 'close', { reason: 'secret words' })).toThrow(Refused);
+    expect(() => actRow({ ...board, closed: true }, 'p3', 'close', {})).toThrow(Refused);
   });
   it('says so when no board is open, and names another board in its sentences', () => {
     expect(boardBrief(null, [])).toBe('No board is open in this thread.');
