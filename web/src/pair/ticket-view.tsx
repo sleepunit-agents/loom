@@ -19,6 +19,7 @@ type TicketView = { ticket: string; kind: 'ticket' | 'comment'; ref?: string; in
 export type ScopeView = { kind: 'repository' | 'agent' | 'member'; project: string; ref: string };
 export type PullView = { kind: 'pull'; ref: string; ticket?: string };
 export const indexNames = {
+  browse: 'Browse',
   projects: 'Projects',
   people: 'People',
   agents: 'Agents',
@@ -91,6 +92,7 @@ type Row = { title: string; state?: string; heading?: string; meta?: string; det
 function RowPreview({ row, children }: { row: Row; children: React.ReactElement }) {
   return (
     <ViewPreview
+      menu="entity"
       view={row.target}
       intent="Show details here."
       preview={
@@ -637,6 +639,7 @@ export function TicketCanvas({
                       ? 'Return to the open project overview.'
                       : 'Open the project overview in this context.'
                   }
+                  menu={{view:{kind:'project',project:t.project}}}
                   preview={<ProjectPreview id={t.project} />}
                   link={
                     <a

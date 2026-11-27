@@ -17,7 +17,9 @@ function restore(key: string, root?: string): Ring {
           (v.kind === 'index'
             ? Object.hasOwn(indexNames, v.ref)
             : v.kind === 'profile'
-              ? ['agent', 'member', 'repository', 'contact'].includes(v.role) && typeof v.ref === 'string' && !!v.ref
+              ? ['agent', 'member', 'repository', 'contact'].includes(v.role) &&
+                typeof v.ref === 'string' &&
+                !!v.ref
               : 'project' in v
                 ? typeof v.project === 'string' &&
                   !!v.project &&
@@ -77,17 +79,25 @@ export function useViewRing(key: string, root?: string) {
     window.addEventListener('keydown', cycle);
     return () => window.removeEventListener('keydown', cycle);
   }, [ring.views.length]);
-  function work(v: View) {
+  function work(v: View, background = false) {
     set((old) => {
       const existing = old.views.find((other) => viewKey(other) === viewKey(v));
-      return { views: existing ? old.views : [...old.views, v], active: existing || v };
+      return {
+        views: existing ? old.views : [...old.views, v],
+        active: background ? old.active : existing || v,
+      };
     });
   }
-  function close() {
+  function close(target: View) {
     set((old) => {
-      const index = old.views.indexOf(old.active!);
-      const views = old.views.filter((v) => v !== old.active);
-      return { views, active: views[Math.max(0, index - 1)] || null };
+      if (target.kind === 'ticket' && target.intent === 'work' && target.ticket === root) return old;
+      const index = old.views.findIndex((v) => viewKey(v) === viewKey(target));
+      if (index < 0) return old;
+      const views = old.views.filter((_, i) => i !== index);
+      return {
+        views,
+        active: old.active === old.views[index] ? views[Math.max(0, index - 1)] || null : old.active,
+      };
     });
   }
   return { ...ring, work, close };

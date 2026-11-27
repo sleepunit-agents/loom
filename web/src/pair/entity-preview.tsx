@@ -1,31 +1,103 @@
 import { useKnownPeople, contactMeta } from './known-people';
-import { useId, useState, type ReactElement, type ReactNode } from 'react';
+import { createContext, useContext, useRef, useId, useState, type ReactElement, type ReactNode } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from './ui/hover-card';
-import { indexNames, type View, type Related } from './ticket-view';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from './ui/context-menu';
+import { indexNames, viewKey, type View, type Related } from './ticket-view';
 type Project = { name: string; goal: string | null; lifecycle: string };
 
+export const ViewMenuActions = createContext<{
+  active: View | null;
+  views: View[];
+  root?: string;
+  work: (v: View) => void;
+  background: (v: View) => void;
+  close: (v: View) => void;
+} | null>(null);
+type MenuTarget = { view: View; ring?: boolean };
 export function EntityPreview({
   link,
   preview,
   intent,
+  menu,
 }: {
   link: ReactElement;
   preview: ReactNode;
   intent: string;
+  menu?: MenuTarget;
 }) {
   const id = useId();
   const [open, setOpen] = useState(false);
+  const actions = useContext(ViewMenuActions);
+  const menuOpen = useRef(false);
+  const trigger = (
+    <HoverCardTrigger
+      asChild
+      aria-description={intent}
+      aria-describedby={open ? id : undefined}
+      onClick={() => setOpen(false)}
+    >
+      {link}
+    </HoverCardTrigger>
+  );
+  const v = menu?.view;
+  const active = v && actions?.active && viewKey(actions.active) === viewKey(v);
+  const exists = v && actions?.views.some((i) => viewKey(i) === viewKey(v));
+  const canClose = v && !(v.kind === 'ticket' && v.intent === 'work' && v.ticket === actions?.root);
   return (
-    <HoverCard open={open} onOpenChange={setOpen} openDelay={350} closeDelay={120}>
-      <HoverCardTrigger
-        asChild
-        aria-description={intent}
-        aria-describedby={open ? id : undefined}
-        onClick={() => setOpen(false)}
-      >
-        {link}
-      </HoverCardTrigger>
+    <HoverCard
+      open={open}
+      onOpenChange={(next) => setOpen(next && !menuOpen.current)}
+      openDelay={350}
+      closeDelay={120}
+    >
+      {actions && v ? (
+        <ContextMenu
+          onOpenChange={(next) => {
+            menuOpen.current = next;
+            if (next) setOpen(false);
+          }}
+        >
+          <ContextMenuTrigger
+            asChild
+            onKeyDown={(e) => {
+              if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return;
+              e.preventDefault();
+              const box = e.currentTarget.getBoundingClientRect();
+              e.currentTarget.dispatchEvent(
+                new MouseEvent('contextmenu', {
+                  bubbles: true,
+                  cancelable: true,
+                  clientX: box.left + 8,
+                  clientY: box.bottom,
+                }),
+              );
+            }}
+          >
+            {trigger}
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            {!active && (
+              <ContextMenuItem onSelect={() => actions.work(v)}>
+                {exists ? 'Switch to view' : 'Open view'}
+              </ContextMenuItem>
+            )}
+            {!exists && (
+              <ContextMenuItem onSelect={() => actions.background(v)}>Open in background</ContextMenuItem>
+            )}
+            <ContextMenuItem asChild>
+              <a href={viewHash(v)} target="_blank" rel="noreferrer">
+                Open in new tab
+              </a>
+            </ContextMenuItem>
+            {menu?.ring && exists && canClose && (
+              <ContextMenuItem onSelect={() => actions.close(v)}>Close view</ContextMenuItem>
+            )}
+          </ContextMenuContent>
+        </ContextMenu>
+      ) : (
+        trigger
+      )}
       <HoverCardContent
         id={id}
         align="start"
@@ -88,7 +160,7 @@ export function ViewLink({
   children: ReactNode;
 }) {
   return (
-    <ViewPreview view={view}>
+    <ViewPreview view={view} menu="entity">
       <a
         className="underline decoration-muted-foreground/50 underline-offset-2 hover:text-foreground"
         href={viewHash(view)}
@@ -229,17 +301,20 @@ export function ViewPreview({
   children,
   intent,
   preview,
+  menu,
 }: {
   view: View;
   children: ReactElement;
   intent?: string;
   preview?: ReactNode;
+  menu?: 'entity' | 'ring';
 }) {
   const noun =
     view.kind === 'project' ? 'project overview' : view.kind === 'pull' ? 'pull request' : view.kind;
   return (
     <EntityPreview
       link={children}
+      menu={menu ? { view, ring: menu === 'ring' } : undefined}
       intent={intent || 'Open the ' + noun + ' view in this context.'}
       preview={
         preview ??
@@ -270,7 +345,7 @@ export function TicketReference({
   className?: string;
 }) {
   return (
-    <ViewPreview view={{ kind: 'ticket', ticket: id }}>
+    <ViewPreview view={{ kind: 'ticket', ticket: id }} menu="entity">
       <a className={className} href={'?ticket=' + id}>
         {children}
       </a>

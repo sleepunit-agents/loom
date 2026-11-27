@@ -1,18 +1,29 @@
 import { Input } from './ui/input';
 import { ContactFacts, contactMeta, useKnownPeople, type Contact } from './known-people';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { ModuleCard } from './module-card';
-import { ViewLink } from './entity-preview';
+import { ViewLink, ViewPreview } from './entity-preview';
 import {
   indexNames,
-  ListPager,
+  viewKey,
   type IndexName,
   type IndexView,
   type ProfileView,
   type View,
 } from './ticket-view';
-import { NativeSelect, NativeSelectOption } from './ui/native-select';
+import { Button } from './ui/button';
+import {
+  Folder,
+  Users,
+  Bot,
+  GitFork,
+  Ticket,
+  Layers,
+  GitPullRequest,
+  MessageSquare,
+  ChevronRight,
+} from 'lucide-react';
 import { Badge } from './ui/badge';
 
 type Entry = { view: View; title: string; meta?: string; detail?: string | null };
@@ -37,9 +48,49 @@ const rosterQuery = `query PairDirectoryRoster {
   agents(orderBy:{id:{direction:asc,priority:0}}){id about}
   householdSharing{projects{id agents repositories}} workspaceRepositories{repository project count}
 }`;
-const size = 8;
+const size = 24;
 const repoName = (s: string) => s.replace(/^github:/, '');
-const names = Object.keys(indexNames) as IndexName[];
+const collections = {
+  projects: Folder,
+  people: Users,
+  agents: Bot,
+  repositories: GitFork,
+  tickets: Ticket,
+  epics: Layers,
+  pulls: GitPullRequest,
+  comments: MessageSquare,
+};
+export function BrowseHome({ work }: { work: Work }) {
+  return (
+    <ModuleCard title="Browse" description="Across projects">
+      <ul className="grid gap-x-6 sm:grid-cols-2">
+        {(Object.keys(collections) as (keyof typeof collections)[]).map((ref) => {
+          const Icon = collections[ref];
+          return (
+            <li key={ref} className="border-b">
+              <ViewPreview view={{ kind: 'index', ref }} menu="entity">
+                <a
+                  className="flex items-center gap-3 rounded-sm py-3 text-sm hover:bg-muted/50"
+                  href={'#index=' + ref}
+                  onClick={(e) => {
+                    if (!e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+                      e.preventDefault();
+                      work({ kind: 'index', ref });
+                    }
+                  }}
+                >
+                  <Icon className="size-4 text-muted-foreground" />
+                  {indexNames[ref]}
+                  <ChevronRight className="ml-auto size-4 text-muted-foreground" />
+                </a>
+              </ViewPreview>
+            </li>
+          );
+        })}
+      </ul>
+    </ModuleCard>
+  );
+}
 const profileIndex = (role: ProfileView['role']) =>
   role === 'member' || role === 'contact' ? 'people' : role === 'agent' ? 'agents' : 'repositories';
 function rosterEntries(list: IndexName, r: Roster, contacts: Contact[]): Entry[] {
@@ -145,6 +196,31 @@ function recordQuery(list: IndexName, role?: ProfileView['role']) {
         : `tickets:tasks(${args('changedAt', 'id')}){id title status project type}`;
   return `query PairDirectoryPage($offset:Int!${ref}){total:workspaceListCount(list:"${list}"${arg}) ${rows}}`;
 }
+function LoadMore({ load }: { load: () => void }) {
+  const button = useRef<HTMLButtonElement>(null);
+  const next = useRef(load);
+  next.current = load;
+  useEffect(() => {
+    const node = button.current;
+    if (!node || !('IntersectionObserver' in window)) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          observer.disconnect();
+          next.current();
+        }
+      },
+      { root: node.closest('.pair-canvas-scroll'), rootMargin: '0px 0px 200px' },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <Button ref={button} size="sm" variant="ghost" onClick={load}>
+      Load more
+    </Button>
+  );
+}
 function RecordsList({
   list,
   filter,
@@ -152,18 +228,21 @@ function RecordsList({
   work,
   page,
   move,
+  batch = 0,
+  seen = new Set<string>(),
 }: {
   list: IndexName;
   filter?: string;
   role?: ProfileView['role'];
   work: Work;
+  batch?: number;
+  seen?: Set<string>;
   page: number;
   move: (page: number) => void;
 }) {
   const read = useDataQuery<Records>(
     recordQuery(list, role),
-    filter ? { offset: page * size, ref: filter } : { offset: page * size },
-    { keep: true },
+    filter ? { offset: batch * size, ref: filter } : { offset: batch * size },
   );
   const data = read.data;
   if (!data || read.status !== 'live')
@@ -186,21 +265,32 @@ function RecordsList({
           title: t.title,
           meta: [t.id, t.project, t.status.replaceAll('_', ' ')].filter(Boolean).join(' · '),
         }));
+  const ids = new Set(seen);
+  const distinct = rows.filter((row) => {
+    const id = viewKey(row.view);
+    if (ids.has(id)) return false;
+    ids.add(id);
+    return true;
+  });
+  const more = rows.length === size && (batch + 1) * size < data.total;
   return (
     <>
-      <div aria-busy={!!read.settling} inert={!!read.settling}>
-        {rows.length ? <Rows entries={rows} work={work} /> : <p>No visible records on this page.</p>}
-      </div>
-      <ListPager
-        name={indexNames[list]}
-        page={page}
-        size={size}
-        total={data.total}
-        count={rows.length}
-        pending={read.settling}
-        hasNext={(page + 1) * size < data.total}
-        update={(v) => move(v.page)}
-      />
+      {distinct.length > 0 ? <Rows entries={distinct} work={work} /> : !batch && <p>No visible records.</p>}
+      {more &&
+        (batch < page ? (
+          <RecordsList
+            list={list}
+            role={role}
+            filter={filter}
+            work={work}
+            page={page}
+            move={move}
+            batch={batch + 1}
+            seen={ids}
+          />
+        ) : (
+          <LoadMore load={() => move(batch + 1)} />
+        ))}
     </>
   );
 }
@@ -213,33 +303,19 @@ export function WorkspaceIndex({
   view: IndexView | ProfileView;
   work: Work;
   pages: Map<string, number>;
-  peopleSearch:{current:string};
+  peopleSearch: { current: string };
 }) {
   const list = view.kind === 'index' ? view.ref : profileIndex(view.role);
   const roster = ['projects', 'people', 'agents', 'repositories'].includes(list);
   const read = useDataQuery<Roster>(rosterQuery, undefined, { pause: !roster });
   const known = useKnownPeople(list === 'people');
-  const [search, searchFor] = useState(list==='people'?peopleSearch.current:'');
+  const [search, searchFor] = useState(list === 'people' ? peopleSearch.current : '');
   const key = JSON.stringify(view);
   const [page, setPage] = useState(() => pages.get(key) || 0);
   function move(n: number) {
     pages.set(key, n);
     setPage(n);
   }
-  const picker = (
-    <NativeSelect
-      aria-label="Browse collection"
-      value={list}
-      size="sm"
-      onChange={(e) => work({ kind: 'index', ref: e.target.value as IndexName })}
-    >
-      {names.map((k) => (
-        <NativeSelectOption key={k} value={k}>
-          {indexNames[k]}
-        </NativeSelectOption>
-      ))}
-    </NativeSelect>
-  );
   if (view.kind === 'index') {
     const entries = read.data && roster ? rosterEntries(list, read.data, known.contacts) : [];
     const matching = search
@@ -251,9 +327,16 @@ export function WorkspaceIndex({
             .includes(search.toLowerCase().trim()),
         )
       : entries;
-    const slice = matching.slice(page * size, (page + 1) * size);
+
     return (
-      <ModuleCard title={indexNames[list]} description="Across projects" action={picker}>
+      <ModuleCard
+        title={indexNames[list]}
+        description={
+          <ViewLink view={{ kind: 'index', ref: 'browse' }} work={work}>
+            Browse
+          </ViewLink>
+        }
+      >
         {list === 'people' && (
           <Input
             type="search"
@@ -261,7 +344,7 @@ export function WorkspaceIndex({
             placeholder="Find a person…"
             value={search}
             onChange={(e) => {
-              peopleSearch.current=e.target.value;
+              peopleSearch.current = e.target.value;
               searchFor(e.target.value);
               move(0);
             }}
@@ -279,16 +362,11 @@ export function WorkspaceIndex({
             </p>
           ) : (
             <>
-              {slice.length ? <Rows entries={slice} work={work} /> : <p>No visible records on this page.</p>}
-              <ListPager
-                name={indexNames[list]}
-                page={page}
-                size={size}
-                total={matching.length}
-                count={slice.length}
-                hasNext={(page + 1) * size < matching.length}
-                update={(v) => move(v.page)}
-              />
+              {matching.length ? (
+                <Rows entries={matching} work={work} />
+              ) : (
+                <p>{search ? 'No people match this search.' : 'No visible records.'}</p>
+              )}
             </>
           )
         ) : (
