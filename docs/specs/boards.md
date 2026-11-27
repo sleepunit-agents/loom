@@ -421,7 +421,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `person` | `person`: `member:<member id>` or `contact:<contact slug>` | none | the same string |
 | `agent` | `agent`: agent id | none | the agent id |
 | `question` | `item`: inbox item id | `answer {answer}`, by `inbox.answer`; `answer` is one of `yes`, `no`, `words`, `done`, `dismiss` | the item id |
-| `approval` | `approval`: approval id | none: it is drawn read-only and answered on the desktop | the approval id |
+| `approval` | `approval`: approval id | `approve {}`, `refuse {}`, each after `approvals.answer` took the answer; a reason for denying goes to `approvals.answer` and never to the board | the approval id |
 | `session` | `session`: conversation id | `stop {}`, by `runtime.jobStop` | the conversation id |
 
 | Brick | Can be big | Flags itself when |
@@ -434,7 +434,8 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `person` (a member or a contact), `agent` | not yet | never |
 | `pull` | yes: also its branch and author, its failing and running checks by name, the people on it, whether it can be merged, its tickets with their titles | its checks go to failing, it is merged, it is closed |
 | `repository` | yes: each open pull request with its title and where it stands | never |
-| `question`, `approval` | no | never: being on the board is the flag |
+| `question` | no | never: being on the board is the flag |
+| `approval` | no: the page has a primary form for it, with the record's history, but the catalogue does not let it be big, so a board draws it side or compact | never: being on the board is the flag |
 | `session` | yes: what it was asked, its state, the tools it has used, how it ended, and its steps as they are reported | it finishes, it fails, it is stopped by someone else |
 
 **What the five bricks drawn on 2026-11-27 show.** Each reads what the desktop reads for the same record, and says
@@ -457,21 +458,40 @@ it in the desktop's words.
   to `inbox.answer`; `boards.act` is told `answer=words` and never the words. An answered question shows its answer
   and no controls. `inbox.discuss` (open a conversation about an FYI) and `inbox.dismissResult` (clear the notice of
   one's own action) are not about a question and are not on the brick. The brick does not mark the item read.
-- `approval`: **read-only.** What is asked, why, what allowing and denying do, exactly what it allows (kind and
-  target), its details, the agent, the project, who it is for, its state, and who answered. Of a household change it
-  shows the title, why and state only, as the desktop does for anyone without the owner's reading of it. It has no
-  control of any kind. The desktop's card answers behind four safeguards: only a member loom says may answer is
-  offered the buttons (`workAnswerOwner`); a household change is shown as the program reads it now and is allowed
-  only with that reading's version (`review`); a dangerous action takes a second yes (`confirm`); and a refusal is
-  said in the program's words and the card is read again. That code is the desktop's composition
-  (`web/src/data/work-views.tsx`) and its kit, which this page does not load, so the choice was a second copy of it
-  or none. There is none. `approve` and `refuse` are gone from the catalogue.
+- `approval`: answered from the board, by the code the desktop's card runs. There is one copy of each safeguard:
+  the decisions are in `web/src/pieces/approval-view/answering.ts` (functions and one hook, no component) and the
+  composition is in `web/src/data/work-approvals.ts`; the desktop's view and the brick both draw from them, and the
+  brick adds only markup. The boards bundle lists those modules by path and still refuses the desktop's kit.
+  - **Who may answer.** Allow and Deny are drawn only for a member loom says may answer (`workAnswerOwner`, a live
+    yes), on a request that still waits. Anyone else sees the request and no control. `approvals.answer` rechecks.
+  - **What is shown first.** The title, the question where it says more than the title, why, the agent, the
+    project, who it is for, what allowing and denying do, the stored summary of the change, exactly what it allows
+    (kind and target), and the details, headed "Full command" where the request was filed as a literal command. A
+    Tempo or Measuring settings change that checks against its stored summary is drawn as before and after in the
+    desktop's words, in place of the stored JSON. What already stands against the request is said above the buttons.
+  - **A household change.** Without the owner's reading, the title, why and state only. For a member who may
+    answer, the brick asks `household.proposalPreview` and draws that reading: its title, facts, what each answer
+    does and the exact request. It is read again after a refused Allow and, in a browser, when the window is looked
+    at and every minute. Where the reading carries a version (`review`), Allow sends that version, the one on screen.
+    Until the reading arrives, an owner has the buttons over the title and why alone, as on the desktop; the
+    operation then checks the change against what was filed.
+  - **A dangerous action.** Allow sends nothing and asks again ("This cannot be undone."); only "Yes, allow it"
+    sends, with `confirm`. A new version of the request starts this over.
+  - **Deny.** One press. A reason, up to 2000 characters, is optional and goes to `approvals.answer` only.
+  - **A refused answer.** loom's own refusal is shown in its words and the controls stay; any other failure is one
+    fixed line. While a call is in flight every control is disabled and a second press is dropped.
+  - **Answered.** Once the request no longer waits, whoever answered it, the brick shows the state and who
+    answered, and no control. The compact form is one line with no control in any state, and does not ask loom
+    whether the member may answer.
+  - **Not on the brick.** The desktop's standing answer for a merge ("Always for <project>"), the desktop's
+    display names for agents (the brick shows ids as chips), and the household's time zone (times are in the
+    device's). After `approvals.answer` succeeds the board is told `approve` or `refuse` with an empty detail.
 - `person` with `contact:<slug>`: the shared card People opens (`memoryPerson`, id `commons:<slug>`): name, summary,
   how to reach them, linked projects. Relationship cards, evidence, sightings and conversations are People's and are
   not on the brick. A member is drawn as before, by their open tickets.
 
 **Still not drawn, 2026-11-27.** No brick has a hover form. Writing a brick in words as `[label](loom:<brick>/<key>)`
-is not built; only a bare ticket id becomes a chip. An approval cannot be answered from a board, nor a merge. Not
+is not built; only a bare ticket id becomes a chip. A merge cannot be answered from its `pull` brick; its approval can, from the `approval` brick. Not
 checked: whether `memoryPerson` updates live as rule 8 requires (open question 1). None of the five has been looked
 at in a browser: they are drawn with the classes the other bricks use, and their look is unjudged.
 
@@ -651,8 +671,22 @@ sealed, read by the thread's member alone, absent from the thread, the relay unc
 In `web/src/boards/bricks-drawn.test.tsx`, with a fake data hook and a fake `fetch`: for `pull`, `repository`,
 `question`, `approval` and a contact, all three forms, the compact form as one line, the unavailable and loading
 lines, the heading rule, a pull request's own flag being raised, a question's answers reaching `/api/inbox/answer`
-and then `boards.act`, and an approval having no control in any kind, state or form. In `brick-queries.test.ts`: the
+and then `boards.act`. In `brick-queries.test.ts`: the
 pull and repository selections run against the generated schema.
+
+The approval's answer has two suites, both without a browser, and neither answers a real approval.
+`web/src/pieces/approval-view/answering.test.tsx` checks the shared decisions with no view: who is offered an
+answer, the reviewed version in an Allow, the second yes, the reason for denying, the words of a refusal, what
+stands against a request, what is read of an ordinary request, a literal command, a household change with and
+without the owner's reading, and a Tempo or Measuring change. `web/src/boards/bricks-approval.test.tsx` draws the
+brick over a fake data hook and a fake `fetch`: every kind, state, form and viewer for whether controls are drawn;
+what is shown before a decision; Allow in one press for a merge, a command and a setting, and never in one for a
+dangerous action; the version sent being the one on screen, after a refusal and a second reading; Deny with a
+reason; a refused answer and its controls; the controls disabled in flight; the outcome when it is answered
+elsewhere; and `boards.act` told `approve` or `refuse` with an empty detail and no typed word. The desktop's own
+approval suites pass unchanged. Not tested: the page in a browser, `approvals.answer` itself from the board (its
+own suites cover it from the desktop's door), the reading being asked again on window focus and every minute
+(the tests have no window), and how any of it looks.
 
 In `web/src/boards/bricks.test.tsx` and `page.test.tsx`, the page drawn by a test renderer, with no browser: the data
 hook, the operations, the conversation, and the window's location, history and storage are fakes, and the layout is
