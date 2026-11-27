@@ -16,8 +16,12 @@ import { emptyTail, threadId, TranscriptPage, type ThreadTail } from '../pair/tr
 import { brickView, type Params, type Place } from './bricks';
 import { layout, type Slot } from './layout';
 import { buildChanged } from './build';
+import { wearMotion } from '../access';
 import '../pair/screen.css';
 import './board.css';
+
+// This page has no boot script and no settings of its own, so it follows the device: access.ts answers what moves.
+wearMotion('follow');
 
 type Placement = { id: string; brick: string; params: string; rank: number; placedByKind: string; big: boolean; canBeBig: boolean; flagged: boolean };
 type Board = { id: string; thread: string; title: string; revision: number; closed: boolean; trailAt: string; placements: Placement[] };

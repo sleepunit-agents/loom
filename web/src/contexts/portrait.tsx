@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { createPlayer, type IdleTiming } from './portrait-player';
 import type { FaceState } from '../face';
+import { motionQuery } from '../access';
 import { checkSpriteLayout } from '../../../src/desk-sprite-layout';
 import manifest from './manifest.json';
 import sheet from './sheet.png';
@@ -15,7 +16,7 @@ export function Portrait({ state, className = 'portrait', idleTiming }: {
     player = useRef<ReturnType<typeof createPlayer> | null>(null);
   useEffect(() => {
     const target = node.current!;
-    const motion = matchMedia('(prefers-reduced-motion: reduce)');
+    const motion = motionQuery();
     let visible = false;
     const p = createPlayer(
       layout,

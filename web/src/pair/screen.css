@@ -1,3 +1,5 @@
+/* The order of the cascade's layers, said before any is opened (src/ui/scroll-width.test.ts). */
+@layer properties, theme, base, components, utilities;
 @import 'tailwindcss' source(none);
 @import 'highlight.js/styles/github.css' (prefers-color-scheme: light);
 @import 'highlight.js/styles/github-dark.css' (prefers-color-scheme: dark);
