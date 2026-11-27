@@ -56,7 +56,7 @@ export function Session({ params, form, act, raise }: BodyProps) {
           {!running(job.state) && job.state !== 'done' && detail?.logTail && <Fact wide label="Last output"><pre className="board-tail">{detail.logTail}</pre></Fact>}
           <Fact label="Result"><span className="board-note">{job.state === 'done' ? 'Its answer is in the conversation.' : running(job.state) ? 'Its answer will arrive in the conversation.' : 'It gave no answer.'}</span></Fact>
           {job.usage?.model && <Fact label="Running on">{[job.usage.harness, job.usage.model].filter(Boolean).join(' · ')}</Fact>}
-          {tools.length > 0 && <Fact label="Tools"><span className="board-tools">{tools.slice(0, 12).map((t) => <span key={t.name}>{t.name} ×{t.count}</span>)}</span></Fact>}
+          {tools.length > 0 && <Fact label="Tools"><span className="board-tool-counts">{tools.slice(0, 12).map((t) => <span key={t.name}>{t.name} ×{t.count}</span>)}</span></Fact>}
         </Facts>
       )}
       {big && handoff && <Section title="Steps"><SessionTrace conversation={conversation} job={job.id} running={running(job.state)} /></Section>}

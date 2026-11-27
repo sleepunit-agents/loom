@@ -260,7 +260,7 @@ button.board-step-line::after { content: ''; grid-column: 3; grid-row: 1; justif
 .board-step-more { margin: var(--bk-0) 0 var(--bk-2) 1.25rem; padding-left: var(--bk-3); border-left: 1px solid var(--surface-edge); display: grid; gap: var(--bk-2); }
 .board-step-more .board-tail { max-height: 14rem; margin: 0; }
 .board-tail[data-failed] { color: var(--tone-bad); }
-.board-tools { display: inline-flex; flex-wrap: wrap; gap: 0 var(--bk-3); font-size: var(--bk-sm); color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.board-tool-counts { display: inline-flex; flex-wrap: wrap; gap: 0 var(--bk-3); font-size: var(--bk-sm); color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
 
 /* ── What the work bricks add ─────────────────────────────────────────────────────────────── */
 
