@@ -19,6 +19,7 @@ import { eraseConversationSessions, expireConversationSessions } from './session
 import { acceptAnswer, type Answer } from './answer-rule.js';
 import { lateMailWaits, type DigestInput, type LateJoins } from './index.js';
 import { commsKeepDays } from '../data/comms-days.js';
+import { eraseThreadJobTrace, expireJobTrace } from './job-trace.js';
 
 type Message = typeof messages.$inferSelect;
 type TurnDetails = Partial<Pick<typeof turns.$inferInsert, 'model' | 'outcome' | 'latencyMs'>>;
@@ -291,6 +292,8 @@ export class CommsMessages {
     expired += expireArchivedQuestions(this.db,at,cutoff);
     // A kept harness session holds its conversation's words: it goes at the same keep time.
     expired+=expireConversationSessions(this.db,cutoff);
+    // The work trace of a handed-off job is kept as long as a message's words are.
+    expired+=expireJobTrace(this.db,at,cutoff);
     for(const item of handoffExpiries(this.db,days))if(item.until<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}
     return expired+this.db.update(messages).set({ words: null, archivedStepWords:null }).where(and(or(isNotNull(messages.words),isNotNull(messages.archivedStepWords)),
       or(sql`julianday(${messages.keepUntil}) <= julianday(${at})`, sql`julianday(${messages.at}) <= julianday(${cutoff})`))).returning({ seq: messages.seq }).all().length;
@@ -312,6 +315,7 @@ export class CommsMessages {
         state: sql`case when ${inbox.state} in ('waiting', 'taken') then 'resolved' else ${inbox.state} end`,
         resolution: 'Thread deleted', changedAt: at }).where(eq(inbox.thread, threadId)).run();
       eraseConversationSessions(this.db, thread.conversation);
+      eraseThreadJobTrace(this.db, thread.conversation);
       this.db.delete(threads).where(eq(threads.id, threadId)).run();
     });
   }

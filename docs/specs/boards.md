@@ -110,7 +110,9 @@ a thread's open boards, left to right, in the order they last joined it.
    markup, a query, a style or a rectangle. Every parameter is a record reference, a choice from a fixed list, or a
    whole number in a stated range; a schema may mark a parameter optional. A **record reference** is shaped like an
    id and nothing else: an ASCII letter or digit, then up to 119 of ASCII letters, digits and `: . _ / @ -`; a ticket
-   is `t-` and a number; a person is `member:` or `contact:` and a lowercase slug. It is checked for shape only, so
+   is `t-` and a number; a person is `member:` or `contact:` and a lowercase slug; a change is `github:`, the
+   repository as lowercase `owner/repo`, `#` and a number, which is how loom writes a change's id, and the only
+   reference that may hold a `#`. It is checked for shape only, so
    it may name no record, and it is shown only as an id (see "Names" under "The page"). The only free text the agent
    gives a board is its title. Known limit: an id-shaped string such as `contact:call-me` is still accepted and is
    shown, small and in monospace, beside a brick that says it is unavailable.
@@ -143,7 +145,7 @@ There is no note brick. What the agent has to say goes in the conversation.
 
 ## Records
 
-Five tables, all in the shared schema.
+Five tables for boards and one for a session's steps, all in the shared schema.
 
 **`board_threads`**: `thread`, `since`. A thread that has the second window: its member has sent from this page.
 Only in such a thread is an agent told about boards or allowed to open one. A board nobody can see is never made.
@@ -176,6 +178,14 @@ characters); `parameters` (JSON: a list of `{name, kind}` in order of first use 
 `design` (JSON: an ordered list of `{brick, params}` in rank order, where a record-reference param's value is either
 fixed or `{"open": "<parameter name>"}`); `created_at`; `used_at`; `uses`. A blueprint is readable and usable by its
 agent in any of that agent's threads. No member reads `blueprints`.
+
+**`job_trace`** (schema 49): `conversation`, `seq`, `job`, `at`, `tool`, `card_state` (`running`, `done`, `failed`),
+`client_id`, `words`, `keep_until`. One row for each work step the body of a handed-off job reports, under the child
+conversation and numbered within it. It is not a board record: it is what the `session` brick's big form reads (see
+"Sessions"). `words` is sealed with the household's words key, as a message's words are. A row is written only for a
+conversation whose venue is `handoff`, that has a member, and whose result returns to that member's open thread; a
+step for any other handoff is refused, as every such step was before. No row is written to `messages`, `turns` or
+`threads` for a step.
 
 A board holds no record data and none of a conversation's words.
 
@@ -303,7 +313,7 @@ board by id and the placement by brick and params:
 - `close`, `reopen`: "The member closed board B." / "The member reopened board B."
 - `maximize`: "The member made trend(days=30, project=loom) the big one on board B."
 - `act`: "The member used close on ticket(ticket=t-2441) on board B." An action whose detail is not empty
-  ends ": " and the detail, as `answer` does: "…on board B: choice=yes."
+  ends ": " and the detail, as `answer` does: "…on board B: answer=yes."
 
 With no shown board the text says so. Apart from a board's title, everything in the text is an id, a brick name, a
 choice or a whole number. If a job dies
@@ -344,7 +354,7 @@ ids, making it with `comms.open` if it does not exist.
   them do. A placement there is no room
   for is **folded**: shown as its chip in one expandable row at the end of the board. The exact rule is the design
   pass's to write. Fixed here: it is pure, it reads only rank, fit and area, and the same input always gives the same
-  output. A board with an empty title is headed by its primary's chip, and has no heading if it has no placements.
+  output. A board with an empty title is headed by the name of its big brick, or of its first placement if none is big, without the reference; it has no heading if it has no placements.
 - **Motion.** Placements are keyed by id. One that appears enters, one that goes leaves, the rest move to their new
   rectangles without being redrawn. The page reads the board's `revision` with its placements and applies each
   revision's differences in one step, so everything that changed in one revision starts moving in the same frame. With reduced motion set, changes apply without
@@ -406,12 +416,12 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `trend` | `project`: project id; `days`: 7, 30 or 90, default 30 | none | none |
 | `ticket` | `ticket`: ticket id | `claim {}`, `unclaim {}`, `close {}`, `reopen {}`, each the `tasks.command` action of that name | the ticket id |
 | `comments` | `ticket`: ticket id | `comment {}`, by `tasks.command` | none |
-| `pull` | `change`: change id | none | the change id |
-| `repository` | `repository`: repository id as `project_repositories` stores it; `project`: project id, optional | none | the repository id |
+| `pull` | `change`: change id, `github:owner/repo#number` | none: a merge is answered through its approval, on the desktop | the change id |
+| `repository` | `repository`: `owner/repo`, in any spelling `project_repositories` holds (a leading `github:`, capitals and a trailing `.git` are dropped); `project`: project id, optional | none | the repository id |
 | `person` | `person`: `member:<member id>` or `contact:<contact slug>` | none | the same string |
 | `agent` | `agent`: agent id | none | the agent id |
-| `question` | `item`: inbox item id | `answer {choice}`, by `inbox.answer` | the item id |
-| `approval` | `approval`: approval id | `approve {}`, `refuse {}`, both by `approvals.answer` | the approval id |
+| `question` | `item`: inbox item id | `answer {answer}`, by `inbox.answer`; `answer` is one of `yes`, `no`, `words`, `done`, `dismiss` | the item id |
+| `approval` | `approval`: approval id | none: it is drawn read-only and answered on the desktop | the approval id |
 | `session` | `session`: conversation id | `stop {}`, by `runtime.jobStop` | the conversation id |
 
 | Brick | Can be big | Flags itself when |
@@ -421,31 +431,97 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `trend` | yes: opened and closed per day over `days`, and a picked day lists its tickets | never |
 | `ticket` | yes | it is closed or reopened by someone else |
 | `comments` | yes | a comment arrives from someone else |
-| `person` (a member), `agent` | not yet | never |
-| `pull` | not yet | not drawn; meant: a check fails, it is merged or closed |
-| `repository` | not yet | not drawn |
-| `question`, `approval` | no | not drawn; meant: never, being on the board is the flag |
-| `person` (a contact) | not yet | not drawn |
-| `session` | yes: what it was asked, its state, the tools it has used, how it ended | it finishes, it fails, it is stopped by someone else |
+| `person` (a member or a contact), `agent` | not yet | never |
+| `pull` | yes: also its branch and author, its failing and running checks by name, the people on it, whether it can be merged, its tickets with their titles | its checks go to failing, it is merged, it is closed |
+| `repository` | yes: each open pull request with its title and where it stands | never |
+| `question`, `approval` | no | never: being on the board is the flag |
+| `session` | yes: what it was asked, its state, the tools it has used, how it ended, and its steps as they are reported | it finishes, it fails, it is stopped by someone else |
 
-**Not drawn, 2026-11-27.** `pull`, `repository`, `question`, `approval` and a `person` who is a contact are in the
-catalogue, can be placed, and draw one line saying the page does not draw them yet. Their actions in the table above
-(`answer`, `approve`, `refuse`) are declared and nothing on the page calls them; the `question` action's detail is a
-guess and must be set against `inbox.answer` before it is drawn. No brick has a hover form. Writing a brick in words
-as `[label](loom:<brick>/<key>)` is not built; only a bare ticket id becomes a chip.
+**What the five bricks drawn on 2026-11-27 show.** Each reads what the desktop reads for the same record, and says
+it in the desktop's words.
+
+- `pull`: the `changes` row and its `change_checks`, `change_people` and `change_tasks` rows. Title, number,
+  repository (a `repository` chip), open, draft, merged or closed, checks, review, who it waits on, and its tickets as
+  `ticket` chips. A ticket the member may not read is left out. It has no action. `changes.answer` exists and a
+  member the household lets answer may call it, but it is a merge approval's answer and needs the approval that is
+  waiting for that commit; it stays on the desktop with the approval.
+- `repository`: the open `changes` rows of that repository, in one project when `project` is given, latest first, at
+  most 30, each a `pull` chip. Loom gives a member no read of `project_repositories`, so the brick cannot tell a
+  repository that is bound to a project and has never had a pull request from one that does not exist: both draw
+  "unavailable". It shows nothing else about a repository because loom keeps nothing else a member may read.
+- `question`: the Inbox's own read of one item (`inboxItem`). Its words, why, what yes and no mean, who asked, what
+  it is about as chips, and its state. It is answered by `inbox.answer` with exactly what the Inbox sends: Yes and No
+  where the question takes them, an answer in words, Mark done, Dismiss. The controls are drawn only where the
+  desktop draws them: the item waits, takes an answer, still has its words, loom says the member may answer it, and
+  it is not one answered somewhere else (an approval, a task question, a secret request). Words the member types go
+  to `inbox.answer`; `boards.act` is told `answer=words` and never the words. An answered question shows its answer
+  and no controls. `inbox.discuss` (open a conversation about an FYI) and `inbox.dismissResult` (clear the notice of
+  one's own action) are not about a question and are not on the brick. The brick does not mark the item read.
+- `approval`: **read-only.** What is asked, why, what allowing and denying do, exactly what it allows (kind and
+  target), its details, the agent, the project, who it is for, its state, and who answered. Of a household change it
+  shows the title, why and state only, as the desktop does for anyone without the owner's reading of it. It has no
+  control of any kind. The desktop's card answers behind four safeguards: only a member loom says may answer is
+  offered the buttons (`workAnswerOwner`); a household change is shown as the program reads it now and is allowed
+  only with that reading's version (`review`); a dangerous action takes a second yes (`confirm`); and a refusal is
+  said in the program's words and the card is read again. That code is the desktop's composition
+  (`web/src/data/work-views.tsx`) and its kit, which this page does not load, so the choice was a second copy of it
+  or none. There is none. `approve` and `refuse` are gone from the catalogue.
+- `person` with `contact:<slug>`: the shared card People opens (`memoryPerson`, id `commons:<slug>`): name, summary,
+  how to reach them, linked projects. Relationship cards, evidence, sightings and conversations are People's and are
+  not on the brick. A member is drawn as before, by their open tickets.
+
+**Still not drawn, 2026-11-27.** No brick has a hover form. Writing a brick in words as `[label](loom:<brick>/<key>)`
+is not built; only a bare ticket id becomes a chip. An approval cannot be answered from a board, nor a merge. Not
+checked: whether `memoryPerson` updates live as rule 8 requires (open question 1). None of the five has been looked
+at in a browser: they are drawn with the classes the other bricks use, and their look is unjudged.
 
 **Sessions.** A job in the thread hands work off with `conversation.handoff` (a work role or a harness), which loom
 has today: it opens a child conversation for the same agent, member and project and returns that conversation's id,
 and the child's result comes back to the thread as a reply that wakes the agent. `session` takes that id. It shows the
 latest job in that conversation, or in any conversation with jobs that the member may read. Small: its title, its
-state, how long it has run, the tools it has used most. Big: also what it was asked, what it runs on, and how it
-ended. The member can stop it, by `runtime.jobStop`, which loom allows a member for an agent on their list. A harness's
+state, how long it has run, the tools it has used most, and (the side form, for a handed-off session) its latest
+step as one line. Big: also what it was asked, what it runs on, how it ended, and its steps. The member can stop it, by `runtime.jobStop`, which loom allows a member for an agent on their list. A harness's
 own subagents inside one job are not sessions and loom keeps no record of them for an ordinary job.
 
-Three things loom does not have today, found 2026-11-27, each its own change if wanted:
+**A session's steps.** The body of a job handed off from a member's thread (the worker's assignment says `review`)
+on the owners' word reports each tool call and each result as a card, by the same decoding of the harness's output
+and the same disclosure check as the pairing thread's cards (`src/runtime/body-program.ts`,
+`src/runtime/pair-events.ts`): a tool name or a step's words that say a secret the body holds, one of its own credentials, or a
+token shaped like one are replaced by "Tool" and by "Output withheld."; words past 16,000 characters are cut. Loom keeps each card in `job_trace` under the child conversation (`src/core/conversations/job-trace.ts`),
+not in the thread: the thread's transcript, its turns and its unread state are untouched, and the child's final
+reply is relayed to the thread exactly as before. A retried report writes one row.
 
-- **No step-by-step trace.** A job's tool cards are written only into a thread, and a handed-off conversation has no
-  thread. So the big form shows tool counts, not what the session is doing now.
+The page reads them with `sessionTrace(conversation, job, limit)`: the latest `limit` steps (100 by default, 200 at
+most), oldest first. It answers only a signed-in member who is the member of that handoff conversation, which is
+the member of the originating thread, and only while the conversation rule every Comms read uses lets them see it.
+Another member, a household owner who is not that member, an agent and the job's own body all read an empty list.
+Words are opened only when asked for, and are null once they are no longer kept. The read is live like any other.
+
+The big form draws them under "Steps" with the conversation's own work-trace cards (`web/src/pair/work-trace.tsx`):
+a call and its result are one card, a subagent's steps sit inside its card, the newest is at the bottom and stays in
+view unless the member has scrolled up. It asks for the trace only when the conversation's venue is `handoff`.
+
+Steps are kept as long as a message's words: `keep_until` is stamped from the household's keep time when the step
+is written, the sweep that erases expired message words erases a step's words at the earlier of that and the
+current keep time, a read past that time gives no words before the sweep has run, and deleting the originating
+thread deletes the rows. The row without its words (tool, state, time) stays, as a message's row does.
+
+Its limits, 2026-11-27:
+
+- Only work handed off with a work role or a harness from a member's own thread has steps. A wake, a bridge
+  conversation, a brief handed to another agent, and an ordinary thread's job outside the pairing thread have none.
+- Only a harness whose output `pair-events.ts` decodes reports any, and only what it decodes: tool calls, shell
+  commands and their output, subagent calls, plans. Not the model's words between calls, and not its reasoning.
+- A body built before this change reports none. A loom built before it refuses them, and the body ignores the refusal.
+- The big form shows the latest 100 steps of the latest job and says so when there are more; there is no paging back.
+- An archived originating thread stops new steps being kept; the result is also not relayed then, as before.
+- Every such handed-off job reports its steps, whether or not a `session` brick is on a board. Nothing reads them but
+  the brick.
+- Not run: a real model. The body's part is tested with fed harness output and with a recorded Codex stream run
+  through the real harness adapter; the page's part with fake data; nobody has watched a live session in a browser.
+
+Two things loom does not have today, found 2026-11-27, each its own change if wanted:
+
 - **No way to speak to one.** `comms.send` needs a thread. The member commands a session by stopping it, or by asking
   the agent in the conversation.
 - **It does not flag itself for "waiting on the member".** A question or an approval from a session arrives in the
@@ -564,14 +640,54 @@ the thread's member. No model is involved. Each check sets up its own board unle
 **Which checks have a suite, 2026-11-27.** In `src/core/boards/model.test.ts` and `operations.test.ts`: 1 (the rows),
 3 to 6, 7 (operations only), 8 to 12, 14 to 17 (operations only), 20 (the catalogue only), 24, 26, 27, 28. In
 `web/src/boards/layout.test.ts`: 25 and the layout's rules. In `src/runtime/body-program.test.ts`: 29. In
-`web/src/boards/trend.test.ts` and `build.test.ts`: the trend's days and the new-build test. **No suite:** every check
-of what the page draws (2, 13, 18, 19, 21, 22, 23, and the page halves of 1, 7, 8, 15, 16 and 20). Those were run by
-hand in a browser on an example household and on the owner's own, and are not pinned.
+`web/src/boards/trend.test.ts` and `build.test.ts`: the trend's days and the new-build test.
 
-**Rules with no check at all:** writes to one board applied in arrival order; a blueprint description's limit; the
-heading rule; a brick's own flag (raised, cleared on looking, cleared when its condition ends); a closed board being
-read-only on the page; the reload onto a new build; no flag queueing a job (nothing in the flag path can queue one,
-and no test proves a negative); rules 10 and 11 and the standing instructions, which are judgment.
+A session's steps have their own suites, outside the numbered checks: `src/shared-session-trace.test.ts` (kept,
+sealed, read by the thread's member alone, absent from the thread, the relay unchanged, erased and deleted),
+`src/runtime/body-program.test.ts` (which jobs report steps, and the redaction),
+`src/shared-conversation-handoff.test.ts` (a recorded Codex stream through the real adapter and doors) and
+`web/src/boards/session-trace.test.tsx` (the big and small forms from fake data).
+
+In `web/src/boards/bricks-drawn.test.tsx`, with a fake data hook and a fake `fetch`: for `pull`, `repository`,
+`question`, `approval` and a contact, all three forms, the compact form as one line, the unavailable and loading
+lines, the heading rule, a pull request's own flag being raised, a question's answers reaching `/api/inbox/answer`
+and then `boards.act`, and an approval having no control in any kind, state or form. In `brick-queries.test.ts`: the
+pull and repository selections run against the generated schema.
+
+In `web/src/boards/bricks.test.tsx` and `page.test.tsx`, the page drawn by a test renderer, with no browser: the data
+hook, the operations, the conversation, and the window's location, history and storage are fakes, and the layout is
+given an area. What they pin:
+
+- The page halves of 1 (the big placement is in the primary form, the others side or compact), 8 (a chip click calls
+  `boards.change` with `place` on the open board on screen), 12 (a ticket or comments action calls `tasks.command`,
+  then `boards.act`), 13 (`comms.send` carries the words as typed, trimmed, and `shows` with the board on screen or
+  null), 24 (which placements and folded chips have the maximize control, and what it calls) and 20 (each drawn
+  brick's compact form is one line, its side and primary forms draw, and a brick that is not drawn or not known says
+  so).
+- Of 16: a board that joins the trail is shown and is in the address; with no trail the address is the thread's; the
+  closed board in the address is drawn with Reopen, no remove or maximize control and its bricks in an `inert`
+  container; a closed board that is not in the address gives way; a chip click with a closed board or none calls
+  `boards.open`.
+- Of 18: after placing, maximizing, a chip click, a send and a move along the trail, the page has written nothing to
+  local or session storage, `location.search` and `location.hash` are empty, and each address it went to is a path
+  with one id.
+- The heading rule; the names rule (a heading is the brick's name, the reference is in the monospace line); a stored
+  flag (marked, labelled, `boards.seen` on pointing or focus, the folded chip and row marked); a brick's own flag
+  (raised when the ticket, comments or session read changes, not after the member's own action, cleared on pointing
+  with no call); the session brick's stop asking first; the reload onto a new build, only with the input empty and
+  nothing being sent.
+
+**No suite:** what needs a browser or a server under the page: 2 (the same DOM nodes), 7 (a second member), 15 (both
+entering in one frame), 19, 21, 22, 23, the `t-123` chip in a reply (20), and whether an `inert` container in fact
+stops its controls, which is the browser's. Those were run by hand in a browser on an example household and on the
+owner's own, and are not pinned.
+
+**Rules with no check at all:** writes to one board applied in arrival order; a blueprint description's limit; a
+brick's own flag going when its condition ends (no drawn brick has such a condition); what the page does when the
+board on screen is closed and the page had come to it as the last on the trail at load, where the code gives way to
+the board before it and "The trail" says it stays (the code keeps it only when it was in the address at load or was
+followed to); no flag queueing a job (nothing in the flag path can queue one, and no test proves a negative); rules
+10 and 11 and the standing instructions, which are judgment.
 
 ## The demo
 

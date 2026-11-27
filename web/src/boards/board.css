@@ -1,5 +1,24 @@
 /* The boards page: a conversation and a second window (docs/specs/boards.md). Tokens come from the ticket
    screen's sheet; this file is the two halves, the placements and their motion. */
+/* The look, from the design pass (docs/specs/boards-design): a darker ground, the two card tones, one quiet
+   accent, and the system's own sans. The page sets the app's tokens for itself and everything in it follows. */
+.boards-page {
+  --canvas-cool: light-dark(#e1e6e8, #151a20); --canvas-center: light-dark(#ebece8, #121314); --canvas-warm: light-dark(#ece6e2, #1d1819);
+  --background: var(--canvas-center);
+  --foreground: light-dark(#17181a, #e3e4e0); --card-foreground: var(--foreground); --popover-foreground: var(--foreground);
+  --muted-foreground: light-dark(#5d6266, #9a9ea3); --faint: light-dark(#8b9094, #6c7176);
+  --card: light-dark(#f4f3ef, #1c1d1f); --popover: light-dark(#fbfaf7, #232427); --secondary: var(--popover); --muted: var(--popover);
+  --secondary-foreground: var(--foreground);
+  --surface-edge: light-dark(rgb(48 57 70 / 13%), rgb(230 235 244 / 10%)); --border: var(--surface-edge); --input: var(--surface-edge);
+  --rim: light-dark(rgb(255 255 255 / 76%), rgb(255 255 255 / 5%));
+  --contact: light-dark(rgb(30 40 54 / 9%), rgb(0 0 0 / 32%)); --ambient: var(--contact);
+  --board-accent: light-dark(#1f6f63, #6fd3bf); --ring: var(--board-accent);
+  --radius: 14px;
+  font-family: 'Inter', system-ui, sans-serif; font-size: 16px; line-height: 1.5; color: var(--foreground);
+  background-color: var(--canvas-center);
+}
+.boards-page::before { content: none; }
+.boards-page .font-mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: .86em; }
 .boards-page { display: grid; height: 100dvh; grid-template-columns: 1fr; overflow: hidden; position: relative; isolation: isolate;
   background: linear-gradient(172deg, var(--canvas-cool) 6%, var(--canvas-center) 53%, var(--canvas-warm) 95%); }
 .boards-page[data-board='true'] { grid-template-columns: minmax(0, 1.55fr) minmax(22rem, 1fr); }
@@ -8,7 +27,8 @@
 .boards-board { flex: 0 0 100%; min-width: 0; height: 100%; display: flex; flex-direction: column; padding: 1.25rem clamp(1rem, 3vw, 2.5rem) 1rem; }
 .boards-board > header { display: flex; align-items: baseline; gap: .75rem; margin-bottom: 1rem; min-height: 2rem; }
 .boards-board > header h1 { font-size: 1.05rem; font-weight: 600; }
-.boards-board > header button { margin-left: auto; font-size: .85rem; color: var(--muted-foreground); }
+.boards-board > header button { margin-left: auto; font-size: .85rem; color: var(--faint); }
+.boards-board > header button:hover { color: var(--foreground); }
 .boards-field { position: relative; flex: 1; min-height: 0; }
 .boards-folded { display: flex; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: .4rem; align-items: center; min-height: 2rem; padding-top: .6rem; font-size: .85rem; color: var(--muted-foreground); white-space: nowrap; }
 .boards-folded > * { flex: none; }
@@ -17,16 +37,16 @@
 .boards-dots i[data-on='true'] { width: 26px; background: var(--foreground); opacity: 1; }
 
 .board-placement { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; overflow: hidden;
-  background: color-mix(in srgb, var(--card) 92%, transparent); border: 1px solid var(--surface-edge); border-radius: calc(var(--radius) + 4px);
+  background: color-mix(in srgb, var(--card) 92%, transparent); border: 1px solid var(--surface-edge); border-radius: var(--radius);
   box-shadow: inset 0 1px var(--rim), 0 1px 2px var(--contact), 0 6px 18px -10px var(--ambient); }
 .board-placement > header { display: flex; align-items: baseline; gap: .5rem; padding: .7rem .9rem .5rem; }
 .board-names { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .5rem; }
 .board-placement .board-names h2 { font-size: .95rem; font-weight: 600; flex: 0 0 auto; max-width: 100%; }
-.board-placement .board-names small { color: var(--muted-foreground); margin-right: auto; min-width: 0; flex: 0 1 auto; overflow-wrap: anywhere; }
+.board-placement .board-names small { color: var(--faint); margin-right: auto; min-width: 0; flex: 0 1 auto; overflow-wrap: anywhere; }
 .board-placement > header :is(button, .board-flag) { flex: none; }
 .board-placement > header .board-remove { color: var(--muted-foreground); opacity: 0; padding: 0 .25rem; }
 .board-placement:is(:hover, :focus-within) > header .board-remove { opacity: 1; }
-.board-placement > div { padding: 0 .9rem .9rem; overflow: auto; min-height: 0; flex: 1; scrollbar-width: thin; font-size: .92rem; color: var(--color-card-body); }
+.board-placement > div { padding: 0 .9rem .9rem; overflow: auto; min-height: 0; flex: 1; scrollbar-width: thin; font-size: .92rem; color: var(--muted-foreground); }
 .board-placement[data-form='primary'] > header { padding: 1rem 1.2rem .6rem; }
 .board-placement[data-form='primary'] .board-names h2 { font-size: 1.15rem; }
 .board-placement[data-form='primary'] > div { padding: 0 1.2rem 1.2rem; }
@@ -52,7 +72,7 @@
 .board-chip { display: inline-flex; align-items: center; gap: .35rem; border: 1px solid var(--surface-edge); border-radius: 999px; padding: .05rem .55rem;
   font-size: .84rem; color: var(--foreground); background: var(--popover); white-space: nowrap; }
 .board-chip:is(:hover, :focus-visible) { border-color: var(--ring); outline: 0; }
-.board-chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted-foreground); }
+.board-chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--board-accent); }
 .board-line { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: .8rem; }
 .board-state { font-size: .8rem; border-radius: 999px; padding: .05rem .55rem; background: var(--secondary); color: var(--secondary-foreground); }
 .board-state[data-running='true'] { background: color-mix(in srgb, var(--ring) 30%, var(--secondary)); }
@@ -65,7 +85,7 @@
 .board-notes { display: grid; gap: .7rem; margin-top: .8rem; }
 .board-notes small { display: block; color: var(--muted-foreground); font-size: .78rem; }
 .board-placement dl { display: grid; gap: .6rem; }
-.board-placement dt { font-size: .76rem; letter-spacing: .04em; text-transform: uppercase; color: var(--muted-foreground); }
+.board-placement dt { font-size: .76rem; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
 .board-placement dd { color: var(--foreground); }
 .board-lanes { display: flex; gap: .75rem; align-items: flex-start; }
 .board-lanes > section { flex: 1 1 0; min-width: 0; }
@@ -73,12 +93,12 @@
 .board-placement[data-form='side'] .board-lanes { flex-direction: column; align-items: stretch; }
 .board-placement[data-form='side'] .board-lanes > section { flex: none; }
 .board-lanes h3 { display: flex; justify-content: space-between; font-size: .78rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
-  color: var(--muted-foreground); border-bottom: 1px solid var(--surface-edge); padding-bottom: .3rem; margin-bottom: .5rem; }
+  color: var(--faint); border-bottom: 1px solid var(--surface-edge); padding-bottom: .3rem; margin-bottom: .5rem; }
 .board-lanes ul { display: grid; gap: .45rem; }
 .board-ticket { display: block; width: 100%; text-align: left; border: 1px solid var(--surface-edge); border-radius: 10px; padding: .45rem .6rem;
   background: var(--popover); color: var(--foreground); font-size: .88rem; line-height: 1.3; }
 .board-ticket:hover { border-color: var(--ring); }
-.board-ticket small { display: block; color: var(--muted-foreground); margin-top: .15rem; }
+.board-ticket small { display: block; color: var(--faint); margin-top: .15rem; }
 
 .board-trend { --opened: light-dark(#2a78d6, #3987e5); --closed: light-dark(#eb6834, #d95926); display: flex; flex-direction: column; gap: .5rem; height: 100%; }
 .board-trend-key { display: flex; flex-wrap: wrap; gap: .25rem 1rem; align-items: baseline; }
@@ -127,3 +147,11 @@
   .boards-page[data-board='true'] .boards-talk[data-sheet='false'] .boards-log { display: none; }
   .boards-page[data-board='true'] .boards-talk[data-sheet='true'] .boards-log { height: 55dvh; flex: none; }
 }
+
+/* The conversation, in the same hand: the input is one rounded field, the send button the page's ink. */
+.boards-ask [data-slot='input-group'] { background: var(--popover); border: 1px solid var(--surface-edge); border-radius: 16px;
+  box-shadow: inset 0 1px var(--rim), 0 2px 6px -2px var(--contact); }
+.boards-ask [data-slot='input-group'] button[type='submit'] { border-radius: 12px; background: var(--foreground); color: var(--canvas-center); }
+.boards-ask [data-slot='input-group'] button[type='submit']:disabled { opacity: .25; }
+.boards-page[data-board='false'] .boards-ask [data-slot='input-group'] { border-radius: 20px; }
+.boards-presence .block.font-semibold { font-weight: 600; line-height: 1.2; }

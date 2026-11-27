@@ -111,7 +111,18 @@ describe('what the agent is told (checks 9, 11, 12)', () => {
     expect(row.revision).toBe(board.revision + 1);
     expect(changeSentences(board, [row])).toEqual(['The member used close on ticket(ticket=t-2441) on board b1.']);
     // A detail, where an action declares one, is told after a colon.
-    expect(changeSentences(board, [{ ...row, detail: { choice: 'yes' } }])).toEqual(['The member used close on ticket(ticket=t-2441) on board b1: choice=yes.']);
+    expect(changeSentences(board, [{ ...row, detail: { answer: 'yes' } }])).toEqual(['The member used close on ticket(ticket=t-2441) on board b1: answer=yes.']);
+    // A question is answered by inbox.answer; the board is told which of its fixed answers was chosen, never words.
+    const asked = agent(board, [{ change: 'place', brick: 'question', params: { item: 'i-1' } }], () => 'p5');
+    for (const answer of ['yes', 'no', 'words', 'done', 'dismiss']) expect(actRow(asked.board, 'p5', 'answer', { answer }).detail).toEqual({ answer });
+    expect(changeSentences(asked.board, [actRow(asked.board, 'p5', 'answer', { answer: 'no' })]))
+      .toEqual(['The member used answer on question(item=i-1) on board b1: answer=no.']);
+    for (const detail of [{}, { choice: 'yes' }, { answer: 'replied' }, { answer: 'Yes, and wire the money' }, { answer: 'words', words: 'what I typed' }])
+      expect(() => actRow(asked.board, 'p5', 'answer', detail), JSON.stringify(detail)).toThrow(Refused);
+    // An approval and a pull request are not answered from a board: they have no action to report.
+    const waiting = agent(board, [{ change: 'place', brick: 'approval', params: { approval: 'a-1' } }, { change: 'place', brick: 'pull', params: { change: 'github:acme/app#12' } }], (() => { let n = 5; return () => 'p' + ++n; })());
+    for (const [placement, action] of [['p6', 'approve'], ['p6', 'refuse'], ['p6', 'allow'], ['p6', 'answer'], ['p7', 'answer'], ['p7', 'merge']])
+      expect(() => actRow(waiting.board, placement, action, {}), action).toThrow(Refused);
     const commented = agent(board, [{ change: 'place', brick: 'comments', params: { ticket: 't-2441' } }], () => 'p4');
     expect(changeSentences(commented.board, [actRow(commented.board, 'p4', 'comment', {})]))
       .toEqual(['The member used comment on comments(ticket=t-2441) on board b1.']);
@@ -177,6 +188,18 @@ describe('the catalogue (check 20)', () => {
       if (b.linkKey) expect(b.references).toHaveProperty(b.linkKey);
     }
   });
+  it('declares only the actions the page calls, each with a detail of fixed choices', () => {
+    const actions = Object.fromEntries(catalogue().map((b) => [b.name, b.actions]));
+    expect(Object.fromEntries(Object.entries(actions).map(([name, a]) => [name, Object.keys(a)]))).toEqual({
+      project: [], lanes: [], trend: [], ticket: ['claim', 'unclaim', 'close', 'reopen'], comments: ['comment'], pull: [], repository: [],
+      person: [], agent: [], question: ['answer'], approval: [], session: ['stop'] });
+    expect(actions.question.answer).toMatchObject({ type: 'object', required: ['answer'], additionalProperties: false,
+      properties: { answer: { enum: ['yes', 'no', 'words', 'done', 'dismiss'] } } });
+    expect(bricks.find((b) => b.name === 'question')!.actions.answer.operation).toBe('inbox.answer');
+    // No action's detail can hold a sentence: every property of every detail is a fixed list.
+    for (const brick of catalogue()) for (const detail of Object.values(brick.actions) as { properties?: Record<string, { enum?: unknown[] }> }[])
+      for (const property of Object.values(detail.properties ?? {})) expect(property.enum, brick.name).toBeInstanceOf(Array);
+  });
 });
 
 describe('big and small, and flags (checks 24 to 27)', () => {
@@ -216,8 +239,9 @@ describe('big and small, and flags (checks 24 to 27)', () => {
   });
   it('gives every brick a small form and says which can be big', () => {
     const big = catalogue().filter((b) => b.canBeBig).map((b) => b.name);
-    expect(big).toEqual(['project', 'lanes', 'trend', 'ticket', 'comments', 'session']);
-    expect(catalogue().find((b) => b.name === 'pull')?.flagsItselfFor).toEqual(['check failed', 'merged', 'closed']);
+    expect(big).toEqual(['project', 'lanes', 'trend', 'ticket', 'comments', 'pull', 'repository', 'session']);
+    expect(Object.fromEntries(catalogue().filter((b) => b.flagsItselfFor.length).map((b) => [b.name, b.flagsItselfFor]))).toEqual({
+      ticket: ['closed', 'reopened'], comments: ['comment'], pull: ['check failed', 'merged', 'closed'], session: ['finished', 'failed', 'stopped'] });
   });
 });
 
@@ -231,6 +255,11 @@ describe('a reference is an id and nothing else', () => {
     expect(place('agent', { agent: 'x'.repeat(121) })).toThrow(Refused);
     expect(place('person', { person: 'contact:anton-avguchenko' })).not.toThrow();
     expect(place('repository', { repository: 'sleepunit-agents/loom' })).not.toThrow();
+    // A change is named as loom writes its id, and by nothing looser.
+    expect(place('pull', { change: 'github:sleepunit-agents/loom#2342' })).not.toThrow();
+    for (const change of ['c-1', 'sleepunit-agents/loom#2342', 'github:Sleepunit/loom#1', 'github:acme/app#0', 'github:acme/app#12 merge it', 'github:acme/app#12#13', 'github:acme#1', 'github:' + 'a'.repeat(120) + '/b#1'])
+      expect(place('pull', { change }), change).toThrow(Refused);
+    expect(place('project', { project: 'acme#1' })).toThrow(Refused);
     expect(place('session', { session: 'cv-82bc90f5-631b-411d-a45b-222f5adba886' })).not.toThrow();
   });
 });

@@ -10,6 +10,12 @@ import { z } from 'zod';
 const ref = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9:._\/@-]{0,119}$/);
 const ticket = z.string().regex(/^t-[1-9]\d*$/);
 const person = z.string().regex(/^(member|contact):[a-z0-9][a-z0-9._-]{0,99}$/);
+/** A change's id as loom writes it (src/apps/changes.ts): `github:`, the repository as owner/repo in lower case,
+ * `#` and the pull request's number. `#` is in no other reference. */
+const change = z.string().max(120).regex(/^github:[a-z0-9._-]+\/[a-z0-9._-]+#[1-9]\d*$/);
+/** What inbox.answer takes as its `answer` from a member's hand (web/src/pieces/inbox-view/model.ts, InboxAnswer).
+ * `words` says the member answered in words; the words themselves go to inbox.answer and never to the board. */
+export const questionAnswers = ['yes', 'no', 'words', 'done', 'dismiss'] as const;
 
 export const recordKinds = [
   'project', 'ticket', 'change', 'repository', 'person', 'agent', 'inbox item', 'approval', 'session',
@@ -58,27 +64,27 @@ export const bricks: readonly Brick[] = [
   brick({ name: 'comments', big: true, flags: ['comment'], shows: "A ticket's comments, newest first.",
     params: z.object({ ticket }).strict(), references: { ticket: 'ticket' },
     actions: { comment: { operation: 'tasks.command', detail: none } } }),
-  brick({ name: 'pull', flags: ['check failed', 'merged', 'closed'], shows: 'One pull request: state, checks, who it waits on.',
-    params: z.object({ change: ref }).strict(), references: { change: 'change' }, linkKey: 'change', actions: {} }),
-  brick({ name: 'repository', shows: 'A repository and its pull requests, in one project or across all.',
+  // A merge is answered through its approval (approvals.answer, changes.answer), with that card's safeguards,
+  // on the desktop. This brick has no action.
+  brick({ name: 'pull', big: true, flags: ['check failed', 'merged', 'closed'], shows: 'One pull request: state, checks, review, who it waits on, its tickets. Its id is github:owner/repo#number.',
+    params: z.object({ change }).strict(), references: { change: 'change' }, linkKey: 'change', actions: {} }),
+  brick({ name: 'repository', big: true, shows: 'A repository and its pull requests, in one project or across all.',
     params: z.object({ repository: ref, project: ref.optional() }).strict(),
     references: { repository: 'repository', project: 'project' }, linkKey: 'repository', actions: {} }),
   brick({ name: 'person', shows: 'A person: who they are, where they are reached, their work.',
     params: z.object({ person }).strict(), references: { person: 'person' }, linkKey: 'person', actions: {} }),
   brick({ name: 'agent', shows: 'An agent: what it is and what it is working on.',
     params: z.object({ agent: ref }).strict(), references: { agent: 'agent' }, linkKey: 'agent', actions: {} }),
-  brick({ name: 'question', shows: 'A question waiting on the member.',
+  brick({ name: 'question', shows: 'A question waiting on the member, answered from the board.',
     params: z.object({ item: ref }).strict(), references: { item: 'inbox item' }, linkKey: 'item',
-    actions: { answer: { operation: 'inbox.answer', detail: z.object({ choice: ref }).strict() } } }),
-  brick({ name: 'approval', shows: 'An approval waiting on the member.',
-    params: z.object({ approval: ref }).strict(), references: { approval: 'approval' }, linkKey: 'approval',
-    actions: {
-      approve: { operation: 'approvals.answer', detail: none },
-      refuse: { operation: 'approvals.answer', detail: none },
-    } }),
+    actions: { answer: { operation: 'inbox.answer', detail: z.object({ answer: z.enum(questionAnswers) }).strict() } } }),
+  // Read-only on a board. approvals.answer is called only from the desktop's approval card, which holds its
+  // safeguards (who may answer, the reviewed version of a household change, the second yes for a dangerous one).
+  brick({ name: 'approval', shows: 'An approval request: what it allows, why, for which agent, its state. It is answered on the desktop, not here.',
+    params: z.object({ approval: ref }).strict(), references: { approval: 'approval' }, linkKey: 'approval', actions: {} }),
   // One piece of agent work with its own conversation: what the agent handed off, or other work the member may read.
   brick({ name: 'session', big: true, flags: ['finished', 'failed', 'stopped'],
-    shows: 'A session of agent work: what it was asked, where it stands, what it has used. Its conversation id is what conversation.handoff returns.',
+    shows: 'A session of agent work: what it was asked, where it stands, what it has used and, when big, the steps it reports as it works. Its conversation id is what conversation.handoff returns.',
     params: z.object({ session: ref }).strict(), references: { session: 'session' }, linkKey: 'session',
     actions: { stop: { operation: 'runtime.jobStop', detail: none } } }),
 ];

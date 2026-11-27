@@ -170,7 +170,7 @@ before it runs any step, and refuses one it does not recognise without writing t
 | Sign-in | `tokens`, `program_tokens`, `program_record_grants`, `program_operation_grants`, `sessions`, `signin_links`, `worker_join_requests`, `passkeys`, `notification_devices`, `notification_queue` |
 | Tasks | `tasks`, `task_links`, `task_comments`, `imported_task_sequence` |
 | Conversations | `conversations`, `conversation_people`, `turns`, `digests`, `digest_items`, `agent_status`, `conversation_days`, `findings`, `conversation_sessions` |
-| Inbox and threads | `inbox`, `inbox_refs`, `inbox_reads`, `action_results`, `threads`, `messages`, `archived_questions`, `thread_refs`, `deleted_threads`, `message_files` |
+| Inbox and threads | `inbox`, `inbox_refs`, `inbox_reads`, `action_results`, `threads`, `messages`, `archived_questions`, `thread_refs`, `deleted_threads`, `message_files`, `job_trace` |
 | Boards | `board_threads`, `boards`, `board_placements`, `board_changes`, `blueprints` |
 | Approvals | `approvals`, `approval_rules`, `approval_notices`, `approval_record` |
 | Project backlog history | `task_backlog_events` |
