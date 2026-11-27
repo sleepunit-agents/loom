@@ -105,7 +105,7 @@ function BoardView({ board, onRemove, onMaximize, onClose }: { board: Board; onR
   );
 }
 
-function Page({ member, thread, agent }: { member: string; thread: string; agent: string }) {
+export function Page({ member, thread, agent }: { member: string; thread: string; agent: string }) {
   const read = useDataQuery<{ threadBoards: Board[] }>(`query ThreadBoards($thread:String!){threadBoards(thread:$thread){${boardFields}}}`, { thread }, { keep: true });
   const all = read.data?.threadBoards ?? [];
   const trail = all.filter((b) => !b.closed);
