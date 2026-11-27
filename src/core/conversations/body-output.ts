@@ -1,5 +1,6 @@
 import { agentPostEdit, prepareAgentPost } from './agent-posts.js';
 import { prepareReviewResult } from './review-result.js';
+import { prepareJobTrace } from './job-trace.js';
 import { reviewThread } from './review-place.js';
 import { threadTitle } from './title.js';
 /** Job-body producers for a thread's encrypted output and reported state. */
@@ -30,6 +31,12 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
   }
   return threadFor(viewer);
  };
+ // A handed-off job has no thread to hold its work steps: they are kept beside its own conversation (job-trace.ts).
+ const traced=(viewer:Viewer,kind:string)=>{
+  if(kind!=='card')return;
+  const found=requireCurrent(viewer);
+  return found.cv.venue==='handoff'?found:undefined;
+ };
  const common=bodyOperationDefaults(current,words=>service.key.hash(words),'body-output');
  const progressKey=(job:string,id:string)=>JSON.stringify([job,'progress',id]);
  const details={model:z.string().min(1).max(200).optional(),outcome:z.enum(turns.outcome.enumValues).optional(),latencyMs:z.number().int().nonnegative().optional()};
@@ -42,6 +49,15 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
   output:z.object({saved:z.literal(true),seq:z.number().int()}).strict(),
   may:(viewer,input)=>common.may(viewer)&&(input.kind!=='progress'||maySendProgress?.(viewer)===true),
   async prepare(input,ctx){
+   const child=traced(ctx.viewer,input.kind);
+   if(child&&input.kind==='card'){
+    const save=await prepareJobTrace(service,child.cv,child.job.id,{clientId:input.clientId,words:input.words,tool:input.tool,cardState:input.cardState});
+    return ()=>{
+     const live=traced(ctx.viewer,input.kind);
+     if(!live||live.job.id!==child.job.id||live.cv.id!==child.cv.id||live.cv.member!==child.cv.member||live.cv.project!==child.cv.project||live.cv.agent!==child.cv.agent||live.cv.place!==child.cv.place)throw new OperationError('denied','Conversation changed');
+     return save();
+    };
+   }
    const before=replyTarget(ctx.viewer,input.kind),{kind,clientId,words,model,outcome,latencyMs}=input;
    if(kind==='progress'||kind==='reply'&&input.progressId){
     if(before.cv.venue!=='loom'||kind==='reply'&&clientId!==input.progressId)throw new OperationError('invalid','Invalid progress receipt');
@@ -76,6 +92,8 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
    };
   },
   run(ctx,input,prepared){
+   const child=traced(ctx.viewer,input.kind);
+   if(child){const step=(prepared as ()=>{seq:number})();ctx.changed('job_trace',child.cv.id);return {saved:true as const,seq:step.seq};}
    const found=replyTarget(ctx.viewer,input.kind),message=(prepared as ()=>{seq:number})();
    // A reply answers the mail this job took: both are saved together (ConversationMail.settle). A card is progress, not an answer.
    if(input.kind==='reply'&&input.progressId&&!db.select({seq:turns.seq}).from(turns).where(and(
