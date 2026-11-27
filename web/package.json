@@ -5,8 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node ../scripts/check-app-kit.mjs && tsc -b && vite build && vite build --config vite.contexts.config.ts && vite build --config vite.pair.config.ts && vite build --config vite.boards.config.ts",
-    "build:contexts": "tsc -b && vite build --config vite.contexts.config.ts",
+    "build": "node ../scripts/check-app-kit.mjs && tsc -b && vite build && vite build --config vite.boards.config.ts",
     "lint": "oxlint && node ../scripts/check-app-kit.mjs",
     "preview": "vite preview"
   },
