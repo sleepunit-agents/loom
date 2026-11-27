@@ -564,14 +564,42 @@ the thread's member. No model is involved. Each check sets up its own board unle
 **Which checks have a suite, 2026-11-27.** In `src/core/boards/model.test.ts` and `operations.test.ts`: 1 (the rows),
 3 to 6, 7 (operations only), 8 to 12, 14 to 17 (operations only), 20 (the catalogue only), 24, 26, 27, 28. In
 `web/src/boards/layout.test.ts`: 25 and the layout's rules. In `src/runtime/body-program.test.ts`: 29. In
-`web/src/boards/trend.test.ts` and `build.test.ts`: the trend's days and the new-build test. **No suite:** every check
-of what the page draws (2, 13, 18, 19, 21, 22, 23, and the page halves of 1, 7, 8, 15, 16 and 20). Those were run by
-hand in a browser on an example household and on the owner's own, and are not pinned.
+`web/src/boards/trend.test.ts` and `build.test.ts`: the trend's days and the new-build test.
 
-**Rules with no check at all:** writes to one board applied in arrival order; a blueprint description's limit; the
-heading rule; a brick's own flag (raised, cleared on looking, cleared when its condition ends); a closed board being
-read-only on the page; the reload onto a new build; no flag queueing a job (nothing in the flag path can queue one,
-and no test proves a negative); rules 10 and 11 and the standing instructions, which are judgment.
+In `web/src/boards/bricks.test.tsx` and `page.test.tsx`, the page drawn by a test renderer, with no browser: the data
+hook, the operations, the conversation, and the window's location, history and storage are fakes, and the layout is
+given an area. What they pin:
+
+- The page halves of 1 (the big placement is in the primary form, the others side or compact), 8 (a chip click calls
+  `boards.change` with `place` on the open board on screen), 12 (a ticket or comments action calls `tasks.command`,
+  then `boards.act`), 13 (`comms.send` carries the words as typed, trimmed, and `shows` with the board on screen or
+  null), 24 (which placements and folded chips have the maximize control, and what it calls) and 20 (each drawn
+  brick's compact form is one line, its side and primary forms draw, and a brick that is not drawn or not known says
+  so).
+- Of 16: a board that joins the trail is shown and is in the address; with no trail the address is the thread's; the
+  closed board in the address is drawn with Reopen, no remove or maximize control and its bricks in an `inert`
+  container; a closed board that is not in the address gives way; a chip click with a closed board or none calls
+  `boards.open`.
+- Of 18: after placing, maximizing, a chip click, a send and a move along the trail, the page has written nothing to
+  local or session storage, `location.search` and `location.hash` are empty, and each address it went to is a path
+  with one id.
+- The heading rule; the names rule (a heading is the brick's name, the reference is in the monospace line); a stored
+  flag (marked, labelled, `boards.seen` on pointing or focus, the folded chip and row marked); a brick's own flag
+  (raised when the ticket, comments or session read changes, not after the member's own action, cleared on pointing
+  with no call); the session brick's stop asking first; the reload onto a new build, only with the input empty and
+  nothing being sent.
+
+**No suite:** what needs a browser or a server under the page: 2 (the same DOM nodes), 7 (a second member), 15 (both
+entering in one frame), 19, 21, 22, 23, the `t-123` chip in a reply (20), and whether an `inert` container in fact
+stops its controls, which is the browser's. Those were run by hand in a browser on an example household and on the
+owner's own, and are not pinned.
+
+**Rules with no check at all:** writes to one board applied in arrival order; a blueprint description's limit; a
+brick's own flag going when its condition ends (no drawn brick has such a condition); what the page does when the
+board on screen is closed and the page had come to it as the last on the trail at load, where the code gives way to
+the board before it and "The trail" says it stays (the code keeps it only when it was in the address at load or was
+followed to); no flag queueing a job (nothing in the flag path can queue one, and no test proves a negative); rules
+10 and 11 and the standing instructions, which are judgment.
 
 ## The demo
 
