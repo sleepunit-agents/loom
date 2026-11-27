@@ -8,10 +8,14 @@ import { memberOperation } from '../data/operation';
 import { memoryQueries } from '../memory/queries';
 import { useMemoryQuery } from '../memory/query';
 import { contacts, type Person } from '../pieces/people/model';
-import { Chip, Loading, Unavailable, words, type Act, type Params } from './brick-kit';
+import { Action, Actions, Chip, Lead, Loading, Note, Problem, Row, Rows, Segmented, State, Unavailable, count, words, type Act, type Params, type Place } from './brick-kit';
 import type { Form } from './layout';
 
 const slug = /^[a-z0-9][a-z0-9._-]{0,99}$/, agentId = /^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,119}$/;
+/** Where one card's row leads: see `personChip`. A card whose address a board cannot hold leads nowhere. */
+const personPlace = (p: Pick<Person, 'slug' | 'kind' | 'ownership'>): Place | undefined => p.kind === 'agent'
+  ? (agentId.test(p.slug) ? { brick: 'agent', params: { agent: p.slug } } : undefined)
+  : slug.test(p.slug) ? { brick: 'person', params: { person: (p.ownership ? 'member:' : 'contact:') + p.slug } } : undefined;
 /** The chip for one card: an agent's `agent` brick; a member's `person` brick under their member id, which is the
  * slug of a card that says what a member owns; anyone else's under `contact:`. */
 export function personChip(p: Pick<Person, 'slug' | 'name' | 'kind' | 'ownership'>, label: string = p.name) {
@@ -19,7 +23,7 @@ export function personChip(p: Pick<Person, 'slug' | 'name' | 'kind' | 'ownership
   return slug.test(p.slug) ? <Chip place={{ brick: 'person', params: { person: (p.ownership ? 'member:' : 'contact:') + p.slug } }}>{label}</Chip> : <span>{label}</span>;
 }
 /** What mind.personAdd takes as `channel` (src/pieces/mind/people-actions.ts), in People's words. */
-const channels = [['', 'Not yet'], ['slack', 'slack'], ['discord', 'discord'], ['email', 'email'], ['phone', 'phone'], ['github', 'github']] as const;
+const channels = [['', 'Not yet'], ['slack', 'slack'], ['discord', 'discord'], ['email', 'email'], ['phone', 'phone'], ['github', 'github']].map(([value, label]) => ({ value, label }));
 const blank = { name: '', summary: '', channel: '', handle: '' };
 const folderWord: Record<string, string> = { all: 'Everyone', person: 'People', agent: 'Agents' };
 
@@ -39,25 +43,23 @@ function AddPerson({ act }: { act: Act }) {
     finally { lock.current = false; setBusy(false); }
   };
   if (!open) return (
-    <div className="board-line">
-      <button type="button" className="board-action" onClick={() => { setAdded(''); setOpen(true); }}>Add a person</button>
-      {added && <span role="status">Added to People {personChip({ slug: added, name: '', kind: 'person' }, 'Open person')}</span>}
-    </div>
+    <Actions>
+      <Action onClick={() => { setAdded(''); setOpen(true); }}>Add a person</Action>
+      {added && <span role="status" className="board-note">Added to People {personChip({ slug: added, name: '', kind: 'person' }, 'Open person')}</span>}
+    </Actions>
   );
   return (
-    <form aria-label="Add a person" onSubmit={(e) => void save(e)}>
-      <p className="text-muted-foreground">Contact details are shared. Their summary belongs to the default agent’s relationship.</p>
-      <label className="board-line">Name<input className="board-input" required maxLength={80} value={draft.name} disabled={busy} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label>
-      <label className="board-line">Who they are<textarea className="board-input" maxLength={1200} value={draft.summary} disabled={busy} onChange={(e) => setDraft({ ...draft, summary: e.target.value })} /></label>
-      <div className="board-line" role="group" aria-label="Reach them on">Reach them on
-        {channels.map(([value, word]) => <button key={value} type="button" className="board-action" aria-pressed={draft.channel === value} disabled={busy} onClick={() => setDraft({ ...draft, channel: value })}>{word}</button>)}
-      </div>
-      <label className="board-line">Their handle or address<input className="board-input" maxLength={200} value={draft.handle} disabled={busy} onChange={(e) => setDraft({ ...draft, handle: e.target.value })} /></label>
-      <div className="board-line">
-        <button type="submit" className="board-action" disabled={busy || !draft.name.trim()}>Add</button>
-        <button type="button" className="board-action" disabled={busy} onClick={() => setOpen(false)}>Cancel</button>
-      </div>
-      {error && <p role="alert" className="text-destructive">{error}</p>}
+    <form className="board-form" aria-label="Add a person" onSubmit={(e) => void save(e)}>
+      <Note>Contact details are shared. Their summary belongs to the default agent’s relationship.</Note>
+      <label className="board-field"><span>Name</span><input className="board-input" required maxLength={80} value={draft.name} disabled={busy} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label>
+      <label className="board-field"><span>Who they are</span><textarea className="board-input" rows={2} maxLength={1200} value={draft.summary} disabled={busy} onChange={(e) => setDraft({ ...draft, summary: e.target.value })} /></label>
+      <Segmented<string> label="Reach them on" value={draft.channel} options={channels} onChange={(channel) => setDraft({ ...draft, channel })} disabled={busy} />
+      <label className="board-field"><span>Their handle or address</span><input className="board-input" maxLength={200} value={draft.handle} disabled={busy} onChange={(e) => setDraft({ ...draft, handle: e.target.value })} /></label>
+      <Actions>
+        <Action submit kind="primary" disabled={busy || !draft.name.trim()}>Add</Action>
+        <Action kind="quiet" disabled={busy} onClick={() => setOpen(false)}>Cancel</Action>
+      </Actions>
+      <Problem>{error}</Problem>
     </form>
   );
 }
@@ -72,30 +74,34 @@ export function People({ params, form, act }: { params: Params; form: Form; act:
   if (access.status !== 'live' || !may?.allowed || feed.status !== 'live' || !feed.value) return <Unavailable what="directory" />;
   const all = contacts(feed.value, 'all', '', ''), shown = contacts(feed.value, folder, form === 'primary' ? query : '', '');
   const people = all.filter((g) => g.person.kind === 'person').length, agents = all.length - people;
-  const count = `${people} ${people === 1 ? 'person' : 'people'} · ${agents} agent${agents === 1 ? '' : 's'}`;
-  if (form === 'compact') return <p className="board-brief">{count}</p>;
-  const cap = form === 'primary' ? 60 : 6;
+  const everyone = `${count(people, 'person', 'people')} · ${count(agents, 'agent')}`;
+  if (form === 'compact') return <p className="board-brief">{everyone}</p>;
+  const big = form === 'primary', cap = big ? 60 : 3;
   return (
     <>
-      <p className="board-line"><span>{folderWord[folder] ?? folder} · {folder === 'all' ? count : shown.length}</span></p>
-      {form === 'primary' && (
-        <div className="board-line" role="search">
+      <Lead>{folder === 'all' ? everyone : folder === 'agent' ? count(shown.length, 'agent') : count(shown.length, 'person', 'people')}</Lead>
+      <div className="board-meta"><span>{folderWord[folder] ?? folder}</span></div>
+      {big && (
+        <div className="board-search" role="search">
           <input className="board-input" type="search" aria-label="Search people" placeholder="Search people…" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
       )}
-      {shown.slice(0, cap).map((g) => (
-        <div className="board-line" key={g.person.id}>
-          {personChip(g.person)}
-          <span className="board-state">{g.person.fields.some((f) => f.state === 'stale') ? 'Stale contact details' : g.person.kind}</span>
-          {form === 'primary' && <span className="text-muted-foreground">{g.relationships.length ? `Known to ${g.relationships.map((p) => p.agent).join(', ')}` : 'No relationship cards available'}</span>}
-        </div>
-      ))}
-      {shown.length > cap && <p className="text-muted-foreground">and {shown.length - cap} more</p>}
-      {!shown.length && <p className="text-muted-foreground">{form === 'primary' && query.trim() ? 'Nothing matches.' : all.length ? 'No contacts here' : 'No people yet'}</p>}
-      {form === 'primary' && may.directory && !may.canAdd && (
-        <p className="text-muted-foreground">{may.agents.length ? 'Ask an agent in Comms to set your household’s default agent before adding a person.' : 'Add a household agent and choose it as the default before adding a person.'}</p>
+      {shown.length > 0 && (
+        <Rows>{shown.slice(0, cap).map((g) => {
+          const stale = g.person.fields.some((f) => f.state === 'stale');
+          return (
+            <Row key={g.person.id} place={personPlace(g.person)} title={g.person.name}
+              meta={big && g.relationships.length ? `Known to ${g.relationships.map((p) => p.agent).join(', ')}` : undefined}
+              end={<State tone={stale ? 'waiting' : 'muted'}>{stale ? 'Stale contact details' : g.person.kind}</State>} />
+          );
+        })}</Rows>
       )}
-      {form === 'primary' && may.canAdd && <AddPerson act={act} />}
+      {shown.length > cap && <Note>and {shown.length - cap} more</Note>}
+      {!shown.length && <Note>{big && query.trim() ? 'Nothing matches.' : all.length ? 'No contacts here' : 'No people yet'}</Note>}
+      {big && may.directory && !may.canAdd && (
+        <Note>{may.agents.length ? 'Ask an agent in Comms to set your household’s default agent before adding a person.' : 'Add a household agent and choose it as the default before adding a person.'}</Note>
+      )}
+      {big && may.canAdd && <AddPerson act={act} />}
     </>
   );
 }

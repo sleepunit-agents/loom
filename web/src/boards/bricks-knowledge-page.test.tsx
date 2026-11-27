@@ -57,7 +57,7 @@ const world = (access: object | null = all, over: object = {}): Data => ({ Memor
 it('draws the page big: title, topic, state, its words, checks, annotations, sources and the pages that cite it', async () => {
   answer(world());
   await draw('primary');
-  for (const words of ['How the pond pump runs', 'Due a check', 'verified Oct 20', 'Routine check every 30 days', 'Last check by sam', 'The pump runs at dawn.', 'Fourth line, only when big.',
+  for (const words of ['How the pond pump runs', 'Due a check', 'verified ', 'Oct 20', 'Routine check every 30 days', 'Last check by sam', 'The pump runs at dawn.', 'Fourth line, only when big.',
     'Still true', 'Asked to check again', 'Checked the timer.', 'Runs at dawn', 'manual p.4', 'sourced', 'Written by']) expect(text()).toContain(words);
   // A link to another page is its label in the words and a chip under them. What Knowledge does not read as a link stays as written.
   expect(text()).toContain('See the liner page and [[Bad Slug!]].');

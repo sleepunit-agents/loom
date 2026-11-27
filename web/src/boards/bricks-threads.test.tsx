@@ -59,11 +59,12 @@ it('the primary form shows every row and when each was last used; the side form 
   await draw({ scope: 'open' }, 'side');
   expect(links()).toHaveLength(6);
   expect(JSON.stringify(tree!.toJSON())).toContain('more');
-  expect(said(tree!.root.findAll((n) => n.props.className === 'text-muted-foreground')[0])).toBe('and 3 more');
+  expect(tree!.root.findAll((n) => n.props.className === 'board-note').map(said)).toContain('and 3 more');
   await draw({ scope: 'open' }, 'primary');
   expect(links()).toHaveLength(9);
   expect(links()[0][0]).toBe('/app/t/th%3A8');
-  expect(tree!.root.findAll((n) => n.props.className === 'board-line').every((line) => line.findAllByType('span').some((s) => /\d/.test(said(s))))).toBe(true);
+  // When each was last used: one way of writing a time (brick-kit.tsx, Time).
+  expect(tree!.root.findAllByType('time').map((t) => t.props.dateTime)).toHaveLength(9);
 });
 it('the compact form is one line of counts and no controls', async () => {
   answer();

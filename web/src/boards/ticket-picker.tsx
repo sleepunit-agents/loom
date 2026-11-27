@@ -21,16 +21,16 @@ export function TicketPicker({ label, value, onChange, tickets, disabled }: { la
     <>
       <input className="board-input" aria-label={label} placeholder="Search tickets, or t-…" value={value} disabled={disabled}
         onChange={(e) => { const raw = e.target.value, exact = raw.trim(); onChange(tickets.some((t) => t.id === exact) ? exact : raw); }} />
-      {chosen && <span className="text-muted-foreground">{chosen.title}</span>}
+      {chosen && <span className="board-note">{chosen.title}</span>}
       {found.length > 0 && (
-        <span className="board-line" role="group" aria-label={`${label}: tickets found`}>
+        <span className="board-picker-found" role="group" aria-label={`${label}: tickets found`}>
           {found.slice(0, pickerResults).map((t) => (
-            <button type="button" key={t.id} className="board-action" disabled={disabled} onClick={() => onChange(t.id)}>{t.title} · <span className="font-mono">{t.id}</span></button>
+            <button type="button" key={t.id} disabled={disabled} onClick={() => onChange(t.id)}>{t.title} · <span className="font-mono">{t.id}</span></button>
           ))}
-          {found.length > pickerResults && <span className="text-muted-foreground">and {found.length - pickerResults} more: type more of its title</span>}
+          {found.length > pickerResults && <span className="board-note">and {found.length - pickerResults} more: type more of its title</span>}
         </span>
       )}
-      {typed && !chosen && !found.length && <span className="text-muted-foreground">No ticket matches.</span>}
+      {typed && !chosen && !found.length && <span className="board-note">No ticket matches.</span>}
     </>
   );
 }

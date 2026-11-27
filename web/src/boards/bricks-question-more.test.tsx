@@ -85,10 +85,12 @@ it('sets how loudly the item is shown through inbox.volume, only where the membe
   await draw();
   expect(group()).toEqual([]);
   world.item = { ...item, canSetVolume: true };
-  for (const form of ['primary', 'side'] as const) { await draw(form); expect(notify(), form).toEqual([['Normal', true, true], ['Quiet', false, false], ['Hidden', false, false]]); }
+  // The big form has the setting, as a segmented choice (brick-kit.tsx): the chosen one is pressed. The small form keeps to the answer.
+  await draw('primary'); expect(notify()).toEqual([['Normal', true, false], ['Quiet', false, false], ['Hidden', false, false]]);
+  await draw('side'); expect(group()).toEqual([]);
   await draw('compact');
   expect(tree!.root.findAllByType('button')).toEqual([]);
-  await draw();
+  await draw('primary');
   await press('Normal');
   expect(sent).not.toHaveBeenCalled();
   await press('Quiet');
@@ -96,9 +98,10 @@ it('sets how loudly the item is shown through inbox.volume, only where the membe
   expect(reported.mock.calls).toEqual([['volume', { volume: 'dim' }]]);
   // What the chosen one means, and when it ends, as the Inbox says it.
   world.item = { ...item, canSetVolume: true, volume: 'dim', quietUntil: '2026-11-20T20:00:00Z' };
-  await draw();
-  expect(notify()).toEqual([['Normal', false, false], ['Quiet', true, true], ['Hidden', false, false]]);
-  expect(text()).toContain('One line in the list, no notifications · back to normal Nov 20, 2026');
+  await draw('primary');
+  expect(notify()).toEqual([['Normal', false, false], ['Quiet', true, false], ['Hidden', false, false]]);
+  expect(text()).toContain('One line in the list, no notifications');
+  expect(tree!.root.findAllByType('time').map((t) => t.props.dateTime)).toContain('2026-11-20T20:00:00.000Z');
   // A refused write is said and the board is told nothing.
   ok = false; sent.mockClear(); reported.mockClear();
   await press('Hidden');

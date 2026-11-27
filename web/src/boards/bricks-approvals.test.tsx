@@ -55,7 +55,7 @@ it('lists every pending request oldest first with what, why, agent and target, e
     [{ brick: 'approval', params: { approval: 'a-1' } }, 'What of a-1'], [{ brick: 'approval', params: { approval: 'a-2' } }, 'What of a-2']]);
   expect(chips('agent').map(([place]) => place.params)).toEqual([{ agent: 'art' }, { agent: 'art' }, { agent: 'art' }]);
   const [house, one, two] = rowsDrawn();
-  for (const words of ['Why of a-1.', 'pending', 'command', 'Allows', 'command: pond/pump', 'pond', 'Nov 14, 2026']) expect(one, words).toContain(words);
+  for (const words of ['Why of a-1.', 'pending', 'command', 'Allows', 'command: pond/pump', 'pond', 'Nov 14']) expect(one, words).toContain(words);
   expect(two).toContain('merge: github:acme/app#12@abc');
   // A household change is said by its title and its reason; the other words stored with it are not shown.
   expect(house).toContain('Why of a-house.');

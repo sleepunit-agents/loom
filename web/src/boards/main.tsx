@@ -16,6 +16,7 @@ import { emptyTail, threadId, TranscriptPage, type ThreadTail } from '../pair/tr
 import { brickView, type Params, type Place } from './bricks';
 import { Loading } from './brick-kit';
 import { layout, type Slot } from './layout';
+import { PlacementFrame } from './placement';
 import { buildChanged } from './build';
 import { AgentFace } from './agent-face';
 import { useAgentNames } from './agents-data';
@@ -26,6 +27,7 @@ import { wearMotion } from '../access';
 import { Wear } from './wear';
 import '../pair/screen.css';
 import './board.css';
+import './board-kit.css';
 
 // This page has no boot script, so it starts by following the device (access.ts answers what moves). Once the
 // member is known it wears their own Reduce motion, and of their Appearance nothing else (./wear.ts).
@@ -104,17 +106,12 @@ function BoardView({ board, onRemove, onMaximize, onClose, onLost }: { board: Bo
           if (!slot || slot.form === 'folded') return null;
           const { Body } = p.view;
           return (
-            <article key={p.id} className="board-placement" data-form={slot.form} data-entering={!seen.current.has(p.id)}
-              data-flagged={p.flagged || !!own[p.id]} onPointerEnter={() => looked(p)} onFocus={() => looked(p)}
+            <PlacementFrame key={p.id} title={p.view.title(p.values)} sub={p.view.sub(p.values)} form={slot.form} entering={!seen.current.has(p.id)}
+              flag={p.flagged || own[p.id] ? own[p.id] || 'Look here' : undefined} closed={board.closed} canMaximize={p.canBeBig && !p.big}
+              onMaximize={() => onMaximize(p.id)} onRemove={() => onRemove(p.id)} onLook={() => looked(p)}
               style={{ transform: `translate(${slot.x}px, ${slot.y}px)`, width: slot.w, height: slot.h }}>
-              <header>
-                <div className="board-names"><h2>{p.view.title(p.values)}</h2><small className="font-mono">{p.view.sub(p.values)}</small></div>
-                {(p.flagged || own[p.id]) && <span className="board-flag" role="status">{own[p.id] || 'Look here'}</span>}
-                {!board.closed && p.canBeBig && !p.big && <button type="button" className="board-maximize" aria-label={'Make ' + p.view.title(p.values) + ' the big one'} onClick={() => onMaximize(p.id)}>⤢</button>}
-                {!board.closed && <button type="button" className="board-remove" aria-label={'Remove ' + p.view.title(p.values)} onClick={() => onRemove(p.id)}>✕</button>}
-              </header>
-              <div inert={board.closed}><BodyBoundary onLost={onLost}><Suspense fallback={<Loading />}><Body params={p.values} form={slot.form} raise={(name) => raise(p.id, name)} act={(action, detail) => void memberOperation('boards.act', { board: board.id, placement: p.id, action, detail }).catch(() => {})} /></Suspense></BodyBoundary></div>
-            </article>
+              <BodyBoundary onLost={onLost}><Suspense fallback={<Loading />}><Body params={p.values} form={slot.form} raise={(name) => raise(p.id, name)} act={(action, detail) => void memberOperation('boards.act', { board: board.id, placement: p.id, action, detail }).catch(() => {})} /></Suspense></BodyBoundary>
+            </PlacementFrame>
           );
         })}
       </div>

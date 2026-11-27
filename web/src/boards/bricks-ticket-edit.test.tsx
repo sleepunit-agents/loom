@@ -31,7 +31,7 @@ it('shows a ticket with its priority, who filed it and when, and its links as ti
   b.answer(data());
   await b.draw('ticket', { ticket: 't-7' }, 'primary');
   expect(b.asked('BrickTicketMore')).toEqual({ id: 't-7' });
-  for (const shown of ['P2', 'Filed by Sam', '2026', 'The top hinge is loose.', 'Parent', 'Fence the garden', 'Children', 'Oil the latch', 'Blocked by', 'Buy hinges', 'Blocks', 'Paint the gate', 't-99']) expect(b.all(), shown).toContain(shown);
+  for (const shown of ['P2', 'Filed by Sam', 'Nov 1', 'The top hinge is loose.', 'Parent', 'Fence the garden', 'Children', 'Oil the latch', 'Blocked by', 'Buy hinges', 'Blocks', 'Paint the gate', 't-99']) expect(b.all(), shown).toContain(shown);
   expect(b.placed()).toEqual(expect.arrayContaining([chip('t-1'), chip('t-8'), chip('t-3'), chip('t-5')]));
   // One the member may not read is its id and no chip.
   expect(b.placed()).not.toContainEqual(chip('t-99'));
@@ -61,14 +61,17 @@ it('shows why a closed ticket was closed', async () => {
 it('edits a ticket through tasks.command as the desktop form does, and tells the board only that it was edited', async () => {
   b.answer(data());
   await b.draw('ticket', { ticket: 't-7' }, 'primary');
-  expect(b.labels()).toEqual(['Edit…', 'Links…', 'Ask a person…', 'Promote to epic…', 'Claim', 'Close…']);
+  expect(b.labels()).toEqual(['Claim', 'Close…', 'Edit…', 'Links…', 'Ask a person…', 'Promote to epic…']);
   await b.press('Edit…');
   expect(Object.fromEntries(b.fields().map((f) => [f.props['aria-label'], f.props.value]))).toEqual(
     { Title: 'Mend the gate', Goal: 'A gate that shuts.', Why: 'It swings.', 'Done when': 'It latches.', Description: 'The top hinge is loose.' });
-  expect(b.root().findAll((n) => n.props['aria-pressed'] === true).map(b.said)).toEqual(['P2', 'Garden']);
+  expect(b.root().findAll((n) => n.props['aria-pressed'] === true).map(b.said)).toEqual(['P2']);
+  // The project is one of many: a menu that shows the chosen one and opens the rest in place (brick-kit.tsx, Menu).
+  expect(b.root().findAll((n) => n.props['aria-haspopup'] === 'listbox').map(b.said)).toEqual(['Garden']);
   await b.type('Title', '  Mend the gate properly  ');
   await b.type('Done when', 'It latches in wind.');
   await b.press('P1');
+  await b.press('Garden');
   await b.press('Pond');
   await b.submit('Edit ticket');
   expect(b.sent.mock.calls).toEqual([['/api/tasks/command', { action: 'edit', id: 't-7', input: { title: 'Mend the gate properly', goal: 'A gate that shuts.', why: 'It swings.',
@@ -80,6 +83,7 @@ it('edits a ticket through tasks.command as the desktop form does, and tells the
   // No project is sent as none.
   b.sent.mockReset();
   await b.press('Edit…');
+  await b.press('Garden');
   await b.press('No project');
   await b.submit('Edit ticket');
   expect(b.sent.mock.calls[0][1].input.project).toBeNull();

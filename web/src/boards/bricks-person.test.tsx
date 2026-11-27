@@ -63,9 +63,9 @@ it('draws a contact big as People\'s reader does: reach, last seen, facts, each 
   answer(world());
   await draw('primary');
   expect(feed.mock.calls[0][1]).toEqual({ id: 'commons:anton' });
-  for (const words of ['Anton Avguchenko', 'Fits the pond liners.', 'tony was merged into anton.', 'email: work · anton@example.test · fresh · verified 2026-10-02 · Source: his card',
-    'Slack: anton', 'T1 · U7', 'prefers: mornings', 'Updated 2026-11-10 · 2 memories newer than this card', 'Quick to answer.', 'tone: plain',
-    'Recorded permissions: May be asked for quotes · sam, 2026-10. These records do not grant access.', 'Quoted the liner · 2026-11-09', 'He quoted 400 for the liner.',
+  for (const words of ['Anton Avguchenko', 'Fits the pond liners.', 'tony was merged into anton.', 'email', 'anton@example.test', 'work', 'fresh', 'verified Oct', 'Source: his card',
+    'Slack: anton', 'T1 · U7', 'prefers', 'mornings', 'Updated Nov', '2 memories newer than this card', 'Quick to answer.', 'tone', 'plain',
+    'Recorded permissions: May be asked for quotes · sam, 2026-10. These records do not grant access.', 'Quoted the liner', 'He quoted 400 for the liner.',
     'Contact details and relationship notes do not grant access.']) expect(shown(), words).toContain(words);
   // Another person's relationship card is not drawn here.
   expect(shown()).not.toContain('Someone else.');
@@ -93,8 +93,8 @@ it('says so where a contact has no relationship card the member may read, no pro
 it('draws a contact small with who they are, where they are reached, who knows them and their projects, and no control', async () => {
   answer(world());
   await draw('side');
-  for (const words of ['Anton Avguchenko', 'Fits the pond liners.', 'email: work · anton@example.test · fresh', 'Known to', 'Pond · active · art']) expect(shown(), words).toContain(words);
-  for (const words of ['He quoted 400', 'Last seen', 'verified 2026-10-02', 'do not grant access']) expect(shown(), words).not.toContain(words);
+  for (const words of ['Anton Avguchenko', 'Fits the pond liners.', 'email', 'anton@example.test', 'work', 'fresh', 'Known to', 'Pond', 'active', 'art']) expect(shown(), words).toContain(words);
+  for (const words of ['He quoted 400', 'Last seen', 'verified', 'do not grant access']) expect(shown(), words).not.toContain(words);
   expect(placed()).toEqual([{ brick: 'agent', params: { agent: 'art' } }, { brick: 'project', params: { project: 'pond' } }]);
   expect(controls()).toEqual([]);
   await draw('compact');
@@ -136,7 +136,8 @@ it('draws a member who has no card, or whose card is still loading, by their ope
   for (const data of [world(null), { ...world(), MemoryPerson: undefined }]) {
     answer(data);
     await draw('side', { person: 'member:sam' });
-    expect(shown()).toBe('1 open ticket.t-7');
+    // Each open ticket is a row: its title, and its id under it (assigned.tsx).
+    expect(shown()).toBe('1 open ticket.Order a filtert-7');
     expect(placed()).toEqual([{ brick: 'ticket', params: { ticket: 't-7' } }]);
   }
   feed.mockClear(); answer(world());

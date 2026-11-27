@@ -11,8 +11,8 @@ import { history, kindLabels, nextScheduledAt, source, status, target, terminal,
 import { journalDetailsQuery, programDetailsQuery, tempoCardQuery, triggerHistoryQuery, type JournalDetails, type ProgramDetails, type TempoData } from '../pieces/tempo/query';
 import { runWords, type TriggerRun } from '../pieces/tempo/runs';
 import { useAgentNames } from './agents-data';
-import { Chip, Loading, Unavailable, useOwnFlag, words, type BodyProps } from './brick-kit';
-import { clock, jobFailed, stateWord } from './tempo-data';
+import { Action, Actions, Chip, Fact, Facts, Lead, Loading, Note, Problem, Row, Rows, Section, State, Unavailable, useOwnFlag, words, type BodyProps } from './brick-kit';
+import { clock, jobFailed, stateTone, stateWord } from './tempo-data';
 
 type Asking = '' | 'runNow' | 'stop';
 
@@ -39,7 +39,7 @@ export function Trigger({ params, form, act, raise }: BodyProps) {
   const standing = trigger.lifespan === 'until-stopped';
   if (small) return (
     <p className="board-brief">
-      <span className="board-state" data-running={trigger.state === 'firing'}>{stateWord(trigger, pauses)}</span> {title(trigger)}{next ? ` · next ${time(next)}` : ''}
+      <State tone={stateTone(trigger, pauses)}>{stateWord(trigger, pauses)}</State> {title(trigger)}{next ? ` · next ${time(next)}` : ''}
     </p>
   );
   const run = async (action: 'runNow' | 'stop' | 'start' | 'pause' | 'resume') => {
@@ -60,78 +60,87 @@ export function Trigger({ params, form, act, raise }: BodyProps) {
   const lastDecision = program?.lastResult ?? entries?.find((event) => event.event === 'program')?.note;
   const stopWord = standing ? 'Stop' : 'Cancel';
   const shownRuns = primary ? runs ?? [] : (runs ?? []).slice(0, 3);
+  // One question at a time: while the brick asks, the question stands in place of its controls.
+  const controls = asking ? (
+        <div className="board-confirm" role="group" aria-label="Trigger actions">
+          {asking === 'runNow'
+            ? <><Action kind="primary" disabled={busy} onClick={() => void run('runNow')}>Run it now</Action><Action kind="quiet" onClick={() => setAsking('')}>Not now</Action></>
+            : <><Action kind="danger" disabled={busy} onClick={() => void run('stop')}>{stopWord} this trigger</Action><Action kind="quiet" onClick={() => setAsking('')}>Keep it</Action></>}
+        </div>
+      ) : (
+        <Actions label="Trigger actions">
+          {!terminal(trigger) && <>
+            <Action disabled={busy || !trigger.enabled || paused || trigger.state === 'held' || trigger.state === 'firing'} onClick={() => setAsking('runNow')}>Run now…</Action>
+            <Action disabled={busy} onClick={() => setAsking('stop')}>{stopWord}…</Action>
+          </>}
+          {standing && !trigger.enabled && trigger.state === 'stopped' && !trigger.scheduleRemovedAt && <Action kind="primary" disabled={busy} onClick={() => void run('start')}>Start</Action>}
+          {agent && <Action kind="quiet" disabled={busy} onClick={() => void run(paused ? 'resume' : 'pause')}>{paused ? 'Resume agent' : 'Pause agent'}</Action>}
+        </Actions>
+      );
+  const prose = { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } as const;
   return (
     <>
-      <p className="board-lead">{title(trigger)}</p>
-      <div className="board-line">
-        <span className="board-state" data-running={trigger.state === 'firing'}>{stateWord(trigger, pauses)}</span>
-        <span className="text-muted-foreground">{kindLabels[triggerKind(trigger)]} · {trigger.sourceKind} · {trigger.lifespan} · {status(trigger, pauses)}</span>
+      <Lead>{title(trigger)}</Lead>
+      <div className="board-meta">
+        <State tone={stateTone(trigger, pauses)}>{stateWord(trigger, pauses)}</State>
+        <span>{kindLabels[triggerKind(trigger)]} · {trigger.sourceKind} · {trigger.lifespan} · {status(trigger, pauses)}</span>
       </div>
-      <p>{source(trigger)}</p>
-      {next && <p>Due: {time(next)} · {zone}</p>}
-      {failed && <p className="text-destructive">Its last firing failed.</p>}
-      <dl style={{ marginTop: '.8rem' }}>
-        <div><dt>Set by</dt><dd>{trigger.ownerKind === 'household' ? 'Household'
+      {failed && <p className="board-problem">Its last firing failed.</p>}
+      <Facts>
+        <Fact label="When">{source(trigger)}</Fact>
+        {next && <Fact label="Due">{time(next)} · {zone}</Fact>}
+        {trigger.lastFiredAt && <Fact label="Last fired">{time(trigger.lastFiredAt)}</Fact>}
+      </Facts>
+      {!primary && controls}
+      <Facts>
+        <Fact label="Set by">{trigger.ownerKind === 'household' ? 'Household'
           : trigger.ownerKind === 'agent' && trigger.owner ? <>Agent · <Chip place={{ brick: 'agent', params: { agent: trigger.owner } }}>{name(trigger.owner)}</Chip></>
-          : `Person · ${displayName(trigger.owner)}`}</dd></div>
-        <div><dt>Target</dt><dd>{program ? program.program.name : target(trigger)}{agent && <> <Chip place={{ brick: 'tempo', params: { agent } }}>{name(agent)}’s tempo</Chip></>}</dd></div>
-        {trigger.lastFiredAt && <div><dt>Last fired</dt><dd>{time(trigger.lastFiredAt)}</dd></div>}
+          : `Person · ${displayName(trigger.owner)}`}</Fact>
+        <Fact label="Target">{program ? program.program.name : target(trigger)}{agent && <> <Chip place={{ brick: 'tempo', params: { agent } }}>{name(agent)}’s tempo</Chip></>}</Fact>
         {primary && <>
-          {trigger.project && <div><dt>Project</dt><dd><Chip place={{ brick: 'project', params: { project: trigger.project } }}>{trigger.project}</Chip></dd></div>}
-          {!!trigger.needs?.length && <div><dt>Machine needs</dt><dd>{trigger.needs.join(', ')}</dd></div>}
-          {trigger.prefers != null && <div><dt>Machine preferences</dt><dd>{trigger.prefers.join(', ') || 'None'}</dd></div>}
-          {(trigger.wantsModel || (trigger.targetKind === 'inbox' && trigger.toKind === 'agent')) && <div><dt>Requested model</dt><dd>{trigger.wantsModel || 'Agent default'}</dd></div>}
-          {program && <div><dt>House program definition</dt><dd><pre className="board-tail">{JSON.stringify(program.program, null, 2)}</pre></dd></div>}
-          {lastDecision && <div><dt>Last program result</dt><dd>{lastDecision}</dd></div>}
-          {program?.programState != null && <div><dt>Program state</dt><dd><pre className="board-tail">{JSON.stringify(program.programState, null, 2)}</pre></dd></div>}
-          <div><dt>Enabled</dt><dd>{trigger.enabled ? 'Yes' : 'No'}</dd></div>
+          {trigger.project && <Fact label="Project"><Chip place={{ brick: 'project', params: { project: trigger.project } }}>{trigger.project}</Chip></Fact>}
+          {!!trigger.needs?.length && <Fact label="Machine needs">{trigger.needs.join(', ')}</Fact>}
+          {trigger.prefers != null && <Fact label="Machine preferences">{trigger.prefers.join(', ') || 'None'}</Fact>}
+          {(trigger.wantsModel || (trigger.targetKind === 'inbox' && trigger.toKind === 'agent')) && <Fact label="Requested model">{trigger.wantsModel || 'Agent default'}</Fact>}
+          <Fact label="Enabled">{trigger.enabled ? 'Yes' : 'No'}</Fact>
+        </>}
+        {trigger.file && <Fact label="Repository file"><span className="font-mono">{trigger.file}</span></Fact>}
+        {trigger.instructions && <Fact wide label="Words"><span style={prose}>{primary || trigger.instructions.length <= 240 ? trigger.instructions : trigger.instructions.slice(0, 240) + '…'}</span></Fact>}
+        {primary && <>
+          {program && <Fact wide label="House program definition"><pre className="board-tail">{JSON.stringify(program.program, null, 2)}</pre></Fact>}
+          {lastDecision && <Fact wide label="Last program result">{lastDecision}</Fact>}
+          {program?.programState != null && <Fact wide label="Program state"><pre className="board-tail">{JSON.stringify(program.programState, null, 2)}</pre></Fact>}
           {journal && <>
-            <div><dt>Lessons</dt><dd style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{journal.lessons || 'No lessons yet.'}</dd></div>
-            <div><dt>Saved state</dt><dd><pre className="board-tail">{journal.state || 'Empty'}</pre>{journal.stateChangedAt && <p className="text-muted-foreground">Last changed {time(journal.stateChangedAt)} · {zone}</p>}</dd></div>
+            <Fact wide label="Lessons"><span style={prose}>{journal.lessons || 'No lessons yet.'}</span></Fact>
+            <Fact wide label="Saved state"><pre className="board-tail">{journal.state || 'Empty'}</pre>{journal.stateChangedAt && <p className="board-note">Last changed {time(journal.stateChangedAt)} · {zone}</p>}</Fact>
           </>}
         </>}
-        {trigger.instructions && <div><dt>Words</dt><dd style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{primary || trigger.instructions.length <= 240 ? trigger.instructions : trigger.instructions.slice(0, 240) + '…'}</dd></div>}
-        {trigger.file && <div><dt>Repository file</dt><dd>{trigger.file}</dd></div>}
-        {shownRuns.length > 0 && (
-          <div>
-            <dt>Recent runs</dt>
-            <dd>
-              {shownRuns.map((item) => (
-                <div key={item.event + '-' + item.kind} className="board-line">
-                  <span className="text-muted-foreground">{time(item.at)}</span>
-                  <span className={jobFailed(item.job?.state) ? 'text-destructive' : undefined}>{runWords(item).join(' · ')}</span>
-                  {item.conversation && <Chip place={{ brick: 'session', params: { session: item.conversation.id } }}>Session</Chip>}
-                </div>
-              ))}
-            </dd>
+      </Facts>
+      {shownRuns.length > 0 && (
+        <Section title="Recent runs">
+          <div className="board-tempo">
+            <Rows>{shownRuns.map((item) => (
+              <Row key={item.event + '-' + item.kind} place={item.conversation ? { brick: 'session', params: { session: item.conversation.id } } : undefined}
+                title={<span className={jobFailed(item.job?.state) ? 'board-tempo-failed' : undefined}>{runWords(item).join(' · ')}</span>}
+                end={<span className="board-tempo-at">{time(item.at)}</span>} />
+            ))}</Rows>
           </div>
-        )}
-        {primary && (
-          <div>
-            <dt>Recent history</dt>
-            <dd>
-              {entries?.length ? entries.slice(0, 40).map((event) => <p key={event.seq}>{time(event.at)} · {event.event}{event.note && ` · ${event.note}`}</p>)
-                : entries ? <p className="text-muted-foreground">No events yet.</p>
-                : log.status === 'loading' ? <Loading /> : <p className="text-muted-foreground">Trigger history unavailable.</p>}
-            </dd>
-          </div>
-        )}
-      </dl>
-      <div className="board-line" role="group" aria-label="Trigger actions">
-        {asking === 'runNow' ? <><button type="button" className="board-action" disabled={busy} onClick={() => void run('runNow')}>Run it now</button><button type="button" className="board-action" onClick={() => setAsking('')}>Not now</button></>
-          : asking === 'stop' ? <><button type="button" className="board-action" disabled={busy} onClick={() => void run('stop')}>{stopWord} this trigger</button><button type="button" className="board-action" onClick={() => setAsking('')}>Keep it</button></>
-          : <>
-            {!terminal(trigger) && <>
-              <button type="button" className="board-action" disabled={busy || !trigger.enabled || paused || trigger.state === 'held' || trigger.state === 'firing'} onClick={() => setAsking('runNow')}>Run now…</button>
-              <button type="button" className="board-action" disabled={busy} onClick={() => setAsking('stop')}>{stopWord}…</button>
-            </>}
-            {standing && !trigger.enabled && trigger.state === 'stopped' && !trigger.scheduleRemovedAt && <button type="button" className="board-action" disabled={busy} onClick={() => void run('start')}>Start</button>}
-            {agent && <button type="button" className="board-action" disabled={busy} onClick={() => void run(paused ? 'resume' : 'pause')}>{paused ? 'Resume agent' : 'Pause agent'}</button>}
-          </>}
-      </div>
-      {busy && <p role="status" className="text-muted-foreground">Waiting for Tempo…</p>}
-      {error && <p role="alert" className="text-destructive">{error}</p>}
-      <p className="text-muted-foreground">To change its times or words, ask its agent: Tempo has no editor here or on the desktop.</p>
+        </Section>
+      )}
+      {primary && (
+        <Section title="Recent history">
+          {entries?.length ? (
+            <div className="board-tempo">
+              <Rows>{entries.slice(0, 40).map((event) => <Row key={event.seq} title={event.event} meta={event.note || undefined} end={<span className="board-tempo-at">{time(event.at)}</span>} />)}</Rows>
+            </div>
+          ) : entries ? <Note>No events yet.</Note>
+            : log.status === 'loading' ? <Loading /> : <Note>Trigger history unavailable.</Note>}
+        </Section>
+      )}
+      {primary && controls}
+      {busy && <p role="status" className="board-note">Waiting for Tempo…</p>}
+      <Problem>{error}</Problem>
+      <Note>To change its times or words, ask its agent: Tempo has no editor here or on the desktop.</Note>
     </>
   );
 }

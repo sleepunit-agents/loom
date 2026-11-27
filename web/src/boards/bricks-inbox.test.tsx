@@ -61,7 +61,7 @@ it('reads the folder with the Inbox\'s own selection and lists its items newest 
     [{ brick: 'question', params: { item: 'in-new' } }, 'Words of in-new?'], [{ brick: 'question', params: { item: 'in-old' } }, 'Words of in-old?'],
     // A quiet item is one line; a hidden one is left out, as in the Inbox.
     [{ brick: 'question', params: { item: 'in-quiet' } }, 'First line']]);
-  for (const words of ['Needs you: 3', 'Needs you 3', 'Alerts 1', 'Answered 7', 'FYI 2', 'All items 12', 'Errors 0', 'Why of in-new.', 'sam', 'open', 'Unread', 'Read', 'Quiet', 'Nov 14, 2026']) expect(text(), words).toContain(words);
+  for (const words of ['Needs you: 3', 'Needs you 3', 'Alerts 1', 'Answered 7', 'FYI 2', 'All items 12', 'Errors 0', 'Why of in-new.', 'sam', 'open', 'Unread', 'Quiet', 'Nov 14']) expect(text(), words).toContain(words);
   for (const never of ['in-hidden', 'Second line', 'Quiet why.']) expect(text(), never).not.toContain(never);
   // Who asked is a chip where it is an agent.
   expect(chips().filter(([place]) => place.brick === 'agent').map(([place]) => place.params)).toEqual([{ agent: 'art' }, { agent: 'art' }]);

@@ -65,14 +65,15 @@ const submit = () => act(async () => tree!.root.findAllByType('form')[0].props.o
 it('lists the directory as People does, by name, each person a chip for their person brick and each agent for its agent brick', async () => {
   answer(world());
   await draw('primary');
-  expect(shown()).toContain('Everyone · 3 people · 1 agent');
+  expect(shown()).toContain('3 people · 1 agentEveryone');
   expect(placed()).toEqual([
     { brick: 'person', params: { person: 'contact:anton' } },
     { brick: 'agent', params: { agent: 'art' } },
     // A card that says what a member owns is that member's.
     { brick: 'person', params: { person: 'member:sam' } },
   ]);
-  for (const words of ['Stale contact details', 'Known to art', 'No relationship cards available', 'Zed Oddly']) expect(shown(), words).toContain(words);
+  // A person no agent's card names says nothing under their name: the line is there only when it tells something.
+  for (const words of ['Stale contact details', 'Known to art', 'Zed Oddly']) expect(shown(), words).toContain(words);
   expect(feed.mock.calls.find(([query]) => String(query).includes('MemoryPeople '))![0]).toContain('memoryPeople(includeRemovedAgents:false)');
 });
 
@@ -80,7 +81,7 @@ it('keeps to one of People\'s folders', async () => {
   answer(world());
   await draw('primary', { folder: 'agent' });
   expect(placed()).toEqual([{ brick: 'agent', params: { agent: 'art' } }]);
-  expect(shown()).toContain('Agents · 1');
+  expect(shown()).toContain('1 agentAgents');
   await draw('primary', { folder: 'person' });
   expect(placed().map((p) => p.params.person)).toEqual(['contact:anton', 'member:sam']);
 });
@@ -100,8 +101,9 @@ it('searches as People does from a box inside the brick; what is typed reaches n
 it('draws the side form as a short list and the compact form as one line, neither with a control', async () => {
   answer(world(may, [...people, ...Array.from({ length: 5 }, (_, i) => record('commons:extra-' + i, 'Extra ' + i, 'person'))]));
   await draw('side');
-  expect(placed()).toHaveLength(6);
-  expect(shown()).toContain('and 3 more');
+  // Three rows fit the side form with air between them.
+  expect(placed()).toHaveLength(3);
+  expect(shown()).toContain('and 6 more');
   expect(controls()).toEqual([]);
   await draw('compact');
   const json = tree!.toJSON() as { type: string; props: { className: string } };

@@ -1051,7 +1051,8 @@ A brick has one home on each side and is listed once on each side. Adding one to
    That array is the catalogue's order and the only place the order is stated.
 3. **Its page module**, `web/src/boards/bricks-<name>.tsx`, exporting its body, and its suite
    `web/src/boards/bricks-<name>.test.tsx`. The module imports what bricks share from `brick-kit.tsx` (`Chip`,
-   `Loading`, `Unavailable`, `useOwnFlag`, `words`, the types) and never another brick's module.
+   `Loading`, `Unavailable`, `useOwnFlag`, `words`, the types, and the design kit below, which its body is made
+   of) and never another brick's module. Its scenes go in the gallery's fixtures (below), so it can be seen.
 4. **One line in the registry**, `web/src/boards/bricks.tsx`: `fits`, `title`, `sub`, and
    `...later(() => import('./bricks-<name>').then((m) => m.<Body>))`.
 5. **Its rows in the two tables above.**
@@ -1073,6 +1074,50 @@ brick did not load. Reload the page to try again." in its own placement, and the
 page then looks for a newer build and takes it as "A restart" says, once nothing typed would be lost. The
 page's first script holds no brick and nothing only a brick needs. The bundle guard (`web/vite.boards.config.ts`)
 reads every chunk, the fetched ones too.
+
+### The design kit
+
+Every brick's body is made from one small vocabulary, `web/src/boards/brick-kit.tsx`, styled in
+`web/src/boards/board-kit.css`. A brick writes no markup of its own where the kit has a word for it. The look is
+quiet and typographic: one accent, hairlines in place of boxes, air in place of rules, nothing heavier than a
+medium weight. The page's tokens stay at the top of `board.css`; the kit adds a type scale of five sizes
+(`--bk-xs` to `--bk-xl`), a spacing scale (`--bk-1` to `--bk-5`) and the tones.
+
+| Word | What it is |
+|---|---|
+| `Lead` | The one line a form is about: the record's own title, or the sentence that says where things stand. |
+| `Note` | A quiet line: a count, an empty list, a reason. `Loading` and `Unavailable` are notes. |
+| `Problem` | Something that did not work, said where it happened (an alert). |
+| `State` | Where a record stands: a mark and the record's own word. Six tones and no others: neutral, working, waiting (on the member), good, bad, muted. Each brick maps its record's states onto them. |
+| `board-meta` | The line under a lead: state, who, where, when. |
+| `Section` | A part of a brick under a small heading, with a count where it lists things. |
+| `Facts`, `Fact` | Label and value pairs. A short value sits beside its label; prose (`wide`) sits under it. |
+| `Rows`, `Row` | A list of records parted by hairlines: title, a quiet line under it, a state or time at its end, controls below. A row that places a brick is one hit area. |
+| `Actions`, `Action` | A brick's controls, last in the form. One `primary` at most; `quiet` steps back; `danger` cannot be undone. |
+| `Confirm` | Asking before acting, the same everywhere: the control ("Stop…") opens the act in full ("Stop this session") beside the way back. |
+| `Field` | A field of words under its label; `board-form` stacks them. |
+| `Segmented`, `Menu` | One of a few fixed choices, all in view; or one of many, the chosen one in view and the rest in a list that opens in place. The page has no native picker. |
+| `Meter` | How full something is: a thin bar whose tone turns as it fills. |
+| `Time`, `when` | The one way a brick writes a time: how long ago while it is recent (or how soon), the date after that, in the member's device zone; the whole date and time is its title. |
+| Steps | A session's log (`session-trace.tsx`): one line a step, a mark for where it stands, what ran, and what it said when opened. |
+
+The three forms are decided the same way for every brick. The primary form leads with the one thing the brick is
+about, then its meta line, facts, sections and, last, its actions; a form that opens on a press takes the place of
+the action bar while it is open. The side form keeps the lead, the few facts or rows that matter and the main
+action, and leaves the rest to the primary. The compact form is one `board-brief` line: a state and a few words.
+A placement is a container (`container-type: inline-size`), so a brick answers to its own width, not the window's.
+
+### The gallery
+
+`npm --prefix web run gallery:build` builds a development-only page (`web/gallery.html`,
+`web/vite.gallery.config.ts`, `web/src/boards/gallery/`) that draws every brick in its three forms, at the sizes the
+layout gives them, from fixtures (`gallery/fixtures/`) and never from loom: the build puts a fixture-backed
+`useDataQuery` in the place of `web/src/data/graphql`, and every operation is answered as saved. A fixture names a
+brick's scenes (well filled, empty, unavailable, flagged, closed, a form opened by a press), and each scene what
+every read answers. `node web/scripts/gallery-shots.mjs <dir>` photographs the built gallery in dark and light: one
+image per brick, per scene and form, and contact sheets of every side, compact, primary and phone-width form.
+`npm --prefix web run gallery` serves it for looking. The gallery is no part of `npm --prefix web run build` and no
+shipped page loads it; `src/ui/web-reach.test.ts` names its entry as the one development-only one.
 
 ## Live reads and their cost
 

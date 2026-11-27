@@ -153,13 +153,14 @@ describe('ticket', () => {
     data({ BrickTicket: live({ ticket: closed }), BrickTicketSessions: live({ rows: worked }) });
     const { root } = await draw('ticket', { ticket: 't-7' }, 'primary');
     const [sessions] = section(root);
-    expect(text(sessions.findAllByType('dt')[0])).toBe('Sessions');
+    expect(text(sessions.findAllByType('h3')[0])).toBe('Sessions');
     // In the order loom gave them (newest first), each with its title, its state and when.
     const chips = sessions.findAllByType('button');
     expect(chips.map((b) => JSON.parse(b.props['data-place']))).toEqual(['cv-2', 'cv-1', 'cv-0'].map((session) => ({ brick: 'session', params: { session } })));
     expect(chips.map(text)).toEqual(['Second pass', 'First pass', 'Session']);
     expect(sessions.findAll((n) => n.props.className === 'board-state').map(text)).toEqual(['running', 'done', 'not started']);
-    expect(text(sessions)).toContain('2026');
+    // When each ran: one way of writing a time (brick-kit.tsx, Time), the whole date in its title.
+    expect(sessions.findAllByType('time').map((t) => t.props.dateTime)).toEqual(worked.map((w) => w.at));
     expect(f.queries.find((q) => q.query.includes('BrickTicketSessions'))).toMatchObject({ variables: { t: 't-7' } });
     // The ticket is still a closed ticket: only Reopen is offered.
     expect(root.findAllByType('button').filter((b) => !b.props['data-place']).map(text)).toEqual(['Reopen']);
@@ -220,7 +221,8 @@ describe('ticket', () => {
     const { root } = await draw('ticket', { ticket: 't-7' }, 'side');
     await press('Close…');
     expect(f.op).not.toHaveBeenCalled();
-    expect(names()).toEqual(['Claim', 'Close ticket', 'Cancel']);
+    // The brick's other controls step aside while it asks why.
+    expect(names()).toEqual(['Close ticket', 'Cancel']);
     expect(button('Close ticket')!.props.disabled).toBe(true);
     await act(async () => root.findAllByType('input')[0].props.onChange({ target: { value: '  Gate replaced ' } }));
     await act(async () => root.findAllByType('form')[0].props.onSubmit({ preventDefault() {} }));

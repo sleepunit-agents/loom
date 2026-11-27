@@ -64,11 +64,11 @@ const submit = (name: string) => act(async () => tree!.root.findAllByType('form'
 it('lists the pages as Knowledge does, newest first, each a chip that places its page, and counts those due a check', async () => {
   answer(world());
   await draw('primary');
-  expect(shown()).toContain('All pages · 4 pages');
+  expect(shown()).toContain('4 pagesAll pages');
   expect(pagesPlaced()).toEqual(['liner', 'pump', 'boiler']);
   // A page whose slug no board can hold is named without a chip.
   expect(text()).toContain('An old page');
-  expect(text()).toContain('Due a check'); expect(text()).toContain('Getting old'); expect(text()).toContain('verified Nov 25');
+  expect(text()).toContain('Due a check'); expect(text()).toContain('Getting old'); expect(shown()).toContain('verified Nov 25');
   expect(placed()).toContainEqual({ brick: 'knowledge', params: { show: 'due' } });
   // Its topics are chips that place this brick for one topic; one that is not shaped like an id is words.
   expect(placed().filter((p) => p.brick === 'knowledge' && p.params.domain).map((p) => p.params.domain)).toEqual(['house', 'pond', 'pond/pump']);
@@ -82,7 +82,7 @@ it('keeps to one topic and to one of Knowledge\'s lists, and orders what is due 
   expect(placed()).toContainEqual({ brick: 'knowledge', params: { show: 'due', domain: 'pond' } });
   await draw('primary', { show: 'due' });
   expect(pagesPlaced()).toEqual(['boiler', 'pump']);
-  expect(shown()).toContain('Due a check · 2 pages');
+  expect(shown()).toContain('2 pagesDue a check');
   await draw('primary', { show: 'recent' });
   expect(pagesPlaced()).toEqual(['liner']);
 });
@@ -90,8 +90,9 @@ it('keeps to one topic and to one of Knowledge\'s lists, and orders what is due 
 it('draws the side form as a short list and the compact form as one line, neither with a control', async () => {
   answer(world(all, [...pages, ...Array.from({ length: 4 }, (_, i) => row('extra-' + i, 'Extra ' + i, 'house', 'fresh', '2026-07-0' + (i + 1) + 'T12:00:00Z'))]));
   await draw('side');
-  expect(pagesPlaced()).toHaveLength(4);
-  expect(shown()).toContain('and 3 more');
+  // Three rows fit the side form with air between them.
+  expect(pagesPlaced()).toHaveLength(3);
+  expect(shown()).toContain('and 5 more');
   expect(controls()).toEqual([]);
   await draw('compact');
   const json = tree!.toJSON() as { type: string; props: { className: string }; children: string[] };

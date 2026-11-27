@@ -11,12 +11,12 @@ import { approvalSnapshot, approvalsQuery, type ApprovalsResult } from '../data/
 import { approvalReading } from '../pieces/approval-view/answering';
 import { rows, type Approval as Row } from '../pieces/approval-view/model';
 import { displayName } from '../kit/words';
-import { fullTime } from '../kit/time';
-import { Chip, Loading, Unavailable, useOwnFlag, type Params, type Raise } from './brick-kit';
+import { Chip, Fact, Facts, Lead, Loading, Note, Row as Line, Rows, State, Time, Unavailable, useOwnFlag, type Params, type Raise, type Tone } from './brick-kit';
 import type { Form } from './layout';
 
 const name = (id: string) => displayName(id);
 const few = 4;
+const tone = (state: string): Tone => (state === 'pending' ? 'waiting' : state === 'allowed' || state === 'used' ? 'good' : state === 'denied' ? 'bad' : 'muted');
 
 export function Approvals({ params, form, raise }: { params: Params; form: Form; raise: Raise }) {
   const answered = params.state === 'answered';
@@ -31,15 +31,15 @@ export function Approvals({ params, form, raise }: { params: Params; form: Form;
   if (form === 'compact') return <p className="board-brief">{pending} pending · {settled} answered</p>;
 
   const shown = rows(snapshot, answered ? 'history' : 'pending', '');
-  const lead = <p className="board-lead">{answered ? `${settled} answered` : `${pending} pending`}</p>;
-  const empty = <p className="text-muted-foreground">{answered ? 'No answered approvals.' : 'No approvals are waiting.'}</p>;
+  const lead = <Lead>{answered ? `${settled} answered` : `${pending} pending`}</Lead>;
+  const empty = <Note>{answered ? 'No answered approvals.' : 'No approvals are waiting.'}</Note>;
   const reading = (a: Row) => approvalReading(a, snapshot.record, name);
-  const chip = (a: Row) => <Chip place={{ brick: 'approval', params: { approval: a.id } }}>{reading(a).title}</Chip>;
+  const place = (a: Row) => ({ brick: 'approval', params: { approval: a.id } });
   if (form === 'side') return (
     <>
       {lead}
-      {shown.slice(0, few).map((a) => <div className="board-line" key={a.id}>{chip(a)}<span className="text-muted-foreground">{name(a.agent)} · {a.state}</span></div>)}
-      {shown.length > few && <p className="board-line text-muted-foreground">and {shown.length - few} more</p>}
+      {shown.length > 0 && <Rows>{shown.slice(0, few).map((a) => <Line key={a.id} place={place(a)} title={reading(a).title} meta={<>{name(a.agent)} · {a.state}</>} />)}</Rows>}
+      {shown.length > few && <Note>and {shown.length - few} more</Note>}
       {!shown.length && empty}
     </>
   );
@@ -47,28 +47,25 @@ export function Approvals({ params, form, raise }: { params: Params; form: Form;
     <>
       {lead}
       {shown.length ? (
-        <ol className="board-notes">
+        <Rows>
           {shown.map((a) => {
             const r = reading(a);
             return (
-              <li key={a.id}>
-                <div className="board-line">
-                  {chip(a)}
-                  <span className="board-state">{a.state}</span>
+              <Line key={a.id} place={place(a)} title={r.title} end={<><State tone={tone(a.state)}>{a.state}</State><Time at={a.askedAt} /></>}>
+                <div className="board-meta">
                   <span>{r.kind}</span>
                   <Chip place={{ brick: 'agent', params: { agent: a.agent } }}>{a.agent}</Chip>
                   {r.showStored && a.project && <Chip place={{ brick: 'project', params: { project: a.project } }}>{a.project}</Chip>}
-                  <span className="text-muted-foreground">{fullTime(a.askedAt)}</span>
                 </div>
-                <dl>
-                  <div><dt>Why</dt><dd>{a.why}</dd></div>
-                  {r.allows && <div><dt>Allows</dt><dd>{r.allows}</dd></div>}
-                  {answered && r.showStored && r.answered && <div><dt>Answer</dt><dd>{r.answered}</dd></div>}
-                </dl>
-              </li>
+                <Facts>
+                  <Fact label="Why">{a.why}</Fact>
+                  {r.allows && <Fact label="Allows">{r.allows}</Fact>}
+                  {answered && r.showStored && r.answered && <Fact label="Answer">{r.answered}</Fact>}
+                </Facts>
+              </Line>
             );
           })}
-        </ol>
+        </Rows>
       ) : empty}
     </>
   );

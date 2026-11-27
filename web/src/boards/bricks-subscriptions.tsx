@@ -8,20 +8,17 @@ import { useRef, useState, type FormEvent } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { newId } from '../data/id';
 import { memberOperation } from '../data/operation';
-import { fullTime } from '../kit/time';
 import { useDeadline } from '../pieces/comms/use-deadline';
-import { accountLine, accountServices, loginLine, loginState, modelGroups, runtimeAccountsQuery, serviceLine, subscriptionSetupQuery, subscriptionWords, usagePercent, usageReadStale, weeklyNote, weeklyUsageQuery, windowName,
-  type RuntimeAccountDetail, type RuntimeAccountsData, type SubscriptionSetup, type WeeklyAccount, type WeeklyDimension } from '../pieces/runtime/model-query';
+import { accountServices, loginCounts, loginLine, loginState, modelGroups, runtimeAccountsQuery, serviceLevel, serviceNeedsSignIn, subscriptionSetupQuery, subscriptionWords, usagePercent, usageReadStale, weeklyNote, weeklyUsageQuery, windowName,
+  type AccountLogin, type RuntimeAccountDetail, type RuntimeAccountsData, type SubscriptionSetup, type WeeklyAccount, type WeeklyDimension } from '../pieces/runtime/model-query';
 import { isMember, isRef } from './admin-data';
-import { Chip, Loading, Unavailable, useOwnFlag, type Act, type BodyProps } from './brick-kit';
+import { Action, Actions, Chip, Fact, Facts, Lead, Loading, Meter, Note, Row, Rows, Section, Segmented, State, Time, Unavailable, count, useOwnFlag, type Act, type BodyProps, type Tone } from './brick-kit';
+import { Opened, Opens } from './settings-kit';
 
-const time = (value: string | null, zone?: string) => (value ? fullTime(value, zone) : 'Not available');
 const share = new Intl.NumberFormat(undefined, { style: 'percent', maximumFractionDigits: 2 });
-const dimensions: [WeeklyDimension, string][] = [['agents', 'Agent'], ['triggers', 'Trigger'], ['conversations', 'Conversation']];
-const readLine = (at: string | null, zone: string | undefined, now: number) => {
-  const read = Date.parse(at ?? '');
-  return Number.isFinite(read) ? time(at, zone) + (usageReadStale(read, now) ? subscriptionWords.stale : '') : 'Not available';
-};
+const dimensions: { value: WeeklyDimension; label: string }[] = [{ value: 'agents', label: 'Agent' }, { value: 'triggers', label: 'Trigger' }, { value: 'conversations', label: 'Conversation' }];
+const levelTone = (level: string): Tone => (level === 'almost full' ? 'bad' : level === 'getting full' ? 'waiting' : level === 'plenty' ? 'good' : 'neutral');
+const loginTone = (login: AccountLogin): Tone => (!login.reporting ? 'muted' : login.expired || login.state !== 'signed-in' ? 'waiting' : 'good');
 
 function Weekly({ account }: { account: string }) {
   const feed = useDataQuery<{ modelAccounts: WeeklyAccount[] }>(weeklyUsageQuery, { detailId: account }, { keep: true });
@@ -29,28 +26,24 @@ function Weekly({ account }: { account: string }) {
   const selected = (feed.status === 'live' ? feed.data?.modelAccounts ?? [] : []).filter((row) => row.id === account);
   const now = useDeadline(selected.flatMap((row) => row.weeklyUsage?.map((week) => week.resetsAt) ?? []));
   if (feed.status === 'loading') return <Loading />;
-  if (feed.status !== 'live' || !feed.data) return <p className="text-muted-foreground">Weekly usage is unavailable.</p>;
+  if (feed.status !== 'live' || !feed.data) return <Note>Weekly usage is unavailable.</Note>;
   const weeks = selected.flatMap((row) => row.weeklyUsage?.filter((week) => Date.parse(week.resetsAt) > now) ?? []);
-  if (!weeks.length) return <p className="text-muted-foreground">No current weekly reading is available.</p>;
+  if (!weeks.length) return <Note>No current weekly reading is available.</Note>;
   return (
     <>
-      <div className="board-line" role="group" aria-label="Group by">Group by
-        {dimensions.map(([value, word]) => <button key={value} type="button" className="board-action" aria-pressed={dimension === value} onClick={() => setDimension(value)}>{word}</button>)}
-      </div>
-      <p className="text-muted-foreground">{weeklyNote}</p>
+      <Segmented<WeeklyDimension> label="Group by" value={dimension} options={dimensions} onChange={setDimension} />
       {weeks.map((week) => (
-        <div key={week.window}>
-          <p>{windowName(week.window)} · {share.format(week.usage)} used</p>
+        <Rows key={week.window} label={windowName(week.window)}>
+          <Row title={`${windowName(week.window)} · ${share.format(week.usage)} used`} />
           {week[dimension].map((group) => (
-            <div className="board-line" key={JSON.stringify(group.key)}>
-              {dimension === 'agents' && isRef(group.key) ? <Chip place={{ brick: 'agent', params: { agent: group.key } }}>{group.title}</Chip>
-                : dimension === 'conversations' && isRef(group.key) ? <Chip place={{ brick: 'session', params: { session: group.key } }}>{group.title}</Chip> : <span>{group.title}</span>}
-              <span className="text-muted-foreground">{share.format(group.share)}</span>
-            </div>
+            <Row key={JSON.stringify(group.key)} end={<span className="board-number">{share.format(group.share)}</span>}
+              title={dimension === 'agents' && isRef(group.key) ? <Chip place={{ brick: 'agent', params: { agent: group.key } }}>{group.title}</Chip>
+                : dimension === 'conversations' && isRef(group.key) ? <Chip place={{ brick: 'session', params: { session: group.key } }}>{group.title}</Chip> : group.title} />
           ))}
-          <p className="text-muted-foreground">Unattributed · {share.format(week.unattributed)}</p>
-        </div>
+          <Row title={<span className="board-note">Unattributed</span>} end={<span className="board-number">{share.format(week.unattributed)}</span>} />
+        </Rows>
       ))}
+      <Note>{weeklyNote}</Note>
     </>
   );
 }
@@ -64,50 +57,64 @@ function SignIn({ account, box, act }: { account: string; box: string; act: Act 
     catch { setState('failed'); }
   }
   return (
-    <>
-      <button type="button" className="board-action" disabled={state === 'sending' || state === 'sent'} onClick={() => void ask()}>Sign in on this machine</button>
-      {state === 'sent' && <span role="status">{subscriptionWords.signInSent}</span>}
-      {state === 'failed' && <span role="status">{subscriptionWords.signInFailed}</span>}
-    </>
+    <Actions>
+      <Action disabled={state === 'sending' || state === 'sent'} onClick={() => void ask()}>Sign in on this machine</Action>
+      {state === 'sent' && <span role="status" className="board-note">{subscriptionWords.signInSent}</span>}
+      {state === 'failed' && <span role="status" className="board-problem">{subscriptionWords.signInFailed}</span>}
+    </Actions>
   );
 }
 
-function Account({ account, zone, now, act }: { account: RuntimeAccountDetail; zone?: string; now: number; act: Act }) {
+/** An account's usage windows: each a name, a bar, how full, and when it resets. Opened, each also says when it was
+ * read (and that the reading is stale) and what is held in reserve. */
+function Windows({ account, now, detail }: { account: RuntimeAccountDetail; now: number; detail?: boolean }) {
+  const windows = account.windows?.length ? account.windows : [{ window: '', usage: account.usage, usageReadAt: account.usageReadAt, resetsAt: account.resetsAt, reserve: null }];
+  return (
+    <div className="board-windows">
+      {windows.map((w) => {
+        const read = Date.parse(w.usageReadAt ?? ''), name = w.window ? windowName(w.window) : 'Usage';
+        return (
+          <div key={w.window}>
+            <span>{name}</span>
+            {w.usage === null ? <span className="board-windows-none">Not read yet</span> : <><Meter label={name} value={Math.round(w.usage * 100)} /><span className="board-number">{usagePercent(w.usage)}</span></>}
+            {(w.resetsAt || detail) && (
+              <small>
+                {w.resetsAt && <>Resets <Time at={w.resetsAt} /></>}
+                {detail && <>{w.resetsAt ? ' · ' : ''}{Number.isFinite(read) ? <>Read <Time at={read} />{usageReadStale(read, now) ? subscriptionWords.stale : ''}</> : 'Reading not available'}{w.reserve !== null ? ' · Reserve ' + usagePercent(w.reserve) : ''}</>}
+              </small>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function Account({ account, act }: { account: RuntimeAccountDetail; act: Act }) {
   const logins = account.logins ?? [];
   return (
-    <dl style={{ margin: '.4rem 0 .8rem' }}>
-      <div>
-        <dt>Usage</dt>
-        <dd>
-          {account.windows?.length ? account.windows.map((w) => (
-            <p key={w.window}>{windowName(w.window)} · {w.usage === null ? 'Not read yet' : usagePercent(w.usage)}
-              <span className="text-muted-foreground">{w.usageReadAt ? ' · Read ' + readLine(w.usageReadAt, zone, now) : ''}{w.resetsAt ? ' · Resets ' + time(w.resetsAt, zone) : ''}{w.reserve !== null ? ' · Reserve ' + usagePercent(w.reserve) : ''}</span>
-            </p>
-          )) : <p>{account.usage === null ? 'Not read yet' : usagePercent(account.usage)}<span className="text-muted-foreground"> · Read {readLine(account.usageReadAt, zone, now)} · Resets {time(account.resetsAt, zone)}</span></p>}
-          <p>Has room: {account.hasRoom ? 'Yes' : 'No'}</p>
-        </dd>
-      </div>
-      <div><dt>Weekly usage</dt><dd><Weekly account={account.id} /></dd></div>
-      <div>
-        <dt>Sign-ins</dt>
-        <dd>
-          {account.pendingSignIns?.map((box) => <p key={box.id}>{box.name} · Sign-in requested</p>)}
-          {logins.length ? logins.map((login) => (
-            <div key={JSON.stringify([login.box.id, login.place, login.harness])}>
-              <div className="board-line">
-                <strong>{login.box.name}</strong><span>{loginLine(login)}</span>
-                <span className="board-state">{loginState(login)}</span>
+    <Opened>
+      <Facts>
+        <Fact label="Has room">{account.hasRoom ? 'Yes' : 'No'}</Fact>
+        <Fact label="Owner">{isMember(account.owner) ? <Chip place={{ brick: 'person', params: { person: 'member:' + account.owner } }}>{account.owner}</Chip> : account.owner}</Fact>
+        <Fact label="Service">{account.provider}</Fact>
+        <Fact label="Configured machines">{account.signedInOn.map((box) => box.name).join(' · ') || 'No machines'}</Fact>
+      </Facts>
+      <Section title="Sign-ins">
+        {!logins.length && !account.pendingSignIns?.length ? <Note>No sign-ins reported.</Note> : (
+          <Rows>
+            {account.pendingSignIns?.map((box) => <Row key={box.id} title={box.name} end={<State tone="waiting">Sign-in requested</State>} />)}
+            {logins.map((login) => (
+              <Row key={JSON.stringify([login.box.id, login.place, login.harness])} title={login.box.name} end={<State tone={loginTone(login)}>{loginState(login)}</State>}
+                meta={<>{loginLine(login)} · Checked <Time at={login.checkedAt} />{login.expiresAt && <> · {login.expired ? 'Ended' : 'Ends'} <Time at={login.expiresAt} /></>}</>}>
                 {login.canRequest && <SignIn account={account.id} box={login.box.id} act={act} />}
-              </div>
-              <p className="text-muted-foreground">Checked {time(login.checkedAt, zone)}{login.expiresAt ? ` · ${login.expired ? 'Ended' : 'Ends'} ${time(login.expiresAt, zone)}` : ''}</p>
-            </div>
-          )) : !account.pendingSignIns?.length && <p>No sign-ins reported.</p>}
-        </dd>
-      </div>
-      <div><dt>Owner</dt><dd>{isMember(account.owner) ? <Chip place={{ brick: 'person', params: { person: 'member:' + account.owner } }}>{account.owner}</Chip> : account.owner}</dd></div>
-      <div><dt>Service</dt><dd>{account.provider}</dd></div>
-      <div><dt>Configured machines</dt><dd>{account.signedInOn.map((box) => box.name).join(' · ') || 'No machines'}</dd></div>
-    </dl>
+              </Row>
+            ))}
+          </Rows>
+        )}
+      </Section>
+      <Section title="Weekly usage"><Weekly account={account.id} /></Section>
+    </Opened>
   );
 }
 
@@ -132,24 +139,23 @@ function Add({ setup, act }: { setup: SubscriptionSetup; act: Act }) {
     } catch { setMessage(subscriptionWords.notConfirmed); }
     finally { setBusy(false); }
   }
-  if (!open) return <div className="board-line"><button type="button" className="board-action" onClick={() => setOpen(true)}>Add a subscription</button>{message && <span role="status">{message}</span>}</div>;
+  if (!open) return <Actions><Action onClick={() => setOpen(true)}>Add a subscription</Action>{message && <span role="status" className="board-note">{message}</span>}</Actions>;
   return (
-    <form aria-label="Add a subscription" onSubmit={(event) => void submit(event)}>
-      <p className="text-muted-foreground">Owner: {setup.member}</p>
-      <div className="board-line" role="group" aria-label="Service">Service
-        {setup.providers.map((p) => <button key={p} type="button" className="board-action" aria-pressed={provider === p} disabled={busy} onClick={() => setProvider(p)}>{p}</button>)}
-      </div>
-      <label className="board-line">Label<input className="board-input" required maxLength={200} value={label} disabled={busy} onChange={(e) => setLabel(e.target.value)} /></label>
+    <form className="board-form" aria-label="Add a subscription" onSubmit={(event) => void submit(event)}>
+      <Facts><Fact label="Owner">{setup.member}</Fact></Facts>
+      <Segmented<string> label="Service" value={provider} options={setup.providers.map((p) => ({ value: p, label: p }))} onChange={setProvider} disabled={busy} />
+      <label className="board-field"><span>Label</span><input className="board-input" required maxLength={200} value={label} disabled={busy} onChange={(e) => setLabel(e.target.value)} /></label>
       {!!setup.machines.length && (
-        <div className="board-line" role="group" aria-label="Machines to sign in on">Machines to sign in on
-          {setup.machines.map((m) => <button key={m.id} type="button" className="board-action" aria-pressed={machines.includes(m.id)} disabled={busy} onClick={() => setMachines(machines.includes(m.id) ? machines.filter((id) => id !== m.id) : [...machines, m.id])}>{m.name}</button>)}
+        <div className="board-choice" role="group" aria-label="Machines to sign in on">
+          <span className="board-choice-label">Machines to sign in on</span>
+          <Actions>{setup.machines.map((m) => <Action key={m.id} pressed={machines.includes(m.id)} disabled={busy} onClick={() => setMachines(machines.includes(m.id) ? machines.filter((id) => id !== m.id) : [...machines, m.id])}>{m.name}</Action>)}</Actions>
         </div>
       )}
-      <div className="board-line">
-        <button type="submit" className="board-action" disabled={busy}>Add subscription</button>
-        <button type="button" className="board-action" disabled={busy} onClick={() => { setOpen(false); setMessage(''); }}>Cancel</button>
-      </div>
-      {message && <p role="status">{message}</p>}
+      <Actions>
+        <Action submit kind="primary" disabled={busy}>Add subscription</Action>
+        <Action kind="quiet" disabled={busy} onClick={() => { setOpen(false); setMessage(''); }}>Cancel</Action>
+      </Actions>
+      {message && <p role="status" className="board-note">{message}</p>}
     </form>
   );
 }
@@ -164,51 +170,52 @@ export function Subscriptions({ form, act, raise }: BodyProps) {
   useOwnFlag(need, raise, (was, now) => (now > was ? 'Sign-in needed' : null));
   if (feed.status === 'loading') return <Loading />;
   if (!rows) return <Unavailable what="list of subscriptions" />;
-  const zone = feed.data?.deskTime?.timezone, now = Date.now();
+  const now = Date.now();
   const full = rows.filter((row) => row.level === 'almost full').length;
-  const count = `${rows.length} subscription${rows.length === 1 ? '' : 's'}${full ? ` · ${full} almost full` : ''}${need ? ` · ${need} ${need === 1 ? 'sign-in' : 'sign-ins'} needed` : ''}`;
-  if (form === 'compact') return <p className="board-brief">{count}</p>;
+  const summary = `${count(rows.length, 'subscription')}${full ? ` · ${full} almost full` : ''}${need ? ` · ${count(need, 'sign-in')} needed` : ''}`;
+  if (form === 'compact') return <p className="board-brief">{summary}</p>;
   const services = accountServices(rows, primary ? search : '', primary && attentionOnly);
   const setup = creation.status === 'live' ? creation.data?.subscriptionSetup : null;
   const groups = primary ? modelGroups(feed.data) : new Map();
   return (
     <>
-      <p className="board-line"><span>{count}</span></p>
-      {primary && (
-        <div className="board-line" role="search">
+      <Lead>{summary}</Lead>
+      {primary && rows.length > 0 && (
+        <div className="board-pick" role="search">
           <input className="board-input" type="search" aria-label="Search subscriptions" placeholder="Search subscriptions…" value={search} onChange={(e) => setSearch(e.target.value)} />
-          <button type="button" className="board-action" aria-pressed={attentionOnly} onClick={() => setAttentionOnly(!attentionOnly)}>Needs attention</button>
+          <Action kind="quiet" pressed={attentionOnly} onClick={() => setAttentionOnly(!attentionOnly)}>Needs attention</Action>
         </div>
       )}
-      {!rows.length ? <p className="text-muted-foreground">No model accounts yet.</p> : !services.size ? <p className="text-muted-foreground">No matching subscriptions.</p> : [...services].map(([provider, accounts]) => (
-        <section key={JSON.stringify(provider)} aria-label={provider ?? 'Shared summaries'} style={{ marginTop: '.6rem' }}>
-          <p className="board-lead">{serviceLine(provider, accounts)}</p>
-          {accounts.map((account, index) => account.__typename === 'RuntimeAccountSummary' ? <p key={index}>{account.label} · {account.level}</p> : (
-            <div key={account.id}>
-              <div className="board-line">
-                {primary ? <button type="button" className="board-action" aria-expanded={open === account.id} onClick={() => setOpen(open === account.id ? '' : account.id)}>{account.label}</button> : null}
-                <span>{accountLine(account)}</span>
-              </div>
-              {!primary && !!account.windows?.length && <p className="text-muted-foreground">{account.windows.map((w) => `${windowName(w.window)} ${w.usage === null ? 'not read yet' : usagePercent(w.usage)}`).join(' · ')}</p>}
-              {primary && open === account.id && <Account account={account} zone={zone} now={now} act={act} />}
-            </div>
-          ))}
-        </section>
+      {!rows.length ? <Note>No model accounts yet.</Note> : !services.size ? <Note>No matching subscriptions.</Note> : [...services].map(([provider, accounts]) => (
+        <Section key={JSON.stringify(provider)} title={provider ?? 'Shared summaries'} count={`${accounts.length} · ${serviceLevel(accounts)}${serviceNeedsSignIn(accounts) ? ' · Sign-in needed' : ''}`}>
+          <Rows>
+            {accounts.map((account, index) => {
+              if (account.__typename === 'RuntimeAccountSummary') return <Row key={index} title={account.label} end={<State tone={levelTone(account.level)}>{account.level}</State>} />;
+              const logins = account.logins ?? [], { signedIn, attention, lastKnown } = loginCounts(account);
+              const line = [account.owner, logins.length ? `${signedIn} signed in` : 'No sign-ins reported', attention > 0 && `${attention} ${attention === 1 ? 'needs' : 'need'} attention`,
+                lastKnown > 0 && `${lastKnown} last known`, !!account.pendingSignIns?.length && 'Sign-in requested'].filter(Boolean).join(' · ');
+              return (
+                <Row key={account.id} meta={line} end={<State tone={levelTone(account.level)}>{account.level}</State>}
+                  title={primary ? <Opens open={open === account.id} onToggle={() => setOpen(open === account.id ? '' : account.id)}>{account.label}</Opens> : account.label}>
+                  <Windows account={account} now={now} detail={primary && open === account.id} />
+                  {primary && open === account.id && <Account account={account} act={act} />}
+                </Row>
+              );
+            })}
+          </Rows>
+        </Section>
       ))}
       {primary && (
-        <dl style={{ marginTop: '.9rem' }}>
-          <div>
-            <dt>Models in preference order</dt>
-            <dd>
-              {!groups.size ? <p className="text-muted-foreground">No model preferences yet.</p> : [...groups].map(([agent, models]) => (
-                <div className="board-line" key={agent}>
-                  {isRef(agent) ? <Chip place={{ brick: 'agent', params: { agent } }}>{agent}</Chip> : <span>{agent}</span>}
-                  <span>{models.map((row: { model: string }, index: number) => row.model + (index === 0 ? ' · Primary' : '')).join(', ')}</span>
-                </div>
+        <Section title="Models in preference order">
+          {!groups.size ? <Note>No model preferences yet.</Note> : (
+            <Rows>
+              {[...groups].map(([agent, models]) => (
+                <Row key={agent} title={isRef(agent) ? <Chip place={{ brick: 'agent', params: { agent } }}>{agent}</Chip> : agent}
+                  meta={models.map((row: { model: string }, index: number) => row.model + (index === 0 ? ' · Primary' : '')).join(', ')} />
               ))}
-            </dd>
-          </div>
-        </dl>
+            </Rows>
+          )}
+        </Section>
       )}
       {primary && setup && !!setup.providers.length && <Add key={setup.member} setup={setup} act={act} />}
     </>

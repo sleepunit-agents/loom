@@ -5,6 +5,8 @@ import { useDataQuery } from '../data/graphql';
 import { threadFields } from '../pieces/comms/thread-fields';
 import { threadRows, type CommsThread } from '../pieces/comms-view/model';
 import { useDeskAgentDirectory } from '../pieces/attention/agent-directory';
+import type { FaceState } from '../face';
+import type { Tone } from './brick-kit';
 
 /** An agent's display name as Comms says it: the shared directory's, or its id with a capital. */
 export function useAgentNames(): (id: string) => string {
@@ -30,3 +32,7 @@ export function useThreads(archived = false): ThreadsReading {
   }, [read, archived]);
 }
 export const threadPath = (id: string) => '/app/t/' + encodeURIComponent(id);
+
+/** An agent's state as a tone and as its face's expression: waiting on the member first, then working, then quiet. */
+export const agentTone = (state: string | undefined, needs: number | undefined): Tone => (needs ? 'waiting' : state === 'working' ? 'working' : 'muted');
+export const agentMood = (state: string | undefined, needs: number | undefined): FaceState => (needs ? 'needs-input' : state === 'working' ? 'working' : 'idle');

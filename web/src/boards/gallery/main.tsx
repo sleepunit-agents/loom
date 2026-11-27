@@ -1,0 +1,109 @@
+/** The bricks' gallery (development only; web/vite.gallery.config.ts, `npm run gallery:build`): every brick of the
+ * page's registry in its three forms, at the sizes the layout gives them, drawn from fixtures and never from loom.
+ *
+ * The address chooses what is drawn:
+ *   ?scheme=dark|light       the colour scheme (default: the device's)
+ *   ?sheet=side|compact|primary|phone   one contact sheet: every brick's `default` scene in that form
+ *   ?brick=<name>            only that brick's scenes
+ * With no `sheet`, every scene of every brick is drawn in all its forms. Each drawing is a <figure data-shot>, which
+ * is what web/scripts/gallery-shots.mjs photographs. */
+import { Suspense, useEffect, useRef, type ReactNode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { bricks, brickView } from '../bricks';
+import { Loading } from '../brick-kit';
+import type { Form } from '../layout';
+import { PlacementFrame } from '../placement';
+import { SceneContext } from './fake-graphql';
+import { all, groups } from './fixtures';
+import type { Scene } from './scenes';
+import '../../pair/screen.css';
+import '../board.css';
+import '../board-kit.css';
+import './gallery.css';
+
+const query = new URLSearchParams(location.search);
+const scheme = query.get('scheme');
+if (scheme === 'dark' || scheme === 'light') document.documentElement.style.colorScheme = scheme;
+// A brick's operations go nowhere: each is answered as saved, a moment later.
+window.fetch = async () => { await new Promise((done) => setTimeout(done, 400)); return new Response(JSON.stringify({ ok: true, value: {} }), { status: 200, headers: { 'content-type': 'application/json' } }); };
+
+type Drawn = Form | 'phone';
+/** The room the layout gives a form on an ordinary screen (../layout.ts): a 1440 px window gives the side column
+ * about 300 px and a 1920 px one its ideal 360; the primary gets what is left, up to its max. */
+function room(brick: string, form: Drawn): { w: number; h: number } {
+  const fits = brickView(brick).fits;
+  if (form === 'phone') return { w: 362, h: 620 };
+  if (form === 'primary') return { w: Math.min(fits.primary.max, Math.max(fits.primary.min, 700)), h: Math.max(fits.primary.height, 640) };
+  return { w: 320, h: fits[form].height };
+}
+
+/** Presses a scene's buttons, in order, once the brick has drawn them. */
+function Pressed({ labels, children }: { labels?: string[]; children: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!labels?.length) return;
+    let stopped = false;
+    void (async () => {
+      for (const label of labels) {
+        for (let tries = 0; tries < 40 && !stopped; tries++) {
+          const button = [...(box.current?.querySelectorAll('button') ?? [])].find((b) => b.textContent?.trim() === label);
+          if (button) { button.click(); break; }
+          await new Promise((done) => setTimeout(done, 50));
+        }
+      }
+    })();
+    return () => { stopped = true; };
+  }, [labels]);
+  return <div ref={box} style={{ display: 'contents' }}>{children}</div>;
+}
+
+function Shot({ brick, scene, form }: { brick: string; scene: Scene; form: Drawn }) {
+  const view = brickView(brick), size = room(brick, form), drawnForm: Form = form === 'phone' ? 'primary' : form;
+  const { Body } = view;
+  return (
+    <figure data-shot={`${brick}.${scene.name}.${form}`}>
+      <figcaption><b>{brick}</b> {scene.name} · {form}</figcaption>
+      <SceneContext.Provider value={scene}>
+        <Pressed labels={scene.press}>
+          <PlacementFrame title={view.title(scene.params)} sub={view.sub(scene.params)} form={drawnForm} flag={scene.flag} canMaximize={drawnForm !== 'primary'}
+            style={{ width: size.w, height: size.h }}>
+            <Suspense fallback={<Loading />}><Body params={scene.params} form={drawnForm} act={() => {}} raise={() => {}} /></Suspense>
+          </PlacementFrame>
+        </Pressed>
+      </SceneContext.Provider>
+    </figure>
+  );
+}
+
+function Gallery() {
+  const sheet = query.get('sheet') as Drawn | null, only = query.get('brick');
+  const missing = Object.keys(bricks).filter((name) => !all.some((b) => b.brick === name));
+  if (sheet) {
+    return (
+      <div className="gallery-sheet" data-sheet={sheet}>
+        {all.map((b) => { const scene = b.scenes.find((s) => s.name === 'default') ?? b.scenes[0]; return scene ? <Shot key={b.brick} brick={b.brick} scene={scene} form={sheet} /> : null; })}
+      </div>
+    );
+  }
+  return (
+    <>
+      {missing.length > 0 && <p className="gallery-missing">No fixtures: {missing.join(', ')}</p>}
+      {groups.map((group) => (
+        <section key={group.name} className="gallery-group">
+          {!only && <h1>{group.name}</h1>}
+          {group.bricks.filter((b) => !only || b.brick === only).map((b) => (
+            <section key={b.brick} className="gallery-brick">
+              {b.scenes.map((scene) => (
+                <div key={scene.name} className="gallery-scene">
+                  {(['primary', 'side', 'compact'] as const).filter((form) => !scene.only || scene.only.includes(form)).map((form) => <Shot key={form} brick={b.brick} scene={scene} form={form} />)}
+                </div>
+              ))}
+            </section>
+          ))}
+        </section>
+      ))}
+    </>
+  );
+}
+
+createRoot(document.getElementById('root')!).render(<main className="boards-page pair-workspace gallery"><Gallery /></main>);

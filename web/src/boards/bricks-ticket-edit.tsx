@@ -8,8 +8,8 @@ import { useState, type FormEvent } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { displayName } from '../kit/words';
 import { Reply } from '../pair/reply';
-import { ticketChip, type Act } from './brick-kit';
-import { Pick, Words, priorityWord, ticketChoicesQuery, useSummary, useTaskChoices, useTaskCommand, type Summary } from './bricks-work';
+import { Action, Actions, Fact, Facts, Problem, Segmented, Time, ticketChip, type Act } from './brick-kit';
+import { Words, priorityWord, ticketChoicesQuery, useSummary, useTaskChoices, useTaskCommand, type Summary } from './bricks-work';
 import type { Form } from './layout';
 import { TicketPicker } from './ticket-picker';
 
@@ -22,16 +22,14 @@ export const ticketMoreQuery = `query BrickTicketMore($id:String!){
     taskLinksByTask{dependsOn type dependsOnRow{id title}} taskLinksByDependsOn{task type taskRow{id title}}}
 }`;
 export { ticketChoicesQuery };
-const day = (at: string) => new Date(at).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
 
 /** A linked ticket: a chip, with its title in the primary form. One the member may not read is its id alone. */
 function Linked({ label, rows, titles }: { label: string; rows: { id: string; row: Near }[]; titles: boolean }) {
   if (!rows.length) return null;
   return (
-    <div className="board-line" role="group" aria-label={label}>
-      <span className="text-muted-foreground">{label}</span>
-      {rows.map(({ id, row }) => <span key={id}>{row ? ticketChip(id) : <span className="font-mono">{id}</span>}{titles && row ? ' ' + row.title : ''}</span>)}
-    </div>
+    <Fact label={label}>
+      {rows.map(({ id, row }) => <span key={id} className="board-linked">{row ? ticketChip(id) : <span className="font-mono">{id}</span>}{titles && row ? <span> {row.title}</span> : null}</span>)}
+    </Fact>
   );
 }
 
@@ -39,13 +37,10 @@ function EditForm({ ticket, act, done }: { ticket: More; act: Act; done(): void 
   const draft = useSummary(ticket), { projects } = useTaskChoices(), { busy, error, run } = useTaskCommand(act);
   const save = async (e: FormEvent) => { e.preventDefault(); if (draft.valid && await run('edit', { action: 'edit', id: ticket.id, input: draft.summary() })) done(); };
   return (
-    <form aria-label="Edit ticket" onSubmit={(e) => void save(e)}>
+    <form className="board-form" aria-label="Edit ticket" onSubmit={(e) => void save(e)}>
       {draft.fields({ more: true, projects, disabled: busy })}
-      <div className="board-line">
-        <button type="submit" className="board-action" disabled={busy || !draft.valid}>Save changes</button>
-        <button type="button" className="board-action" onClick={done}>Cancel</button>
-      </div>
-      {error && <p role="alert" className="text-destructive">{error}</p>}
+      <Actions><Action submit kind="primary" disabled={busy || !draft.valid}>Save changes</Action><Action kind="quiet" onClick={done}>Cancel</Action></Actions>
+      <Problem>{error}</Problem>
     </form>
   );
 }
@@ -60,41 +55,41 @@ function LinksForm({ ticket, act, done }: { ticket: More; act: Act; done(): void
   const link = (type: Relation, dependsOn: string) => run('link', { action: 'link', id: ticket.id, dependsOn, type }, { type });
   const unlink = (type: Relation, dependsOn: string) => run('unlink', { action: 'unlink', id: ticket.id, dependsOn, type }, { type });
   const now = (type: Relation, label: string) => has(type).map((l) => (
-    <div className="board-line" key={l.dependsOn}>
+    <div className="board-linked-now" key={l.dependsOn}>
       <span>{l.dependsOnRow ? `${l.dependsOnRow.title} · ` : ''}<span className="font-mono">{l.dependsOn}</span></span>
-      <button type="button" className="board-action" aria-label={`Remove ${label} ${l.dependsOn}`} disabled={busy} onClick={() => void unlink(type, l.dependsOn)}>Remove</button>
+      <Action kind="quiet" label={`Remove ${label} ${l.dependsOn}`} disabled={busy} onClick={() => void unlink(type, l.dependsOn)}>Remove</Action>
     </div>
   ));
   return (
-    <div role="group" aria-label="Links to other tickets">
-      <dl style={{ marginTop: '.8rem' }}>
+    <div className="board-form" role="group" aria-label="Links to other tickets">
+      <dl>
         <div>
           <dt>Parent</dt>
-          <dd>
+          <dd className="board-form">
             {now('parent-child', 'parent')}
             {/* A parent is changed by taking the one it has away first, so a second is not offered beside it. */}
-            {has('parent-child').length ? <p className="text-muted-foreground">To change the parent, remove this one first.</p> : (
-              <form className="board-line" onSubmit={(e) => { e.preventDefault(); if (known('parent-child', parent)) void link('parent-child', parent).then((ok) => { if (ok) setParent(''); }); }}>
+            {has('parent-child').length ? <p className="board-note">To change the parent, remove this one first.</p> : (
+              <form className="board-pick" onSubmit={(e) => { e.preventDefault(); if (known('parent-child', parent)) void link('parent-child', parent).then((ok) => { if (ok) setParent(''); }); }}>
                 <TicketPicker label="Parent ticket" value={parent} onChange={setParent} tickets={offered('parent-child')} disabled={busy} />
-                <button type="submit" className="board-action" disabled={busy || !known('parent-child', parent)}>Set parent</button>
+                <Action submit disabled={busy || !known('parent-child', parent)}>Set parent</Action>
               </form>
             )}
           </dd>
         </div>
         <div>
           <dt>Blocked by</dt>
-          <dd>
+          <dd className="board-form">
             {now('blocks', 'blocker')}
-            <form className="board-line" onSubmit={(e) => { e.preventDefault(); if (known('blocks', blocker)) void link('blocks', blocker).then((ok) => { if (ok) setBlocker(''); }); }}>
+            <form className="board-pick" onSubmit={(e) => { e.preventDefault(); if (known('blocks', blocker)) void link('blocks', blocker).then((ok) => { if (ok) setBlocker(''); }); }}>
               <TicketPicker label="Blocking ticket" value={blocker} onChange={setBlocker} tickets={offered('blocks')} disabled={busy} />
-              <button type="submit" className="board-action" disabled={busy || !known('blocks', blocker)}>Add blocker</button>
+              <Action submit disabled={busy || !known('blocks', blocker)}>Add blocker</Action>
             </form>
-            <p className="text-muted-foreground">This ticket waits until the one you choose is closed.</p>
+            <p className="board-note">This ticket waits until the one you choose is closed.</p>
           </dd>
         </div>
       </dl>
-      <div className="board-line"><button type="button" className="board-action" onClick={done}>Done</button></div>
-      {error && <p role="alert" className="text-destructive">{error}</p>}
+      <Actions><Action onClick={done}>Done</Action></Actions>
+      <Problem>{error}</Problem>
     </div>
   );
 }
@@ -113,17 +108,14 @@ function AskForm({ ticket, act, done }: { ticket: More; act: Act; done(): void }
     if (valid && await run('ask', { action: 'ask', id: ticket.id, input: { to: { kind: 'member', id: to }, ask: ask.trim(), ifYes: ifYes.trim(), ifNo: ifNo.trim(), answers } })) done();
   };
   return (
-    <form aria-label="Ask a person" onSubmit={(e) => void save(e)}>
-      <Pick<string> label="Person" value={to} options={members.map((who) => ({ value: who.id, label: who.label }))} onChange={setTo} disabled={busy} />
+    <form className="board-form" aria-label="Ask a person" onSubmit={(e) => void save(e)}>
+      <Segmented<string> label="Person" value={to} options={members.map((who) => ({ value: who.id, label: who.label }))} onChange={setTo} disabled={busy} />
       <Words label="Question" long value={ask} onChange={setAsk} disabled={busy} />
       <Words label="If yes" long value={ifYes} onChange={setIfYes} disabled={busy} />
       <Words label="If no" long value={ifNo} onChange={setIfNo} disabled={busy} />
-      <Pick<'yes-no' | 'words'> label="Answer" value={answers} options={askAnswers} onChange={setAnswers} disabled={busy} />
-      <div className="board-line">
-        <button type="submit" className="board-action" disabled={busy || !valid}>Ask</button>
-        <button type="button" className="board-action" onClick={done}>Cancel</button>
-      </div>
-      {error && <p role="alert" className="text-destructive">{error}</p>}
+      <Segmented<'yes-no' | 'words'> label="Answer" value={answers} options={askAnswers} onChange={setAnswers} disabled={busy} />
+      <Actions><Action submit kind="primary" disabled={busy || !valid}>Ask</Action><Action kind="quiet" onClick={done}>Cancel</Action></Actions>
+      <Problem>{error}</Problem>
     </form>
   );
 }
@@ -132,47 +124,58 @@ function Promote({ ticket, act, done }: { ticket: More; act: Act; done(): void }
   const { busy, error, run } = useTaskCommand(act);
   return (
     <>
-      <div className="board-line" role="group" aria-label="Promote to epic">
-        <button type="button" className="board-action" disabled={busy} onClick={() => void run('promote', { action: 'edit', id: ticket.id, input: { type: 'epic' } }).then((ok) => { if (ok) done(); })}>Make this ticket an epic</button>
-        <button type="button" className="board-action" onClick={done}>Cancel</button>
-      </div>
-      {error && <p role="alert" className="text-destructive">{error}</p>}
+      <Actions label="Promote to epic">
+        <Action kind="primary" disabled={busy} onClick={() => void run('promote', { action: 'edit', id: ticket.id, input: { type: 'epic' } }).then((ok) => { if (ok) done(); })}>Make this ticket an epic</Action>
+        <Action kind="quiet" onClick={done}>Cancel</Action>
+      </Actions>
+      <Problem>{error}</Problem>
     </>
   );
 }
 
-export function TicketMore({ id, form, act }: { id: string; form: Form; act: Act }) {
+/** The rest of a ticket, read once and drawn in three places of the brick: a line under its title (`meta`), its
+ * longer facts and links (`facts`), and its forms (`forms`), whose opening controls join the brick's own (`controls`). */
+export function useTicketMore(id: string, form: Form, act: Act) {
   const read = useDataQuery<{ ticket: More | null }>(ticketMoreQuery, { id }, { keep: true });
   const [open, setOpen] = useState<'edit' | 'links' | 'ask' | 'promote'>();
   const t = read.status === 'live' ? read.data?.ticket : undefined;
-  if (!t || form === 'compact') return null;
-  const big = form === 'primary';
+  if (!t || form === 'compact') return { meta: null, facts: null, controls: null, forms: null, open: false };
+  const big = form === 'primary', done = () => setOpen(undefined);
   const up = (t.taskLinksByTask ?? []).map((l) => ({ type: l.type, id: l.dependsOn, row: l.dependsOnRow }));
   const down = (t.taskLinksByDependsOn ?? []).map((l) => ({ type: l.type, id: l.task, row: l.taskRow }));
-  return (
-    <div data-ticket-more="">
-      <div className="board-line">
-        <span className="board-state">{priorityWord(t.priority)}</span>
-        {t.createdBy && <span className="text-muted-foreground">Filed by {displayName(t.createdBy)}{t.createdAt ? ' · ' + day(t.createdAt) : ''}</span>}
-      </div>
-      {big && t.description && <dl style={{ marginTop: '.8rem' }}><div><dt>Description</dt><dd><Reply words={t.description} /></dd></div></dl>}
-      {t.status === 'closed' && t.closeReason && <dl style={{ marginTop: '.8rem' }}><div><dt>Closed{t.closedAt ? ' · ' + day(t.closedAt) : ''}</dt><dd><Reply words={t.closeReason} /></dd></div></dl>}
-      <Linked label="Parent" titles={big} rows={up.filter((l) => l.type === 'parent-child')} />
-      <Linked label="Children" titles={big} rows={down.filter((l) => l.type === 'parent-child')} />
-      <Linked label="Blocked by" titles={big} rows={up.filter((l) => l.type === 'blocks')} />
-      <Linked label="Blocks" titles={big} rows={down.filter((l) => l.type === 'blocks')} />
-      {big && !open && (
-        <div className="board-line">
-          <button type="button" className="board-action" onClick={() => setOpen('edit')}>Edit…</button>
-          <button type="button" className="board-action" onClick={() => setOpen('links')}>Links…</button>
-          {t.status !== 'closed' && <button type="button" className="board-action" onClick={() => setOpen('ask')}>Ask a person…</button>}
-          {t.type !== 'epic' && <button type="button" className="board-action" onClick={() => setOpen('promote')}>Promote to epic…</button>}
-        </div>
-      )}
-      {big && open === 'edit' && <EditForm ticket={t} act={act} done={() => setOpen(undefined)} />}
-      {big && open === 'ask' && <AskForm ticket={t} act={act} done={() => setOpen(undefined)} />}
-      {big && open === 'promote' && <Promote ticket={t} act={act} done={() => setOpen(undefined)} />}
-      {big && open === 'links' && <LinksForm ticket={{ ...t, taskLinksByTask: t.taskLinksByTask ?? [] }} act={act} done={() => setOpen(undefined)} />}
-    </div>
-  );
+  const linked = up.length + down.length > 0;
+  return {
+    open: big && !!open,
+    meta: <><span className="board-priority">{priorityWord(t.priority)}</span>{t.createdBy && <span>Filed by {displayName(t.createdBy)}{t.createdAt && <> · <Time at={t.createdAt} /></>}</span>}</>,
+    facts: (
+      <>
+        {((big && t.description) || (t.status === 'closed' && t.closeReason)) && (
+          <Facts>
+            {big && t.description && <Fact wide label="Description"><Reply words={t.description} /></Fact>}
+            {t.status === 'closed' && t.closeReason && <Fact wide label="Closed">{t.closedAt && <Time at={t.closedAt} />}<Reply words={t.closeReason} /></Fact>}
+          </Facts>
+        )}
+        {linked && (
+          <Facts>
+            <Linked label="Parent" titles={big} rows={up.filter((l) => l.type === 'parent-child')} />
+            <Linked label="Children" titles={big} rows={down.filter((l) => l.type === 'parent-child')} />
+            <Linked label="Blocked by" titles={big} rows={up.filter((l) => l.type === 'blocks')} />
+            <Linked label="Blocks" titles={big} rows={down.filter((l) => l.type === 'blocks')} />
+          </Facts>
+        )}
+      </>
+    ),
+    controls: big && !open ? (
+      <>
+        <Action kind="quiet" onClick={() => setOpen('edit')}>Edit…</Action>
+        <Action kind="quiet" onClick={() => setOpen('links')}>Links…</Action>
+        {t.status !== 'closed' && <Action kind="quiet" onClick={() => setOpen('ask')}>Ask a person…</Action>}
+        {t.type !== 'epic' && <Action kind="quiet" onClick={() => setOpen('promote')}>Promote to epic…</Action>}
+      </>
+    ) : null,
+    forms: !big ? null : open === 'edit' ? <EditForm ticket={t} act={act} done={done} />
+      : open === 'ask' ? <AskForm ticket={t} act={act} done={done} />
+      : open === 'promote' ? <Promote ticket={t} act={act} done={done} />
+      : open === 'links' ? <LinksForm ticket={{ ...t, taskLinksByTask: t.taskLinksByTask ?? [] }} act={act} done={done} /> : null,
+  };
 }

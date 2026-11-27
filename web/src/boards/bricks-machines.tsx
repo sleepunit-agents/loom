@@ -9,16 +9,16 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { liveAgents } from '../data/live-agents';
 import { memberOperation } from '../data/operation';
-import { briefTime, fullTime } from '../kit/time';
 import { alertControls, alertLinesSelection, alertPatch, type AlertLines } from '../pieces/household/alert-lines-model';
 import { hostingWord, listedAgents } from '../pieces/runtime/machine-hosting-model';
 import { conditionLine, readingAge, readingLine, readingsOf, type Reading } from '../pieces/runtime/machine-readings';
 import { machinesInventoryQuery, ownerMachinesQuery, signInWarnings, type Machine, type MachineReadEntry, type MachinesInventory, type OwnerMachinesData, type ReaderCard } from '../pieces/runtime/machines-query';
 import { isMember, isRef, useHouseholdOwner } from './admin-data';
-import { Chip, Loading, Unavailable, type Act, type BodyProps } from './brick-kit';
+import { Action, Actions, Chip, Fact, Facts, Lead, Loading, Note, Problem, Row, Rows, Section, State, Time, Unavailable, count, type Act, type BodyProps } from './brick-kit';
+import { Opened, Opens } from './settings-kit';
 
 export const machineFactsQuery = `query BrickMachineFacts { boxes { id sameMachineAsLoom lastSeenAt slots } ${alertLinesSelection} }`;
-type Facts = { boxes: { id: string; sameMachineAsLoom: boolean; lastSeenAt: string | null; slots: number | null }[]; boxAlertSettings: AlertLines[] };
+type MachineFacts = { boxes: { id: string; sameMachineAsLoom: boolean; lastSeenAt: string | null; slots: number | null }[]; boxAlertSettings: AlertLines[] };
 /** The jobs of each of `count` agents the member may read, and the private ones on a machine the member owns,
  * as the desktop's jobs list reads them for one agent (pieces/attention/agent-jobs.tsx). */
 export const machineJobsQuery = (count: number) => `query BrickMachineJobs(${Array.from({ length: count }, (_, i) => `$a${i}:String!`).join(',')}){${Array.from({ length: count }, (_, i) =>
@@ -31,26 +31,22 @@ function Jobs({ box, agents }: { box: string; agents: string[] }) {
   const ids = agents.slice(0, agentCap);
   const query = useMemo(() => machineJobsQuery(Math.max(ids.length, 1)), [ids.length]);
   const read = useDataQuery<Record<string, Job[]>>(query, Object.fromEntries((ids.length ? ids : ['']).map((id, i) => ['a' + i, id])), { keep: true, pause: !ids.length });
-  if (!ids.length) return <p className="text-muted-foreground">None right now.</p>;
+  if (!ids.length) return <Note>None right now.</Note>;
   if (read.status === 'loading') return <Loading />;
-  if (read.status !== 'live' || !read.data) return <p className="text-muted-foreground">Can’t read jobs right now.</p>;
+  if (read.status !== 'live' || !read.data) return <Note>Can’t read jobs right now.</Note>;
   const jobs = Object.values(read.data).flatMap((rows) => (Array.isArray(rows) ? rows : [])).filter((job) => job.box === box && current.includes(job.state))
     .sort((a, b) => b.queuedAt.localeCompare(a.queuedAt) || b.id.localeCompare(a.id));
-  if (!jobs.length) return <p className="text-muted-foreground">None right now.</p>;
+  if (!jobs.length) return <Note>None right now.</Note>;
   return (
-    <>
+    <Rows>
       {jobs.map((job) => {
         const title = 'title' in job ? job.title || 'Untitled job' : 'Private conversation';
         return (
-          <div className="board-line" key={job.id}>
-            {isRef(job.conversation) ? <Chip place={{ brick: 'session', params: { session: job.conversation } }}>{title}</Chip> : <span>{title}</span>}
-            <span className="board-state" data-running={job.state !== 'queued'}>{job.state}</span>
-            {isRef(job.agent) ? <Chip place={{ brick: 'agent', params: { agent: job.agent } }}>{job.agent}</Chip> : <span>{job.agent}</span>}
-            <span className="text-muted-foreground">queued {briefTime(job.queuedAt)}</span>
-          </div>
+          <Row key={job.id} title={title} place={isRef(job.conversation) ? { brick: 'session', params: { session: job.conversation } } : undefined}
+            end={<><State tone={job.state === 'queued' ? 'neutral' : 'working'}>{job.state}</State>{isRef(job.agent) ? <Chip place={{ brick: 'agent', params: { agent: job.agent } }}>{job.agent}</Chip> : <span>{job.agent}</span>}<span>queued <Time at={job.queuedAt} /></span></>} />
         );
       })}
-    </>
+    </Rows>
   );
 }
 
@@ -81,56 +77,53 @@ function Settings({ box, agents, act }: { box: Machine; agents: string[]; act: A
   return (
     <>
       {!box.revokedAt && (
-        <div>
-          <dt>Explicit read grants</dt>
-          <dd>
-            <p className="text-muted-foreground">Agents allowed to run on this machine may also read it.</p>
-            {readers.map((id) => (
-              <div className="board-line" key={id}>
-                {isRef(id) ? <Chip place={{ brick: 'agent', params: { agent: id } }}>{id}</Chip> : <span>{id}</span>}
-                <button type="button" className="board-action" disabled={busy} onClick={() => void propose(id, false)}>Request revocation for {id}</button>
-              </div>
-            ))}
-            {!readers.length && <p>No explicit grants.</p>}
-            {!!choices.length && (
-              <div className="board-line" role="group" aria-label="Agent">
-                {choices.map((id) => <button key={id} type="button" className="board-action" aria-pressed={agent === id} disabled={busy} onClick={() => select(agent === id ? '' : id)}>{id}</button>)}
-                <button type="button" className="board-action" disabled={busy || !agent || readers.includes(agent)} onClick={() => void propose(agent, true)}>Request read grant</button>
-              </div>
-            )}
-            {error && <p role="alert" className="text-destructive">{error}</p>}
-            {cards === undefined && <Loading />}
-            {cards === null && <p className="text-muted-foreground">Pending read grants are unavailable.</p>}
-            {cards?.map((card) => (
-              <div key={card.id}>
-                <p>{card.ask}</p>
-                {card.review && <p className="text-muted-foreground">Updated to show the current readers.</p>}
-                <div className="board-line">
-                  <button type="button" className="board-action" disabled={busy} onClick={() => void change('machine.answerReader', { id: card.id, answer: 'allow', ...(card.review ? { review: card.review } : {}) }, () => act('answerReader', { answer: 'allow' }))}>Allow</button>
-                  <button type="button" className="board-action" disabled={busy} onClick={() => void change('machine.answerReader', { id: card.id, answer: 'deny' }, () => act('answerReader', { answer: 'deny' }))}>Deny</button>
-                </div>
-              </div>
-            ))}
-          </dd>
-        </div>
-      )}
-      <div>
-        <dt>Read history</dt>
-        <dd>
-          <div className="board-line"><button type="button" className="board-action" disabled={busy} onClick={() => refresh((n) => n + 1)}>Refresh</button></div>
-          {history === null && <p className="text-muted-foreground">Machine read history is unavailable.</p>}
-          {history === undefined && <Loading />}
-          {history?.length === 0 && <p>No machine reads recorded.</p>}
-          {history?.map((row) => (
-            <div key={row.id} style={{ marginTop: '.4rem' }}>
-              <p><strong>{row.read}</strong> · {fullTime(row.askedAt)}</p>
-              <p className="text-muted-foreground">{row.agent} · {row.word}{row.person ? ' · ' + row.person : ''} · {row.outcome} · {row.bytes} bytes</p>
-              <p className="text-muted-foreground">Job <span className="font-mono">{row.job}</span> {isRef(row.conversation) && <Chip place={{ brick: 'session', params: { session: row.conversation } }}>Session</Chip>}</p>
-              <p className="text-muted-foreground">Arguments <code>{row.args}</code></p>
+        <Section title="Explicit read grants">
+          <Note>Agents allowed to run on this machine may also read it.</Note>
+          {!readers.length ? <Note>No explicit grants.</Note> : (
+            <Rows>
+              {readers.map((id) => (
+                <Row key={id} title={isRef(id) ? <Chip place={{ brick: 'agent', params: { agent: id } }}>{id}</Chip> : id}
+                  end={<Action kind="quiet" disabled={busy} onClick={() => void propose(id, false)}>Request revocation for {id}</Action>} />
+              ))}
+            </Rows>
+          )}
+          {!!choices.length && (
+            <div className="board-choice" role="group" aria-label="Agent">
+              <span className="board-seg">{choices.map((id) => <button key={id} type="button" aria-pressed={agent === id} disabled={busy} onClick={() => select(agent === id ? '' : id)}>{id}</button>)}</span>
+              <Action disabled={busy || !agent || readers.includes(agent)} onClick={() => void propose(agent, true)}>Request read grant</Action>
             </div>
-          ))}
-        </dd>
-      </div>
+          )}
+          <Problem>{error}</Problem>
+          {cards === undefined && <Loading />}
+          {cards === null && <Note>Pending read grants are unavailable.</Note>}
+          {!!cards?.length && (
+            <Rows>
+              {cards.map((card) => (
+                <Row key={card.id} title={card.ask} meta={card.review ? 'Updated to show the current readers.' : undefined}>
+                  <Actions>
+                    <Action disabled={busy} onClick={() => void change('machine.answerReader', { id: card.id, answer: 'allow', ...(card.review ? { review: card.review } : {}) }, () => act('answerReader', { answer: 'allow' }))}>Allow</Action>
+                    <Action disabled={busy} onClick={() => void change('machine.answerReader', { id: card.id, answer: 'deny' }, () => act('answerReader', { answer: 'deny' }))}>Deny</Action>
+                  </Actions>
+                </Row>
+              ))}
+            </Rows>
+          )}
+        </Section>
+      )}
+      <Section title="Read history">
+        {history === null && <Note>Machine read history is unavailable.</Note>}
+        {history === undefined && <Loading />}
+        {history?.length === 0 && <Note>No machine reads recorded.</Note>}
+        {!!history?.length && (
+          <Rows>
+            {history.map((row) => (
+              <Row key={row.id} title={row.read} end={<Time at={row.askedAt} />}
+                meta={<>{row.agent} · {row.word}{row.person ? ' · ' + row.person : ''} · {row.outcome} · {row.bytes} bytes<br />Job <span className="font-mono">{row.job}</span> {isRef(row.conversation) && <Chip place={{ brick: 'session', params: { session: row.conversation } }}>Session</Chip>}<br />Arguments <code className="font-mono">{row.args}</code></>} />
+            ))}
+          </Rows>
+        )}
+        <Actions><Action kind="quiet" disabled={busy} onClick={() => refresh((n) => n + 1)}>Refresh</Action></Actions>
+      </Section>
     </>
   );
 }
@@ -140,7 +133,7 @@ function AlertLinesForm({ lines, owner, act }: { lines: AlertLines; owner: boole
   const stored = JSON.stringify(lines);
   const [draft, setDraft] = useState<Record<string, string>>({}), [busy, setBusy] = useState(false), [said, say] = useState('');
   useEffect(() => { setDraft({}); }, [stored]);
-  if (!owner) return <>{alertControls.map(({ key, label }) => <p key={key}>{label}: {lines[key]}</p>)}<p className="text-muted-foreground">A household owner changes these.</p></>;
+  if (!owner) return <><Facts>{alertControls.map(({ key, label }) => <Fact key={key} label={label}>{lines[key]}</Fact>)}</Facts><Note>A household owner changes these.</Note></>;
   const save = async (event: FormEvent) => {
     event.preventDefault();
     if (busy) return;
@@ -153,15 +146,16 @@ function AlertLinesForm({ lines, owner, act }: { lines: AlertLines; owner: boole
     finally { setBusy(false); }
   };
   return (
-    <form aria-label="Machine alert thresholds" onSubmit={(event) => void save(event)}>
-      <p className="text-muted-foreground">These thresholds apply to all machines on their next reading.</p>
-      {alertControls.map(({ key, label, min, max }) => (
-        <label className="board-line" key={key}>{label}
-          <input className="board-input" type="number" min={min} max={max} step={1} required disabled={busy} value={draft[key] ?? String(lines[key])} onChange={(e) => setDraft({ ...draft, [key]: e.target.value })} />
-        </label>
-      ))}
-      <div className="board-line"><button type="submit" className="board-action" disabled={busy}>Save thresholds</button></div>
-      {said && <p role="status">{said}</p>}
+    <form className="board-form" aria-label="Machine alert thresholds" onSubmit={(event) => void save(event)}>
+      <div className="board-machines-lines">
+        {alertControls.map(({ key, label, min, max }) => (
+          <label className="board-field" key={key}><span>{label}</span>
+            <input className="board-input" type="number" min={min} max={max} step={1} required disabled={busy} value={draft[key] ?? String(lines[key])} onChange={(e) => setDraft({ ...draft, [key]: e.target.value })} />
+          </label>
+        ))}
+      </div>
+      <Note>These thresholds apply to all machines on their next reading.</Note>
+      <Actions><Action submit disabled={busy}>Save thresholds</Action>{said && <span role="status" className="board-note">{said}</span>}</Actions>
     </form>
   );
 }
@@ -170,7 +164,7 @@ export function Machines({ form, act }: BodyProps) {
   const primary = form === 'primary';
   const inventory = useDataQuery<MachinesInventory>(machinesInventoryQuery, undefined, { keep: true });
   const mine = useDataQuery<OwnerMachinesData>(ownerMachinesQuery, undefined, { keep: true });
-  const facts = useDataQuery<Facts>(machineFactsQuery, undefined, { keep: true });
+  const facts = useDataQuery<MachineFacts>(machineFactsQuery, undefined, { keep: true });
   const owner = useHouseholdOwner(!primary);
   const [open, setOpen] = useState('');
   const [, tick] = useState(0);
@@ -190,46 +184,49 @@ export function Machines({ form, act }: BodyProps) {
     return line ? [{ key: JSON.stringify([reading.kind, reading.thing]), line: line + readingAge(reading, now) }] : [];
   });
   const live = boxes.filter((box) => !box.revokedAt), alerts = live.reduce((n, box) => n + conditions(box.id).length, 0);
-  const count = `${live.length} machine${live.length === 1 ? '' : 's'} · ${alerts ? `${alerts} open alert${alerts === 1 ? '' : 's'}` : 'no open alerts'}`;
-  if (form === 'compact') return <p className="board-brief">{count}</p>;
+  const summary = `${count(live.length, 'machine')} · ${alerts ? count(alerts, 'open alert') : 'no open alerts'}`;
+  if (form === 'compact') return <p className="board-brief">{summary}</p>;
   const agents = liveAgents(data.agents).map((a) => a.id);
   return (
     <>
-      <p className="board-line"><span>{count}</span></p>
-      {!boxes.length && <p className="text-muted-foreground">No machines are visible to this account.</p>}
-      {boxes.map((box) => {
-        const more = fact.get(box.id), list = read(box.id), disks = list.filter((r) => r.kind === 'disk').length, setting = settings.get(box.id);
-        const shown = primary && open === box.id;
-        return (
-          <section key={box.id} aria-label={box.name} style={{ marginTop: '.7rem' }}>
-            <div className="board-line">
-              {primary ? <button type="button" className="board-action" aria-expanded={shown} onClick={() => setOpen(shown ? '' : box.id)}>{box.name}</button> : <strong>{box.name}</strong>}
-              {box.revokedAt && <span className="board-state">Revoked</span>}
-              {more?.sameMachineAsLoom && <span className="board-state">The loom machine</span>}
-              <span className="text-muted-foreground">{more?.lastSeenAt ? 'last seen ' + briefTime(more.lastSeenAt, undefined, now) : more ? 'never seen' : ''}</span>
-              {!box.revokedAt && warnings.has(box.id) && <span className="board-state">A sign-in needs attention</span>}
-            </div>
-            {!box.revokedAt && conditions(box.id).map(({ key, line }) => <p key={key} role="status"><strong>{line}</strong></p>)}
-            {!box.revokedAt && !!list.length && <p className="text-muted-foreground">{list.map((reading) => readingLine(reading, disks, now)).join(' · ')}</p>}
-            {!box.revokedAt && !!setting && setting.readingsLeftOut > 0 && <p role="status">More than 24 things reported; {setting.readingsLeftOut} were left out.</p>}
-            {shown && (
-              <dl style={{ marginTop: '.5rem' }}>
-                <div><dt>Owner</dt><dd>{isMember(box.owner) ? <Chip place={{ brick: 'person', params: { person: 'member:' + box.owner } }}>{box.owner}</Chip> : box.owner}</dd></div>
-                <div><dt>Hosting</dt><dd>{hostingWord(box)}</dd></div>
-                <div><dt>Listed agents</dt><dd>{listedAgents(box).join(', ') || 'None listed'}</dd></div>
-                <div><dt>Slots</dt><dd>{more?.slots ?? 'Not reported'}</dd></div>
-                {!box.revokedAt && <div><dt>Jobs on it now</dt><dd><Jobs box={box.id} agents={agents} /></dd></div>}
-                {box.owner === member && setting && <Settings box={setting} agents={(mine.data?.agents ?? []).map((a) => a.id)} act={act} />}
-              </dl>
-            )}
-            {!primary && <p className="text-muted-foreground">{hostingWord(box)}{more?.slots != null ? ` · ${more.slots} slot${more.slots === 1 ? '' : 's'}` : ''}</p>}
-          </section>
-        );
-      })}
-      {primary && lines && (
-        <dl style={{ marginTop: '.9rem' }}><div><dt>Machine alerts</dt><dd><AlertLinesForm lines={lines} owner={owner} act={act} /></dd></div></dl>
-      )}
-      {primary && <p className="text-muted-foreground" style={{ marginTop: '.6rem' }}>Enrolling or revoking a machine is not done from a board.</p>}
+      <Lead>{summary}</Lead>
+      {!boxes.length && <Note>No machines are visible to this account.</Note>}
+      <Rows>
+        {boxes.map((box) => {
+          const more = fact.get(box.id), list = read(box.id), disks = list.filter((r) => r.kind === 'disk').length, setting = settings.get(box.id);
+          const shown = primary && open === box.id, open_ = !box.revokedAt ? conditions(box.id) : [];
+          return (
+            <Row key={box.id} flagged={open_.length > 0} title={primary ? <Opens open={shown} onToggle={() => setOpen(shown ? '' : box.id)}>{box.name}</Opens> : box.name}
+              meta={<>
+                {more?.sameMachineAsLoom && <>The loom machine · </>}
+                {more?.lastSeenAt ? <>last seen <Time at={more.lastSeenAt} /></> : more ? 'never seen' : ''}
+                {!primary && more?.slots != null && <> · {count(more.slots, 'slot')}</>}
+              </>}
+              end={<>
+                {box.revokedAt && <State tone="muted">Revoked</State>}
+                {!box.revokedAt && warnings.has(box.id) && <State tone="waiting">A sign-in needs attention</State>}
+              </>}>
+              {open_.map(({ key, line }) => <p key={key} role="status" className="board-machines-alert">{line}</p>)}
+              {primary && !box.revokedAt && !!list.length && <Note>{list.map((reading) => readingLine(reading, disks, now)).join(' · ')}</Note>}
+              {primary && !box.revokedAt && !!setting && setting.readingsLeftOut > 0 && <p role="status" className="board-note">More than 24 things reported; {setting.readingsLeftOut} were left out.</p>}
+              {shown && (
+                <Opened>
+                  <Facts>
+                    <Fact label="Owner">{isMember(box.owner) ? <Chip place={{ brick: 'person', params: { person: 'member:' + box.owner } }}>{box.owner}</Chip> : box.owner}</Fact>
+                    <Fact label="Hosting">{hostingWord(box)}</Fact>
+                    <Fact label="Listed agents">{listedAgents(box).join(', ') || 'None listed'}</Fact>
+                    <Fact label="Slots">{more?.slots ?? 'Not reported'}</Fact>
+                  </Facts>
+                  {!box.revokedAt && <Section title="Jobs on it now"><Jobs box={box.id} agents={agents} /></Section>}
+                  {box.owner === member && setting && <Settings box={setting} agents={(mine.data?.agents ?? []).map((a) => a.id)} act={act} />}
+                </Opened>
+              )}
+            </Row>
+          );
+        })}
+      </Rows>
+      {primary && lines && <Section title="Machine alerts"><AlertLinesForm lines={lines} owner={owner} act={act} /></Section>}
+      {primary && <Note>Enrolling or revoking a machine is not done from a board.</Note>}
     </>
   );
 }

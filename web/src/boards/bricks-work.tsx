@@ -10,7 +10,7 @@ import { displayName } from '../kit/words';
 import { taskChoicesQuery } from '../pieces/tasks/query';
 import type { TaskCommand } from '../pieces/tasks/shared-form';
 import { taskDefaultPriority, taskPriorities } from '../pieces/tasks/words';
-import type { Act } from './brick-kit';
+import { Field, Menu, Segmented, type Act } from './brick-kit';
 
 /** Every ticket the member may read, in the backlog's order: what the desktop's Parent and Blocked by forms offer. */
 export const ticketChoicesQuery = 'query BrickTicketChoices{tasks(orderBy:{priority:{direction:asc,priority:2},position:{direction:asc,priority:1},id:{direction:asc,priority:0}}){id title}}';
@@ -34,27 +34,10 @@ export function useTaskCommand(act: Act, own: () => void = () => {}) {
 export const priorityWord = (priority: number) => 'P' + priority;
 export const priorityChoices = taskPriorities.map((label, value) => ({ value, label }));
 
-/** One of a few fixed choices, as a row of buttons: the page has no native picker of its own. */
-export function Pick<T extends string | number>({ label, value, options, onChange, disabled }: { label: string; value: T; options: readonly { value: T; label: string }[]; onChange(value: T): void; disabled?: boolean }) {
-  return (
-    <div className="board-line" role="group" aria-label={label}>
-      <span className="text-muted-foreground">{label}</span>
-      {options.map((option) => (
-        <button type="button" key={String(option.value)} className="board-action" aria-pressed={option.value === value} disabled={disabled} onClick={() => onChange(option.value)}>{option.label}</button>
-      ))}
-    </div>
-  );
-}
-/** One field of words. */
-export function Words({ label, value, onChange, long, disabled }: { label: string; value: string; onChange(value: string): void; long?: boolean; disabled?: boolean }) {
-  const Field = long ? 'textarea' : 'input';
-  return (
-    <label className="board-line">
-      <span className="text-muted-foreground">{label}</span>
-      <Field className="board-input" aria-label={label} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} />
-    </label>
-  );
-}
+/** One of a few fixed choices (./brick-kit.tsx, Segmented). */
+export const Pick = Segmented;
+/** One field of words (./brick-kit.tsx, Field). */
+export const Words = Field;
 type Choices = { projects: { id: string; name: string; projectMembersByProject: { member: string }[] }[]; agents: { id: string; removedAt?: string | null }[]; members: { id: string }[] };
 export type Owner = { kind: 'member' | 'agent'; id: string; label: string };
 /** The projects a ticket may be put in and the people and agents it may be given to, as the desktop's Tasks screen
@@ -88,7 +71,7 @@ export function useSummary(from?: Partial<Summary>) {
         <Words label="Done when" long value={doneWhen} onChange={setDoneWhen} disabled={show.disabled} />
         <Words label="Description" long value={description} onChange={setDescription} disabled={show.disabled} />
         <Pick<number> label="Priority" value={priority} options={priorityChoices} onChange={setPriority} disabled={show.disabled} />
-        {show.projects && <Pick<string> label="Project" value={project} options={[{ value: '', label: 'No project' }, ...show.projects.map((p) => ({ value: p.id, label: p.label }))]} onChange={setProject} disabled={show.disabled} />}
+        {show.projects && <Menu<string> label="Project" value={project} options={[{ value: '', label: 'No project' }, ...show.projects.map((p) => ({ value: p.id, label: p.label }))]} onChange={setProject} disabled={show.disabled} />}
       </>}
     </>
   );

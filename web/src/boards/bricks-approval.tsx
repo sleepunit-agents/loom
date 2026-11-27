@@ -22,15 +22,16 @@ import { approvalTitle, recordWord, type Approval as Row, type ApprovalSnapshot 
 import { tempoChangeWords } from '../pieces/tempo/change';
 import { measuringChangeWords } from '../pieces/measuring/change';
 import { displayName } from '../kit/words';
-import { fullTime } from '../kit/time';
-import { Chip, Loading, Unavailable, words, type Act, type Params } from './brick-kit';
+import { Action, Actions, Chip, Fact, Facts, Lead, Loading, Note, Problem, Row as Line, Rows, Section, State, Time, Unavailable, words, type Act, type Params, type Tone } from './brick-kit';
 import type { Form } from './layout';
 
 const name = (id: string) => displayName(id);
 /** A change the program can check, as the desktop's card draws it: the same list, in the same order
  * (web/src/data/work-views.tsx, renderChange). */
 const changeWords = (a: Row): ChangeWords | null => (a.operation === 'household.change' ? null : tempoChangeWords(a) ?? measuringChangeWords(a));
-const Values = ({ rows }: { rows: readonly ChangeRow[] }) => <dl>{rows.map((row) => <div key={row.label}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}</dl>;
+const Values = ({ rows }: { rows: readonly ChangeRow[] }) => <Facts>{rows.map((row) => <Fact key={row.label} label={row.label}>{row.value}</Fact>)}</Facts>;
+/** An approval's own state words, as tones: it waits on an answer, it was allowed, it was refused, or it is over. */
+export const approvalTone = (state: string): Tone => (state === 'pending' ? 'waiting' : state === 'allowed' || state === 'used' ? 'good' : state === 'denied' ? 'bad' : 'muted');
 
 /** Allow and Deny, drawn from the shared steps. Keyed by the reading it answers (answerKey): a request read again
  * in a new version starts over. */
@@ -39,35 +40,35 @@ function Answer({ approval, actions }: { approval: Row; actions?: ApprovalAction
   const caution = cautionWords(approval), always = answer.always;
   return (
     <>
-      {!answer.allowed && caution && <p role="note" className="board-line">{caution}</p>}
+      {!answer.allowed && caution && <p role="note" className="board-approval-caution">{caution}</p>}
       {answer.open && (
-        <>
-          <details className="board-line">
+        <div className="board-form">
+          {answer.confirming && <p className="board-approval-caution">{secondYesWords}</p>}
+          <Actions label="Answer approval">
+            {answer.confirming
+              ? <>
+                  <Action kind="primary" disabled={busy} onClick={answer.confirm}>Yes, allow it</Action>
+                  <Action kind="quiet" disabled={busy} onClick={answer.cancel}>Cancel</Action>
+                </>
+              : <Action kind="primary" disabled={busy} onClick={answer.allow}>Allow</Action>}
+            {always && !always.asking && <Action disabled={busy} onClick={always.ask}>{always.label}…</Action>}
+            <Action disabled={busy} onClick={answer.deny}>Deny</Action>
+          </Actions>
+          {always?.asking && (
+            <div className="board-confirm" role="group" aria-label="Standing answer">
+              <p>{always.label}? {standingWords}</p>
+              <Action kind="primary" disabled={busy} onClick={always.run}>Yes, always allow</Action>
+              <Action kind="quiet" disabled={busy} onClick={always.cancel}>Cancel</Action>
+            </div>
+          )}
+          <details className="board-approval-reason">
             <summary>Add a reason for denying</summary>
             <textarea className="board-input" aria-label="Reason for the requesting agent" value={answer.reason} maxLength={reasonLimit} disabled={busy} onChange={(e) => answer.setReason(e.target.value)} />
           </details>
-          {answer.confirming && <p className="board-line">{secondYesWords}</p>}
-          <div className="board-line" role="group" aria-label="Answer approval">
-            {answer.confirming
-              ? <>
-                  <button type="button" className="board-action" disabled={busy} onClick={answer.confirm}>Yes, allow it</button>
-                  <button type="button" className="board-action" disabled={busy} onClick={answer.cancel}>Cancel</button>
-                </>
-              : <button type="button" className="board-action" disabled={busy} onClick={answer.allow}>Allow</button>}
-            {always && !always.asking && <button type="button" className="board-action" disabled={busy} onClick={always.ask}>{always.label}…</button>}
-            <button type="button" className="board-action" disabled={busy} onClick={answer.deny}>Deny</button>
-          </div>
-          {always?.asking && (
-            <div className="board-line" role="group" aria-label="Standing answer">
-              <p>{always.label}? {standingWords}</p>
-              <button type="button" className="board-action" disabled={busy} onClick={always.run}>Yes, always allow</button>
-              <button type="button" className="board-action" disabled={busy} onClick={always.cancel}>Cancel</button>
-            </div>
-          )}
-        </>
+        </div>
       )}
-      {busy && <p role="status" className="text-muted-foreground">Saving answer…</p>}
-      {answer.error && <p role="alert" className="text-destructive">{answer.error}</p>}
+      {busy && <p role="status" className="board-note">Saving answer…</p>}
+      <Problem>{answer.error}</Problem>
     </>
   );
 }
@@ -90,47 +91,54 @@ function Card({ stored, record, form, act }: { stored: Row; record: ApprovalSnap
   const change = changeWords(a);
   const r = approvalReading(a, record, name, { change: !!change });
   const whom = forWhom(a, viewer, name);
+  const facts = (
+    <>
+      <Facts>
+        <Fact label="Why">{a.why}</Fact>
+        {r.card?.facts.map((fact, index) => <Fact key={index} label={fact.label}><span className={fact.small ? 'font-mono' : undefined}>{fact.value}</span></Fact>)}
+        {r.showStored && <Fact label="If you allow">{r.ifYes}</Fact>}
+        {r.showStored && <Fact label="If you deny">{r.ifNo}</Fact>}
+        {r.storedSummary && <Fact wide label="Exactly what will change">{r.storedSummary}</Fact>}
+        {r.allows && <Fact wide label="Exactly what this allows">{r.allows}</Fact>}
+        {r.fullCommand && <Fact wide label="Full command"><pre className="board-tail">{r.fullCommand}</pre></Fact>}
+        {r.details && <Fact wide label="Details"><pre className="board-tail">{r.details}</pre></Fact>}
+        {r.exact && <Fact wide label="Exact request"><pre className="board-tail">{r.exact}</pre></Fact>}
+      </Facts>
+      {change && (
+        <section className="board-approval-change" aria-label={change.label}>
+          <p className="board-approval-ask">{change.heading}</p>
+          <Section title="Before"><Values rows={change.before} /></Section>
+          <Section title="After"><Values rows={change.after} /></Section>
+          <Note>{change.note}</Note>
+        </section>
+      )}
+    </>
+  );
+  const answer = <Answer key={answerKey(a)} approval={a} actions={actions} />;
   return (
     <>
-      <p className="board-lead">{r.title}</p>
-      {r.ask && <p>{r.ask}</p>}
-      <div className="board-line">
-        <span className="board-state">{a.state}</span>
+      <Lead>{r.title}</Lead>
+      {r.ask && <p className="board-approval-ask">{r.ask}</p>}
+      <div className="board-meta">
+        <State tone={approvalTone(a.state)}>{a.state}</State>
         <span>{r.kind}</span>
         {r.showStored && <Chip place={{ brick: 'agent', params: { agent: a.agent } }}>{a.agent}</Chip>}
         {r.showStored && a.project && <Chip place={{ brick: 'project', params: { project: a.project } }}>{a.project}</Chip>}
-        {r.showStored && whom && <span className="text-muted-foreground">{whom}</span>}
+        {r.showStored && whom && <span>{whom}</span>}
       </div>
-      <dl style={{ marginTop: '.8rem' }}>
-        <div><dt>Why</dt><dd>{a.why}</dd></div>
-        {r.card?.facts.map((fact, index) => <div key={index}><dt>{fact.label}</dt><dd className={fact.small ? 'font-mono' : undefined}>{fact.value}</dd></div>)}
-        {r.showStored && <div><dt>If you allow</dt><dd>{r.ifYes}</dd></div>}
-        {r.showStored && <div><dt>If you deny</dt><dd>{r.ifNo}</dd></div>}
-        {r.storedSummary && <div><dt>Exactly what will change</dt><dd>{r.storedSummary}</dd></div>}
-        {r.allows && <div><dt>Exactly what this allows</dt><dd>{r.allows}</dd></div>}
-        {r.fullCommand && <div><dt>Full command</dt><dd><pre className="board-tail">{r.fullCommand}</pre></dd></div>}
-        {r.details && <div><dt>Details</dt><dd><pre className="board-tail">{r.details}</pre></dd></div>}
-        {r.exact && <div><dt>Exact request</dt><dd><pre className="board-tail">{r.exact}</pre></dd></div>}
-      </dl>
-      {change && (
-        <section aria-label={change.label}>
-          <p className="board-line">{change.heading}</p>
-          <p className="board-line text-muted-foreground">Before</p><Values rows={change.before} />
-          <p className="board-line text-muted-foreground">After</p><Values rows={change.after} />
-          <p className="board-line">{change.note}</p>
-        </section>
-      )}
-      <Answer key={answerKey(a)} approval={a} actions={actions} />
+      {/* Everything it is weighed by comes before the answer, in every form. */}
+      {facts}
+      {answer}
       {r.showStored && (r.answered || a.expiresAt) && (
-        <dl style={{ marginTop: '.8rem' }}>
-          {r.answered && <div><dt>Answer</dt><dd>{r.answered}</dd></div>}
-          {a.expiresAt && <div><dt>Allowance ends</dt><dd>{fullTime(a.expiresAt)}</dd></div>}
-        </dl>
+        <Facts>
+          {r.answered && <Fact label="Answer">{r.answered}</Fact>}
+          {a.expiresAt && <Fact label="Allowance ends"><Time at={a.expiresAt} /></Fact>}
+        </Facts>
       )}
       {form === 'primary' && r.showStored && r.record.length > 0 && (
-        <dl style={{ marginTop: '.8rem' }}>
-          <div><dt>History</dt><dd>{r.record.map((row) => <span key={row.seq} className="block">{recordWord(row, name)} · {fullTime(row.at)}</span>)}</dd></div>
-        </dl>
+        <Section title="History">
+          <Rows>{r.record.map((row) => <Line key={row.seq} title={recordWord(row, name)} end={<Time at={row.at} />} />)}</Rows>
+        </Section>
       )}
     </>
   );
@@ -142,6 +150,6 @@ export function Approval({ params, form, act }: { params: Params; form: Form; ac
   const a = read.data?.approvals.find((row) => row.id === id);
   if (read.status === 'loading') return <Loading />;
   if (read.status !== 'live' || !a) return <Unavailable what="approval" />;
-  if (form === 'compact') return <p className="board-brief"><span className="board-state">{a.state}</span> {approvalTitle(a)}</p>;
+  if (form === 'compact') return <p className="board-brief"><State tone={approvalTone(a.state)}>{a.state}</State> {approvalTitle(a)}</p>;
   return <Card key={id} stored={a} record={read.data?.approvalRecord ?? []} form={form} act={act} />;
 }

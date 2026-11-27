@@ -1,8 +1,7 @@
 /** The `threads` brick: the member's own conversations, as the list beside the presence reads them (agents-data.ts,
  * Comms' rows and order), each an ordinary link to that thread's address on this page. */
-import { briefTime } from '../kit/time';
 import { threadPath, useAgentNames, useThreads } from './agents-data';
-import { Loading, Unavailable, words, type Params } from './brick-kit';
+import { Lead, Loading, Note, Row, Rows, Time, Unavailable, words, type Params } from './brick-kit';
 import type { Form } from './layout';
 import { ThreadLine } from './threads';
 
@@ -18,15 +17,14 @@ export function Threads({ params, form }: { params: Params; form: Form }) {
   const shown = list.rows.slice(0, form === 'primary' ? 50 : 6);
   return (
     <>
-      <p>{counts}</p>
-      {shown.map((t) => (
-        <div className="board-line" key={t.id}>
-          <a href={threadPath(t.id)}><ThreadLine thread={t} name={name} /></a>
-          {form === 'primary' && <span className="text-muted-foreground">{briefTime(t.lastAt)}</span>}
-        </div>
-      ))}
-      {list.rows.length > shown.length && <p className="text-muted-foreground">and {list.rows.length - shown.length} more</p>}
-      {!list.rows.length && <p className="text-muted-foreground">{archived ? 'No archived conversations.' : 'No conversations yet.'}</p>}
+      {form === 'primary' ? <Lead>{counts}</Lead> : <Note>{counts}</Note>}
+      {shown.length > 0 && (
+        <Rows>
+          {shown.map((t) => <Row key={t.id} title={<span className="board-threads-line"><a href={threadPath(t.id)}><ThreadLine thread={t} name={name} /></a></span>} end={form === 'primary' ? <Time at={t.lastAt} /> : undefined} />)}
+        </Rows>
+      )}
+      {list.rows.length > shown.length && <Note>and {list.rows.length - shown.length} more</Note>}
+      {!list.rows.length && <Note>{archived ? 'No archived conversations.' : 'No conversations yet.'}</Note>}
     </>
   );
 }

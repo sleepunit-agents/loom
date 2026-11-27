@@ -57,8 +57,9 @@ const type = (label: string, value: string) => act(async () => tree!.root.findAl
 it('lists accounts by service in the desktop\'s words: a full account with its sign-ins, a shared one as a label and a level', async () => {
   answer();
   await draw('primary');
-  for (const words of ['2 subscriptions · 1 almost full · 1 sign-in needed', 'acme · 1 · plenty · Sign-in needed', 'Main subscription · sam · plenty · 1 signed in · 1 needs attention',
-    'Shared summaries · 1 · almost full', 'Shared account · almost full', 'big-one · Primary, small-one']) expect(shown(), words).toContain(words);
+  for (const words of ['2 subscriptions · 1 almost full · 1 sign-in needed', // A service is a small heading with its count and level; an account is a row: its label, a quiet line, its level.
+    'acme', '1 · plenty · Sign-in needed', 'Main subscription', 'sam · 1 signed in · 1 needs attention', 'plenty',
+    'Shared summaries', '1 · almost full', 'Shared account', 'almost full', 'big-one · Primary, small-one']) expect(shown(), words).toContain(words);
   expect(shown()).not.toContain('hidden-one');
   expect(placed()).toEqual([{ brick: 'agent', params: { agent: 'art' } }]);
   expect(sent).not.toHaveBeenCalled();
@@ -68,7 +69,7 @@ it('opens an account: usage windows with a stale reading said, room, weekly usag
   answer();
   await draw('primary');
   await press('Main subscription');
-  for (const words of ['Week · 58%', 'Stale reading (over an hour old)', 'Reserve 10%', 'Session · Not read yet', 'Has room: Yes', 'Week · 30% used', 'Unattributed · 5%', 'Den', 'codex · On the machine', 'Signed in',
+  for (const words of ['Week', '58%', 'Stale reading (over an hour old)', 'Reserve 10%', 'Session', 'Not read yet', 'Has room', 'Yes', 'Week · 30% used', 'Unattributed', '5%', 'Den', 'codex · On the machine', 'Signed in',
     'Attic', 'codex · In houses', 'Signed out', 'Configured machines', 'Each percentage is a share']) expect(shown(), words).toContain(words);
   expect(placed()).toContainEqual({ brick: 'agent', params: { agent: 'art' } });
   expect(placed()).toContainEqual({ brick: 'person', params: { person: 'member:sam' } });
@@ -105,12 +106,12 @@ it('searches and keeps to what needs attention inside the brick; what is typed r
   await draw('primary');
   const reads = feed.mock.calls.length;
   await type('Search subscriptions', 'quiet');
-  expect(shown()).toContain('Quiet one · sam'); expect(shown()).not.toContain('Main subscription · sam');
+  expect(shown()).toContain('Quiet onesam'); expect(shown()).not.toContain('Main subscription');
   await type('Search subscriptions', 'zebra');
   expect(shown()).toContain('No matching subscriptions.');
   await type('Search subscriptions', '');
   await press('Needs attention');
-  expect(shown()).toContain('Main subscription · sam'); expect(shown()).toContain('Shared account'); expect(shown()).not.toContain('Quiet one · sam');
+  expect(shown()).toContain('Main subscriptionsam'); expect(shown()).toContain('Shared account'); expect(shown()).not.toContain('Quiet one');
   expect(JSON.stringify(feed.mock.calls.slice(reads))).not.toContain('zebra');
   expect(reported).not.toHaveBeenCalled(); expect(sent).not.toHaveBeenCalled();
 });
@@ -147,7 +148,7 @@ it('offers no way to add a subscription to someone loom gives no choices', async
 it('draws the side form as a list and the compact form as one line, neither with a control', async () => {
   answer();
   await draw('side');
-  for (const words of ['acme · 1 · plenty', 'Main subscription · sam · plenty', 'Week 58% · Session not read yet', 'Shared account · almost full']) expect(shown(), words).toContain(words);
+  for (const words of ['acme', '1 · plenty', 'Main subscription', 'sam · 1 signed in', 'Week', '58%', 'Session', 'Not read yet', 'Shared account', 'almost full']) expect(shown(), words).toContain(words);
   expect(controls()).toEqual([]);
   await draw('compact');
   const json = tree!.toJSON() as { type: string; props: { className: string } };

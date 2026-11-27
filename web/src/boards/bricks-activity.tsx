@@ -9,7 +9,7 @@ import { memoryQueries } from '../memory/queries';
 import { useMemoryQuery } from '../memory/query';
 import { Reply } from '../pair/reply';
 import { VENUES, passes, safeHref, type ActivityEntry, type ActivityLink, type Filters } from '../pieces/activity/model';
-import { Chip, Loading, Unavailable, ticketChip, type Params } from './brick-kit';
+import { Action, Actions, Chip, Fact, Facts, Lead, Loading, Note, Row, Rows, Section, Unavailable, ticketChip, type Params } from './brick-kit';
 import type { Form } from './layout';
 
 /** How many of Activity's three-day windows hold a range of days. */
@@ -27,30 +27,42 @@ export function changeOf(link: ActivityLink): string | undefined {
   if (!id && href.startsWith('/p/work/changes/change/')) try { id = decodeURIComponent(href.slice('/p/work/changes/change/'.length)); } catch { /* not an id */ }
   return id && id.length <= 120 && /^github:[a-z0-9._-]+\/[a-z0-9._-]+#[1-9]\d*$/.test(id) ? id : undefined;
 }
-const Link = ({ label, href }: ActivityLink) => { const safe = safeHref(href); return safe ? <a className="underline" href={safe} target="_blank" rel="noopener noreferrer">{label}</a> : <span>{label}</span>; };
+const Link = ({ label, href }: ActivityLink) => { const safe = safeHref(href); return safe ? <a href={safe} target="_blank" rel="noopener noreferrer">{label}</a> : <span>{label}</span>; };
+
+/** A log is read by the clock: the hour and minute in the household's zone, under the day it happened. */
+const clock = (at: string, zone: string) => new Date(at).toLocaleTimeString('en-US', { timeZone: zone, hour: 'numeric', minute: '2-digit' });
+/** A household day (YYYY-MM-DD) in words: "Fri, Nov 13". */
+const dayWord = (day: string) => new Date(day + 'T12:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' });
+const stepWord = (state: string) => (state === 'running' ? 'running' : state === 'error' ? 'failed' : 'done');
 
 function Opened({ id, zone }: { id: string; zone: string }) {
   const read = useMemoryQuery(memoryQueries.activityEntry(id));
   const e = read.value;
   if (read.status === 'loading') return <Loading />;
-  if (read.status !== 'live' || !e) return <p className="text-muted-foreground">This entry is no longer available.</p>;
+  if (read.status !== 'live' || !e) return <Note>This entry is no longer available.</Note>;
   const tickets = [...new Set(e.tasks.map(ticketOf).filter((t): t is string => !!t))];
   const otherTasks = e.tasks.filter((t) => !ticketOf(t));
   return (
-    <dl data-entry={id}>
-      {e.needs && <div><dt>Needs you</dt><dd>{e.needs}</dd></div>}
-      {e.asked.length > 0 && <div><dt>What was asked</dt><dd>{e.asked.map((s, i) => <span key={i} className="block">{s}</span>)}</dd></div>}
-      {e.story && <div><dt>What happened</dt><dd><Reply words={e.story} /></dd></div>}
-      {e.decided.length > 0 && <div><dt>{e.id.startsWith('e~') ? 'Shipped' : 'What was decided'}</dt><dd>{e.decided.map((s, i) => <span key={i} className="block">{s}</span>)}</dd></div>}
-      {e.tasks.length + e.prs.length > 0 && <div><dt>Tasks and pull requests</dt><dd className="board-line">
-        {tickets.map((t) => <span key={t}>{ticketChip(t)}</span>)}
-        {otherTasks.map((t, i) => <Link key={'t' + i} {...t} />)}
-        {e.prs.map((p, i) => { const change = changeOf(p); return change ? <Chip key={'p' + i} place={{ brick: 'pull', params: { change } }}>{p.label}</Chip> : <Link key={'p' + i} {...p} />; })}
-      </dd></div>}
-      {!!e.steps?.length && <div><dt>Steps · {e.steps.length}</dt><dd>{e.steps.slice(-8).map((s, i) => <span key={i} className="block">{s.label} · {s.state === 'running' ? 'running' : s.state === 'error' ? 'failed' : 'done'}</span>)}</dd></div>}
-      {e.links.length > 0 && <div><dt>Read more</dt><dd className="board-line">{e.links.map((l, i) => <Link key={i} {...l} />)}</dd></div>}
-      <div><dt>When</dt><dd className="text-muted-foreground">{new Date(e.at).toLocaleString([], { timeZone: zone })}{e.owner ? ' · with you' : ''}</dd></div>
-    </dl>
+    <div className="board-activity-entry" data-entry={id}>
+      <Facts>
+        {e.needs && <Fact wide label="Needs you">{e.needs}</Fact>}
+        {e.asked.length > 0 && <Fact wide label="What was asked">{e.asked.map((s, i) => <span key={i} className="block">{s}</span>)}</Fact>}
+        {e.story && <Fact wide label="What happened"><Reply words={e.story} /></Fact>}
+        {e.decided.length > 0 && <Fact wide label={e.id.startsWith('e~') ? 'Shipped' : 'What was decided'}>{e.decided.map((s, i) => <span key={i} className="block">{s}</span>)}</Fact>}
+        {e.tasks.length + e.prs.length > 0 && (
+          <Fact wide label="Tasks and pull requests">
+            <span className="board-meta">
+              {tickets.map((t) => <span key={t}>{ticketChip(t)}</span>)}
+              {otherTasks.map((t, i) => <Link key={'t' + i} {...t} />)}
+              {e.prs.map((p, i) => { const change = changeOf(p); return change ? <Chip key={'p' + i} place={{ brick: 'pull', params: { change } }}>{p.label}</Chip> : <Link key={'p' + i} {...p} />; })}
+            </span>
+          </Fact>
+        )}
+        {!!e.steps?.length && <Fact wide label={`Steps · ${e.steps.length}`}>{e.steps.slice(-8).map((s, i) => <span key={i} className="block">{s.label} · {stepWord(s.state)}</span>)}</Fact>}
+        {e.links.length > 0 && <Fact wide label="Read more"><span className="board-meta">{e.links.map((l, i) => <Link key={i} {...l} />)}</span></Fact>}
+        <Fact label="When"><span className="board-note">{dayWord(e.day)}, {clock(e.at, zone)}{e.owner ? ' · with you' : ''}</span></Fact>
+      </Facts>
+    </div>
   );
 }
 
@@ -85,20 +97,17 @@ export function Activity({ params, form }: { params: Params; form: Form }) {
   const on = filters.who.length + filters.where.length + filters.what.length > 0;
   const total = `${on ? `${entries.length} of ${all.length}` : entries.length} ${(on ? all : entries).length === 1 ? 'entry' : 'entries'} ${range}`;
   if (form === 'compact') return <p className="board-brief">{total}{entries[0] ? ` · latest from ${entries[0].agent}: ${entries[0].title}` : ''}</p>;
-  const time = (at: string) => new Date(at).toLocaleTimeString([], { timeZone: zone, hour: 'numeric', minute: '2-digit' });
-  const big = form === 'primary', cap = big ? 80 : 5, shown = entries.slice(0, cap);
+  const big = form === 'primary', cap = big ? 80 : 3, shown = entries.slice(0, cap);
+  const kindWord = (e: ActivityEntry) => (e.what === 'work' ? 'Work done' : e.what === 'system' ? 'System' : '');
   const row = (e: ActivityEntry) => (
-    <li key={e.id}>
-      <div className="board-line">
-        <span className="text-muted-foreground">{big ? time(e.at) : `${e.day.slice(5)} ${time(e.at)}`}</span>
-        {agentChip(e.agent)}
-        {big ? <button type="button" className="board-action" aria-expanded={open === e.id} onClick={() => setOpen(open === e.id ? '' : e.id)}>{e.title}</button> : <span>{e.title}</span>}
-        {e.what !== 'conversation' && <span className="board-state">{e.what === 'work' ? 'Work done' : 'System'}</span>}
-        {ticketsIn(`${e.title} ${e.line ?? ''}`).map((t) => <span key={t}>{ticketChip(t)}</span>)}
-      </div>
-      {big && <p className="text-muted-foreground">{e.where}{e.owner ? ' · with you' : ''}{e.line ? ' · ' + e.line : ''}</p>}
-      {big && open === e.id && <Opened id={e.id} zone={zone} />}
-    </li>
+    <Row key={e.id}
+      title={big ? <button type="button" className="board-activity-open" aria-expanded={open === e.id} onClick={() => setOpen(open === e.id ? '' : e.id)}>{e.title}</button> : e.title}
+      meta={big
+        ? <>{agentChip(e.agent)} <span>{e.where}{e.owner ? ' · with you' : ''}{e.line ? ' · ' + e.line : ''}</span>{ticketsIn(`${e.title} ${e.line ?? ''}`).map((t) => <span key={t}> {ticketChip(t)}</span>)}</>
+        : <>{e.agent}{kindWord(e) && ' · ' + kindWord(e)} · {days === 1 ? clock(e.at, zone) : `${dayWord(e.day)}, ${clock(e.at, zone)}`}</>}
+      end={big ? <>{kindWord(e) && <span>{kindWord(e)}</span>}<span className="board-time">{clock(e.at, zone)}</span></> : undefined}>
+      {big && open === e.id ? <Opened id={e.id} zone={zone} /> : undefined}
+    </Row>
   );
   const tally = (test: (e: ActivityEntry) => boolean) => all.filter(test).length;
   const venues: Record<string, string> = Object.fromEntries(listedVenues.map((v) => [v, VENUES[v]]));
@@ -111,25 +120,31 @@ export function Activity({ params, form }: { params: Params; form: Form }) {
   const toggle = (key: keyof Filters, id: string) => setFilters((f) => ({ ...f, [key]: f[key].includes(id) ? f[key].filter((x) => x !== id) : [...f[key], id].sort() }));
   return (
     <>
-      <p className="board-line">
-        <span>{total}</span>
-        {big && all.length > 0 && <button type="button" className="board-action" aria-expanded={filtering} onClick={() => setFiltering(!filtering)}>Filter activity</button>}
-        {big && on && <button type="button" className="board-action" onClick={() => setFilters(none)}>Show everything</button>}
-      </p>
-      {big && filtering && groups.map((g) => (
-        <div key={g.key} className="board-line" role="group" aria-label={g.label}>
-          <span className="text-muted-foreground">{g.label}</span>
-          {g.items.map((i) => <button type="button" key={i.id} className="board-action" aria-pressed={filters[g.key].includes(i.id)} onClick={() => toggle(g.key, i.id)}>{i.label} · {i.count}</button>)}
+      <Lead>{total}</Lead>
+      {big && all.length > 0 && (
+        <Actions>
+          <button type="button" className="board-action" data-kind="quiet" aria-expanded={filtering} onClick={() => setFiltering(!filtering)}>Filter activity</button>
+          {on && <Action kind="quiet" onClick={() => setFilters(none)}>Show everything</Action>}
+        </Actions>
+      )}
+      {big && filtering && (
+        <div className="board-form">
+          {groups.map((g) => (
+            <div key={g.key} className="board-choice" role="group" aria-label={g.label}>
+              <span className="board-choice-label">{g.label}</span>
+              <span className="board-seg">{g.items.map((i) => <button type="button" key={i.id} aria-pressed={filters[g.key].includes(i.id)} onClick={() => toggle(g.key, i.id)}>{i.label} · {i.count}</button>)}</span>
+            </div>
+          ))}
         </div>
-      ))}
-      {big && records.some((w) => w.conversations !== 'available') && <p role="status" className="text-muted-foreground">Conversations and digests {records.some((w) => w.conversations === 'error') ? 'couldn’t load' : 'are not available yet'}.</p>}
-      {big && records.some((w) => w.episodes !== 'available') && <p role="status" className="text-muted-foreground">Some episode stores {records.some((w) => w.episodes === 'error') ? 'couldn’t load' : 'are not available'}.</p>}
-      {big && records.some((w) => w.truncated) && <p role="status" className="text-muted-foreground">Showing the newest 600 entries per window.</p>}
+      )}
+      {big && records.some((w) => w.conversations !== 'available') && <p role="status" className="board-note">Conversations and digests {records.some((w) => w.conversations === 'error') ? 'couldn’t load' : 'are not available yet'}.</p>}
+      {big && records.some((w) => w.episodes !== 'available') && <p role="status" className="board-note">Some episode stores {records.some((w) => w.episodes === 'error') ? 'couldn’t load' : 'are not available'}.</p>}
+      {big && records.some((w) => w.truncated) && <p role="status" className="board-note">Showing the newest 600 entries per window.</p>}
       {big
-        ? [...kept].sort().reverse().map((day) => { const rows = shown.filter((e) => e.day === day); return rows.length ? <section key={day} aria-label={day}><h3>{day}</h3><ol className="board-notes">{rows.map(row)}</ol></section> : null; })
-        : <ol className="board-notes">{shown.map(row)}</ol>}
-      {entries.length > cap && <p className="text-muted-foreground">and {entries.length - cap} more</p>}
-      {!entries.length && <p className="text-muted-foreground">{big && on ? 'Nothing matches these filters. Try fewer filters or more days.' : 'Quiet'}</p>}
+        ? [...kept].sort().reverse().map((day) => { const rows = shown.filter((e) => e.day === day); return rows.length ? <Section key={day} title={dayWord(day)} count={rows.length}><Rows>{rows.map(row)}</Rows></Section> : null; })
+        : shown.length > 0 && <Rows>{shown.map(row)}</Rows>}
+      {entries.length > cap && <Note>and {entries.length - cap} more</Note>}
+      {!entries.length && <Note>{big && on ? 'Nothing matches these filters. Try fewer filters or more days.' : 'Quiet'}</Note>}
     </>
   );
 }

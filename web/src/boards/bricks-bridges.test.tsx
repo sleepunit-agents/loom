@@ -55,8 +55,9 @@ const press = (label: string, nth = 0) => act(async () => { await buttons().filt
 it('shows a household owner the waiting replies, connections, channel rules and person links as Bridges does', async () => {
   await draw('primary');
   for (const words of ['1 connection · 2 pending sends', 'Reply to C-garden', 'Secret words of s-held', 'Thread: T-1', 'This send waits for a person to release or dismiss it.', 'Secret words of s-doubt',
-    'Delivery could not be confirmed. Review before sending again.', 'discord', 'connected', 'Enabled', 'W-home · 5 received · 4 delivered · 1 held in 24 hours', 'Bot user B-1', 'Only channels: None', 'Ignored channels: C-noise',
-    'Stored secret names · Bot token: discord-bot', 'Answers when nobody is addressed:', 'Bots may talk: No', 'Outside user: U-9', 'ask the agent in the conversation']) expect(shown(), words).toContain(words);
+    'Delivery could not be confirmed. Review before sending again.', 'discord', 'connected', 'Enabled', 'W-home · 5 received · 4 delivered · 1 held in 24 hours', // A connection's details are facts: a label and its value (brick-kit.tsx, Fact).
+    'Bot userB-1', 'Only channelsNone', 'Ignored channelsC-noise',
+    'Stored secret namesBot token: discord-bot', 'Answers when nobody is addressed:', 'Bots may talk: No', 'Outside user: U-9', 'ask the agent in the conversation']) expect(shown(), words).toContain(words);
   expect(shown()).not.toContain('s-sent'); expect(shown()).not.toContain('s-gone');
   expect(placed()).toEqual([{ brick: 'agent', params: { agent: 'art' } }, { brick: 'agent', params: { agent: 'art' } }, { brick: 'person', params: { person: 'member:lee' } }]);
   // A held reply can be released or dismissed; one in doubt only dismissed.

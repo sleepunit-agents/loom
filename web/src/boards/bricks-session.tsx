@@ -3,12 +3,13 @@ import { useEffect, useState } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { memberOperation } from '../data/operation';
 import { Reply } from '../pair/reply';
-import { Chip, Loading, Unavailable, useOwnFlag, words, type BodyProps } from './brick-kit';
+import { Chip, Confirm, Fact, Facts, Lead, Loading, Note, Problem, Section, State, Unavailable, useOwnFlag, words, type BodyProps, type Tone } from './brick-kit';
 import { SessionLatestStep, SessionTrace } from './session-trace';
 
 type SessionJob = { id: string; title: string; state: string; queuedAt: string; usage: { model: string | null; harness: string | null; tools: { name: string; count: number | null }[] | null } | null };
 type SessionDetail = { brief: string | null; logTail: string | null; endedNote: string | null; claimedAt: string | null; endedAt: string | null };
 const running = (state: string) => state === 'queued' || state === 'starting' || state === 'running';
+const tone = (state: string): Tone => (running(state) ? 'working' : state === 'done' ? 'good' : state === 'stopped' ? 'muted' : 'bad');
 const lasted = (from: string, to: number) => { const m = Math.max(0, Math.round((to - Date.parse(from)) / 60000)); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
 /** One session of agent work, by its conversation: the latest job there. It shows what it was asked, where it
  * stands and which tools it has used; and, for work handed off from the member's own thread, the steps its body
@@ -24,7 +25,7 @@ export function Session({ params, form, act, raise }: BodyProps) {
     'query BrickSessionJob($agent:String!,$id:String!){rows:jobHistory(agent:$agent,id:$id){brief logTail endedNote claimedAt endedAt}}',
     { agent, id: job?.id ?? '' }, { keep: true, pause: !agent || !job || form !== 'primary' });
   const own = useOwnFlag(job?.state, raise, (was, now) => (!running(was) ? null : now === 'done' ? 'Finished' : now === 'stopped' ? 'Stopped' : running(now) ? null : 'Failed'));
-  const [asking, setAsking] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [now, setNow] = useState(Date.now);
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
   if (read.status === 'loading') return <Loading />;
@@ -33,39 +34,36 @@ export function Session({ params, form, act, raise }: BodyProps) {
   const tools = [...(job.usage?.tools ?? [])].filter((t) => t.count).sort((a, b) => (b.count ?? 0) - (a.count ?? 0));
   const stop = async () => {
     setBusy(true); setError('');
-    try { own(); await memberOperation('runtime.jobStop', { job: job.id, reason: 'write-off' }); act('stop', {}); setAsking(false); }
-    catch { setError('That did not stop it.'); }
+    try { own(); await memberOperation('runtime.jobStop', { job: job.id, reason: 'write-off' }); act('stop', {}); return true; }
+    catch { setError('That did not stop it.'); return false; }
     finally { setBusy(false); }
   };
-  if (form === 'compact') return <p className="board-brief"><span className="board-state" data-running={running(job.state)}>{job.state}</span> {job.title}</p>;
+  if (form === 'compact') return <p className="board-brief"><State tone={tone(job.state)}>{job.state}</State> {job.title}</p>;
+  const big = form === 'primary', handoff = read.data?.cv?.venue === 'handoff';
+  const span = running(job.state) ? 'for ' + lasted(job.queuedAt, now) : detail?.endedAt ? 'ran ' + lasted(detail.claimedAt ?? job.queuedAt, Date.parse(detail.endedAt)) : '';
   return (
     <>
-      <p className="board-lead">{job.title || read.data?.cv?.label || 'Session'}</p>
-      <div className="board-line">
-        <span className="board-state" data-running={running(job.state)}>{job.state}</span>
+      <Lead>{job.title || read.data?.cv?.label || 'Session'}</Lead>
+      <div className="board-meta">
+        <State tone={tone(job.state)}>{job.state}</State>
         {agent && <Chip place={{ brick: 'agent', params: { agent } }}>{agent}</Chip>}
-        <span className="text-muted-foreground">{running(job.state) ? 'for ' + lasted(job.queuedAt, now) : detail?.endedAt ? 'ran ' + lasted(detail.claimedAt ?? job.queuedAt, Date.parse(detail.endedAt)) : ''}</span>
+        {span && <span>{span}</span>}
       </div>
-      {tools.length > 0 && <p className="board-line text-muted-foreground">{tools.slice(0, form === 'primary' ? 12 : 3).map((t) => <span key={t.name}>{t.name} ×{t.count}</span>)}</p>}
-      {form === 'primary' && (
-        <dl style={{ marginTop: '.8rem' }}>
-          {detail?.brief && <div><dt>Asked</dt><dd><Reply words={detail.brief} /></dd></div>}
-          {job.usage?.model && <div><dt>Running on</dt><dd>{[job.usage.harness, job.usage.model].filter(Boolean).join(' · ')}</dd></div>}
-          {detail?.endedNote && <div><dt>How it ended</dt><dd>{detail.endedNote}</dd></div>}
-          {!running(job.state) && job.state !== 'done' && detail?.logTail && <div><dt>Last output</dt><dd><pre className="board-tail">{detail.logTail}</pre></dd></div>}
-          <div><dt>Result</dt><dd className="text-muted-foreground">{job.state === 'done' ? 'Its answer is in the conversation.' : running(job.state) ? 'Its answer will arrive in the conversation.' : 'It gave no answer.'}</dd></div>
-          {read.data?.cv?.venue === 'handoff' && <div><dt>Steps</dt><dd><SessionTrace conversation={conversation} job={job.id} running={running(job.state)} /></dd></div>}
-        </dl>
+      {big && (
+        <Facts>
+          {detail?.brief && <Fact wide label="Asked"><Reply words={detail.brief} /></Fact>}
+          {detail?.endedNote && <Fact wide label="How it ended">{detail.endedNote}</Fact>}
+          {!running(job.state) && job.state !== 'done' && detail?.logTail && <Fact wide label="Last output"><pre className="board-tail">{detail.logTail}</pre></Fact>}
+          <Fact label="Result"><span className="board-note">{job.state === 'done' ? 'Its answer is in the conversation.' : running(job.state) ? 'Its answer will arrive in the conversation.' : 'It gave no answer.'}</span></Fact>
+          {job.usage?.model && <Fact label="Running on">{[job.usage.harness, job.usage.model].filter(Boolean).join(' · ')}</Fact>}
+          {tools.length > 0 && <Fact label="Tools"><span className="board-tools">{tools.slice(0, 12).map((t) => <span key={t.name}>{t.name} ×{t.count}</span>)}</span></Fact>}
+        </Facts>
       )}
-      {form === 'side' && read.data?.cv?.venue === 'handoff' && <SessionLatestStep conversation={conversation} job={job.id} />}
-      {running(job.state) && (
-        <div className="board-line">
-          {asking
-            ? <><button type="button" className="board-action" disabled={busy} onClick={() => void stop()}>Stop this session</button><button type="button" className="board-action" onClick={() => setAsking(false)}>Keep it running</button></>
-            : <button type="button" className="board-action" onClick={() => setAsking(true)}>Stop…</button>}
-        </div>
-      )}
-      {error && <p role="alert" className="text-destructive">{error}</p>}
+      {!big && tools.length > 0 && <Note><span className="board-tools">{tools.slice(0, 3).map((t) => <span key={t.name}>{t.name} ×{t.count}</span>)}</span></Note>}
+      {big && handoff && <Section title="Steps"><SessionTrace conversation={conversation} job={job.id} running={running(job.state)} /></Section>}
+      {!big && handoff && <SessionLatestStep conversation={conversation} job={job.id} />}
+      {running(job.state) && <div className="board-actions"><Confirm ask="Stop…" yes="Stop this session" no="Keep it running" busy={busy} act={stop} /></div>}
+      <Problem>{error}</Problem>
     </>
   );
 }

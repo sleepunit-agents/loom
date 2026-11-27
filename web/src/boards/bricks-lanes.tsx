@@ -8,7 +8,7 @@ import { useRef, useState } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { memberOperation } from '../data/operation';
 import { displayName } from '../kit/words';
-import { Chip, Loading, Unavailable, words, type Act, type Params } from './brick-kit';
+import { Action, Actions, Loading, Problem, Row, Rows, Section, State, Time, Unavailable, words, type Act, type Params } from './brick-kit';
 import { priorityWord } from './bricks-work';
 import type { Form } from './layout';
 
@@ -36,21 +36,25 @@ function Tools({ project, act }: { project: string; act: Act }) {
   }
   if (!waiting && !rows.length) return null;
   return (
-    <div data-lanes-tools="">
-      {waiting > 0 && <p className="board-line"><span className="board-state" data-running="true">Needs you · {waiting}</span></p>}
-      {rows.map((row) => {
-        const name = displayName(row.agent), verb = row.paused ? 'Resume new claims for ' : 'Pause new claims for ';
-        return (
-          <div className="board-line" key={row.agent}>
-            <Chip place={{ brick: 'agent', params: { agent: row.agent } }}>{name}</Chip>
-            <span>{row.paused ? 'New claims paused' : 'New claims enabled'}{row.at ? ' · ' + new Date(row.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''}</span>
-            {asking === row.agent
-              ? <><button type="button" className="board-action" disabled={busy} onClick={() => void change(row)}>{verb + name}</button><button type="button" className="board-action" onClick={() => setAsking(undefined)}>Cancel</button></>
-              : <button type="button" className="board-action" aria-label={verb + name} onClick={() => { setError(''); setAsking(row.agent); }}>{row.paused ? 'Resume…' : 'Pause…'}</button>}
-          </div>
-        );
-      })}
-      {error && <p role="alert" className="text-destructive">{error}</p>}
+    <div className="board-lanes-tools" data-lanes-tools="">
+      {waiting > 0 && <p className="board-meta"><State tone="waiting">Needs you · {waiting}</State></p>}
+      {rows.length > 0 && (
+        <Section title="New claims">
+          <Rows>
+            {rows.map((row) => {
+              const name = displayName(row.agent), verb = row.paused ? 'Resume new claims for ' : 'Pause new claims for ';
+              return (
+                <Row key={row.agent} place={{ brick: 'agent', params: { agent: row.agent } }} title={name}
+                  meta={<>{row.paused ? 'New claims paused' : 'New claims enabled'}{row.at && <> · <Time at={row.at} /></>}</>}
+                  end={asking === row.agent ? undefined : <Action kind="quiet" label={verb + name} onClick={() => { setError(''); setAsking(row.agent); }}>{row.paused ? 'Resume…' : 'Pause…'}</Action>}>
+                  {asking === row.agent && <Actions><Action disabled={busy} onClick={() => void change(row)}>{verb + name}</Action><Action kind="quiet" onClick={() => setAsking(undefined)}>Cancel</Action></Actions>}
+                </Row>
+              );
+            })}
+          </Rows>
+        </Section>
+      )}
+      <Problem>{error}</Problem>
     </div>
   );
 }
@@ -70,7 +74,7 @@ export function Lanes({ params, form, act }: { params: Params; form: Form; act: 
           const rows = read.data!.projectBoardTickets.filter((t) => t.lane === lane);
           return (
             <section key={lane} aria-label={lane} data-empty={rows.length === 0}>
-              <h3><span>{lane}</span><span>{rows.length}</span></h3>
+              <h3><span>{lane}</span><small>{rows.length}</small></h3>
               <ul>
                 {rows.slice(0, cap).map((t) => (
                   <li key={t.id}>
@@ -81,7 +85,7 @@ export function Lanes({ params, form, act }: { params: Params; form: Form; act: 
                     </button>
                   </li>
                 ))}
-                {rows.length > cap && <li className="text-xs text-muted-foreground">and {rows.length - cap} more</li>}
+                {rows.length > cap && <li className="board-note">and {rows.length - cap} more</li>}
               </ul>
             </section>
           );
