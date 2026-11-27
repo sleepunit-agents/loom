@@ -5,6 +5,8 @@ import { Badge } from './ui/badge';
 import { ModuleCard } from './module-card';
 import { Reply } from './reply';
 import {
+  indexNames,
+  type IndexName,
   relatedFields,
   listPageSize,
   type ListPage,
@@ -63,6 +65,12 @@ export const projectQuery = `query PairProject($id:String!){
 export function hashView(hash: string): View | null {
   const p = new URLSearchParams(hash.slice(1)),
     project = p.get('project');
+  const index = p.get('index'),
+    role = p.get('profile'),
+    ref = p.get('ref');
+  if (index && Object.hasOwn(indexNames, index)) return { kind: 'index', ref: index as IndexName };
+  if (ref && (role === 'member' || role === 'agent' || role === 'repository'))
+    return { kind: 'profile', role, ref };
   if (project) {
     for (const kind of ['repository', 'agent', 'member'] as const) {
       const ref = p.get(kind);
@@ -72,6 +80,9 @@ export function hashView(hash: string): View | null {
   }
   const pull = p.get('pull'),
     ticket = p.get('ticket');
+  const comment = p.get('comment');
+  if (ticket && /^t-\d+$/.test(ticket) && comment && /^\d+$/.test(comment))
+    return { kind: 'comment', ticket, ref: comment };
   if (pull) return { kind: 'pull', ref: pull };
   return ticket && /^t-\d+$/.test(ticket) ? ticketView(ticket) : null;
 }
@@ -247,7 +258,7 @@ export function ProjectCanvas({ data, work, memory }: { data: ProjectOverview; w
             <div className="flex flex-wrap gap-x-3">
               {links.map((l) => (
                 <span key={l.kind + l.ref}>
-                  <ViewLink view={{ ...l, project: p.id }} work={work}>
+                  <ViewLink view={{ kind: 'profile', role: l.kind, ref: l.ref }} work={work}>
                     {l.ref}
                   </ViewLink>{' '}
                   · {l.kind}

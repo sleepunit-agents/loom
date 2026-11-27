@@ -1,6 +1,6 @@
 import { hashView } from './project-entities';
 import { useEffect, useState } from 'react';
-import { ticketView, viewKey, type View } from './ticket-view';
+import { indexNames, ticketView, viewKey, type View } from './ticket-view';
 
 interface Ring {
   views: View[];
@@ -14,15 +14,19 @@ function restore(key: string, root?: string): Ring {
       const views: View[] = saved.views.filter(
         (v: View) =>
           v &&
-          ('project' in v
-            ? typeof v.project === 'string' &&
-              !!v.project &&
-              (v.kind === 'project' ||
-                (['repository', 'agent', 'member'].includes(v.kind) && typeof v.ref === 'string'))
-            : v.kind === 'pull'
-              ? typeof v.ref === 'string'
-              : /^t-\d+$/.test(v.ticket) &&
-                (v.kind === 'ticket' || (v.kind === 'comment' && typeof v.ref === 'string'))),
+          (v.kind === 'index'
+            ? Object.hasOwn(indexNames, v.ref)
+            : v.kind === 'profile'
+              ? ['agent', 'member', 'repository'].includes(v.role) && typeof v.ref === 'string' && !!v.ref
+              : 'project' in v
+                ? typeof v.project === 'string' &&
+                  !!v.project &&
+                  (v.kind === 'project' ||
+                    (['repository', 'agent', 'member'].includes(v.kind) && typeof v.ref === 'string'))
+                : v.kind === 'pull'
+                  ? typeof v.ref === 'string'
+                  : /^t-\d+$/.test(v.ticket) &&
+                    (v.kind === 'ticket' || (v.kind === 'comment' && typeof v.ref === 'string'))),
       );
       if (base && !views.some((v) => viewKey(v) === viewKey(base))) views.unshift(base);
       const focus = base && saved.root !== root ? viewKey(base) : saved.active;

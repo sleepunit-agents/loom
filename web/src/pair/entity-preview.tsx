@@ -1,7 +1,7 @@
 import { useId, useState, type ReactElement, type ReactNode } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from './ui/hover-card';
-import type { View, Related } from './ticket-view';
+import { indexNames, type View, type Related } from './ticket-view';
 type Project = { name: string; goal: string | null; lifecycle: string };
 
 export function EntityPreview({
@@ -62,11 +62,18 @@ export function ProjectPreview({ id }: { id: string }) {
 
 export function viewHash(v: View) {
   const p = new URLSearchParams();
-  if ('project' in v) {
+  if (v.kind === 'index') p.set('index', v.ref);
+  else if (v.kind === 'profile') {
+    p.set('profile', v.role);
+    p.set('ref', v.ref);
+  } else if ('project' in v) {
     p.set('project', v.project);
     if (v.kind !== 'project') p.set(v.kind, v.ref);
   } else if (v.kind === 'pull') p.set('pull', v.ref);
-  else p.set('ticket', v.ticket);
+  else {
+    p.set('ticket', v.ticket);
+    if (v.kind === 'comment' && v.ref) p.set('comment', v.ref);
+  }
   return '#' + p.toString();
 }
 
@@ -122,7 +129,7 @@ type PreviewData = {
   assigned?: Related[];
   claims?: { agent: string; paused: boolean }[];
 };
-function RecordPreview({ view }: { view: Exclude<View, { kind: 'project' }> }) {
+function RecordPreview({ view }: { view: Exclude<View, { kind: 'project' | 'index' | 'profile' }> }) {
   let query: string, variables: Record<string, string | number>;
   let title: string;
   if ('project' in view) {
@@ -235,7 +242,15 @@ export function ViewPreview({
       intent={intent || 'Open the ' + noun + ' view in this context.'}
       preview={
         preview ??
-        (view.kind === 'project' ? <ProjectPreview id={view.project} /> : <RecordPreview view={view} />)
+        (view.kind === 'index' ? (
+          <MiniCard title={indexNames[view.ref]} meta="Across projects" />
+        ) : view.kind === 'profile' ? (
+          <ProfileMini view={view} />
+        ) : view.kind === 'project' ? (
+          <ProjectPreview id={view.project} />
+        ) : (
+          <RecordPreview view={view} />
+        ))
       }
     />
   );
@@ -279,10 +294,28 @@ export function ActorReference({
       ? 'agent'
       : null;
   return kind ? (
-    <ViewLink view={{ kind, ref: id, project }} work={work}>
+    <ViewLink view={{ kind: 'profile', role: kind, ref: id }} work={work}>
       {id}
     </ViewLink>
   ) : (
     <>{id}</>
+  );
+}
+
+function ProfileMini({ view }: { view: Extract<View, { kind: 'profile' }> }) {
+  const repo = view.role === 'repository';
+  const ref = repo ? view.ref.replace(/^github:/, '') : view.ref;
+  const r = useDataQuery<{ rows: { title: string }[] }>(
+    repo
+      ? 'query RepoLatest($ref:String!){rows:changes(where:{repository:{eq:$ref}},orderBy:{updatedAt:{direction:desc,priority:0}},limit:1){title}}'
+      : `query PersonLatest($ref:String!){rows:tasks(where:{assignee:{eq:$ref},assigneeKind:{eq:${view.role}}},${latest}){title}}`,
+    { ref },
+  );
+  return (
+    <MiniCard
+      title={ref}
+      meta={view.role + ' · Across projects'}
+      detail={r.data?.rows[0] && (repo ? 'Latest PR · ' : 'Latest assignment · ') + r.data.rows[0].title}
+    />
   );
 }

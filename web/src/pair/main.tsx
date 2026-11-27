@@ -1,3 +1,5 @@
+import { WorkspaceIndex } from './workspace-index';
+import { LibraryIcon } from 'lucide-react';
 import { ViewPreview, TicketReference } from './entity-preview';
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { flushSync } from 'react-dom';
@@ -331,6 +333,8 @@ function Workspace({
   const root = ticket?.id || initialSubjects[place.id];
   const ring = useViewRing(JSON.stringify(['pair-views',member,id]),root);
   const active = ring.active;
+  const directory=active?.kind==='index' || active?.kind==='profile' ? active : null;
+  const directoryPages=useRef(new Map<string,number>());
   const projectId = active?.kind === 'project' ? active.project : '';
   const ticketId = active?.kind === 'ticket' || active?.kind === 'comment' ? active.ticket : '';
   const entity = active && (active.kind === 'pull' || active.kind === 'repository' || active.kind === 'agent' || active.kind === 'member') ? active : null;
@@ -339,7 +343,7 @@ function Workspace({
     entity && 'project' in entity ? {id:entity.project,ref:entity.ref} : {ref:entity?.ref || ''},{pause:!entity});
   const details = useDataQuery<{ticket: Ticket | null}>(detailsQuery,{id:ticketId},{pause:!ticketId});
   const project = useDataQuery<ProjectOverview>(projectQuery,{id:projectId},{pause:!projectId});
-  const viewStatus = entity ? other.status : projectId ? project.status : details.status;
+  const viewStatus = directory ? 'live' : entity ? other.status : projectId ? project.status : details.status;
   const secondaryState = useRef(new Map<string, SecondaryState>());
   const viewNav = useRef<HTMLElement>(null);
   const canvasScroll = useRef<HTMLDivElement>(null);
@@ -523,7 +527,7 @@ function Workspace({
     sending(true);
     fail('');
     const subject = active && (active.kind === 'project' ? active.project : active.kind === 'ticket' ? active.ticket : active.kind === 'pull' ? active.ref : 'project' in active ? active.kind + ' ' + active.ref + ' in ' + active.project : viewLabel(active));
-    const contextLabel = projectId ? 'Project workspace' : entity ? 'Entity workspace' : 'Ticket workspace';
+    const contextLabel = projectId ? 'Project workspace' : entity || directory ? 'Entity workspace' : 'Ticket workspace';
     const message = subject ? '['+contextLabel+' · '+subject+']\n'+value : value;
     try {
       const payload = bar || !files.length ? {} : {files: await Promise.all(files.map(async file => {
@@ -565,15 +569,16 @@ function Workspace({
       }
     }}>
       <section className="pair-canvas relative flex min-w-0 flex-1 flex-col">
-          {(ring.views.length > 1 || (active && !root)) && <nav aria-label="Open views" ref={viewNav} className="pair-view-ring flex items-center gap-1">
-            {ring.views.map(v=><ViewPreview key={viewKey(v)} view={v} intent="Show this open view."><Button size="sm" variant={viewKey(v)===activeKey ? 'secondary' : 'ghost'}
+          <nav aria-label="Open views" ref={viewNav} className="pair-view-ring flex items-center gap-1">
+            <Button size="sm" variant="ghost" title="Browse across projects" onClick={()=>workOn({kind:'index',ref:'projects'})}><LibraryIcon/>Browse</Button>
+            {(ring.views.length > 1 || (active && !root)) && ring.views.map(v=><ViewPreview key={viewKey(v)} view={v} intent="Show this open view."><Button size="sm" variant={viewKey(v)===activeKey ? 'secondary' : 'ghost'}
               aria-current={viewKey(v)===activeKey ? 'page' : undefined} onClick={()=>workOn(v)}>{viewLabel(v)}</Button></ViewPreview>)}
             {active && !(active.kind === 'ticket' && active.intent === 'work' && active.ticket === root) && <Button size="icon-xs" variant="ghost"
               aria-label="Close current view" onClick={ring.close}><XIcon/></Button>}
-          </nav>}
+          </nav>
         <div ref={canvasScroll} className="pair-canvas-scroll" onScroll={e=>{if(viewStatus === 'live') positions.current.set(activeKey,e.currentTarget.scrollTop);}}>
           <div className="pair-zones" key={activeKey}>
-            {entity ? other.status === 'live' && other.data ?
+            {directory ? <WorkspaceIndex view={directory} work={workOn} pages={directoryPages.current}/> : entity ? other.status === 'live' && other.data ?
               <EntityCanvas view={entity} data={other.data} work={workOn} memory={secondaryState.current}/> :
               <p role="status">{other.status==='loading' ? 'Opening view…' : 'Record unavailable.'}</p> :
               active?.kind === 'project' ? project.data?.project?.id === projectId && project.status === 'live' ?

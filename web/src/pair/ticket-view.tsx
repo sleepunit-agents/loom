@@ -18,13 +18,33 @@ import { Reply } from './reply';
 type TicketView = { ticket: string; kind: 'ticket' | 'comment'; ref?: string; intent?: 'work' };
 export type ScopeView = { kind: 'repository' | 'agent' | 'member'; project: string; ref: string };
 export type PullView = { kind: 'pull'; ref: string; ticket?: string };
-export type View = TicketView | PullView | ScopeView | { kind: 'project'; project: string };
+export const indexNames = {
+  projects: 'Projects',
+  people: 'People',
+  agents: 'Agents',
+  repositories: 'Repositories',
+  tickets: 'Tickets',
+  epics: 'Epics',
+  pulls: 'Pull requests',
+  comments: 'Comments',
+} as const;
+export type IndexName = keyof typeof indexNames;
+export type IndexView = { kind: 'index'; ref: IndexName };
+export type ProfileView = { kind: 'profile'; role: 'member' | 'agent' | 'repository'; ref: string };
+export type View =
+  IndexView | ProfileView | TicketView | PullView | ScopeView | { kind: 'project'; project: string };
 export const ticketView = (ticket: string): TicketView => ({ ticket, kind: 'ticket' });
 export const viewKey = (v: View) =>
-  'project' in v
-    ? JSON.stringify(v.kind === 'project' ? [v.kind, v.project] : [v.kind, v.project, v.ref])
-    : JSON.stringify([v.kind, v.kind === 'pull' ? '' : v.ticket, v.ref, 'intent' in v ? v.intent : null]);
+  v.kind === 'index'
+    ? JSON.stringify([v.kind, v.ref])
+    : v.kind === 'profile'
+      ? JSON.stringify([v.kind, v.role, v.ref])
+      : 'project' in v
+        ? JSON.stringify(v.kind === 'project' ? [v.kind, v.project] : [v.kind, v.project, v.ref])
+        : JSON.stringify([v.kind, v.kind === 'pull' ? '' : v.ticket, v.ref, 'intent' in v ? v.intent : null]);
 export function viewLabel(v: View) {
+  if (v.kind === 'index') return indexNames[v.ref];
+  if (v.kind === 'profile') return v.ref.replace(/^github:/, '') + ' · ' + v.role;
   if (v.kind === 'project') return 'Overview · ' + v.project;
   if ('project' in v) return v.ref.replace(/^github:/, '') + ' · ' + v.project;
   if (v.kind === 'comment') return v.ticket + ' · note ' + v.ref;
@@ -99,7 +119,7 @@ export type Group = {
 };
 type PanelState = { page: number; item?: string };
 export type SecondaryState = { selected: string; panels: Record<string, PanelState> };
-function ListPager({
+export function ListPager({
   name,
   page,
   size,
