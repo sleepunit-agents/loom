@@ -623,6 +623,23 @@ remembers.
 body needs them to resume. Showing them to the owner for that window keeps no word longer than the slot does. The only
 reader is the member who said half of it.
 
+**As built (2026-11-27): a thread's jobs continue one harness session.** The "continuity slot" is the kept harness
+session of accepted-tradeoffs.md ("A harness session is kept between bodies, sealed, for the next body alone"), and
+until this date only bridge conversations had one: every job of a thread started fresh with the thread's kept
+history. Now the body of a job in one member's own thread asks loom for the session the thread's last body left,
+continues it, and hands its own back; loom is where it waits, so the next job may run on any machine.
+
+- A continuing body is told its new mail and what can change between jobs (the boards brief, who the job works for,
+  how to post activity and hand off), not the thread's history again and not its own last answer.
+- The session is erased with the oldest word it was handed, by the sweep that erases that word; with the thread, when
+  its member deletes it; and when the thread is archived.
+- A job that cannot continue starts fresh with the kept history and never fails for it: none kept, another harness
+  or family of models than last time, a session over 700 KB packed, a worker that runs bodies as plain processes.
+  Where the job could have continued and did not, the thread gets one step, tool `Session`, saying so.
+- Suite: `src/shared-conversation-sessions.test.ts` (the doors, expiry, archive, deletion, what each body is told),
+  with `src/runtime/body-program.test.ts`, `src/runtime/body-session.test.ts` and
+  `src/core/conversations/sessions.test.ts`.
+
 **Considered and not chosen:**
 - keeping words only until seen (an hour), after which a thread is a list of digests;
 - keeping them for the thread's life, which would break rule 3's "no transcripts" for this venue.

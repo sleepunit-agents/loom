@@ -9,6 +9,10 @@
  * body holding the conversation's job is let through to (shared-conversation-sessions.ts). It is not
  * served by the query door, so no page shows it to anybody, an owner included.
  *
+ * Which conversations keep one is the doors' to say (shared-conversation-sessions.ts): a bridge conversation,
+ * and one member's own thread with an agent. A thread's session goes with the thread: deleted with it
+ * (messages.ts) and erased when it is archived (threads.ts).
+ *
  * How long: a session holds words, and the words of a direct conversation are erased at the household's
  * keep time. So a session's own count starts at the oldest such word it can hold, and it is erased when
  * the keep time has passed since then, however often it has been saved since. `started_at` is that time: when

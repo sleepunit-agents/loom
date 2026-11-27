@@ -1,4 +1,5 @@
-/** A body's side of keeping its conversation's harness session (core/conversations/sessions.ts).
+/** A body's side of keeping its conversation's harness session (core/conversations/sessions.ts): a bridge
+ * conversation's, or that of one member's own thread with the agent (body-program.ts says which bodies ask).
  *
  * When the body starts it asks loom for the session the last body of this conversation left, puts its
  * files back where the harness keeps them, and tells the harness to continue it. When it has answered it

@@ -121,7 +121,8 @@ body of this conversation left (`conversation_sessions`, sealed, at most 700 KB 
 household's keep time for words). Handed one, it continues it and is told only the new mail. Otherwise
 it starts fresh and is told what was said earlier in the conversation
 (`src/core/conversations/bridge-history.ts`). When it has answered it hands the session back. Only Claude
-Code keeps sessions so far.
+Code keeps sessions so far. A member's own thread with an agent keeps a session the same way
+(accepted-tradeoffs.md, "A harness session is kept between bodies"; comms.md, "History").
 
 A job on anybody else's word has no part in this. A session is the harness's own record of what an
 earlier body read and used, tool results included. Both session doors (`conversation.session`,
