@@ -9,8 +9,9 @@ import { sharedRoot } from './shared-root.js';
 const clean: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const hash=(text:string)=>createHash('sha256').update(text).digest('hex');
-const source=readFileSync(new URL('../web/src/pieces/account/index.tsx',import.meta.url),'utf8');
-const query=source.match(/const query=`([^`]+)`/)![1];
+// The page's selection has its own home, which Account and the boards page's account brick both read.
+const source=readFileSync(new URL('../web/src/pieces/account/query.ts',import.meta.url),'utf8');
+const query=source.match(/export const accountQuery=`([^`]+)`/)![1];
 it('keeps the shipped personal account read bounded and private as credentials grow',async()=>{
  const counts:number[]=[];
  for(const size of [2,10]){
