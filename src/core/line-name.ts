@@ -15,3 +15,14 @@ export const onOneLine = (value: string): string => value.replace(controls, ' ')
  * take this, so neither can store a name the other refuses. A name is refused, never trimmed for the
  * caller: what is stored is what was sent. */
 export const machineName = lineName.refine(value => !hasControlCharacter(value));
+
+/** A single clean line: text an agent or a page gives that loom later repeats, in its own voice, to a person or to
+ * another job (a board's title, a blueprint's name and description, a session step's tool). It holds no control
+ * character (Unicode Cc: a line break, a tab, an escape), no format character (Cf: a bidirectional override, a
+ * zero-width joiner or space, a soft hyphen) and no line or paragraph separator.
+ * Text that breaks the rule is refused, never repaired: what is stored is what was sent. This is the one home of
+ * the rule; `cleanLineOf` is for rows stored before it, which are cleaned as they are repeated. */
+const unclean = /[\p{Cc}\p{Cf}\u2028\u2029]/u;
+export const CLEAN_LINE = 'one line with no control characters and no invisible formatting characters (a line break, a tab, a zero-width or direction mark)';
+export const isCleanLine = (value: string): boolean => !unclean.test(value);
+export const cleanLineOf = (value: string): string => value.replace(new RegExp(unclean.source, 'gu'), '');

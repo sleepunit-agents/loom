@@ -3,23 +3,39 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
+import { CLEAN_LINE, isCleanLine } from '../line-name.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
-import { blueprints, conversations, threads } from '../data/schema.js';
+import { conversations, threads } from '../data/schema.js';
 import { operation, OperationError, type Context, type Operations } from '../operations/index.js';
 import type { conversationBodyScope } from '../conversations/body-scope.js';
 import { catalogue } from './bricks.js';
-import { actRow, applyChanges, bigOf, live, designFrom, fill, filled, Refused, TITLE_MAX, type Change, type Design } from './model.js';
+import { titleSaid } from './brief.js';
+import { CHANGES_PER_CALL_MAX, PARAMS_JSON_MAX, PARAMS_KEY_MAX, PARAMS_KEYS_MAX, PLACEMENTS_MAX, READ_CHANGES_DEFAULT, READ_CHANGES_MAX, READ_CHANGES_MIN } from './limits.js';
+import { actRow, applyChanges, bigOf, live, designFrom, fill, filled, Refused, TITLE_RULE, validTitle, type Change, type Design } from './model.js';
 import { BoardStore, newPlacementId } from './store.js';
 
 type BodyScope = ReturnType<typeof conversationBodyScope>;
 const id = z.string().min(1).max(200);
 const params = z.record(z.string(), z.unknown());
+/** A brick's params, an action's detail, a blueprint's arguments: bounded here, before the brick's own schema reads
+ * them, and refused in words the caller can act on. */
+function sized(what: string, value: Record<string, unknown> | undefined): void {
+  if (!value) return;
+  const keys = Object.keys(value);
+  if (keys.length > PARAMS_KEYS_MAX || keys.some((k) => k.length > PARAMS_KEY_MAX))
+    throw new Refused(`${what} holds at most ${PARAMS_KEYS_MAX} names, each of at most ${PARAMS_KEY_MAX} characters.`);
+  if (JSON.stringify(value).length > PARAMS_JSON_MAX)
+    throw new Refused(`${what} is too long: at most ${PARAMS_JSON_MAX} characters as JSON. Each value is an id, a choice or a whole number.`);
+}
+/** Longer than any title, so a title that is too long or not one clean line is refused in words (TITLE_RULE). */
+const title = z.string().max(1000);
+const BLUEPRINT_NAME_MAX = 80, BLUEPRINT_DESCRIPTION_MAX = 300;
 const change = z.discriminatedUnion('change', [
   z.object({ change: z.literal('place'), brick: z.string().min(1).max(80), params: params.optional(), rank: z.number().int().optional() }).strict(),
   z.object({ change: z.literal('remove'), placement: id }).strict(),
   z.object({ change: z.literal('rank'), placement: id, rank: z.number().int() }).strict(),
-  z.object({ change: z.literal('title'), title: z.string().max(TITLE_MAX) }).strict(),
+  z.object({ change: z.literal('title'), title }).strict(),
   z.object({ change: z.literal('maximize'), placement: id }).strict(),
   z.object({ change: z.literal('flag'), placement: id }).strict(),
 ]);
@@ -28,12 +44,20 @@ const any = z.unknown();
 export function registerBoardOperations(operations: Operations, db: DataDatabase, body: BodyScope, hash: (words: string) => string): BoardStore {
   const store = new BoardStore(db);
   const at = (ctx: Context) => new Date(ctx.now).toISOString();
-  /** The thread a job's body is working in, and its agent. */
+  /** The thread a job's body is working in, its agent, and the member the thread's conversation is with. */
   const working = (viewer: Viewer) => {
     const found = body(viewer);
     const thread = found && store.threadOfConversation(found.cv.id);
     // Boards are offered only where the member has the second window to see them.
-    return thread && store.attended(thread) ? { thread, agent: found.cv.agent } : undefined;
+    if (!thread || !store.attended(thread)) return;
+    const member = db.select({ member: conversations.member }).from(conversations).where(eq(conversations.id, found.cv.id)).get()?.member ?? null;
+    return { thread, agent: found.cv.agent, member };
+  };
+  /** Blueprints are an agent's for one member. A thread that is no one member's has none. */
+  const blueprintsFor = (viewer: Viewer) => {
+    const job = working(viewer)!;
+    if (!job.member) throw new Refused('Blueprints are kept for a member, and this thread is not one member\'s own.');
+    return { agent: job.agent, member: job.member };
   };
   /** A member owns a thread when its conversation is theirs, in loom's own venue. */
   const owns = (viewer: Viewer, thread: string) =>
@@ -68,8 +92,8 @@ export function registerBoardOperations(operations: Operations, db: DataDatabase
   operations.register(operation({ name: 'blueprints.list', write: false, doors: ['http'], input: z.object({}).strict(), output: any,
     may: (viewer) => !!working(viewer),
     run(ctx) {
-      const { agent } = working(ctx.viewer)!;
-      return { blueprints: store.blueprintsOf(agent).map((b) => ({ blueprint: b.id, name: b.name, description: b.description,
+      const { agent, member } = working(ctx.viewer)!;
+      return { blueprints: (member ? store.blueprintsOf(agent, member) : []).map((b) => ({ blueprint: b.id, name: b.name, description: b.description,
         parameters: JSON.parse(b.parameters) as unknown, uses: b.uses })) };
     } }));
 
@@ -79,13 +103,13 @@ export function registerBoardOperations(operations: Operations, db: DataDatabase
       const { thread } = working(ctx.viewer)!;
       return { boards: store.inThread(thread).map((row) => {
         const primary = bigOf(live(store.board(row.id)!));
-        return { board: row.id, title: row.title, closed: row.closedAt !== null, trailAt: row.trailAt,
+        return { board: row.id, title: titleSaid(row.title), closed: row.closedAt !== null, trailAt: row.trailAt,
           big: primary ? { brick: primary.brick, params: primary.params } : null };
       }) };
     } }));
 
   operations.register(operation({ ...common, name: 'boards.open',
-    input: z.object({ thread: id.optional(), title: z.string().max(TITLE_MAX).optional(), blueprint: id.optional(),
+    input: z.object({ thread: id.optional(), title: title.optional(), blueprint: id.optional(),
       arguments: params.optional(), place: z.object({ brick: z.string().min(1).max(80), params: params.optional() }).strict().optional() }).strict(),
     output: any,
     may: (viewer, input) => !!working(viewer) || (!!input.thread && owns(viewer, input.thread)),
@@ -93,18 +117,21 @@ export function registerBoardOperations(operations: Operations, db: DataDatabase
       const job = working(ctx.viewer);
       const who: 'agent' | 'member' = job ? 'agent' : 'member';
       const thread = job ? job.thread : input.thread!;
+      if (input.title !== undefined && !validTitle(input.title)) throw new Refused(TITLE_RULE);
+      sized('arguments', input.arguments); sized('params', input.place?.params);
       if (job && (input.thread || (input.place && input.blueprint))) throw new Refused('A body opens a board in its own thread, with a title and either a blueprint or one brick to place.');
       if (!job && (!input.place || input.title || input.blueprint || input.arguments))
         throw new Refused('A member opens a board by placing one brick.');
       let placed: { brick: string; params: Record<string, unknown> }[] = [];
       if (input.blueprint) {
-        const blueprint = db.select().from(blueprints).where(and(eq(blueprints.id, input.blueprint), eq(blueprints.agent, job!.agent))).get();
+        // Another member's blueprint is answered exactly as one that does not exist.
+        const blueprint = job!.member ? store.blueprint(job!.agent, job!.member, input.blueprint) : undefined;
         if (!blueprint) throw new OperationError('denied', 'This agent has no such blueprint.');
         placed = fill({ parameters: JSON.parse(blueprint.parameters), design: JSON.parse(blueprint.design) } as Design, input.arguments);
-        db.update(blueprints).set({ usedAt: at(ctx), uses: blueprint.uses + 1 }).where(eq(blueprints.id, blueprint.id)).run();
       } else if (input.arguments) throw new Refused('Arguments are for a blueprint.');
       else if (input.place) placed = [{ brick: input.place.brick, params: filled(input.place.brick, input.place.params).params }];
       const board = store.open({ thread, title: input.title ?? '', blueprint: input.blueprint, at: at(ctx) });
+      if (input.blueprint) store.usedBlueprint(input.blueprint, at(ctx));
       const made = placed.map((p, rank) => ({ id: newPlacementId(), brick: p.brick, params: p.params, rank, placedByKind: who, removed: false } as const));
       const empty = { id: board, title: input.title ?? '', revision: 1, closed: false, placements: [] };
       store.save(empty, { ...empty, placements: [...made] }, [
@@ -116,10 +143,11 @@ export function registerBoardOperations(operations: Operations, db: DataDatabase
     } }));
 
   operations.register(operation({ ...common, name: 'boards.change',
-    input: z.object({ board: id, changes: z.array(change).min(1).max(40) }).strict(), output: any,
+    input: z.object({ board: id, changes: z.array(change).min(1).max(CHANGES_PER_CALL_MAX) }).strict(), output: any,
     may: (viewer, input) => mayBoard(viewer, input.board),
     run(ctx, input) {
       const { board, who } = loaded(ctx.viewer, input.board);
+      for (const c of input.changes) if (c.change === 'place') sized('params', c.params);
       const next = applyChanges(board, input.changes as Change[], who, newPlacementId);
       store.save(board, next.board, next.rows, at(ctx), next.flagged);
       ctx.changed('boards', board.id);
@@ -127,14 +155,16 @@ export function registerBoardOperations(operations: Operations, db: DataDatabase
     } }));
 
   operations.register(operation({ ...common, name: 'boards.read', write: false,
-    input: z.object({ board: id, since: z.number().int().nonnegative().optional() }).strict(), output: any,
+    input: z.object({ board: id, since: z.number().int().nonnegative().optional(),
+      limit: z.number().int().min(READ_CHANGES_MIN).max(READ_CHANGES_MAX).optional() }).strict(), output: any,
     may: (viewer, input) => !!working(viewer) && mayBoard(viewer, input.board),
     run(ctx, input) {
       const { board } = loaded(ctx.viewer, input.board);
-      return { board: board.id, title: board.title, revision: board.revision, closed: board.closed,
-        placements: board.placements.filter((p) => !p.removed).sort((a, b) => a.rank - b.rank)
-          .map((p) => ({ placement: p.id, brick: p.brick, params: p.params, rank: p.rank })),
-        changes: store.changes(board.id, input.since ?? 0) };
+      // Whole revisions, oldest first, a bounded number of rows: `more` says to read on from the last revision given.
+      const { rows, more } = store.changes(board.id, input.since ?? 0, input.limit ?? READ_CHANGES_DEFAULT);
+      return { board: board.id, title: titleSaid(board.title), revision: board.revision, closed: board.closed,
+        placements: live(board).map((p) => ({ placement: p.id, brick: p.brick, params: p.params, rank: p.rank })),
+        changes: rows, more };
     } }));
 
   for (const name of ['close', 'reopen'] as const)
@@ -144,6 +174,7 @@ export function registerBoardOperations(operations: Operations, db: DataDatabase
         const { board, who } = loaded(ctx.viewer, input.board);
         if (board.closed === (name === 'close')) throw new Refused(name === 'close' ? 'This board is already closed.' : 'This board is already open.');
         const now = at(ctx);
+        if (name === 'reopen') store.roomOnTrail(board.thread);
         store.stamp(board, { revision: board.revision + 1, seq: 0, actorKind: who, change: name }, now,
           name === 'close' ? { closedAt: now } : { closedAt: null, trailAt: now });
         ctx.changed('boards', board.id);
@@ -155,6 +186,7 @@ export function registerBoardOperations(operations: Operations, db: DataDatabase
     may: (viewer, input) => { const row = store.row(input.board); return !!row && owns(viewer, row.thread); },
     run(ctx, input) {
       const { board } = loaded(ctx.viewer, input.board);
+      sized('detail', input.detail);
       const revision = store.stamp(board, actRow(board, input.placement, input.action, input.detail), at(ctx));
       ctx.changed('boards', board.id);
       return { board: board.id, revision };
@@ -178,19 +210,18 @@ export function registerBoardOperations(operations: Operations, db: DataDatabase
     } }));
 
   operations.register(operation({ ...agentOnly, name: 'blueprints.save',
-    input: z.object({ board: id, name: z.string().trim().min(1).max(80), description: z.string().trim().max(300),
-      placements: z.array(z.object({ placement: id, open: z.record(z.string(), z.string()).optional() }).strict()).min(1).max(40) }).strict(),
+    input: z.object({ board: id, name: z.string().trim().min(1).max(BLUEPRINT_NAME_MAX), description: z.string().trim().max(BLUEPRINT_DESCRIPTION_MAX),
+      placements: z.array(z.object({ placement: id, open: z.record(z.string().max(PARAMS_KEY_MAX), z.string().max(PARAMS_KEY_MAX)).optional() }).strict()).min(1).max(PLACEMENTS_MAX) }).strict(),
     output: any,
     may: (viewer, input) => !!working(viewer) && mayBoard(viewer, input.board),
     run(ctx, input) {
-      const { agent } = working(ctx.viewer)!;
+      const owner = blueprintsFor(ctx.viewer);
+      // Both are repeated to this member's later jobs by blueprints.list: one clean line each (core/line-name.ts).
+      if (!isCleanLine(input.name) || !isCleanLine(input.description)) throw new Refused(`A blueprint's name and its description are each ${CLEAN_LINE}.`);
       const { board } = loaded(ctx.viewer, input.board);
       const design = designFrom(board, input.placements);
-      const values = { description: input.description, parameters: JSON.stringify(design.parameters), design: JSON.stringify(design.design) };
-      const existing = db.select({ id: blueprints.id }).from(blueprints).where(and(eq(blueprints.agent, agent), eq(blueprints.name, input.name))).get();
-      const blueprint = existing?.id ?? 'bp-' + randomUUID();
-      if (existing) db.update(blueprints).set(values).where(eq(blueprints.id, blueprint)).run();
-      else db.insert(blueprints).values({ id: blueprint, agent, name: input.name, createdAt: at(ctx), ...values }).run();
+      const blueprint = store.saveBlueprint({ ...owner, name: input.name, description: input.description,
+        parameters: JSON.stringify(design.parameters), design: JSON.stringify(design.design), at: at(ctx), newId: () => 'bp-' + randomUUID() });
       ctx.changed('blueprints', blueprint);
       return { blueprint, name: input.name, parameters: design.parameters };
     } }));

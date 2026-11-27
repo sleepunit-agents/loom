@@ -23,6 +23,6 @@ it("tells a pause or a resume of an agent's claims from the lanes, with nothing 
     for (const detail of [{ agent: 'art' }, { paused: 'true' }, { why: 'typed words' }]) expect(() => actRow(board, 'l1', action, detail), action + JSON.stringify(detail)).toThrow(Refused);
     expect(bricks.find((x) => x.name === 'lanes')!.actions[action].operation).toBe('work.setProjectClaims');
   }
-  expect(changeSentences(board, [actRow(board, 'l1', 'pause', {})])).toEqual(['The member used pause on lanes(project=loom) on board b1.']);
+  expect(changeSentences(board, [actRow(board, 'l1', 'pause', {})])).toEqual(["The member's page reported: used pause on lanes(project=loom) on board b1."]);
   expect(() => actRow(board, 'l1', 'claim', {})).toThrow(Refused);
 });

@@ -1385,6 +1385,7 @@ CREATE TABLE `measuring_settings` (
 CREATE TABLE `blueprints` (
 	`id` text PRIMARY KEY NOT NULL,
 	`agent` text NOT NULL,
+	`member` text NOT NULL,
 	`name` text NOT NULL,
 	`description` text NOT NULL,
 	`parameters` text NOT NULL,
@@ -1393,6 +1394,7 @@ CREATE TABLE `blueprints` (
 	`used_at` text,
 	`uses` integer DEFAULT 0 NOT NULL,
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "blueprints_created_at_utc" CHECK("blueprints"."created_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "blueprints"."created_at") = "blueprints"."created_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "blueprints"."created_at") = "blueprints"."created_at", 0)),
 	CONSTRAINT "blueprints_used_at_utc" CHECK("blueprints"."used_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "blueprints"."used_at") = "blueprints"."used_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "blueprints"."used_at") = "blueprints"."used_at", 0)),
 	CONSTRAINT "blueprints_name_length" CHECK(length("blueprints"."name") between 1 and 80),
@@ -1401,7 +1403,7 @@ CREATE TABLE `blueprints` (
 	CONSTRAINT "blueprints_design_json" CHECK(json_valid("blueprints"."design"))
 );
 
-CREATE UNIQUE INDEX `blueprints_agent_name` ON `blueprints` (`agent`,`name`);
+CREATE UNIQUE INDEX `blueprints_agent_member_name` ON `blueprints` (`agent`,`member`,`name`);
 CREATE TABLE `board_threads` (
 	`thread` text PRIMARY KEY NOT NULL,
 	`since` text NOT NULL,

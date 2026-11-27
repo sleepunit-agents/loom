@@ -36,10 +36,18 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
   return threadFor(viewer);
  };
  // A handed-off job has no thread to hold its work steps: they are kept beside its own conversation (job-trace.ts).
+ // What the server can check of who may write a step, it checks: the body is the current, authenticated body of a
+ // live job whose conversation is this handoff (body-scope.ts), the job is that conversation's own and its result
+ // returns to its member's own open thread (prepareJobTrace), and the job does not work on anybody else's word
+ // (`quiet`, the composition's answer: a kept session is the record of an owners' body). The body's own gate
+ // (runtime/body-program.ts) says the same and is no longer the only one. What is not checked here: that a step's
+ // words hold no secret. That filter runs in the body, where the secret values are known; the server never has them.
  const traced=(viewer:Viewer,kind:string)=>{
   if(kind!=='card')return;
   const found=requireCurrent(viewer);
-  return found.cv.venue==='handoff'?found:undefined;
+  if(found.cv.venue!=='handoff')return;
+  if(quiet?.(found)===true)throw new OperationError('denied','A session on anybody else\'s word keeps no steps');
+  return found;
  };
  const common=bodyOperationDefaults(current,words=>service.key.hash(words),'body-output');
  const progressKey=(job:string,id:string)=>JSON.stringify([job,'progress',id]);

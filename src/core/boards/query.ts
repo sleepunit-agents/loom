@@ -6,6 +6,7 @@ import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import { conversations, threads } from '../data/schema.js';
 import { brickNamed } from './bricks.js';
+import { titleSaid } from './brief.js';
 import { bigOf, live } from './model.js';
 import { BoardStore } from './store.js';
 
@@ -29,7 +30,7 @@ export function boardQueryFields(db: DataDatabase): GraphQLFieldConfigMap<unknow
   const shaped = (id: string) => {
     const found = store.board(id)!, row = store.row(id)!;
     const list = live(found), big = bigOf(list);
-    return { id, thread: found.thread, title: found.title, revision: found.revision, closed: found.closed, trailAt: row.trailAt,
+    return { id, thread: found.thread, title: titleSaid(found.title), revision: found.revision, closed: found.closed, trailAt: row.trailAt,
       placements: list.map((p) => ({ id: p.id, brick: p.brick, params: JSON.stringify(p.params), rank: p.rank, placedByKind: p.placedByKind,
         big: p === big, canBeBig: !!brickNamed(p.brick)?.big, flagged: !!p.flagged })) };
   };

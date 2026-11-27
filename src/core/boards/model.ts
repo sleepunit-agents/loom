@@ -1,6 +1,8 @@
 /** A board's rules as plain functions (docs/specs/boards.md, "Records" and "Operations"). Nothing here reads
  * or writes a database: an operation loads a board, calls these, and stores what comes back. */
+import { CLEAN_LINE, isCleanLine } from '../line-name.js';
 import { brickNamed, paramsKey, type Brick } from './bricks.js';
+import { PLACEMENTS_MAX } from './limits.js';
 
 export type ActorKind = 'agent' | 'member';
 export interface Placement {
@@ -19,7 +21,7 @@ export interface Board {
   title: string;
   revision: number;
   closed: boolean;
-  /** Every placement the board has had. Live ones hold ranks 0 to n−1. */
+  /** Its live placements, which hold ranks 0 to n−1, and any removed one the caller loaded to name it. */
   placements: Placement[];
 }
 export type Change =
@@ -30,6 +32,8 @@ export type Change =
   | { change: 'maximize'; placement: string }
   | { change: 'flag'; placement: string };
 export interface ChangeRow {
+  /** When it was stored; set on rows read back. */
+  at?: string;
   revision: number;
   seq: number;
   actorKind: ActorKind;
@@ -42,6 +46,10 @@ export interface ChangeRow {
 }
 
 export const TITLE_MAX = 80;
+/** A title is the one free text an agent gives a board, and loom repeats it to later jobs: a single clean line
+ * (core/line-name.ts). The message a refused one gets, for the operation's schema and the rules alike. */
+export const TITLE_RULE = `A title is at most ${TITLE_MAX} characters, on ${CLEAN_LINE}.`;
+export const validTitle = (title: unknown): title is string => typeof title === 'string' && title.length <= TITLE_MAX && isCleanLine(title);
 /** A call the rules refuse. The message is for the caller: an agent corrects itself from it. */
 export class Refused extends Error {}
 
@@ -96,6 +104,8 @@ export function applyChanges(
       const list = order();
       if (list.some((p) => same(p, c.brick, params)))
         throw new Refused(`${c.brick} with these params is already on the board.`);
+      if (list.length >= PLACEMENTS_MAX)
+        throw new Refused(`A board holds at most ${PLACEMENTS_MAX} placements. Remove one that no longer serves, or open another board.`);
       const rank = c.rank ?? list.length;
       if (!Number.isInteger(rank) || rank < 0 || rank > list.length)
         throw new Refused(`rank must be a whole number from 0 to ${list.length}: the board has ${list.length} placement${list.length === 1 ? '' : 's'} as this change lands. Changes apply in order; leave rank out to place last.`);
@@ -142,8 +152,7 @@ export function applyChanges(
       row({ change: 'flag', placement: p.id });
     } else {
       if (actorKind === 'member') throw new Refused('A member cannot change the title.');
-      if (typeof c.title !== 'string' || c.title.length > TITLE_MAX)
-        throw new Refused(`A title is at most ${TITLE_MAX} characters.`);
+      if (!validTitle(c.title)) throw new Refused(TITLE_RULE);
       row({ change: 'title', from: title, to: c.title });
       title = c.title;
     }

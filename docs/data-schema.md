@@ -46,6 +46,8 @@ must be exactly a fresh database's shape. Only then are the steps run on the rea
 file. A foreign, interim, hand-altered or newer database is refused untouched;
 moving older data in is the separate real-data move.
 
+Schema 52 gives `blueprints` a `member`: a blueprint belongs to its agent and to the member of the thread it was saved in, and its name is unique for that pair (docs/specs/boards.md, "Records"). The table is rebuilt empty: a blueprint saved before never recorded which thread it was saved in, so none could be given its member, and they are deleted. A board opened from one keeps its placements and no longer names a blueprint.
+
 Schema 51 adds `notification_devices.replies` (whether a device is also pushed to when an agent replies in one of its member's threads; every device enrolled before starts with it off) and `notification_replies`: the newest agent reply each such device is to be told of, one row for a device and a thread, with when it was queued and sent (docs/specs/boards.md, "Coming back"). It holds a thread's id and a message's number, never words, and its rows go with the device or the thread. Earlier households start with none.
 
 Schema 50 adds `conversation_tasks`: the tickets a handed-off session was said to be for, one row for each ticket named in `conversation.handoff` (docs/specs/boards.md, "Sessions"). It holds no words. Earlier households start with none: a session handed off before it has no ticket.

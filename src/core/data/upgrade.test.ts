@@ -75,6 +75,32 @@ describe('upgrading a household database', () => {
     expect(old.pragma('foreign_key_check')).toEqual([]);
   });
 
+  it('deletes the agent-wide blueprints at schema 52, keeps the boards opened from them, and holds a new one to a member', () => {
+    const old = household(51);
+    old.function('loom_now', () => at);
+    old.exec(`INSERT INTO members(id,role,joined_at) VALUES ('sam','member','${at}'),('kim','member','${at}');
+      INSERT INTO agents(id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('art','','','','pebble','dot');
+      INSERT INTO conversations(id,agent,member,venue,place,label,direct,started_at,last_at,turn_count) VALUES ('cv','art','sam','loom','p','',0,'${at}','${at}',0);
+      INSERT INTO threads(id,conversation,title,titled_by,pinned,opened_at,last_at,read_seq,working,stop_requested) VALUES ('th','cv','T','member',0,'${at}','${at}',0,0,0);
+      INSERT INTO blueprints(id,agent,name,description,parameters,design,created_at,uses) VALUES ('bp-old','art','pulse','For whom?','[]','[]','${at}',3);
+      INSERT INTO boards(id,thread,title,blueprint,opened_at,trail_at,changed_at) VALUES ('bd','th','Pond','bp-old','${at}','${at}','${at}');
+      INSERT INTO board_placements(id,board,brick,params,rank,placed_by_kind,placed_at) VALUES ('pl','bd','ticket','{"ticket":"t-1"}',0,'agent','${at}')`);
+    applyUpgrades(old, 51, () => at, 52);
+    // A blueprint never recorded the thread it was saved in, so none could be given its member: they are gone.
+    expect(old.prepare('SELECT count(*) AS n FROM blueprints').get()).toEqual({ n: 0 });
+    expect(old.prepare('SELECT id,title,blueprint FROM boards').all()).toEqual([{ id: 'bd', title: 'Pond', blueprint: null }]);
+    expect(old.prepare('SELECT id FROM board_placements').all()).toEqual([{ id: 'pl' }]);
+    const save = (id: string, member: string | null) => old.prepare("INSERT INTO blueprints(id,agent,member,name,description,parameters,design,created_at) VALUES (?,'art',?,'pulse','','[]','[]',?)").run(id, member, at);
+    expect(() => save('bp-none', null)).toThrow(/NOT NULL/);
+    expect(() => save('bp-ghost', 'nobody')).toThrow(/FOREIGN KEY/);
+    save('bp-sam', 'sam'); save('bp-kim', 'kim');
+    expect(() => save('bp-sam-2', 'sam')).toThrow(/UNIQUE/);
+    old.exec("UPDATE boards SET blueprint='bp-sam'");
+    const pinned = open(); pinned.exec(shipped(52));
+    expect(dataSchemaShape(old)).toEqual(dataSchemaShape(pinned));
+    expect(old.pragma('foreign_key_check')).toEqual([]);
+  });
+
   it('leaves the sign-in diagnosis unknown for preexisting unplaced jobs', () => {
     const old = household(38);
     old.exec(`INSERT INTO agents (id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('art','','','','pebble','dot');
