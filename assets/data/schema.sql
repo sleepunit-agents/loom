@@ -1400,6 +1400,13 @@ CREATE TABLE `blueprints` (
 );
 
 CREATE UNIQUE INDEX `blueprints_agent_name` ON `blueprints` (`agent`,`name`);
+CREATE TABLE `board_threads` (
+	`thread` text PRIMARY KEY NOT NULL,
+	`since` text NOT NULL,
+	FOREIGN KEY (`thread`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "board_threads_since_utc" CHECK("board_threads"."since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "board_threads"."since") = "board_threads"."since" or strftime('%Y-%m-%dT%H:%M:%fZ', "board_threads"."since") = "board_threads"."since", 0))
+);
+
 CREATE TABLE `boards` (
 	`id` text PRIMARY KEY NOT NULL,
 	`thread` text NOT NULL,

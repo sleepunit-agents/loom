@@ -1,4 +1,5 @@
 import {pairEvents} from './pair-events.js';
+import {boardsMail} from '../core/boards/brief.js';
 /** Fixed private child: bootstrap enters on stdin only, after the parent's
  * running ACK. Native execution and mail acceptance happen in this program.
  *
@@ -251,6 +252,16 @@ export async function bodyProgram(input: {
       context.push(attachments);continued.push(attachments);
     }
     if(sent){context.push(sent);continued.push(sent);}
+    // A thread whose member has the second window: the body is told what is on its boards and what the member did
+    // there, before its mail. Any other thread refuses the read and is told nothing (core/boards/operations.ts).
+    if(job.venue==='loom'&&memoryClient){
+      try{
+        const brief=await memoryClient.command('boards.brief',{},randomUUID());
+        const text=brief.ok&&(brief.value as {text?:unknown}|null)?.text;
+        if(typeof text==='string'){const told=boardsMail(text);context.push(told);continued.push(told);}
+      }catch{/* A brief that cannot be read is no reason to refuse the work. */}
+      if(signal.aborted)throw new Error();
+    }
     // In a bridge's room others speak beside the one who asked. The body is told who this job works for, by loom's
     // reading of the room, before its mail: a body that continues a kept session is told too, since the asker of
     // this job need not be the asker of the last (harness-traits.ts, workingFor).

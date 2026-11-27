@@ -1,3 +1,4 @@
+import { BoardStore } from './core/boards/store.js';
 import {workDiscussions} from './core/conversations/work-discussion.js';
 import {inboxDiscussions} from './core/conversations/inbox-discussion.js';
 import type {inbox as inboxTable} from './core/data/schema.js';
@@ -54,7 +55,7 @@ export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKe
     install(operations: Operations) {
       work.install(operations);
       discussions.install(operations);
-      registerConversationOperations(operations, service, { authorize(viewer, access) {
+      registerConversationOperations(operations, service, { sentFromBoards: (thread, board, at) => new BoardStore(db).sentFrom(thread, board, at), authorize(viewer, access) {
         if (viewer.kind !== 'member') return false;
         const sharing = sharedSharing(db);
         if (access.action === 'open') {

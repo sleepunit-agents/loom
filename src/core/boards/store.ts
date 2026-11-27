@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, gt, isNull } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { blueprints, boardChanges, boardPlacements, boards, threads } from '../data/schema.js';
+import { blueprints, boardChanges, boardPlacements, boards, boardThreads, threads } from '../data/schema.js';
 import { boardBrief, changeSentences, described } from './brief.js';
 import { live, Refused, type Board, type ChangeRow, type Placement } from './model.js';
 
@@ -109,6 +109,15 @@ export class BoardStore {
     return text;
   }
 
+  /** Whether the thread's member uses the page that shows boards. Only then is an agent offered them. */
+  attended(thread: string): boolean {
+    return !!this.db.select({ thread: boardThreads.thread }).from(boardThreads).where(eq(boardThreads.thread, thread)).get();
+  }
+  /** The member sent from the page that shows boards, with this board on screen or none. */
+  sentFrom(thread: string, board: string | null, at: string): void {
+    this.db.insert(boardThreads).values({ thread, since: at }).onConflictDoNothing().run();
+    if (board) this.show(thread, board, at);
+  }
   /** The member sent a message while looking at this board. */
   show(thread: string, board: string, at: string): void {
     const row = this.row(board);

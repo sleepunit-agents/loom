@@ -30,7 +30,8 @@ export function registerBoardOperations(operations: Operations, db: DataDatabase
   const working = (viewer: Viewer) => {
     const found = body(viewer);
     const thread = found && store.threadOfConversation(found.cv.id);
-    return thread ? { thread, agent: found.cv.agent } : undefined;
+    // Boards are offered only where the member has the second window to see them.
+    return thread && store.attended(thread) ? { thread, agent: found.cv.agent } : undefined;
   };
   /** A member owns a thread when its conversation is theirs, in loom's own venue. */
   const owns = (viewer: Viewer, thread: string) =>
@@ -155,6 +156,14 @@ export function registerBoardOperations(operations: Operations, db: DataDatabase
       const revision = store.stamp(board, actRow(board, input.placement, input.action, input.detail), at(ctx));
       ctx.changed('boards', board.id);
       return { board: board.id, revision };
+    } }));
+
+  operations.register(operation({ ...agentOnly, name: 'boards.brief', input: z.object({}).strict(), output: any,
+    run(ctx) {
+      const { thread } = working(ctx.viewer)!;
+      const text = store.takeBrief(thread);
+      ctx.changed('boards', thread);
+      return { text };
     } }));
 
   operations.register(operation({ ...agentOnly, name: 'blueprints.save',

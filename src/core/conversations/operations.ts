@@ -25,6 +25,8 @@ export interface ConversationOperationOptions {
   /** Synchronous, side-effect-free current policy check, repeated after async
    * preparation and before receipt replay. No default allow implementation. */
   authorize(viewer: Viewer, access: ConversationAccess): boolean;
+  /** The member sent from the page that shows boards, with this board on screen or none. Throws to refuse the send. */
+  sentFromBoards?(thread: string, board: string | null, at: string): void;
 }
 
 const target = z.object({ thread: z.string().min(1) }).strict();
@@ -90,11 +92,12 @@ export function registerConversationOperations(operations: Operations, service: 
   }));
 
   operations.register(operation({ ...common, name: 'comms.send',
-    input: target.extend({ clientId: z.string().min(1).max(200), words: z.string().trim().max(MESSAGE_WORDS_MAX), files: chatFiles.optional() }).refine(i => (i.words.length > 0 || !!i.files?.length) && i.words.length + (i.files ? JSON.stringify(i.files.map(f => f.name)).length + 17 : 0) <= MESSAGE_WORDS_MAX),
+    input: target.extend({ clientId: z.string().min(1).max(200), words: z.string().trim().max(MESSAGE_WORDS_MAX), files: chatFiles.optional(), shows: z.object({ board: z.string().min(1).max(200).nullable() }).strict().optional() }).refine(i => (i.words.length > 0 || !!i.files?.length) && i.words.length + (i.files ? JSON.stringify(i.files.map(f => f.name)).length + 17 : 0) <= MESSAGE_WORDS_MAX),
     output: z.object({ thread: z.string(), seq: z.number().int(), item: z.string() }).strict(),
     may: (v, i) => threadAccess(v, i.thread),
     prepare: (i, ctx) => service.prepareSend({ thread: i.thread, clientId: i.clientId, words: i.words, files:i.files, sender: member(ctx.viewer), kind: 'message' }),
     run(ctx, i, prepared) {
+      if (i.shows) options.sentFromBoards?.(i.thread, i.shows.board, new Date(ctx.now).toISOString());
       const message = (prepared as Awaited<ReturnType<CommsMessages['prepareSend']>>)();
       changed(ctx, i.thread);
       ctx.changed('messages', `${i.thread}:${message.seq}`);

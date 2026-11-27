@@ -5,7 +5,7 @@ import { Operations } from '../operations/index.js';
 import { createDataSchema } from '../data/database.js';
 import { OperationResults } from '../data/operation-results.js';
 import { DataWrites } from '../data/writes.js';
-import { agents, blueprints, boardChanges, boardPlacements, boards, members } from '../data/schema.js';
+import { agents, blueprints, boardChanges, boardPlacements, boards, boardThreads, members } from '../data/schema.js';
 import { CommsMessages } from '../conversations/messages.js';
 import type { Viewer } from '../../policy.js';
 import { registerBoardOperations } from './operations.js';
@@ -33,6 +33,7 @@ function fixture() {
     'body-theirs': { job: { id: 'job-2' }, cv: { id: theirs.conversation, agent: 'art' } },
   };
   const store = registerBoardOperations(operations, db, ((viewer: Viewer) => bodies[viewer.id]) as never, (w) => 'h:' + w);
+  for (const thread of ['th:mine', 'th:theirs']) store.sentFrom(thread, null, now());
   let n = 0;
   const as = (viewer: Viewer) => async (name: string, input: unknown, command = 'c' + ++n) => {
     clock.advance(1000);
@@ -186,6 +187,17 @@ it('closes and reopens along the trail (checks 16, 17)', async () => {
   const read = await f.agent('boards.read', { board, since: 3 });
   expect(read.value.changes.map((c: { change: string }) => c.change)).toEqual(['close', 'reopen']);
   expect(f.db.select().from(boards).all()).toHaveLength(2);
+});
+
+it('offers boards only in a thread whose member has the second window', async () => {
+  const f = fixture();
+  f.db.delete(boardThreads).run();
+  expect(await f.agent('boards.open', { title: 'Unseen' })).toMatchObject({ ok: false, code: 'denied' });
+  expect(await f.agent('boards.brief', {})).toMatchObject({ ok: false, code: 'denied' });
+  f.store.sentFrom('th:mine', null, new Date().toISOString());
+  expect((await f.agent('boards.brief', {})).value.text).toBe('No board is open in this thread.');
+  expect((await f.agent('boards.open', { title: 'Seen' })).ok).toBe(true);
+  expect(await f.stranger('boards.open', { title: 'Theirs' })).toMatchObject({ ok: false, code: 'denied' });
 });
 
 it('lists every brick for a body and for a member', async () => {

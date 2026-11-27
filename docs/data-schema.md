@@ -46,7 +46,7 @@ must be exactly a fresh database's shape. Only then are the steps run on the rea
 file. A foreign, interim, hand-altered or newer database is refused untouched;
 moving older data in is the separate real-data move.
 
-Schema 48 adds boards: `boards`, `board_placements`, `board_changes` and `blueprints` (docs/specs/boards.md). Earlier households start with none.
+Schema 48 adds boards: `board_threads`, `boards`, `board_placements`, `board_changes` and `blueprints` (docs/specs/boards.md). Earlier households start with none.
 
 Schema 39 records whether a sign-in prevented the last placement attempt. Earlier jobs begin with the warning off.
 

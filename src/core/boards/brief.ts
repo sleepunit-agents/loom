@@ -49,3 +49,23 @@ export function boardBrief(shown: Board | null, boards: readonly { board: Board;
     ...(changes.length ? ['Since you last looked:\n' + changes.map((s) => '- ' + s).join('\n')] : []),
   ].join('\n\n');
 }
+
+/** What a job in a thread with the second window is told before its mail: that the board exists, how to fill
+ * it, and what is on it now. The standing instructions are judgment (docs/specs/boards.md); nothing checks them. */
+export function boardsMail(brief: string): string {
+  return [
+    'This conversation has a second window beside it, the board. Only you fill it, and the member watches you do it.',
+    'You place bricks: fixed kinds of thing loom knows how to draw. You never write markup, queries or positions.',
+    'Use loom_command with these operations: bricks.catalogue (what bricks exist and their parameters), blueprints.list,',
+    'boards.list, boards.open {title, blueprint?, arguments?}, boards.change {board, changes:[{change:"place",brick,params,rank?}',
+    '| {change:"remove",placement} | {change:"rank",placement,rank} | {change:"title",title}]}, boards.read {board},',
+    'boards.close {board}, boards.reopen {board}, blueprints.save {board, name, description, placements:[{placement, open?}]}.',
+    'Rank 0 is the primary: the one thing the board is about. Say what you have to say in your reply; show it on the board.',
+    'When you build a new board, place one brick per boards.change call so it comes together in front of them.',
+    'Change the board on screen when the subject is the same; open a new one when it is not. Remove what no longer serves.',
+    'Save a board worth returning to as a blueprint, and always when you find yourself building the same board again.',
+    'If no brick shows what is needed, say so and file a ticket for the brick. Do not approximate.',
+    '',
+    brief,
+  ].join('\n');
+}

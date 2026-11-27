@@ -2519,6 +2519,12 @@ export const blueprints = sqliteTable('blueprints', {
   uniqueIndex('blueprints_agent_name').on(t.agent, t.name),
 ]);
 
+// A thread that has the second window: its member has written from the page that shows boards.
+export const boardThreads = sqliteTable('board_threads', {
+  thread: text('thread').primaryKey().notNull().references((): AnySQLiteColumn => threads.id, { onDelete: 'cascade' }),
+  since: text('since').notNull(),
+}, t => [check('board_threads_since_utc', utc(t.since))]);
+
 export const boards = sqliteTable('boards', {
   id: text('id').primaryKey().notNull(),
   thread: text('thread').notNull().references((): AnySQLiteColumn => threads.id, { onDelete: 'cascade' }),
@@ -2581,7 +2587,7 @@ export const boardChanges = sqliteTable('board_changes', {
 ]);
 
 export const plumbing = {
-  blueprints, boards, boardPlacements, boardChanges,
+  blueprints, boardThreads, boards, boardPlacements, boardChanges,
   messageFiles,
   projectClaimDirections, taskBacklogEvents,
   bridgePersonSightings,
