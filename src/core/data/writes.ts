@@ -1,6 +1,7 @@
 import { types } from 'node:util';
 import type { DataDatabase } from './database.js';
 import { rowsWritten } from './rows-written.js';
+import type { TableTracker, WrittenTables } from './table-tracker.js';
 
 export interface CommittedWrite<T> {
   value: T;
@@ -25,6 +26,9 @@ export interface CommittedWrite<T> {
  * who may read what) is told to `stamped` alone, which may wake readers late and
  * rarely. Every other commit is told to everyone, at once. Each caller that says
  * `stampOnly` is named in docs/accepted-tradeoffs.md.
+ *
+ * Given a table tracker (./table-tracker.ts, installed only when LOOM_LIVE_SCOPE is not off), `changed` is told
+ * which tables the commit wrote; without one, `unknown`. Who is told, and when, does not depend on it.
  */
 export class DataWrites {
   private depth = 0;
@@ -40,10 +44,10 @@ export class DataWrites {
 
   constructor(private readonly db: DataDatabase, private readonly notify: {
     refreshAccess(): void;
-    changed(): void;
+    changed(written?: WrittenTables): void;
     /** Without this, a stamp-only commit is told as any other. */
     stamped?(): void;
-  }) {}
+  }, private readonly tracker?: TableTracker) {}
 
   /** `stampOnly` is asked once, after the operation returned and before its transaction commits. */
   run<T>(operation: () => T, stampOnly?: () => boolean): CommittedWrite<T> {
@@ -55,6 +59,9 @@ export class DataWrites {
     if (outer) this.loud = false;
     const before = outer ? rowsWritten(this.db) : 0;
     this.depth++;
+    // Only the outer run's capture is told: nested runs commit with it.
+    const capture = outer ? this.tracker?.begin() : undefined;
+    let written: WrittenTables = 'unknown';
     let value: T;
     try {
       value = this.db.$client.transaction(() => {
@@ -66,12 +73,13 @@ export class DataWrites {
       })();
     } finally {
       this.depth--;
+      if (capture) written = this.tracker!.end(capture);
     }
     const notificationErrors: unknown[] = [];
     if (outer && rowsWritten(this.db) !== before) {
       // Revocation takes effect before live reads are woken. Attempt both hooks
       // even when one fails; notification failure cannot roll back a commit.
-      const all = this.loud || !this.notify.stamped ? [() => this.notify.refreshAccess(), () => this.notify.changed(), ...[...this.observers].map(observer => () => { if (this.observers.has(observer)) observer(); })]
+      const all = this.loud || !this.notify.stamped ? [() => this.notify.refreshAccess(), () => this.notify.changed(written), ...[...this.observers].map(observer => () => { if (this.observers.has(observer)) observer(); })]
         : [() => this.notify.stamped!()];
       for (const notify of all) {
         try { notify(); } catch (error) { notificationErrors.push(error); }

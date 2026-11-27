@@ -23,6 +23,9 @@ import { dataAuthentication } from './core/data/authentication.js';
 import { dataHttp } from './core/data/http.js';
 import type { memoryQueryFields } from './transport/memory-queries.js';
 import { DataLive, type MeasureRead } from './core/data/live.js';
+import { liveScope } from './core/data/live-scope.js';
+import { installTableTracker, markUnscoped, type WrittenTables } from './core/data/table-tracker.js';
+import { defaultFieldResolver, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import { LIVE_RELAXED_MS } from './core/data/live-pace.js';
 import { dataQueries } from './core/data/queries.js';
 import { dataSocket } from './core/data/socket.js';
@@ -52,7 +55,14 @@ export const STAMP_WAKE_MS = 60_000;
  * last of them and no more: docs/specs/boards.md, "Live reads and their cost". A selection its client opened
  * `relaxed` waits `LIVE_RELAXED_MS` instead (core/data/live-pace.ts), and this time when the client asks for it now. */
 export const LIVE_SETTLE_MS = 100;
-export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>, measure?: MeasureRead, programRecords?: (viewer:Viewer)=>readonly string[]|undefined, canReadUsage: (viewer:Viewer)=>boolean = () => true, canReadProgram: (viewer:Viewer)=>boolean = canReadUsage) {
+export function nextData(db: DataDatabase, baseClock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>, measure?: MeasureRead, programRecords?: (viewer:Viewer)=>readonly string[]|undefined, canReadUsage: (viewer:Viewer)=>boolean = () => true, canReadProgram: (viewer:Viewer)=>boolean = canReadUsage) {
+  // t-2431, shadow only (core/data/live-scope.ts). Off, none of this is installed and nothing below differs.
+  // Shadow, a reading that asks the clock, or reads another database file or a cache shared between selections,
+  // is unscoped: the shadow check never takes it as skippable.
+  const scope = liveScope();
+  const tracker = scope === 'shadow' ? installTableTracker(db.$client) : undefined;
+  const clock: Clock = tracker ? { now: () => { markUnscoped('the clock'); return baseClock.now(); }, at: (time, fn) => baseClock.at(time, fn) } : baseClock;
+  if (tracker) fields = unscopedFields(fields, 'another database (memory)');
   const summaries = (viewer:Viewer) => new JobSummaries(db, () => ({ ...talkVisibility(viewer), ...conversationVisibility(viewer), ...boxVisibility(viewer), ...taskVisibility(viewer), ...tempoVisibility(viewer) }), () => clock.now(), () => { if (!currentJobsRead) { currentJobsRead = true; schedule(); } });
   let cancelLoginWake:(()=>void)|undefined, loginWakeAt = Infinity;
   const accounts = modelAccountQueries(db, () => new Date(clock.now()).toISOString(),viewer=>canReadUsage(viewer) ? summaries(viewer) : undefined, summaries, at=>{
@@ -71,7 +81,8 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     const auth = resolve(request);
     return auth && { ...auth, valid: () => admitted() && auth.valid() && accounts.valid(auth.viewer) };
   };
-  const live = new DataLive(measure, LIVE_SETTLE_MS, LIVE_RELAXED_MS);
+  if (tracker) accounts.fields = unscopedFields(accounts.fields, 'a cache shared between selections (model accounts)');
+  const live = new DataLive(measure, LIVE_SETTLE_MS, LIVE_RELAXED_MS, scope);
   const bridges = new BridgeQueries(db, () => clock.now());
   let activityRead = false, currentJobsRead = false;
   const ownFields = { ...boardQueryFields(db), ...contextTicketFields(db), ...epicWorkFields(db), ...workspaceDirectoryFields(db), ...workJobFields(db, () => clock.now(), () => { if (!currentJobsRead) { currentJobsRead = true; schedule(); } }), ...backlogWindowFields(db), ...workBoardFields(db), ...changeReviewFields(db), ...bridgeSecretsReaderFields(db), ...bridgeQueryFields(bridges, viewer => {
@@ -143,14 +154,16 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     cancelStamps?.(); stampsDue = clock.now() + STAMP_WAKE_MS;
     cancelStamps = clock.at(stampsDue, () => { cancelStamps = undefined; if (!stopped) live.metadataChanged(); });
   };
-  const writes = new DataWrites(db, { refreshAccess: () => socket.refreshAccess(), changed: () => { live.changed(); schedule(); }, stamped });
+  const writes = new DataWrites(db, { refreshAccess: () => socket.refreshAccess(), changed: written => { live.changed(written); schedule(); }, stamped }, tracker);
   const http = dataHttp(db, authenticate, publicOrigin, schema, {}, () => live.epoch(), () => clock.now());
   let closing: Promise<void> | undefined;
   return {
     http,
     readVersion: () => live.epoch(),
     attach: socket.attach,
-    changed() { socket.refreshAccess(); live.changed(); schedule(); },
+    /** For writes and other changes that do not go through `writes.run`. With no tables (all of them today), the
+     * change is `unknown`. A caller that captured its writes (`tableTracker(client).capture`) may say which. */
+    changed(written?: WrittenTables) { socket.refreshAccess(); live.changed(written); schedule(); },
     timingsChanged: stamped,
     credentialUsageChanged: stamped,
     writes,
@@ -167,4 +180,9 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
       return closing;
     },
   };
+}
+
+/** The same fields, each marking the reading that resolves it unscoped (core/data/table-tracker.ts). */
+function unscopedFields<F extends GraphQLFieldConfigMap<any, any>>(fields: F, reason: string): F {
+  return Object.fromEntries(Object.entries(fields).map(([name, field]) => [name, { ...field, resolve: (...args: Parameters<typeof defaultFieldResolver>) => { markUnscoped(reason); return (field.resolve ?? defaultFieldResolver)(...args); } }])) as F;
 }

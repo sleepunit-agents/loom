@@ -1,3 +1,5 @@
+import { liveScope } from './core/data/live-scope.js';
+import { installTableTracker } from './core/data/table-tracker.js';
 import {startSharedHolder} from './shared-holder-process.js';
 import {githubBindingNames} from './pieces/changes/secrets.js';
 import { notificationKey } from './core/signin/notification-key.js';
@@ -110,6 +112,9 @@ export async function startSharedHome(options:{home:string;program?:string;host?
   const parent=openSync(dirname(realpathSync(home)),constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);
   try{fsyncSync(parent);}finally{closeSync(parent);}
   client=new Database(program.database,{fileMustExist:true});client.pragma('foreign_keys = ON');
+  // t-2431: LOOM_LIVE_SCOPE=shadow tracks which tables each statement of this connection reads and writes, from
+  // its first statement on (core/data/table-tracker.ts). Off (the default), nothing is installed.
+  if(liveScope()!=='off')installTableTracker(client);
   // Recognised again under the write lock, then upgraded; see upgradeDataSchema.
   upgradeDataSchema(client,()=>new Date(clock.now()).toISOString());
   const db=dataDatabase(client,()=>new Date(clock.now()).toISOString());

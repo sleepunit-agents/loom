@@ -8,7 +8,8 @@
  * vectors for sqlite-vec storage/recall plumbing.
  */
 import { Server } from 'node:http';
-import { vi } from 'vitest';
+import { afterEach, vi } from 'vitest';
+import { liveScopeViolations } from './core/data/live-scope.js';
 
 // A test's server never closes an idle keep-alive socket; its client does. Playwright's request client (a context's
 // `request`, `route.fetch`) keeps the socket of a request, the sign-in at the top of a test say, and sends a later one
@@ -64,3 +65,11 @@ vi.mock('./backends/embedding-runtime.js', () => ({
     MLE5Large: 'fast-multilingual-e5-large',
   },
 }));
+
+// t-2431: under LOOM_LIVE_SCOPE=shadow a live reading scoping would have skipped, whose answer changed, throws where
+// it is found (core/data/live-scope.ts). The throw can be caught on its way out (a socket turns it into an error
+// message), so the test that left one fails here too. Off, there are never any.
+afterEach(() => {
+  const violations = liveScopeViolations();
+  if (violations.length) throw new Error(`live scope violations: ${JSON.stringify(violations)}`);
+});
