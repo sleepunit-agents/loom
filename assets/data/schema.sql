@@ -1440,9 +1440,11 @@ CREATE TABLE `board_placements` (
 	`placed_by_kind` text NOT NULL,
 	`placed_at` text NOT NULL,
 	`removed_at` text,
+	`flagged_at` text,
 	FOREIGN KEY (`board`) REFERENCES `boards`(`id`) ON UPDATE no action ON DELETE cascade,
 	CONSTRAINT "board_placements_placed_at_utc" CHECK("board_placements"."placed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "board_placements"."placed_at") = "board_placements"."placed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "board_placements"."placed_at") = "board_placements"."placed_at", 0)),
 	CONSTRAINT "board_placements_removed_at_utc" CHECK("board_placements"."removed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "board_placements"."removed_at") = "board_placements"."removed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "board_placements"."removed_at") = "board_placements"."removed_at", 0)),
+	CONSTRAINT "board_placements_flagged_at_utc" CHECK("board_placements"."flagged_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "board_placements"."flagged_at") = "board_placements"."flagged_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "board_placements"."flagged_at") = "board_placements"."flagged_at", 0)),
 	CONSTRAINT "board_placements_placed_by_kind_choice" CHECK("board_placements"."placed_by_kind" in ('agent', 'member')),
 	CONSTRAINT "board_placements_params_json" CHECK(json_valid("board_placements"."params")),
 	CONSTRAINT "board_placements_rank_range" CHECK("board_placements"."rank" >= 0)
@@ -1465,7 +1467,7 @@ CREATE TABLE `board_changes` (
 	FOREIGN KEY (`board`) REFERENCES `boards`(`id`) ON UPDATE no action ON DELETE cascade,
 	CONSTRAINT "board_changes_at_utc" CHECK("board_changes"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "board_changes"."at") = "board_changes"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "board_changes"."at") = "board_changes"."at", 0)),
 	CONSTRAINT "board_changes_actor_kind_choice" CHECK("board_changes"."actor_kind" in ('agent', 'member')),
-	CONSTRAINT "board_changes_change_choice" CHECK("board_changes"."change" in ('open', 'place', 'remove', 'rank', 'title', 'close', 'reopen', 'act')),
+	CONSTRAINT "board_changes_change_choice" CHECK("board_changes"."change" in ('open', 'place', 'remove', 'rank', 'title', 'close', 'reopen', 'act', 'maximize', 'flag')),
 	CONSTRAINT "board_changes_detail_json" CHECK("board_changes"."detail" is null or json_valid("board_changes"."detail"))
 );
 

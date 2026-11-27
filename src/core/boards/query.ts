@@ -5,14 +5,16 @@ import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectT
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import { conversations, threads } from '../data/schema.js';
-import { live } from './model.js';
+import { brickNamed } from './bricks.js';
+import { bigOf, live } from './model.js';
 import { BoardStore } from './store.js';
 
 export function boardQueryFields(db: DataDatabase): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
-  const text = new GraphQLNonNull(GraphQLString), integer = new GraphQLNonNull(GraphQLInt);
+  const text = new GraphQLNonNull(GraphQLString), integer = new GraphQLNonNull(GraphQLInt), flag = new GraphQLNonNull(GraphQLBoolean);
   const placement = new GraphQLObjectType({ name: 'BoardPlacement', fields: {
     id: { type: text }, brick: { type: text }, params: { type: text, description: 'JSON, valid for the brick.' },
     rank: { type: integer }, placedByKind: { type: text },
+    big: { type: flag, description: 'Drawn in the primary form.' }, canBeBig: { type: flag }, flagged: { type: flag },
   } });
   const board = new GraphQLObjectType({ name: 'Board', fields: {
     id: { type: text }, thread: { type: text }, title: { type: text }, revision: { type: integer },
@@ -26,8 +28,10 @@ export function boardQueryFields(db: DataDatabase): GraphQLFieldConfigMap<unknow
       .where(and(eq(threads.id, thread), eq(conversations.member, viewer.id), eq(conversations.venue, 'loom'))).get();
   const shaped = (id: string) => {
     const found = store.board(id)!, row = store.row(id)!;
+    const list = live(found), big = bigOf(list);
     return { id, thread: found.thread, title: found.title, revision: found.revision, closed: found.closed, trailAt: row.trailAt,
-      placements: live(found).map((p) => ({ id: p.id, brick: p.brick, params: JSON.stringify(p.params), rank: p.rank, placedByKind: p.placedByKind })) };
+      placements: list.map((p) => ({ id: p.id, brick: p.brick, params: JSON.stringify(p.params), rank: p.rank, placedByKind: p.placedByKind,
+        big: p === big, canBeBig: !!brickNamed(p.brick)?.big, flagged: !!p.flagged })) };
   };
   return {
     /** Every board of a thread, open ones in trail order and then the closed. Empty for anyone but its member. */

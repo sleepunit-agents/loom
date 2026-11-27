@@ -375,7 +375,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | --- | --- | --- |
 | `project` | yes | never |
 | `lanes` | yes | never |
-| `trend` | once its primary form is built: opened and closed per day over `days`, with the tickets behind a day | never |
+| `trend` | yes: opened and closed per day over `days`, and a picked day lists its tickets | never |
 | `ticket` | yes | it is closed or reopened by someone else |
 | `comments` | yes | a comment arrives from someone else |
 | `pull` | not yet | a check fails; it is merged or closed |

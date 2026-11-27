@@ -2557,9 +2557,12 @@ export const boardPlacements = sqliteTable('board_placements', {
   placedByKind: text('placed_by_kind', { enum: ['agent', 'member'] }).notNull(),
   placedAt: text('placed_at').notNull(),
   removedAt: text('removed_at'),
+  // When the agent last pointed at it; null once the member has looked.
+  flaggedAt: text('flagged_at'),
 }, t => [
   check('board_placements_placed_at_utc', utc(t.placedAt)),
   check('board_placements_removed_at_utc', utc(t.removedAt)),
+  check('board_placements_flagged_at_utc', utc(t.flaggedAt)),
   check('board_placements_placed_by_kind_choice', sql`${t.placedByKind} in ('agent', 'member')`),
   check('board_placements_params_json', sql`json_valid(${t.params})`),
   check('board_placements_rank_range', sql`${t.rank} >= 0`),
@@ -2572,7 +2575,7 @@ export const boardChanges = sqliteTable('board_changes', {
   seq: integer('seq').notNull(),
   at: text('at').notNull(),
   actorKind: text('actor_kind', { enum: ['agent', 'member'] }).notNull(),
-  change: text('change', { enum: ['open', 'place', 'remove', 'rank', 'title', 'close', 'reopen', 'act'] }).notNull(),
+  change: text('change', { enum: ['open', 'place', 'remove', 'rank', 'title', 'close', 'reopen', 'act', 'maximize', 'flag'] }).notNull(),
   placement: text('placement'),
   from: text('from_value'),
   to: text('to_value'),
@@ -2582,7 +2585,7 @@ export const boardChanges = sqliteTable('board_changes', {
   primaryKey({ columns: [t.board, t.revision, t.seq] }),
   check('board_changes_at_utc', utc(t.at)),
   check('board_changes_actor_kind_choice', sql`${t.actorKind} in ('agent', 'member')`),
-  check('board_changes_change_choice', sql`${t.change} in ('open', 'place', 'remove', 'rank', 'title', 'close', 'reopen', 'act')`),
+  check('board_changes_change_choice', sql`${t.change} in ('open', 'place', 'remove', 'rank', 'title', 'close', 'reopen', 'act', 'maximize', 'flag')`),
   check('board_changes_detail_json', sql`${t.detail} is null or json_valid(${t.detail})`),
 ]);
 

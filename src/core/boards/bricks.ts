@@ -24,22 +24,26 @@ export interface Brick {
   references: Record<string, RecordKind>;
   /** The parameter a chip's link key fills, for a brick that can be written in words. */
   linkKey?: string;
+  /** Whether it has a primary form. Every brick has the small forms; only some can be the big one. */
+  big: boolean;
+  /** The changes to its own record the page marks it for, by name. The page raises these; nothing is stored. */
+  flags: readonly string[];
   /** Action name → the schema of its detail, which holds only choices and ids. */
   actions: Record<string, { detail: z.ZodObject; operation: string }>;
 }
 
 const none = z.object({}).strict();
-const brick = (b: Brick) => b;
+const brick = (b: Omit<Brick, 'big' | 'flags'> & Partial<Pick<Brick, 'big' | 'flags'>>): Brick => ({ big: false, flags: [], ...b });
 
 export const bricks: readonly Brick[] = [
-  brick({ name: 'project', shows: "A project: its goal, where it stands, who is on it.",
+  brick({ name: 'project', big: true, shows: "A project: its goal, where it stands, who is on it.",
     params: z.object({ project: ref }).strict(), references: { project: 'project' }, linkKey: 'project', actions: {} }),
-  brick({ name: 'lanes', shows: "A project's active tickets in lanes: working, verifying, waiting.",
+  brick({ name: 'lanes', big: true, shows: "A project's active tickets in lanes: working, verifying, waiting.",
     params: z.object({ project: ref }).strict(), references: { project: 'project' }, actions: {} }),
-  brick({ name: 'trend', shows: 'Tickets opened and closed per day in a project.',
+  brick({ name: 'trend', big: true, shows: 'Tickets opened and closed per day in a project.',
     params: z.object({ project: ref, days: z.union([z.literal(7), z.literal(30), z.literal(90)]).default(30) }).strict(),
     references: { project: 'project' }, actions: {} }),
-  brick({ name: 'ticket', shows: 'One ticket: goal, why, done when, status, who has it.',
+  brick({ name: 'ticket', big: true, flags: ['closed', 'reopened'], shows: 'One ticket: goal, why, done when, status, who has it.',
     params: z.object({ ticket }).strict(), references: { ticket: 'ticket' }, linkKey: 'ticket',
     // What tasks.command offers a member on one ticket. A close takes a reason in words; the words go to the
     // ticket and never to the board, so every detail here is empty.
@@ -49,10 +53,10 @@ export const bricks: readonly Brick[] = [
       close: { operation: 'tasks.command', detail: none },
       reopen: { operation: 'tasks.command', detail: none },
     } }),
-  brick({ name: 'comments', shows: "A ticket's comments, newest first.",
+  brick({ name: 'comments', big: true, flags: ['comment'], shows: "A ticket's comments, newest first.",
     params: z.object({ ticket }).strict(), references: { ticket: 'ticket' },
     actions: { comment: { operation: 'tasks.command', detail: none } } }),
-  brick({ name: 'pull', shows: 'One pull request: state, checks, who it waits on.',
+  brick({ name: 'pull', flags: ['check failed', 'merged', 'closed'], shows: 'One pull request: state, checks, who it waits on.',
     params: z.object({ change: ref }).strict(), references: { change: 'change' }, linkKey: 'change', actions: {} }),
   brick({ name: 'repository', shows: 'A repository and its pull requests, in one project or across all.',
     params: z.object({ repository: ref, project: ref.optional() }).strict(),
@@ -89,6 +93,8 @@ export function catalogue() {
     params: z.toJSONSchema(b.params, { io: 'input' }),
     references: b.references,
     linkKey: b.linkKey ?? null,
+    canBeBig: b.big,
+    flagsItselfFor: b.flags,
     actions: Object.fromEntries(Object.entries(b.actions).map(([name, a]) => [name, z.toJSONSchema(a.detail)])),
   }));
 }

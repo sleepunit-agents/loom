@@ -22,7 +22,7 @@ export class BoardStore {
     if (!row) return;
     const placements: Placement[] = this.db.select().from(boardPlacements).where(eq(boardPlacements.board, id)).all()
       .map((p) => ({ id: p.id, brick: p.brick, params: JSON.parse(p.params) as Record<string, unknown>, rank: p.rank,
-        placedByKind: p.placedByKind, removed: p.removedAt !== null }));
+        placedByKind: p.placedByKind, removed: p.removedAt !== null, flagged: p.flaggedAt !== null }));
     return { id: row.id, title: row.title, revision: row.revision, closed: row.closedAt !== null, placements,
       thread: row.thread, agentSeen: row.agentSeen };
   }
@@ -45,7 +45,7 @@ export class BoardStore {
     return id;
   }
   /** Stores one revision: the board as the rules left it, and the rows that say what changed. */
-  save(before: Board, after: Board, rows: readonly ChangeRow[], at: string): void {
+  save(before: Board, after: Board, rows: readonly ChangeRow[], at: string, flagged: readonly string[] = []): void {
     const known = new Set(before.placements.map((p) => p.id));
     for (const p of after.placements) {
       if (!known.has(p.id))
@@ -58,6 +58,7 @@ export class BoardStore {
             .where(eq(boardPlacements.id, p.id)).run();
       }
     }
+    for (const id of flagged) this.db.update(boardPlacements).set({ flaggedAt: at }).where(eq(boardPlacements.id, id)).run();
     this.db.update(boards).set({ title: after.title, revision: after.revision, changedAt: at }).where(eq(boards.id, after.id)).run();
     this.log(after.id, rows, at);
   }
@@ -81,6 +82,11 @@ export class BoardStore {
         from: r.from ?? undefined, to: r.to ?? undefined, action: r.action ?? undefined,
         detail: r.detail ? (JSON.parse(r.detail) as Record<string, unknown>) : undefined }));
   }
+  /** The member looked at a flagged placement. Not a change to the board: no row, no revision. */
+  seen(board: string, placement: string): boolean {
+    return this.db.update(boardPlacements).set({ flaggedAt: null })
+      .where(and(eq(boardPlacements.board, board), eq(boardPlacements.id, placement))).run().changes > 0;
+  }
   /** What every agent call that takes a board returns with its result. Marks the member's changes as handed over. */
   handed(id: string) {
     const board = this.board(id);
@@ -88,7 +94,7 @@ export class BoardStore {
     const meanwhile = changeSentences(board, this.changes(id, board.agentSeen));
     this.db.update(boards).set({ agentSeen: board.revision }).where(eq(boards.id, id)).run();
     return { board: id, title: board.title, revision: board.revision, closed: board.closed,
-      placements: live(board).map((p) => ({ placement: p.id, brick: p.brick, params: p.params, rank: p.rank })),
+      placements: live(board).map((p) => ({ placement: p.id, brick: p.brick, params: p.params, rank: p.rank, flagged: !!p.flagged })),
       described: described(board), meanwhile };
   }
   /** The brief a job is handed at start: the shown board, and every member change in the thread the agent has

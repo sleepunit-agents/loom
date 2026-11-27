@@ -6,7 +6,7 @@ const fits = (side = 200): Fits => ({
   side: { min: 260, ideal: 360, max: 420, height: side },
   compact: { min: 220, ideal: 320, max: 420, height: 44 },
 });
-const board = (n: number, side?: number): Placed[] => Array.from({ length: n }, (_, i) => ({ id: 'p' + i, fits: fits(side) }));
+const board = (n: number, side?: number): Placed[] => Array.from({ length: n }, (_, i) => ({ id: 'p' + i, fits: fits(side), big: i === 0 }));
 const wide = { w: 1100, h: 800 };
 const rect = (s: Slot | undefined) => { if (!s || s.form === 'folded') throw new Error('not placed'); return s; };
 
@@ -54,5 +54,24 @@ describe('the board layout', () => {
     expect([...a]).toEqual([...b]);
     const renamed = layout(board(5).map((p, i) => ({ ...p, id: 'x' + i })), wide);
     expect([...renamed.values()]).toEqual([...a.values()]);
+  });
+
+  it('gives the primary form to the placement marked big, wherever it ranks (check 25)', () => {
+    const list = board(3).map((p, i) => ({ ...p, big: i === 2 }));
+    const out = layout(list, wide);
+    expect(['p0', 'p1', 'p2'].map((id) => rect(out.get(id)).form)).toEqual(['side', 'side', 'primary']);
+    expect(rect(out.get('p0')).y).toBeLessThan(rect(out.get('p1')).y);
+  });
+
+  it('lays a board with no big placement out as columns of small ones (check 25)', () => {
+    const list = board(3).map((p) => ({ ...p, big: false }));
+    const out = layout(list, wide), slots = ['p0', 'p1', 'p2'].map((id) => rect(out.get(id)));
+    expect(slots.every((s) => s.form === 'side')).toBe(true);
+    expect(slots[1].x).toBeGreaterThan(slots[0].x);
+    expect(slots[2].x).toBe(slots[0].x);
+    expect(slots[2].y).toBeGreaterThan(slots[0].y);
+    expect(slots[1].x + slots[1].w).toBeLessThanOrEqual(wide.w);
+    const narrow = layout(list, { w: 400, h: 800 });
+    expect(['p0', 'p1', 'p2'].map((id) => rect(narrow.get(id)).x)).toEqual([20, 20, 20]);
   });
 });

@@ -18,9 +18,9 @@ import { layout, type Slot } from './layout';
 import '../pair/screen.css';
 import './board.css';
 
-type Placement = { id: string; brick: string; params: string; rank: number; placedByKind: string };
+type Placement = { id: string; brick: string; params: string; rank: number; placedByKind: string; big: boolean; canBeBig: boolean; flagged: boolean };
 type Board = { id: string; thread: string; title: string; revision: number; closed: boolean; trailAt: string; placements: Placement[] };
-const boardFields = 'id thread title revision closed trailAt placements{id brick params rank placedByKind}';
+const boardFields = 'id thread title revision closed trailAt placements{id brick params rank placedByKind big canBeBig flagged}';
 
 /** The one id the address holds: a board's, a thread's, or none. */
 function address(): { board?: string; thread?: string } {
@@ -29,7 +29,7 @@ function address(): { board?: string; thread?: string } {
 }
 const go = (path: string, replace = false) => { if (location.pathname !== path) history[replace ? 'replaceState' : 'pushState'](null, '', path); };
 
-function BoardView({ board, onRemove, onClose }: { board: Board; onRemove(id: string): void; onClose(): void }) {
+function BoardView({ board, onRemove, onMaximize, onClose }: { board: Board; onRemove(id: string): void; onMaximize(id: string): void; onClose(): void }) {
   const field = useRef<HTMLDivElement>(null);
   const [area, setArea] = useState({ w: 0, h: 0 });
   useLayoutEffect(() => {
@@ -41,7 +41,7 @@ function BoardView({ board, onRemove, onClose }: { board: Board; onRemove(id: st
     return () => watch.disconnect();
   }, []);
   const placements = board.placements.map((p) => ({ ...p, view: brickView(p.brick), values: JSON.parse(p.params) as Params }));
-  const slots = area.w ? layout(placements.map((p) => ({ id: p.id, fits: p.view.fits })), area) : new Map<string, Slot>();
+  const slots = area.w ? layout(placements.map((p) => ({ id: p.id, fits: p.view.fits, big: p.big })), area) : new Map<string, Slot>();
   // A placement is drawn where it will rest and faded in; one already there moves by its transform.
   const seen = useRef(new Set<string>());
   const [, settle] = useState(0);
@@ -52,7 +52,15 @@ function BoardView({ board, onRemove, onClose }: { board: Board; onRemove(id: st
     return () => cancelAnimationFrame(frame);
   });
   const folded = placements.filter((p) => slots.get(p.id)?.form === 'folded');
-  const heading = board.title || (placements[0] ? `${placements[0].view.title(placements[0].values)} · ${placements[0].view.sub(placements[0].values)}` : '');
+  const lead = placements.find((p) => p.big) ?? placements[0];
+  const heading = board.title || (lead ? `${lead.view.title(lead.values)} · ${lead.view.sub(lead.values)}` : '');
+  // A brick's own flag: raised by the page when it sees the change happen, kept only while the page is open.
+  const [own, setOwn] = useState<Record<string, string>>({});
+  const raise = useCallback((id: string, name: string) => setOwn((now) => (now[id] === name ? now : { ...now, [id]: name })), []);
+  const looked = (p: Placement) => {
+    if (own[p.id]) setOwn(({ [p.id]: _gone, ...rest }) => rest);
+    if (p.flagged) void memberOperation('boards.seen', { board: board.id, placement: p.id }).catch(() => {});
+  };
   return (
     <section className="boards-board" aria-label={heading || 'Board'}>
       <header>
@@ -68,20 +76,26 @@ function BoardView({ board, onRemove, onClose }: { board: Board; onRemove(id: st
           const { Body } = p.view;
           return (
             <article key={p.id} className="board-placement" data-form={slot.form} data-entering={!seen.current.has(p.id)}
+              data-flagged={p.flagged || !!own[p.id]} onPointerEnter={() => looked(p)} onFocus={() => looked(p)}
               style={{ transform: `translate(${slot.x}px, ${slot.y}px)`, width: slot.w, height: slot.h }}>
               <header>
                 <h2>{p.view.title(p.values)}</h2>
                 <small className="font-mono">{p.view.sub(p.values)}</small>
+                {(p.flagged || own[p.id]) && <span className="board-flag" role="status">{own[p.id] || 'Look here'}</span>}
+                {!board.closed && p.canBeBig && !p.big && <button type="button" className="board-maximize" aria-label={'Make ' + p.view.title(p.values) + ' the big one'} onClick={() => onMaximize(p.id)}>⤢</button>}
                 {!board.closed && <button type="button" className="board-remove" aria-label={'Remove ' + p.view.title(p.values)} onClick={() => onRemove(p.id)}>✕</button>}
               </header>
-              <div><Body params={p.values} form={slot.form} act={(action, detail) => void memberOperation('boards.act', { board: board.id, placement: p.id, action, detail }).catch(() => {})} /></div>
+              <div><Body params={p.values} form={slot.form} raise={(name) => raise(p.id, name)} act={(action, detail) => void memberOperation('boards.act', { board: board.id, placement: p.id, action, detail }).catch(() => {})} /></div>
             </article>
           );
         })}
       </div>
-      <div className="boards-folded">
+      <div className="boards-folded" data-flagged={folded.some((p) => p.flagged || own[p.id])}>
         {folded.length > 0 && 'Also here'}
-        {folded.map((p) => <span key={p.id} className="board-chip"><i aria-hidden="true" />{p.view.title(p.values)} · {p.view.sub(p.values)}</span>)}
+        {folded.map((p) => p.canBeBig && !board.closed
+          ? <button key={p.id} type="button" className="board-chip" data-flagged={p.flagged || !!own[p.id]} title="Make this the big one"
+              onPointerEnter={() => looked(p)} onClick={() => onMaximize(p.id)}><i aria-hidden="true" />{p.view.title(p.values)} · {p.view.sub(p.values)}</button>
+          : <span key={p.id} className="board-chip" data-flagged={p.flagged || !!own[p.id]} onPointerEnter={() => looked(p)}><i aria-hidden="true" />{p.view.title(p.values)} · {p.view.sub(p.values)}</span>)}
       </div>
     </section>
   );
@@ -159,6 +173,7 @@ function Page({ member, thread, agent }: { member: string; thread: string; agent
           <div className="boards-trail" style={{ transform: `translateX(${-100 * Math.max(0, column)}%)` }}>
             {drawn.map((b) => (
               <BoardView key={b.id} board={b} onRemove={(id) => void change(b.id, [{ change: 'remove', placement: id }])}
+                onMaximize={(id) => void change(b.id, [{ change: 'maximize', placement: id }])}
                 onClose={() => void memberOperation('boards.close', { board: b.id }).catch(() => {})} />
             ))}
           </div>

@@ -11,6 +11,8 @@ export interface Placement {
   rank: number;
   placedByKind: ActorKind;
   removed: boolean;
+  /** The agent pointed at it and the member has not looked yet. */
+  flagged?: boolean;
 }
 export interface Board {
   id: string;
@@ -24,12 +26,14 @@ export type Change =
   | { change: 'place'; brick: string; params?: Record<string, unknown>; rank?: number }
   | { change: 'remove'; placement: string }
   | { change: 'rank'; placement: string; rank: number }
-  | { change: 'title'; title: string };
+  | { change: 'title'; title: string }
+  | { change: 'maximize'; placement: string }
+  | { change: 'flag'; placement: string };
 export interface ChangeRow {
   revision: number;
   seq: number;
   actorKind: ActorKind;
-  change: 'open' | 'place' | 'remove' | 'rank' | 'title' | 'close' | 'reopen' | 'act';
+  change: 'open' | 'place' | 'remove' | 'rank' | 'title' | 'close' | 'reopen' | 'act' | 'maximize' | 'flag';
   placement?: string;
   from?: string | number;
   to?: string | number;
@@ -43,6 +47,9 @@ export class Refused extends Error {}
 
 export const live = (board: Board) =>
   board.placements.filter((p) => !p.removed).sort((a, b) => a.rank - b.rank);
+
+/** The big placement: the first in rank order whose brick has a primary form. A board of small-only bricks has none. */
+export const bigOf = <P extends { brick: string }>(inRankOrder: readonly P[]) => inRankOrder.find((p) => brickNamed(p.brick)?.big);
 
 /** A brick's params as they are stored: checked against its schema, defaults filled. */
 export function filled(brick: string, params: Record<string, unknown> = {}): { brick: Brick; params: Record<string, unknown> } {
@@ -64,7 +71,7 @@ export function applyChanges(
   changes: readonly Change[],
   actorKind: ActorKind,
   newId: () => string,
-): { board: Board; rows: ChangeRow[]; placed: Placement[] } {
+): { board: Board; rows: ChangeRow[]; placed: Placement[]; flagged: string[] } {
   if (board.closed) throw new Refused('This board is closed. Reopen it, or open another.');
   if (!changes.length) throw new Refused('Give at least one change.');
   const revision = board.revision + 1;
@@ -72,6 +79,7 @@ export function applyChanges(
   const placements = board.placements.map((p) => ({ ...p }));
   const rows: ChangeRow[] = [];
   const placed: Placement[] = [];
+  const flagged: string[] = [];
   const order = () => placements.filter((p) => !p.removed).sort((a, b) => a.rank - b.rank);
   const renumber = (list: Placement[]) => list.forEach((p, rank) => (p.rank = rank));
   const row = (r: Omit<ChangeRow, 'revision' | 'seq' | 'actorKind'>) =>
@@ -113,6 +121,29 @@ export function applyChanges(
       list.splice(c.rank, 0, p);
       renumber(list);
       row({ change: 'rank', placement: p.id, from, to: c.rank });
+    } else if (c.change === 'maximize') {
+      const p = find(c.placement);
+      if (!brickNamed(p.brick)?.big) throw new Refused(`${p.brick} has no big form. It stays small.`);
+      const list = order();
+      const big = bigOf(list);
+      if (big === p) throw new Refused('That placement is already the big one.');
+      const from = p.rank;
+      if (big) {
+        // A trade: nothing else on the board moves.
+        p.rank = big.rank;
+        big.rank = from;
+      } else {
+        list.splice(from, 1);
+        list.unshift(p);
+        renumber(list);
+      }
+      row({ change: 'maximize', placement: p.id, from, to: p.rank });
+    } else if (c.change === 'flag') {
+      if (actorKind === 'member') throw new Refused('A member does not flag. Flags are how the board points things out to them.');
+      const p = find(c.placement);
+      p.flagged = true;
+      flagged.push(p.id);
+      row({ change: 'flag', placement: p.id });
     } else {
       if (actorKind === 'member') throw new Refused('A member cannot change the title.');
       if (typeof c.title !== 'string' || c.title.length > TITLE_MAX)
@@ -121,7 +152,7 @@ export function applyChanges(
       title = c.title;
     }
   }
-  return { board: { ...board, title, revision, placements }, rows, placed };
+  return { board: { ...board, title, revision, placements }, rows, placed, flagged };
 }
 
 /** A member's use of a brick's action, reported by the page after the action's own operation succeeded. */

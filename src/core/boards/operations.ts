@@ -9,7 +9,7 @@ import { blueprints, conversations, threads } from '../data/schema.js';
 import { operation, OperationError, type Context, type Operations } from '../operations/index.js';
 import type { conversationBodyScope } from '../conversations/body-scope.js';
 import { catalogue } from './bricks.js';
-import { actRow, applyChanges, designFrom, fill, filled, Refused, TITLE_MAX, type Change, type Design } from './model.js';
+import { actRow, applyChanges, bigOf, live, designFrom, fill, filled, Refused, TITLE_MAX, type Change, type Design } from './model.js';
 import { BoardStore, newPlacementId } from './store.js';
 
 type BodyScope = ReturnType<typeof conversationBodyScope>;
@@ -20,6 +20,8 @@ const change = z.discriminatedUnion('change', [
   z.object({ change: z.literal('remove'), placement: id }).strict(),
   z.object({ change: z.literal('rank'), placement: id, rank: z.number().int() }).strict(),
   z.object({ change: z.literal('title'), title: z.string().max(TITLE_MAX) }).strict(),
+  z.object({ change: z.literal('maximize'), placement: id }).strict(),
+  z.object({ change: z.literal('flag'), placement: id }).strict(),
 ]);
 const any = z.unknown();
 
@@ -76,9 +78,9 @@ export function registerBoardOperations(operations: Operations, db: DataDatabase
     run(ctx) {
       const { thread } = working(ctx.viewer)!;
       return { boards: store.inThread(thread).map((row) => {
-        const primary = store.board(row.id)!.placements.find((p) => !p.removed && p.rank === 0);
+        const primary = bigOf(live(store.board(row.id)!));
         return { board: row.id, title: row.title, closed: row.closedAt !== null, trailAt: row.trailAt,
-          primary: primary ? { brick: primary.brick, params: primary.params } : null };
+          big: primary ? { brick: primary.brick, params: primary.params } : null };
       }) };
     } }));
 
@@ -119,7 +121,7 @@ export function registerBoardOperations(operations: Operations, db: DataDatabase
     run(ctx, input) {
       const { board, who } = loaded(ctx.viewer, input.board);
       const next = applyChanges(board, input.changes as Change[], who, newPlacementId);
-      store.save(board, next.board, next.rows, at(ctx));
+      store.save(board, next.board, next.rows, at(ctx), next.flagged);
       ctx.changed('boards', board.id);
       return result(who, board.id);
     } }));
@@ -156,6 +158,15 @@ export function registerBoardOperations(operations: Operations, db: DataDatabase
       const revision = store.stamp(board, actRow(board, input.placement, input.action, input.detail), at(ctx));
       ctx.changed('boards', board.id);
       return { board: board.id, revision };
+    } }));
+
+  operations.register(operation({ ...common, name: 'boards.seen',
+    input: z.object({ board: id, placement: id }).strict(), output: any,
+    may: (viewer, input) => { const row = store.row(input.board); return !!row && owns(viewer, row.thread); },
+    run(ctx, input) {
+      const cleared = store.seen(input.board, input.placement);
+      if (cleared) ctx.changed('boards', input.board);
+      return { board: input.board, cleared };
     } }));
 
   operations.register(operation({ ...agentOnly, name: 'boards.brief', input: z.object({}).strict(), output: any,

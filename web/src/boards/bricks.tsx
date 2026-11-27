@@ -1,10 +1,10 @@
 /** How each brick draws itself (docs/specs/boards.md, "The first bricks"). A brick reads its own data, live, as
  * the member looking, and takes only the parameters the server already checked. Three forms are drawn by Body;
  * the chip and the hover are the same words in one line. */
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { memberOperation } from '../data/operation';
 import { useDataQuery } from '../data/graphql';
-import ProjectTrends from '../pair/project-trends';
+import { Trend } from './trend';
 import { Reply } from '../pair/reply';
 import type { Fits, Form } from './layout';
 
@@ -15,10 +15,27 @@ export interface BrickView {
   /** Its name and what it is about, as words: the heading, the chip, the folded row. */
   title(params: Params): string;
   sub(params: Params): string;
-  Body(props: { params: Params; form: Form; act: Act }): ReactNode;
+  Body(props: { params: Params; form: Form; act: Act; raise: Raise }): ReactNode;
 }
 /** Report a brick's action after its own operation succeeded. */
 export type Act = (action: string, detail: Record<string, string>) => void;
+/** Mark this placement: its record changed in a way the brick flags itself for, and the member did not do it. */
+export type Raise = (name: string) => void;
+
+/** Watches one value of a brick's record. When it changes while the page is open, and the change was not the
+ * member's own doing here a moment ago, the brick flags itself with the name the change is given. */
+function useOwnFlag<T>(value: T | undefined, raise: Raise, name: (before: T, now: T) => string | null) {
+  const before = useRef<T | undefined>(undefined), mine = useRef(0);
+  useEffect(() => {
+    const was = before.current;
+    before.current = value;
+    if (was === undefined || value === undefined || was === value) return;
+    if (Date.now() - mine.current < 5000) { mine.current = 0; return; }
+    const called = name(was, value);
+    if (called) raise(called);
+  });
+  return () => { mine.current = Date.now(); };
+}
 
 const fit = (primary: [number, number, number, number], side: number): Fits => ({
   primary: { min: primary[0], ideal: primary[1], max: primary[2], height: primary[3] },
@@ -80,23 +97,24 @@ function Lanes({ params, form }: { params: Params; form: Form }) {
 
 type Task = { id: string; title: string; status: string; assignee: string | null; assigneeKind: string | null; goal: string | null; why: string | null; doneWhen: string | null; project: string | null };
 /** One of loom's own ticket commands, then the report to the board that the member used it. */
-function useTicketAction(act: Act) {
+function useTicketAction(act: Act, own: () => void = () => {}) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   async function run(action: string, input: Record<string, unknown>) {
     if (busy) return false;
     setBusy(true); setError('');
-    try { await memberOperation('tasks.command', { action, ...input }); act(action, {}); return true; }
+    try { own(); await memberOperation('tasks.command', { action, ...input }); act(action, {}); return true; }
     catch { setError('That did not save.'); return false; }
     finally { setBusy(false); }
   }
   return { busy, error, run };
 }
-function Ticket({ params, form, act }: { params: Params; form: Form; act: Act }) {
+function Ticket({ params, form, act, raise }: { params: Params; form: Form; act: Act; raise: Raise }) {
   const id = words(params.ticket);
   const read = useDataQuery<{ ticket: Task | null }>(
     'query BrickTicket($id:String!){ticket:tasksSingle(where:{id:{eq:$id}}){id title status assignee assigneeKind goal why doneWhen project}}',
     { id }, { keep: true });
-  const { busy, error, run } = useTicketAction(act);
+  const own = useOwnFlag(read.data?.ticket?.status, raise, (was, now) => (now === 'closed' ? 'Closed' : was === 'closed' ? 'Reopened' : null));
+  const { busy, error, run } = useTicketAction(act, own);
   const [closing, setClosing] = useState(false), [reason, setReason] = useState('');
   const t = read.data?.ticket;
   if (read.status === 'loading') return <Loading />;
@@ -138,12 +156,13 @@ function Ticket({ params, form, act }: { params: Params; form: Form; act: Act })
 }
 
 type Note = { seq: number; text: string; actor: string; at: string };
-function Comments({ params, form, act }: { params: Params; form: Form; act: Act }) {
+function Comments({ params, form, act, raise }: { params: Params; form: Form; act: Act; raise: Raise }) {
   const id = words(params.ticket);
   const read = useDataQuery<{ ticket: { title: string; taskCommentsByTask: Note[] } | null }>(
     'query BrickComments($id:String!){ticket:tasksSingle(where:{id:{eq:$id}}){title taskCommentsByTask(orderBy:{seq:{direction:desc,priority:0}}){seq text actor at}}}',
     { id }, { keep: true });
-  const { busy, error, run } = useTicketAction(act);
+  const own = useOwnFlag(read.data?.ticket?.taskCommentsByTask.length, raise, (was, now) => (now > was ? 'New comment' : null));
+  const { busy, error, run } = useTicketAction(act, own);
   const [text, setText] = useState('');
   const t = read.data?.ticket;
   if (read.status === 'loading') return <Loading />;
@@ -215,7 +234,7 @@ export const bricks: Record<string, BrickView> = {
   project: { fits: fit([440, 680, 820, 300], 190), title: () => 'Project', sub: (p) => words(p.project), Body: Project },
   lanes: { fits: fit([520, 820, 980, 480], 330), title: () => 'Lanes', sub: (p) => words(p.project), Body: Lanes },
   trend: { fits: fit([460, 720, 860, 360], 300), title: () => 'Opened and closed', sub: (p) => `${words(p.project)} · ${words(p.days)} days`,
-    Body: ({ params }) => <ProjectTrends project={words(params.project)} /> },
+    Body: ({ params, form }) => <Trend project={words(params.project)} days={Number(params.days) || 30} form={form} chip={ticketChip} /> },
   ticket: { fits: fit([460, 700, 820, 380], 230), title: () => 'Ticket', sub: (p) => words(p.ticket), Body: Ticket },
   person: { fits: fit([420, 640, 760, 260], 150), title: (p) => words(p.person).split(':')[1] || 'Person', sub: (p) => words(p.person).split(':')[0],
     Body: ({ params }) => { const [kind, id] = words(params.person).split(':'); return kind === 'member' ? <Assigned who={id} kind="member" /> : <NotDrawn params={params} />; } },

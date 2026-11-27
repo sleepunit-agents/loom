@@ -126,7 +126,7 @@ it('hands a job its brief once, naming boards and placements by id (checks 9, 11
   f.store.show('th:mine', board, new Date(Date.now() + 86_400_000 * 400).toISOString());
   const brief = f.store.takeBrief('th:mine');
   expect(brief).toContain(`Board ${board} "Loom lately", open, revision 4.`);
-  expect(brief).toContain(`lanes(project=loom) [placement ${placements[0].placement}] (primary)`);
+  expect(brief).toContain(`lanes(project=loom) [placement ${placements[0].placement}] (big)`);
   expect(brief).toContain(`The member removed trend(days=30, project=loom) from board ${board}.`);
   expect(brief).toContain(`The member opened board ${other}.`);
   expect(brief).toContain(`The member placed ticket(ticket=t-7) on board ${other}.`);
@@ -176,7 +176,7 @@ it('closes and reopens along the trail (checks 16, 17)', async () => {
   const f = fixture(), { board } = await pulse(f);
   const second = (await f.agent('boards.open', { title: 'Another thing' })).value.board as string;
   expect(f.store.trail('th:mine').map((b) => b.id)).toEqual([board, second]);
-  expect((await f.agent('boards.list', {})).value.boards).toMatchObject([{ board, primary: { brick: 'lanes' } }, { board: second, primary: null }]);
+  expect((await f.agent('boards.list', {})).value.boards).toMatchObject([{ board, big: { brick: 'lanes' } }, { board: second, big: null }]);
   expect((await f.member('boards.close', { board })).ok).toBe(true);
   expect((await f.member('boards.close', { board })).ok).toBe(false);
   expect((await f.agent('boards.change', { board, changes: [place('ticket', { ticket: 't-1' })] })).ok).toBe(false);
@@ -204,4 +204,24 @@ it('lists every brick for a body and for a member', async () => {
   const f = fixture();
   expect((await f.agent('bricks.catalogue', {})).value.bricks).toHaveLength(11);
   expect((await f.member('bricks.catalogue', {})).value.bricks[2]).toMatchObject({ name: 'trend', linkKey: null });
+});
+
+it('lets either party maximize, tells the agent, and keeps flags to the agent (checks 24, 27, 28)', async () => {
+  const f = fixture(), { board, placements } = await pulse(f);
+  const ticket = (await f.agent('boards.change', { board, changes: [place('ticket', { ticket: 't-1' })] })).value.placements[2].placement as string;
+  const person = (await f.agent('boards.change', { board, changes: [place('person', { person: 'member:jonathan' })] })).value.placements[3].placement as string;
+  expect((await f.member('boards.change', { board, changes: [{ change: 'maximize', placement: person }] })).ok).toBe(false);
+  expect((await f.member('boards.change', { board, changes: [{ change: 'maximize', placement: ticket }] })).ok).toBe(true);
+  const woken = f.woken();
+  expect((await f.member('boards.change', { board, changes: [{ change: 'flag', placement: ticket }] })).ok).toBe(false);
+  const flagged = await f.agent('boards.change', { board, changes: [{ change: 'flag', placement: placements[1].placement }] });
+  expect(flagged.value.meanwhile).toEqual([`The member made ticket(ticket=t-1) the big one on board ${board}.`]);
+  expect(flagged.value.placements).toMatchObject([{ brick: 'ticket', rank: 0, flagged: false }, { brick: 'trend', rank: 1, flagged: true }, { brick: 'lanes', rank: 2 }, { brick: 'person', rank: 3 }]);
+  const revision = f.store.row(board)!.revision;
+  expect((await f.stranger('boards.seen', { board, placement: placements[1].placement })).ok).toBe(false);
+  expect((await f.agent('boards.seen', { board, placement: placements[1].placement })).ok).toBe(false);
+  expect((await f.member('boards.seen', { board, placement: placements[1].placement })).value).toMatchObject({ cleared: true });
+  expect(f.db.select().from(boardPlacements).all().every((p) => p.flaggedAt === null)).toBe(true);
+  expect(f.store.row(board)!.revision).toBe(revision);
+  expect(f.woken()).toBeGreaterThan(woken); // live reads re-run; no job is queued by any of it
 });

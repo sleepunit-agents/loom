@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { bricks, catalogue } from './bricks.js';
 import { boardBrief, changeSentences } from './brief.js';
-import { actRow, applyChanges, designFrom, fill, live, Refused, type Board, type Change } from './model.js';
+import { actRow, applyChanges, bigOf, designFrom, fill, live, Refused, type Board, type Change } from './model.js';
 
 const empty = (): Board => ({ id: 'b1', title: '', revision: 1, closed: false, placements: [] });
 function ids() {
@@ -97,7 +97,7 @@ describe('what the agent is told (checks 9, 11, 12)', () => {
     const removed = applyChanges(board, [{ change: 'remove', placement: 'p2' }], 'member', ids());
     const text = boardBrief(removed.board, [{ board: removed.board, unseen: removed.rows }]);
     expect(text).toContain('Board b1');
-    expect(text).toContain('lanes(project=loom) [placement p1] (primary)');
+    expect(text).toContain('lanes(project=loom) [placement p1] (big)');
     expect(text).toContain('The member removed trend(days=30, project=loom) from board b1.');
     expect(text).not.toContain('1. trend');
     expect(boardBrief(removed.board, [{ board: removed.board, unseen: [] }])).not.toContain('Since you last looked');
@@ -176,5 +176,47 @@ describe('the catalogue (check 20)', () => {
       for (const name of required) expect(b.references, `${b.name}.${name}`).toHaveProperty(name);
       if (b.linkKey) expect(b.references).toHaveProperty(b.linkKey);
     }
+  });
+});
+
+describe('big and small, and flags (checks 24 to 27)', () => {
+  const three = () => agent(empty(), [
+    { change: 'place', brick: 'lanes', params: { project: 'loom' } },
+    { change: 'place', brick: 'agent', params: { agent: 'art' } },
+    { change: 'place', brick: 'ticket', params: { ticket: 't-1' } },
+  ]).board;
+  it('trades the maximized placement with the big one and moves nothing else', () => {
+    const next = applyChanges(three(), [{ change: 'maximize', placement: 'p3' }], 'member', ids());
+    expect(live(next.board).map((p) => [p.brick, p.rank])).toEqual([['ticket', 0], ['agent', 1], ['lanes', 2]]);
+    expect(next.rows).toMatchObject([{ change: 'maximize', actorKind: 'member', placement: 'p3', from: 2, to: 0 }]);
+    expect(changeSentences(next.board, next.rows)).toEqual(['The member made ticket(ticket=t-1) the big one on board b1.']);
+  });
+  it('refuses a small-only brick and the placement that is already big', () => {
+    expect(() => agent(three(), [{ change: 'maximize', placement: 'p2' }])).toThrow(/no big form/);
+    expect(() => agent(three(), [{ change: 'maximize', placement: 'p1' }])).toThrow(/already the big one/);
+  });
+  it('takes the big one from rank, skipping small-only bricks, and has none on a board of them', () => {
+    const board = agent(empty(), [
+      { change: 'place', brick: 'agent', params: { agent: 'art' } },
+      { change: 'place', brick: 'person', params: { person: 'member:jonathan' } },
+    ]).board;
+    expect(bigOf(live(board))).toBeUndefined();
+    const later = agent(board, [{ change: 'place', brick: 'lanes', params: { project: 'loom' } }]).board;
+    expect(bigOf(live(later))?.brick).toBe('lanes');
+    expect(boardBrief(later, [])).toContain('2. lanes(project=loom) [placement p1] (big)');
+    // With no big one to trade with, the first to be maximized goes to the front.
+    const first = agent(empty(), [{ change: 'place', brick: 'agent', params: { agent: 'art' } }]).board;
+    expect(bigOf(live(first))).toBeUndefined();
+  });
+  it('lets only the agent flag, and a flag moves nothing', () => {
+    const next = agent(three(), [{ change: 'flag', placement: 'p2' }]);
+    expect(next.flagged).toEqual(['p2']);
+    expect(live(next.board).map((p) => [p.brick, p.rank, !!p.flagged])).toEqual([['lanes', 0, false], ['agent', 1, true], ['ticket', 2, false]]);
+    expect(() => applyChanges(three(), [{ change: 'flag', placement: 'p2' }], 'member', ids())).toThrow(Refused);
+  });
+  it('gives every brick a small form and says which can be big', () => {
+    const big = catalogue().filter((b) => b.canBeBig).map((b) => b.name);
+    expect(big).toEqual(['project', 'lanes', 'trend', 'ticket', 'comments']);
+    expect(catalogue().find((b) => b.name === 'pull')?.flagsItselfFor).toEqual(['check failed', 'merged', 'closed']);
   });
 });
