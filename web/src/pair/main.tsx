@@ -1,3 +1,4 @@
+import { ViewPreview, TicketReference } from './entity-preview';
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
@@ -70,9 +71,9 @@ function TicketLinks({ words }: { words: string }) {
     <>
       {words.split(/(\bt-\d+\b)/gi).map((v, i) =>
         /^t-\d+$/i.test(v) ? (
-          <a className="underline" key={i} href={'?ticket=' + v.toLowerCase()}>
+          <TicketReference className="underline" key={i} id={v.toLowerCase()}>
             {v}
-          </a>
+          </TicketReference>
         ) : (
           v
         ),
@@ -308,7 +309,7 @@ function ContextCanvas({ place }: { place: Place }) {
       for (const match of (row.words || '').matchAll(/\bt-\d+\b/gi)) refs.add(match[0].toLowerCase());
   }
   return <ModuleCard title={place.name} description={refs.size ? 'Tickets mentioned in this conversation' : 'Open a ticket from chat to start a view.'}>
-    {refs.size > 0 && <ul className="flex flex-wrap gap-3">{[...refs].map(id=><li key={id}><a className="pair-id" href={'?ticket='+id}>{id}</a></li>)}</ul>}
+    {refs.size > 0 && <ul className="flex flex-wrap gap-3">{[...refs].map(id=><li key={id}><TicketReference className="pair-id" id={id}>{id}</TicketReference></li>)}</ul>}
   </ModuleCard>;
 }
 function Workspace({
@@ -565,8 +566,8 @@ function Workspace({
     }}>
       <section className="pair-canvas relative flex min-w-0 flex-1 flex-col">
           {(ring.views.length > 1 || (active && !root)) && <nav aria-label="Open views" ref={viewNav} className="pair-view-ring flex items-center gap-1">
-            {ring.views.map(v=><Button key={viewKey(v)} size="sm" variant={viewKey(v)===activeKey ? 'secondary' : 'ghost'}
-              aria-current={viewKey(v)===activeKey ? 'page' : undefined} onClick={()=>workOn(v)}>{viewLabel(v)}</Button>)}
+            {ring.views.map(v=><ViewPreview key={viewKey(v)} view={v} intent="Show this open view."><Button size="sm" variant={viewKey(v)===activeKey ? 'secondary' : 'ghost'}
+              aria-current={viewKey(v)===activeKey ? 'page' : undefined} onClick={()=>workOn(v)}>{viewLabel(v)}</Button></ViewPreview>)}
             {active && !(active.kind === 'ticket' && active.intent === 'work' && active.ticket === root) && <Button size="icon-xs" variant="ghost"
               aria-label="Close current view" onClick={ring.close}><XIcon/></Button>}
           </nav>}

@@ -12,7 +12,7 @@ import {
   PaginationEllipsis,
 } from './ui/pagination';
 import { ModuleCard } from './module-card';
-import { EntityPreview, ProjectPreview } from './entity-preview';
+import { EntityPreview, ProjectPreview, ViewPreview, MiniCard, ActorReference } from './entity-preview';
 import { Reply } from './reply';
 
 type TicketView = { ticket: string; kind: 'ticket' | 'comment'; ref?: string; intent?: 'work' };
@@ -68,6 +68,25 @@ export const detailsQuery = `query PairTicketView($id:String!){ticket:tasksSingl
   taskCommentsByTask(orderBy:{seq:{direction:desc,priority:0}}){seq text actor at}
 }}`;
 type Row = { title: string; state?: string; heading?: string; meta?: string; detail: string; target: View };
+function RowPreview({ row, children }: { row: Row; children: React.ReactElement }) {
+  return (
+    <ViewPreview
+      view={row.target}
+      intent="Show details here."
+      preview={
+        <MiniCard
+          title={row.heading || row.title}
+          meta={[row.meta, row.state && !row.meta?.includes(row.state) && row.state]
+            .filter(Boolean)
+            .join(' · ')}
+          detail={row.detail}
+        />
+      }
+    >
+      {children}
+    </ViewPreview>
+  );
+}
 export const listPageSize = 5;
 export type ListPage = { rows: Row[]; hasNext: boolean; pending?: boolean; total?: number; status?: string };
 export type Group = {
@@ -258,18 +277,23 @@ function SecondaryPanel({
             <ul className="divide-y" aria-busy={remote?.pending} inert={remote?.pending}>
               {rows.map((row) => (
                 <li key={viewKey(row.target)}>
-                  <button
-                    type="button"
-                    className="flex w-full items-center gap-2 py-2 text-left text-sm"
-                    data-row={viewKey(row.target)}
-                    onClick={() => openRow(row)}
-                  >
-                    <span className="min-w-0 flex-1 leading-snug [overflow-wrap:anywhere]">
-                      {row.title}
-                      {row.state && <span className="ml-2 text-xs text-muted-foreground">{row.state}</span>}
-                    </span>
-                    <ChevronRightIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-                  </button>
+                  <RowPreview row={row}>
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 py-2 text-left text-sm"
+                      data-row={viewKey(row.target)}
+                      onClick={() => openRow(row)}
+                    >
+                      <span className="min-w-0 flex-1 leading-snug [overflow-wrap:anywhere]">
+                        {row.title}
+                        {row.state && <span className="ml-2 text-xs text-muted-foreground">{row.state}</span>}
+                      </span>
+                      <ChevronRightIcon
+                        aria-hidden="true"
+                        className="size-4 shrink-0 text-muted-foreground"
+                      />
+                    </button>
+                  </RowPreview>
                 </li>
               ))}
             </ul>
@@ -370,19 +394,21 @@ function BoardPanel({
                       .filter((row) => row.state === lane)
                       .map((row) => (
                         <li key={viewKey(row.target)}>
-                          <button
-                            type="button"
-                            className="w-full rounded-lg border border-border bg-card/70 p-2 text-left text-sm leading-snug hover:bg-card"
-                            data-row={viewKey(row.target)}
-                            onClick={() => open(row)}
-                          >
-                            <span className="block font-medium [overflow-wrap:anywhere]">{row.title}</span>
-                            {row.detail && (
-                              <span className="mt-1 block text-xs text-card-body [overflow-wrap:anywhere]">
-                                {row.detail}
-                              </span>
-                            )}
-                          </button>
+                          <RowPreview row={row}>
+                            <button
+                              type="button"
+                              className="w-full rounded-lg border border-border bg-card/70 p-2 text-left text-sm leading-snug hover:bg-card"
+                              data-row={viewKey(row.target)}
+                              onClick={() => open(row)}
+                            >
+                              <span className="block font-medium [overflow-wrap:anywhere]">{row.title}</span>
+                              {row.detail && (
+                                <span className="mt-1 block text-xs text-card-body [overflow-wrap:anywhere]">
+                                  {row.detail}
+                                </span>
+                              )}
+                            </button>
+                          </RowPreview>
                         </li>
                       ))}
                   </ul>
@@ -512,7 +538,16 @@ export function TicketCanvas({
       <>
         <ModuleCard
           title={note ? 'Comment on ' + t.id : 'Record unavailable'}
-          description={note ? note.actor + ' · ' + new Date(note.at).toLocaleString() : t.id}
+          description={
+            note ? (
+              <>
+                {t.project ? <ActorReference project={t.project} id={note.actor} work={work} /> : note.actor}{' '}
+                · {new Date(note.at).toLocaleString()}
+              </>
+            ) : (
+              t.id
+            )
+          }
         >
           {note && <Reply words={note.text} />}
         </ModuleCard>
@@ -603,7 +638,13 @@ export function TicketCanvas({
             )}
             {t.type === 'epic' && 'Epic · '}
             {t.id}
-            {t.assignee && ' · Assigned to ' + t.assignee}
+            {t.assignee && (
+              <>
+                {' '}
+                · Assigned to{' '}
+                {t.project ? <ActorReference project={t.project} id={t.assignee} work={work} /> : t.assignee}
+              </>
+            )}
           </>
         }
         action={<Badge variant="secondary">{t.status.replaceAll('_', ' ')}</Badge>}

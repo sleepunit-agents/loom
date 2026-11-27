@@ -1,3 +1,4 @@
+import { TicketReference, ViewPreview } from './entity-preview';
 import Markdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
@@ -31,6 +32,21 @@ export function Reply({ words }: { words: string }) {
         disallowedElements={['img']}
         urlTransform={(url) => (/^(https?:\/\/|\?ticket=t-\d+$)/i.test(url) ? url : '')}
         components={{
+          a: ({ href, children }) => {
+            const id = href?.match(/^\?ticket=(t-\d+)$/i)?.[1];
+            const pull = href?.match(/^(https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+)\/?(?:[?#].*)?$/i);
+            if (pull)
+              return (
+                <ViewPreview view={{ kind: 'pull', ref: pull[1] }} intent="Open this pull request on GitHub.">
+                  <a href={href}>{children}</a>
+                </ViewPreview>
+              );
+            return id ? (
+              <TicketReference id={id.toLowerCase()}>{children}</TicketReference>
+            ) : (
+              <a href={href}>{children}</a>
+            );
+          },
           pre: ({ node, children }) => {
             const code = node?.children[0];
             if (code?.type !== 'element' || code.tagName !== 'code') return <pre>{children}</pre>;

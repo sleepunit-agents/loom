@@ -1,3 +1,4 @@
+import { ViewLink, ViewPreview, EntityPreview, MiniCard } from './entity-preview';
 import { lazy, Suspense, type ReactNode } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { Badge } from './ui/badge';
@@ -59,15 +60,6 @@ export const projectQuery = `query PairProject($id:String!){
   recent:tasks(where:{project:{eq:$id}},${recentTickets}){${relatedFields}}
   epics:tasks(where:{project:{eq:$id},type:{eq:epic},status:{ne:closed}},${recentTickets}){${relatedFields}}
 }`;
-export function viewHash(v: View) {
-  const p = new URLSearchParams();
-  if ('project' in v) {
-    p.set('project', v.project);
-    if (v.kind !== 'project') p.set(v.kind, v.ref);
-  } else if (v.kind === 'pull') p.set('pull', v.ref);
-  else p.set('ticket', v.ticket);
-  return '#' + p.toString();
-}
 export function hashView(hash: string): View | null {
   const p = new URLSearchParams(hash.slice(1)),
     project = p.get('project');
@@ -82,22 +74,6 @@ export function hashView(hash: string): View | null {
     ticket = p.get('ticket');
   if (pull) return { kind: 'pull', ref: pull };
   return ticket && /^t-\d+$/.test(ticket) ? ticketView(ticket) : null;
-}
-export function ViewLink({ view, work, children }: { view: View; work: Work; children: ReactNode }) {
-  return (
-    <a
-      className="underline decoration-muted-foreground/50 underline-offset-2 hover:text-foreground"
-      href={viewHash(view)}
-      onClick={(e) => {
-        if (!e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
-          e.preventDefault();
-          work(view);
-        }
-      }}
-    >
-      {children}
-    </a>
-  );
 }
 function Fact({ name, children }: { name: string; children: ReactNode }) {
   return (
@@ -355,7 +331,33 @@ export function EntityCanvas({
             ) : (
               repo
             )}{' '}
-            #{pr.number} · {pr.authorLogin}
+            #{pr.number}
+            {pr.authorLogin && (
+              <>
+                {' '}
+                ·{' '}
+                <EntityPreview
+                  intent="Open this GitHub profile."
+                  preview={
+                    <MiniCard
+                      title={pr.authorLogin}
+                      meta="GitHub author"
+                      detail={'Opened ' + repo + ' #' + pr.number + ' · ' + pr.title}
+                    />
+                  }
+                  link={
+                    <a
+                      className="underline"
+                      href={'https://github.com/' + encodeURIComponent(pr.authorLogin)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {pr.authorLogin}
+                    </a>
+                  }
+                />
+              </>
+            )}
           </>
         }
         action={<Badge variant="secondary">{pr.state}</Badge>}
@@ -394,9 +396,11 @@ export function EntityCanvas({
             <Reply words={pr.body} />
           </details>
         )}
-        <a className="text-sm underline" href={pr.url} target="_blank" rel="noreferrer">
-          Open pull request
-        </a>
+        <ViewPreview view={view} intent="Open this pull request on GitHub.">
+          <a className="text-sm underline" href={pr.url} target="_blank" rel="noreferrer">
+            Open pull request
+          </a>
+        </ViewPreview>
       </ModuleCard>
     );
   } else {
@@ -461,14 +465,16 @@ export function EntityCanvas({
           </Fact>
         )}
         {repo && /^github:[\w.-]+\/[\w.-]+$/.test(view.ref) && (
-          <a
-            className="text-sm underline"
-            href={'https://github.com/' + view.ref.slice(7)}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Open repository
-          </a>
+          <ViewPreview view={view} intent="Open this repository on GitHub.">
+            <a
+              className="text-sm underline"
+              href={'https://github.com/' + view.ref.slice(7)}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open repository
+            </a>
+          </ViewPreview>
         )}
       </ModuleCard>
     );
