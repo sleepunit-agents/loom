@@ -40,6 +40,7 @@ export function Trend({ project, days, form, chip }: { project: string; days: nu
   if (read.status !== 'live') return <p className="text-muted-foreground">This project is unavailable.</p>;
   const opened = series.reduce((n, d) => n + d.opened.length, 0), closed = series.reduce((n, d) => n + d.closed.length, 0);
   const top = Math.max(1, ...series.map((d) => Math.max(d.opened.length, d.closed.length)));
+  if (form === 'compact') return <p className="board-brief">{opened} opened · {closed} closed in {days} days</p>;
   const big = form === 'primary';
   // One band per day. Opened grows up from the baseline, closed grows down: one axis, two directions.
   const W = 600, H = big ? 220 : 64, pad = big ? 18 : 2, half = (H - pad * 2) / 2, band = W / days, bar = Math.min(24, Math.max(2, band - 2));

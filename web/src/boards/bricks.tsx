@@ -40,7 +40,7 @@ function useOwnFlag<T>(value: T | undefined, raise: Raise, name: (before: T, now
 const fit = (primary: [number, number, number, number], side: number): Fits => ({
   primary: { min: primary[0], ideal: primary[1], max: primary[2], height: primary[3] },
   side: { min: 260, ideal: 360, max: 420, height: side },
-  compact: { min: 220, ideal: 320, max: 420, height: 46 },
+  compact: { min: 220, ideal: 320, max: 420, height: 68 },
 });
 const words = (v: unknown) => (v === undefined || v === null ? '' : String(v));
 const Unavailable = ({ what }: { what: string }) => <p className="text-muted-foreground">This {what} is unavailable.</p>;
@@ -70,6 +70,8 @@ function Lanes({ params, form }: { params: Params; form: Form }) {
   if (read.status === 'loading') return <Loading />;
   if (read.status !== 'live' || !read.data) return <Unavailable what="project" />;
   const cap = form === 'primary' ? 8 : 3;
+  const count = (lane: string) => read.data!.projectBoardTickets.filter((t) => t.lane === lane).length;
+  if (form === 'compact') return <p className="board-brief">{count('Working')} working · {count('Verifying')} verifying · {count('Waiting')} waiting</p>;
   return (
     <div className="board-lanes">
       {['Working', 'Verifying', 'Waiting'].map((lane) => {
@@ -82,7 +84,7 @@ function Lanes({ params, form }: { params: Params; form: Form }) {
                 <li key={t.id}>
                   <button type="button" className="board-ticket" data-flip={'tk-' + t.id} data-place={JSON.stringify({ brick: 'ticket', params: { ticket: t.id } })}>
                     {t.title}
-                    <small className="font-mono">{t.id}</small>
+                    <small><span className="font-mono">{t.id}</span>{t.reason ? ' · ' + t.reason : ''}</small>
                   </button>
                 </li>
               ))}
@@ -119,6 +121,7 @@ function Ticket({ params, form, act, raise }: { params: Params; form: Form; act:
   const t = read.data?.ticket;
   if (read.status === 'loading') return <Loading />;
   if (read.status !== 'live' || !t) return <Unavailable what="ticket" />;
+  if (form === 'compact') return <p className="board-brief"><span className="board-state">{t.status.replaceAll('_', ' ')}</span> {t.title}</p>;
   const close = async (e: FormEvent) => { e.preventDefault(); if (reason.trim() && await run('close', { id, reason: reason.trim() })) { setClosing(false); setReason(''); } };
   return (
     <>
@@ -168,6 +171,7 @@ function Comments({ params, form, act, raise }: { params: Params; form: Form; ac
   if (read.status === 'loading') return <Loading />;
   if (read.status !== 'live' || !t) return <Unavailable what="ticket" />;
   const add = async (e: FormEvent) => { e.preventDefault(); if (text.trim() && await run('comment', { id, text: text.trim() })) setText(''); };
+  if (form === 'compact') return <p className="board-brief">{t.taskCommentsByTask.length ? `${t.taskCommentsByTask.length} · latest from ${t.taskCommentsByTask[0].actor}: ${t.taskCommentsByTask[0].text}` : 'No comments yet'}</p>;
   const notes = t.taskCommentsByTask.slice(0, form === 'primary' ? 30 : 4);
   return (
     <>
@@ -191,12 +195,13 @@ function Comments({ params, form, act, raise }: { params: Params; form: Form; ac
   );
 }
 
-function Project({ params }: { params: Params }) {
+function Project({ params, form }: { params: Params; form: Form }) {
   const read = useDataQuery<{ project: { name: string; goal: string | null; lifecycle: string } | null }>(
     'query BrickProject($id:String!){project:projectsSingle(where:{id:{eq:$id}}){name goal lifecycle}}', { id: words(params.project) }, { keep: true });
   const p = read.data?.project;
   if (read.status === 'loading') return <Loading />;
   if (read.status !== 'live' || !p) return <Unavailable what="project" />;
+  if (form === 'compact') return <p className="board-brief"><span className="board-state">{p.lifecycle}</span> {p.goal || p.name}</p>;
   return (
     <>
       {p.goal ? <Reply words={p.goal} /> : <p className="text-muted-foreground">No goal written.</p>}
@@ -209,13 +214,14 @@ function Project({ params }: { params: Params }) {
   );
 }
 
-function Assigned({ who, kind }: { who: string; kind: 'member' | 'agent' }) {
+function Assigned({ who, kind, form }: { who: string; kind: 'member' | 'agent'; form?: Form }) {
   const read = useDataQuery<{ rows: { id: string; title: string; status: string }[] }>(
     `query BrickAssigned($ref:String!){rows:tasks(where:{assignee:{eq:$ref},assigneeKind:{eq:${kind}},status:{ne:closed}},orderBy:{changedAt:{direction:desc,priority:0}},limit:6){id title status}}`,
     { ref: who }, { keep: true });
   if (read.status === 'loading') return <Loading />;
   if (read.status !== 'live' || !read.data) return <Unavailable what={kind === 'agent' ? 'agent' : 'person'} />;
   const rows = read.data.rows;
+  if (form === 'compact') return <p className="board-brief">{rows.length ? `${rows.length === 6 ? 'At least six' : rows.length} open ticket${rows.length === 1 ? '' : 's'}` : 'No open tickets'}</p>;
   return rows.length ? (
     <>
       <p>{rows.length === 6 ? 'At least six' : rows.length} open ticket{rows.length === 1 ? '' : 's'}.</p>
@@ -254,6 +260,7 @@ function Session({ params, form, act, raise }: { params: Params; form: Form; act
     catch { setError('That did not stop it.'); }
     finally { setBusy(false); }
   };
+  if (form === 'compact') return <p className="board-brief"><span className="board-state" data-running={running(job.state)}>{job.state}</span> {job.title}</p>;
   return (
     <>
       <p className="board-lead">{job.title || read.data?.cv?.label || 'Session'}</p>
@@ -297,8 +304,8 @@ export const bricks: Record<string, BrickView> = {
     Body: ({ params, form }) => <Trend project={words(params.project)} days={Number(params.days) || 30} form={form} chip={ticketChip} /> },
   ticket: { fits: fit([460, 700, 820, 380], 230), title: () => 'Ticket', sub: (p) => words(p.ticket), Body: Ticket },
   person: { fits: fit([420, 640, 760, 260], 150), title: (p) => words(p.person).split(':')[1] || 'Person', sub: (p) => words(p.person).split(':')[0],
-    Body: ({ params }) => { const [kind, id] = words(params.person).split(':'); return kind === 'member' ? <Assigned who={id} kind="member" /> : <NotDrawn params={params} />; } },
-  agent: { fits: fit([420, 640, 760, 260], 150), title: (p) => words(p.agent), sub: () => 'agent', Body: ({ params }) => <Assigned who={words(params.agent)} kind="agent" /> },
+    Body: ({ params, form }) => { const [kind, id] = words(params.person).split(':'); return kind === 'member' ? <Assigned who={id} kind="member" form={form} /> : <NotDrawn params={params} />; } },
+  agent: { fits: fit([420, 640, 760, 260], 150), title: (p) => words(p.agent), sub: () => 'agent', Body: ({ params, form }) => <Assigned who={words(params.agent)} kind="agent" form={form} /> },
   comments: { fits: fit([440, 680, 820, 420], 260), title: () => 'Comments', sub: (p) => words(p.ticket), Body: Comments },
   session: { fits: fit([440, 680, 820, 360], 170), title: () => 'Session', sub: (p) => words(p.session).slice(0, 11), Body: Session },
   pull: later('Pull request', 'change'),

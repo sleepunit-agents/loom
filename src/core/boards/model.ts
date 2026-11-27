@@ -98,7 +98,7 @@ export function applyChanges(
         throw new Refused(`${c.brick} with these params is already on the board.`);
       const rank = c.rank ?? list.length;
       if (!Number.isInteger(rank) || rank < 0 || rank > list.length)
-        throw new Refused(`rank must be a whole number from 0 to ${list.length}.`);
+        throw new Refused(`rank must be a whole number from 0 to ${list.length}: the board has ${list.length} placement${list.length === 1 ? '' : 's'} as this change lands. Changes apply in order; leave rank out to place last.`);
       const p: Placement = { id: newId(), brick: c.brick, params, rank, placedByKind: actorKind, removed: false };
       list.splice(rank, 0, p);
       placements.push(p);

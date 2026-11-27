@@ -93,7 +93,7 @@ export function registerBoardOperations(operations: Operations, db: DataDatabase
       const job = working(ctx.viewer);
       const who: 'agent' | 'member' = job ? 'agent' : 'member';
       const thread = job ? job.thread : input.thread!;
-      if (job && (input.thread || input.place)) throw new Refused('A body opens a board in its own thread, with a title and perhaps a blueprint.');
+      if (job && (input.thread || (input.place && input.blueprint))) throw new Refused('A body opens a board in its own thread, with a title and either a blueprint or one brick to place.');
       if (!job && (!input.place || input.title || input.blueprint || input.arguments))
         throw new Refused('A member opens a board by placing one brick.');
       let placed: { brick: string; params: Record<string, unknown> }[] = [];

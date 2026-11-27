@@ -28,7 +28,9 @@
 .board-placement[data-form='primary'] > header { padding: 1rem 1.2rem .6rem; }
 .board-placement[data-form='primary'] > header h2 { font-size: 1.15rem; }
 .board-placement[data-form='primary'] > div { padding: 0 1.2rem 1.2rem; }
-.board-placement[data-form='compact'] > div { display: none; }
+.board-placement[data-form='compact'] > div { overflow: hidden; padding-bottom: .5rem; }
+.board-placement[data-form='compact'] > header { padding-bottom: .15rem; }
+.board-brief { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: .86rem; }
 .board-placement[data-form='compact'] > header h2 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .board-placement > header .board-maximize { color: var(--muted-foreground); padding: 0 .25rem; opacity: .55; }
 .board-placement > header .board-maximize:is(:hover, :focus-visible) { opacity: 1; color: var(--foreground); }
@@ -103,7 +105,9 @@
 .boards-page[data-board='false'] .boards-talk[data-empty='true'] .boards-log { display: none; }
 .boards-page[data-board='false'] .boards-log { flex: 0 1 auto; max-height: 55dvh; }
 .boards-presence { display: flex; align-items: center; gap: .75rem; padding: 1rem 1.25rem .75rem; text-align: left; }
-.boards-presence .boards-face { width: 3rem; height: 3.5rem; border-radius: 12px; overflow: hidden; display: grid; place-items: center; background: var(--popover); border: 1px solid var(--surface-edge); }
+/* Art's sprite is one 56 by 84 cell holding a bust about 32 by 44, centred near (32, 46). The frame shows the bust. */
+.boards-presence .boards-face { flex: none; position: relative; width: 48px; height: 48px; border-radius: 12px; overflow: hidden; background: var(--popover); border: 1px solid var(--surface-edge); }
+.boards-presence .boards-face .art-portrait { position: absolute; left: -8px; top: -22px; zoom: 1; }
 .boards-log { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .boards-ask { padding: .75rem 1.25rem 1.25rem; }
 .boards-page[data-board='false'] .boards-ask textarea { font-size: 1.15rem; }
