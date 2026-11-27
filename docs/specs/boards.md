@@ -445,6 +445,10 @@ something unrelated, and a second board opens to the right and closes back to th
 
 ## Open
 
-1. **Memory and knowledge.** They are in the agent's own store, not the shared schema, so their bricks need a read
-   path the page does not have today. The owner called this "a miss in general we should think through". Written as:
-   not in the first set. How the two stores relate is a question of its own and is not settled here.
+1. **Memory and knowledge.** They are kept in files, not in the shared schema's tables, but the page can already
+   query some of them: `src/transport/memory-queries.ts` joins knowledge pages, knowledge search, people and identity
+   into the same query layer every page reads (`memoryKnowledge`, `memoryKnowledgePage`, `memoryKnowledgeSearch`,
+   `memoryPeople`, `memoryPerson`). So `knowledge` and a fuller `person` can be bricks by rule 2 with no new read path.
+   Not checked: whether those fields update live as rule 8 requires, and whether an agent's own memories (as opposed
+   to shared knowledge) are exposed at all. Written as: not in the first set; those two questions are answered before
+   the bricks are specified.
