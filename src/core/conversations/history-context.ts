@@ -7,9 +7,14 @@ import type {CommsMessages} from './messages.js';
 import {wordsDeadline} from './retention.js';
 import { commsKeepDays } from '../data/comms-days.js';
 import { HISTORY_BYTES, HISTORY_LINES } from './history-limit.js';
-/** `keepUntil` is when the words will be erased; null for words kept without limit (a bridge room's). */
+/** `keepUntil` is when the words will be erased; null for words kept without limit (a bridge room's).
+ * `sourceKey`, given when the body asks for keys (`identify`), names what a line is of, so that a body continuing a
+ * kept harness session is told only the lines that session does not hold (runtime/body-program.ts): a member's
+ * message by the mail it was delivered as, everything one job said by that job (`threadRunKey`), anything else by
+ * its place in the thread. */
+export const threadRunKey=(job:string)=>'run:'+job;
 export type HistoryLine={sourceKey?:string;seq:number;kind:'message'|'reply'|'notice';sender:string;at:string;words:string;keepUntil:string|null};
-export async function prepareHistoryContext(comms:CommsMessages,conversation:string,beforeSeq:number):Promise<()=>HistoryLine[]>{
+export async function prepareHistoryContext(comms:CommsMessages,conversation:string,beforeSeq:number,identify=false):Promise<()=>HistoryLine[]>{
  const {db}=comms,thread=db.select().from(threads).where(eq(threads.conversation,conversation)).get();
  const cv=db.select().from(conversations).where(eq(conversations.id,conversation)).get();
  if(!thread||!cv)return()=>[];
@@ -30,6 +35,7 @@ export async function prepareHistoryContext(comms:CommsMessages,conversation:str
    &&item.toKind==='agent'&&item.to===cv.agent&&item.fromKind==='person'&&item.fromId===row.sender
    &&item.state==='done'&&item.volume==='full'&&item.takenVolume==='full'?JSON.stringify(item):null;
  };
+ const keyed=(row:typeof messages.$inferSelect)=>identify?{sourceKey:row.kind==='message'&&row.inboxItem?row.inboxItem:row.kind==='reply'&&row.run?threadRunKey(row.run):row.thread+'#'+row.seq}:{};
  const rows=db.select().from(messages).where(and(eq(messages.thread,thread.id),lt(messages.seq,beforeSeq))).orderBy(desc(messages.seq)).limit(HISTORY_LINES).all();
  // Keep the original work reference available in a busy discussion while its words are retained.
  if(thread.id.startsWith('th:work-') && rows.length===HISTORY_LINES && rows.at(-1)?.seq!==1) {
@@ -44,7 +50,7 @@ export async function prepareHistoryContext(comms:CommsMessages,conversation:str
   if(!acceptedFingerprint||!row.words||!(deadline(row)>Date.parse(comms.now())))continue;
   let words:string|null;try{words=await comms.words(row.thread,row.seq);}catch{continue;}
   if(words===null||!(deadline(row)>Date.parse(comms.now())))continue;
-  const line={seq:row.seq,kind:row.kind,sender:row.sender,at:row.at,words,keepUntil:new Date(deadline(row)).toISOString()};
+  const line={...keyed(row),seq:row.seq,kind:row.kind,sender:row.sender,at:row.at,words,keepUntil:new Date(deadline(row)).toISOString()};
   const size=Buffer.byteLength(JSON.stringify(line))+(prepared.length?1:0);
   if(bytes+size>HISTORY_BYTES)break;
   bytes+=size;prepared.push({snapshot:row,delivery:acceptedFingerprint,words});
@@ -60,7 +66,7 @@ export async function prepareHistoryContext(comms:CommsMessages,conversation:str
    if(workNotice(current) && (!cv.member || !readableWorkNotice(db,{kind:'member',id:cv.member},words)
      || !readableWorkNotice(db,{kind:'agent',id:cv.agent,workingFor:cv.member},words)))return[];
    if(current.kind!=='message'&&current.kind!=='reply'&&current.kind!=='notice')return[];
-   return[{seq:current.seq,kind:current.kind,sender:current.sender,at:current.at,words,keepUntil:new Date(deadline(current)).toISOString()}];
+   return[{...keyed(current),seq:current.seq,kind:current.kind,sender:current.sender,at:current.at,words,keepUntil:new Date(deadline(current)).toISOString()}];
   }).sort((a,b)=>a.seq-b.seq);
  };
 }

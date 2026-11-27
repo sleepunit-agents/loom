@@ -14,8 +14,12 @@
  * the keep time has passed since then, however often it has been saved since. `started_at` is that time: when
  * the session was first saved, or earlier when its first body started fresh and was handed older words of
  * a direct conversation (its kept history, each line carrying when it will be erased). A save within the
- * keep time continues the session kept there and leaves the start as it is. So no erasable word in a
- * session outlives its keep time. A room's words are kept without limit and do not move the start. Past it the row is never handed on and the words'
+ * keep time continues the session kept there and leaves the start as it is. A body also says when the first
+ * of the erasable words it was handed will be erased (`until`): a word can carry a limit earlier than its own
+ * age gives it (a work notice counts from when its ticket's thread was opened; a word written under a shorter
+ * keep time keeps that limit), and the start is then no later than the keep time before that. So no erasable
+ * word in a session outlives its keep time. The words of a member's own thread with an agent (the venue
+ * `loom`) are all erasable, and are counted so: its mail, its kept history, the question an answer quotes. A room's words are kept without limit and do not move the start. Past it the row is never handed on and the words'
  * sweep removes it (expireConversationSessions); the next body starts fresh, and its session starts a new
  * count.
  *
@@ -37,7 +41,7 @@ export interface KeptSession { session: string; files: string }
 /** What `open` hands back: the session, when it was started (the row's `started_at`) and when it was last saved. */
 export type OpenedSession = KeptSession & { startedAt: string; lastSavedAt: string; covered?: string[] };
 /** A session sealed and ready to store: made outside the transaction that stores it. */
-export interface SealedSession { conversation: string; harness: string; session: string; sealed: Buffer | null; bytes: number; since?: string }
+export interface SealedSession { conversation: string; harness: string; session: string; sealed: Buffer | null; bytes: number; since?: string; until?: string }
 
 export class ConversationSessions {
   constructor(private db: DataDatabase, private now: () => string, private key: WordsKey) {}
@@ -45,11 +49,12 @@ export class ConversationSessions {
   /** `files` is the packed session as base64. Too large, or not a session's id: sealed as nothing, which
    * stores as a removal. */
   /** `since` is the time of the oldest word this body was handed that is erased at the keep time (a direct
-   * conversation's kept history): the session holds that word, so its count starts no later than then. */
-  async seal(input: { conversation: string; harness: string; model: string; session: string; files: string; since?: string; covered?: string[] }): Promise<SealedSession> {
+   * conversation's kept history): the session holds that word, so its count starts no later than then.
+   * `until` is when the first of the erasable words it was handed will be erased, whatever its age. */
+  async seal(input: { conversation: string; harness: string; model: string; session: string; files: string; since?: string; until?: string; covered?: string[] }): Promise<SealedSession> {
     const bytes = Buffer.byteLength(input.files, 'base64');
     const keep = SESSION_ID.test(input.session) && bytes > 0 && bytes <= SESSION_BYTES;
-    return { conversation: input.conversation, harness: input.harness, session: input.session, bytes, ...(input.since ? { since: input.since } : {}),
+    return { conversation: input.conversation, harness: input.harness, session: input.session, bytes, ...(input.since ? { since: input.since } : {}), ...(input.until ? { until: input.until } : {}),
       // When it was last saved is sealed with it: the row's own time is when the session was started.
       sealed: keep ? await this.key.seal(JSON.stringify({ model: input.model, files: input.files, at: this.now(), covered:input.covered })) : null };
   }
@@ -64,11 +69,14 @@ export class ConversationSessions {
       if (!sealed.sealed) { this.db.delete(conversationSessions).where(where).run(); return false; }
       // The count of its keep time starts at the oldest erasable word the session can hold: the start of the
       // session kept here, if one is still within the keep time (this save continues or replaces it); the
-      // oldest such word its body was handed (`since`); and otherwise now. Whichever is earliest.
-      const now = this.now(), times = [this.kept(sealed.conversation, sealed.harness)?.startedAt, sealed.since, now].filter((at): at is string => !!at && Number.isFinite(Date.parse(at)) && Date.parse(at) <= Date.parse(now));
+      // oldest such word its body was handed (`since`); the keep time before the first of them is erased
+      // (`until`: a word's limit can be earlier than its age gives it); and otherwise now. Whichever is earliest.
+      const now = this.now(), days = commsKeepDays(this.db), erased = sealed.until ? Date.parse(sealed.until) : NaN;
+      const before = Number.isFinite(erased) ? ageCutoff(new Date(erased).toISOString(), days) : undefined;
+      const times = [this.kept(sealed.conversation, sealed.harness)?.startedAt, sealed.since, before, now].filter((at): at is string => !!at && Number.isFinite(Date.parse(at)) && Date.parse(at) <= Date.parse(now));
       const startedAt = times.reduce((oldest, at) => Date.parse(at) < Date.parse(oldest) ? at : oldest);
       // Already past the keep time by that count: there is nothing it may be kept for.
-      if (Date.parse(startedAt) <= Date.parse(ageCutoff(now, commsKeepDays(this.db)))) { this.db.delete(conversationSessions).where(where).run(); return false; }
+      if (Date.parse(startedAt) <= Date.parse(ageCutoff(now, days))) { this.db.delete(conversationSessions).where(where).run(); return false; }
       const row = { conversation: sealed.conversation, harness: sealed.harness, session: sealed.session, files: sealed.sealed, bytes: sealed.bytes, startedAt };
       this.db.insert(conversationSessions).values(row).onConflictDoUpdate({ target: [conversationSessions.conversation, conversationSessions.harness], set: row }).run();
       return true;
