@@ -12,6 +12,9 @@ const shared = new Set([
   'pieces/change-view/model.ts', // a pull request's state words (imports kit/words.ts)
   'pieces/inbox-view/model.ts', // an Inbox item's state words and the rule for what is answered elsewhere (imports kit/time.ts)
   'pieces/approval-view/model.ts', // an approval's title and kind words
+  'pieces/approval-view/answering.ts', // how an approval is read and answered: every safeguard of the answer, as functions and one headless hook (imports react and model.ts)
+  'pieces/tempo/change.ts', // a Tempo timings change, checked and said as before and after (imports zod; types from answering.ts)
+  'pieces/measuring/change.ts', // the same for a Measuring settings change (imports src/core/measuring/change)
   'pieces/attention/inbox-query.ts', // the Inbox's selection of one item and its inbox.answer call (imports data/ only)
   'memory/queries.ts', // the People selection of one person
   'memory/query.ts', // its decoder over the data hook

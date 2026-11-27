@@ -78,10 +78,12 @@ export const bricks: readonly Brick[] = [
   brick({ name: 'question', shows: 'A question waiting on the member, answered from the board.',
     params: z.object({ item: ref }).strict(), references: { item: 'inbox item' }, linkKey: 'item',
     actions: { answer: { operation: 'inbox.answer', detail: z.object({ answer: z.enum(questionAnswers) }).strict() } } }),
-  // Read-only on a board. approvals.answer is called only from the desktop's approval card, which holds its
-  // safeguards (who may answer, the reviewed version of a household change, the second yes for a dangerous one).
-  brick({ name: 'approval', shows: 'An approval request: what it allows, why, for which agent, its state. It is answered on the desktop, not here.',
-    params: z.object({ approval: ref }).strict(), references: { approval: 'approval' }, linkKey: 'approval', actions: {} }),
+  // Answered from the board with the desktop's own safeguards, from the code the desktop's card runs
+  // (web/src/pieces/approval-view/answering.ts): who may answer, the reviewed version of a household change, the
+  // second yes for a dangerous one. A reason for denying goes to approvals.answer and never to the board.
+  brick({ name: 'approval', shows: 'An approval request: what it allows, why, for which agent, its state. A member the household lets answer allows or denies it from the board.',
+    params: z.object({ approval: ref }).strict(), references: { approval: 'approval' }, linkKey: 'approval',
+    actions: { approve: { operation: 'approvals.answer', detail: none }, refuse: { operation: 'approvals.answer', detail: none } } }),
   // One piece of agent work with its own conversation: what the agent handed off, or other work the member may read.
   brick({ name: 'session', big: true, flags: ['finished', 'failed', 'stopped'],
     shows: 'A session of agent work: what it was asked, where it stands, what it has used and, when big, the steps it reports as it works. Its conversation id is what conversation.handoff returns.',

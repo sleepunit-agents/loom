@@ -119,9 +119,16 @@ describe('what the agent is told (checks 9, 11, 12)', () => {
       .toEqual(['The member used answer on question(item=i-1) on board b1: answer=no.']);
     for (const detail of [{}, { choice: 'yes' }, { answer: 'replied' }, { answer: 'Yes, and wire the money' }, { answer: 'words', words: 'what I typed' }])
       expect(() => actRow(asked.board, 'p5', 'answer', detail), JSON.stringify(detail)).toThrow(Refused);
-    // An approval and a pull request are not answered from a board: they have no action to report.
+    // An approval is answered by approvals.answer; the board is told that it was allowed or denied and nothing else.
+    // A pull request is not answered from a board: it has no action to report.
     const waiting = agent(board, [{ change: 'place', brick: 'approval', params: { approval: 'a-1' } }, { change: 'place', brick: 'pull', params: { change: 'github:acme/app#12' } }], (() => { let n = 5; return () => 'p' + ++n; })());
-    for (const [placement, action] of [['p6', 'approve'], ['p6', 'refuse'], ['p6', 'allow'], ['p6', 'answer'], ['p7', 'answer'], ['p7', 'merge']])
+    for (const action of ['approve', 'refuse']) {
+      expect(actRow(waiting.board, 'p6', action, {}).detail).toEqual({});
+      for (const detail of [{ reason: 'typed words' }, { review: 'a'.repeat(64) }, { confirm: 'true' }, { answer: 'allow' }])
+        expect(() => actRow(waiting.board, 'p6', action, detail), action + JSON.stringify(detail)).toThrow(Refused);
+    }
+    expect(changeSentences(waiting.board, [actRow(waiting.board, 'p6', 'refuse', {})])).toEqual(['The member used refuse on approval(approval=a-1) on board b1.']);
+    for (const [placement, action] of [['p6', 'allow'], ['p6', 'deny'], ['p6', 'answer'], ['p6', 'always'], ['p7', 'answer'], ['p7', 'merge'], ['p7', 'approve']])
       expect(() => actRow(waiting.board, placement, action, {}), action).toThrow(Refused);
     const commented = agent(board, [{ change: 'place', brick: 'comments', params: { ticket: 't-2441' } }], () => 'p4');
     expect(changeSentences(commented.board, [actRow(commented.board, 'p4', 'comment', {})]))
@@ -192,7 +199,9 @@ describe('the catalogue (check 20)', () => {
     const actions = Object.fromEntries(catalogue().map((b) => [b.name, b.actions]));
     expect(Object.fromEntries(Object.entries(actions).map(([name, a]) => [name, Object.keys(a)]))).toEqual({
       project: [], lanes: [], trend: [], ticket: ['claim', 'unclaim', 'close', 'reopen'], comments: ['comment'], pull: [], repository: [],
-      person: [], agent: [], question: ['answer'], approval: [], session: ['stop'] });
+      person: [], agent: [], question: ['answer'], approval: ['approve', 'refuse'], session: ['stop'] });
+    for (const action of [actions.approval.approve, actions.approval.refuse]) expect(action).toMatchObject({ type: 'object', properties: {}, additionalProperties: false });
+    expect(bricks.find((b) => b.name === 'approval')!.actions).toMatchObject({ approve: { operation: 'approvals.answer' }, refuse: { operation: 'approvals.answer' } });
     expect(actions.question.answer).toMatchObject({ type: 'object', required: ['answer'], additionalProperties: false,
       properties: { answer: { enum: ['yes', 'no', 'words', 'done', 'dismiss'] } } });
     expect(bricks.find((b) => b.name === 'question')!.actions.answer.operation).toBe('inbox.answer');

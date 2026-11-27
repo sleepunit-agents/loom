@@ -152,11 +152,19 @@ it("logs a brick's action only for an action the brick has (check 12)", async ()
   expect((await f.member('boards.act', { board, placement: question, action: 'answer', detail: { answer: 'words' } })).ok).toBe(true);
   for (const detail of [{}, { choice: 'yes' }, { answer: 'maybe' }, { answer: 'I typed this' }, { answer: 'words', words: 'I typed this' }])
     expect((await f.member('boards.act', { board, placement: question, action: 'answer', detail })).ok, JSON.stringify(detail)).toBe(false);
-  // Nothing on a board answers an approval or a merge, so there is no such action to log.
-  for (const [placement, action] of [[approval, 'approve'], [approval, 'refuse'], [approval, 'answer'], [pull, 'answer']])
+  // An approval's answer is logged as allowed or denied, with nothing in its detail: a reason the member typed is refused here.
+  for (const action of ['approve', 'refuse']) {
+    expect((await f.member('boards.act', { board, placement: approval, action, detail: {} })).ok, action).toBe(true);
+    expect((await f.member('boards.act', { board, placement: approval, action, detail: { reason: 'I typed this' } })).ok, action).toBe(false);
+    expect((await f.agent('boards.act', { board, placement: approval, action, detail: {} })).ok, action).toBe(false);
+  }
+  // Nothing on a board answers a merge, so there is no such action to log.
+  for (const [placement, action] of [[approval, 'answer'], [approval, 'allow'], [pull, 'answer'], [pull, 'approve']])
     expect((await f.member('boards.act', { board, placement, action, detail: {} })).ok, action).toBe(false);
   const brief = f.store.takeBrief('th:mine');
   expect(brief).toContain(`The member used answer on question(item=i-7) on board ${board}: answer=yes.`);
+  expect(brief).toContain(`The member used approve on approval(approval=a-7) on board ${board}.`);
+  expect(brief).toContain(`The member used refuse on approval(approval=a-7) on board ${board}.`);
   expect(brief).not.toContain('I typed this');
   await f.member('boards.close', { board });
   expect((await f.member('boards.act', { board, placement: ticket, action: 'reopen', detail: {} })).ok).toBe(false);
