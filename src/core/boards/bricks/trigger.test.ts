@@ -26,6 +26,6 @@ it('tells each action with nothing in its detail: not the trigger, not the agent
     expect(actRow(board, 'g1', action, {}).detail).toEqual({});
     for (const detail of [{ id: 'tr-1' }, { agent: 'art' }, { instructions: 'typed words' }, { times: '08:00' }]) expect(() => actRow(board, 'g1', action, detail), action + JSON.stringify(detail)).toThrow(Refused);
   }
-  expect(changeSentences(board, [actRow(board, 'g1', 'runNow', {})])).toEqual(['The member used runNow on trigger(trigger=tr-1) on board b1.']);
+  expect(changeSentences(board, [actRow(board, 'g1', 'runNow', {})])).toEqual(["The member's page reported: used runNow on trigger(trigger=tr-1) on board b1."]);
   for (const action of ['edit', 'set', 'create']) expect(() => actRow(board, 'g1', action, {})).toThrow(Refused);
 });

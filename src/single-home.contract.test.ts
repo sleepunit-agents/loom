@@ -52,7 +52,9 @@ import { MEMORY_CONTENT_MAX } from './backends/types.js';
 import { MAX_PAGE_BODY_LENGTH } from './backends/knowledge-verification.js';
 import { LOG_TAIL_MAX, logTail } from './runtime/log-tail.js';
 import { MESSAGE_WORDS_MAX } from './core/conversations/words.js';
-import { LINE_NAME_MAX, hasControlCharacter, lineName, machineName } from './core/line-name.js';
+import { LINE_NAME_MAX, cleanLineOf, hasControlCharacter, isCleanLine, lineName, machineName } from './core/line-name.js';
+import * as boardLimits from './core/boards/limits.js';
+import { TRACE_PAGE_DEFAULT, TRACE_PAGE_MAX, TRACE_STEPS_PER_CONVERSATION_MAX, TRACE_STEPS_PER_JOB_MAX, TRACE_TOOL_MAX } from './core/conversations/job-trace.js';
 import { boxSettingsInput } from './shared-box-settings.js';
 import { AGING_DAYS, CHECK_DAYS, RECENT_DAYS, knowledgeSchedule } from './pieces/mind/knowledge.js';
 import { RAW_EVENT_LIFETIME, UNREAD_EVENT_LIFETIME } from './pieces/bridges/events.js';
@@ -148,6 +150,31 @@ it('checks a Comms keep time, and works out when words stop being kept, in one p
   const own = /\b(days|keep|count)\s*(<=?|>=?)\s*\d|\b(days|keep)\s*\*\s*86_?400_?000/;
   const copies = sources('src/core/conversations').filter(file => file !== 'src/core/conversations/retention.ts' && own.test(text(file)));
   expect(copies).toEqual([]);
+});
+
+it('names each cap on boards and on a session\'s steps once, and the spec states every one', () => {
+  expect({ ...boardLimits }).toEqual({ BOARDS_OPEN_MAX: 20, BOARDS_MAX: 200, PLACEMENTS_MAX: 40, CHANGES_PER_CALL_MAX: 40, BLUEPRINTS_MAX: 100,
+    PARAMS_KEYS_MAX: 40, PARAMS_KEY_MAX: 80, PARAMS_JSON_MAX: 8000, READ_CHANGES_DEFAULT: 100, READ_CHANGES_MAX: 500, READ_CHANGES_MIN: 50, TOLD_CHANGES_MAX: 50 });
+  // A page of changes always holds a whole revision: the most rows one revision can have is an open and a full blueprint.
+  expect(boardLimits.READ_CHANGES_MIN).toBeGreaterThan(Math.max(boardLimits.PLACEMENTS_MAX + 1, boardLimits.CHANGES_PER_CALL_MAX));
+  const traceLimits = { TRACE_STEPS_PER_JOB_MAX, TRACE_STEPS_PER_CONVERSATION_MAX, TRACE_TOOL_MAX, TRACE_PAGE_DEFAULT, TRACE_PAGE_MAX };
+  expect(traceLimits).toEqual({ TRACE_STEPS_PER_JOB_MAX: 2000, TRACE_STEPS_PER_CONVERSATION_MAX: 10000, TRACE_TOOL_MAX: 200, TRACE_PAGE_DEFAULT: 100, TRACE_PAGE_MAX: 200 });
+  // Each is given its number in one file and in no other.
+  for (const [names, home] of [[Object.keys(boardLimits), 'src/core/boards/limits.ts'], [Object.keys(traceLimits), 'src/core/conversations/job-trace.ts']] as const)
+    for (const name of names) expect(sources('src').filter(file => new RegExp(`\\b${name}\\s*=`).test(text(file))), name).toEqual([home]);
+  // The boards' own code writes none of them out as a bare number where a limit is checked.
+  for (const file of ['src/core/boards/operations.ts', 'src/core/boards/store.ts', 'src/core/boards/model.ts', 'src/core/boards/brief.ts'])
+    expect(text(file), file).not.toMatch(/\.(?:max|min|limit|slice)\(-?(?:20|40|50|100|500|8_?000)\)|[<>]=? (?:20|40|50|100|200|500)\b/);
+  // The spec's short list says each number.
+  const spec = text('docs/specs/boards.md'), start = spec.indexOf('\n## Limits\n'), limits = spec.slice(start, spec.indexOf('\n## ', start + 1));
+  expect(start).toBeGreaterThan(0);
+  for (const value of [...Object.values(boardLimits), ...Object.values(traceLimits)])
+    expect(limits, String(value)).toMatch(new RegExp(`(?<![\\d,])${value.toLocaleString('en-US')}(?![\\d,])`));
+  // A single clean line has one statement (core/line-name.ts): the three places that take one all ask it.
+  for (const file of [...sources('src/core/boards'), 'src/core/conversations/job-trace.ts']) expect(text(file), file).not.toMatch(/\\p\{C|\\u20[02]/);
+  for (const file of ['src/core/boards/model.ts', 'src/core/boards/operations.ts', 'src/core/conversations/job-trace.ts']) expect(text(file), file).toContain('isCleanLine(');
+  expect([isCleanLine('Loom lately'), isCleanLine('a\nb'), isCleanLine('a\tb'), isCleanLine('a\u200bb'), isCleanLine('a\u202eb'), isCleanLine('a\u2028b'), isCleanLine('a\u00adb')]).toEqual([true, false, false, false, false, false, false]);
+  expect(cleanLineOf('a\n\u202eb\u200b c')).toBe('ab c');
 });
 
 it('says how long a session\'s steps are kept once, on a clock of its own', () => {

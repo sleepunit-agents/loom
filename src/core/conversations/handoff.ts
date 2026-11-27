@@ -1,6 +1,7 @@
 import {slug} from '../../slug.js';
 import {reviewRequest,reviewPlace,reviewThread} from './review-place.js';
-import {conversations,conversationTasks,jobs,memberAgents,tasks,threads} from '../data/schema.js';
+import {conversations,jobs,memberAgents,tasks,threads} from '../data/schema.js';
+import {linkHandoffTickets} from './handoff-tickets.js';
 import {taskVisibility} from '../data/visibility.js';
 import {handoffPeersAssigned,handoffTarget} from './handoff-access.js';
 import {MESSAGE_WORDS_MAX} from './words.js';
@@ -222,7 +223,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    const place=delegated?reviewPlace(parent,input.clientId,role):job.id;
    const target=cvs.open({agent:recipient,venue:'handoff',place,label:input.label,project:cv.project,member:cv.member,direct:cv.direct,handoffNotBefore:input.notBefore});
    if(target.handoffNotBefore!==(input.notBefore??null)||target.project!==cv.project||target.member!==cv.member||target.direct!==cv.direct)throw new OperationError('conflict','Handoff scope changed');
-   if(tickets.length)db.insert(conversationTasks).values(tickets.map(task=>({conversation:target.id,task}))).onConflictDoNothing().run();
+   linkHandoffTickets(db,target.id,tickets);
    const word=self?.word({job});
    const item=cvs.send({conversation:target.id,toKind:'agent',to:recipient,source:'handoff',sourceId,fromKind:'agent',fromId:cv.agent,words:prepared as string,...(word?{onWordKind:word.kind,onWord:word.id}:{})});
    cvs.turn({conversation:target.id,kind:'message',fromKind:'agent',fromId:cv.agent,outcome:'progressed'});self?.handed({job});

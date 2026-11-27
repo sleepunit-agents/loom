@@ -2551,6 +2551,8 @@ export const conversationTasks = sqliteTable('conversation_tasks', {
 export const blueprints = sqliteTable('blueprints', {
   id: text('id').primaryKey().notNull(),
   agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
+  // The member of the thread it was saved in: a blueprint is that agent's for that member and for nobody else.
+  member: text('member').notNull().references((): AnySQLiteColumn => members.id),
   name: text('name').notNull(),
   description: text('description').notNull(),
   parameters: text('parameters').notNull(),
@@ -2565,7 +2567,7 @@ export const blueprints = sqliteTable('blueprints', {
   check('blueprints_description_length', sql`length(${t.description}) <= 300`),
   check('blueprints_parameters_json', sql`json_valid(${t.parameters})`),
   check('blueprints_design_json', sql`json_valid(${t.design})`),
-  uniqueIndex('blueprints_agent_name').on(t.agent, t.name),
+  uniqueIndex('blueprints_agent_member_name').on(t.agent, t.member, t.name),
 ]);
 
 // A thread that has the second window: its member has written from the page that shows boards.

@@ -6,15 +6,18 @@
  *
  * Words are sealed with the household's words key and kept on the trace's own clock (retention.ts,
  * TRACE_KEEP_DAYS from when the step was written), whatever the household's Comms keep time is. The sweep that
- * erases expired message words erases them, and deleting the originating thread removes the rows. They are read
- * by the member the child conversation belongs to, who is the member of the originating thread, and by nobody else. */
-import { and, desc, eq, getTableColumns, inArray, isNotNull, like, max, min, or, sql } from 'drizzle-orm';
-import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
+ * erases expired message words deletes an expired step's whole row, so nothing a body reported outlives its keep
+ * time, and deleting the originating thread removes the rows. They are read by the member the child conversation
+ * belongs to, who is the member of the originating thread, and by nobody else. */
+import { and, asc, count, desc, eq, getTableColumns, gt, inArray, like, max, min, or, sql } from 'drizzle-orm';
+import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import { selectedQueryFields } from '../data/queries.js';
 import { keepReadUntil } from '../data/read-lease.js';
 import { conversations, jobs, jobTrace } from '../data/schema.js';
+import { unlinkHandoffTickets } from './handoff-tickets.js';
+import { isCleanLine } from '../line-name.js';
 import { OperationError } from '../operations/index.js';
 import type { CommsQueryPolicy } from './comms-query.js';
 import type { CommsMessages } from './messages.js';
@@ -25,22 +28,45 @@ import type { WordsKey } from './words.js';
 type Step = typeof jobTrace.$inferSelect;
 export type TraceCard = Pick<Step, 'clientId' | 'tool' | 'cardState'> & { words: string };
 const NO_TRACE = 'Current conversation has no Comms thread';
+/** The most steps loom keeps for one job, and for one handoff conversation over all its jobs. A step past either is
+ * refused and nothing is stored; the body goes on working (runtime/body-program.ts drops a refused step). A step's
+ * words are bounded where they come in: MESSAGE_WORDS_MAX at the door, and the body cuts them at 16,000 characters. */
+export const TRACE_STEPS_PER_JOB_MAX = 2_000;
+export const TRACE_STEPS_PER_CONVERSATION_MAX = 10_000;
+/** A step's tool is the one thing of a step kept unsealed: a short single clean line (core/line-name.ts). */
+export const TRACE_TOOL_MAX = 200;
+/** The steps one read returns: what it takes when not told, and the most it may be asked for. */
+export const TRACE_PAGE_DEFAULT = 100;
+export const TRACE_PAGE_MAX = 200;
 
 /** Seal one step before the operation transaction; the returned commit writes it. Only a handoff whose result
  * returns to a member's open private thread keeps a trace: any other is refused as it was before. */
 export async function prepareJobTrace(service: CommsMessages, cv: typeof conversations.$inferSelect, job: string, card: TraceCard): Promise<() => { seq: number }> {
   const { db } = service;
-  const origin = () => cv.venue === 'handoff' && cv.member ? reviewThread(db, cv) : undefined;
+  // Checked here, on the server, each time: the job is this conversation's own, and the conversation is a handoff
+  // with a member whose result returns to that member's own open thread.
+  const origin = () => cv.venue === 'handoff' && cv.member
+    && db.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.id, job), eq(jobs.conversation, cv.id))).get() ? reviewThread(db, cv) : undefined;
   if (!origin()) throw new OperationError('not-found', NO_TRACE);
+  if (card.tool.length > TRACE_TOOL_MAX || !isCleanLine(card.tool)) throw new OperationError('invalid', `A step's tool is one line of at most ${TRACE_TOOL_MAX} characters, with no control or invisible formatting characters.`);
   const clientId = job + ':' + card.clientId;
   const saved = () => db.select({ seq: jobTrace.seq }).from(jobTrace).where(and(eq(jobTrace.conversation, cv.id), eq(jobTrace.clientId, clientId))).get();
+  const room = () => {
+    const kept = (where: ReturnType<typeof eq>) => db.select({ n: count() }).from(jobTrace).where(and(eq(jobTrace.conversation, cv.id), where)).get()!.n;
+    if (kept(eq(jobTrace.job, job)) >= TRACE_STEPS_PER_JOB_MAX)
+      throw new OperationError('invalid', `This job has reported ${TRACE_STEPS_PER_JOB_MAX} steps, the most loom keeps for one job. Later steps are not recorded; the work itself is not affected.`);
+    if (kept(eq(jobTrace.conversation, cv.id)) >= TRACE_STEPS_PER_CONVERSATION_MAX)
+      throw new OperationError('invalid', `This session has reported ${TRACE_STEPS_PER_CONVERSATION_MAX} steps, the most loom keeps for one session. Later steps are not recorded; the work itself is not affected.`);
+  };
   const old = saved();
   if (old) return () => old;
+  room();
   const words = await service.key.seal(card.words);
   return () => {
     if (!origin()) throw new OperationError('not-found', NO_TRACE);
     const retry = saved();
     if (retry) return retry;
+    room();
     const at = service.now();
     const seq = (db.select({ seq: max(jobTrace.seq) }).from(jobTrace).where(eq(jobTrace.conversation, cv.id)).get()?.seq ?? 0) + 1;
     db.insert(jobTrace).values({ conversation: cv.id, seq, job, at, tool: card.tool, cardState: card.cardState, clientId, words, keepUntil: traceKeepUntil(at) }).run();
@@ -48,43 +74,66 @@ export async function prepareJobTrace(service: CommsMessages, cv: typeof convers
   };
 }
 
-/** The sweep's part (CommsMessages.expire): a step's words go at the earlier of its stamped limit and the trace's age limit. */
+/** The sweep's part (CommsMessages.expire): a step goes, row and all, at the earlier of its stamped limit and the
+ * trace's age limit. Nothing of it is left: not its tool, not that it happened. A row whose words an earlier program
+ * erased and left behind goes at the same time. */
 export function expireJobTrace(db: DataDatabase, at: string): number {
   const cutoff = traceCutoff(at);
-  return db.update(jobTrace).set({ words: null }).where(and(isNotNull(jobTrace.words),
-    or(sql`julianday(${jobTrace.keepUntil}) <= julianday(${at})`, sql`julianday(${jobTrace.at}) <= julianday(${cutoff})`))).returning({ seq: jobTrace.seq }).all().length;
+  return db.delete(jobTrace).where(or(sql`julianday(${jobTrace.keepUntil}) <= julianday(${at})`, sql`julianday(${jobTrace.at}) <= julianday(${cutoff})`))
+    .returning({ seq: jobTrace.seq }).all().length;
 }
 
-/** When the sweep is next needed for a step's words, for the one timer that runs it (lifetime.ts). */
+/** When the sweep is next needed for a step, for the one timer that runs it (lifetime.ts). */
 export function nextJobTraceExpiry(db: DataDatabase): number | undefined {
-  const oldest = db.select({ at: min(jobTrace.at), until: min(jobTrace.keepUntil) }).from(jobTrace).where(isNotNull(jobTrace.words)).get();
+  const oldest = db.select({ at: min(jobTrace.at), until: min(jobTrace.keepUntil) }).from(jobTrace).get();
   const next = oldest?.at ? traceDeadline({ at: oldest.at, keepUntil: oldest.until }) : NaN;
   return Number.isFinite(next) ? next : undefined;
 }
 
-/** A deleted thread takes the traces of the work handed off from it, as it takes its messages. Call before the thread row goes. */
+/** A deleted thread takes the traces of the work handed off from it, as it takes its messages, and the links
+ * from those sessions to their tickets: a ticket no longer lists a session whose thread is gone (ticket-sessions.ts).
+ * Call before the thread row goes. */
 export function eraseThreadJobTrace(db: DataDatabase, origin: string): void {
   const parents = new Set(db.select({ id: jobs.id }).from(jobs).where(eq(jobs.conversation, origin)).all().map(row => row.id));
   if (!parents.size) return;
   const children = db.select({ id: conversations.id, venue: conversations.venue, place: conversations.place }).from(conversations)
     .where(and(eq(conversations.venue, 'handoff'), like(conversations.place, '["codex-review",%'))).all()
     .filter(cv => parents.has(reviewParent(cv) ?? '')).map(cv => cv.id);
-  if (children.length) db.delete(jobTrace).where(inArray(jobTrace.conversation, children)).run();
+  if (!children.length) return;
+  db.delete(jobTrace).where(inArray(jobTrace.conversation, children)).run();
+  unlinkHandoffTickets(db, children);
 }
 
 export class JobTraceQueries {
   constructor(readonly db: DataDatabase, readonly key: WordsKey, readonly policy: CommsQueryPolicy, readonly now: () => string = () => new Date().toISOString()) {}
 
-  /** The latest steps, oldest first. The viewer must be the member the handoff conversation belongs to, under
-   * the same conversation rule every Comms read uses; anybody else, and any other venue, reads nothing. */
-  steps(viewer: Viewer, input: { conversation: string; job?: string | null; limit?: number | null }): Step[] {
-    const page = input.limit ?? 100;
-    if (!Number.isInteger(page) || page < 1 || page > 200) throw new Error('Invalid trace page size');
+  private mine(viewer: Viewer, conversation: string) {
+    return and(eq(conversations.id, conversation), eq(conversations.venue, 'handoff'), eq(conversations.member, viewer.id), this.policy(viewer, getTableColumns(conversations)));
+  }
+  /** The latest steps, oldest first; or, with `after`, the earliest steps after that one, so a reader that has a
+   * page asks only for what is newer and opens no step twice (a stored step never changes). The viewer must be the
+   * member the handoff conversation belongs to, under the same conversation rule every Comms read uses; anybody
+   * else, and any other venue, reads nothing. */
+  steps(viewer: Viewer, input: { conversation: string; job?: string | null; limit?: number | null; after?: number | null }): Step[] {
+    const page = input.limit ?? TRACE_PAGE_DEFAULT, after = input.after ?? null;
+    if (!Number.isInteger(page) || page < 1 || page > TRACE_PAGE_MAX) throw new Error('Invalid trace page size');
+    if (after !== null && (!Number.isInteger(after) || after < 0)) throw new Error('Invalid trace position');
     if (viewer.kind !== 'member') return [];
-    return this.db.select(getTableColumns(jobTrace)).from(jobTrace).innerJoin(conversations, eq(conversations.id, jobTrace.conversation))
+    const found = this.db.select(getTableColumns(jobTrace)).from(jobTrace).innerJoin(conversations, eq(conversations.id, jobTrace.conversation))
       .where(and(eq(jobTrace.conversation, input.conversation), input.job ? eq(jobTrace.job, input.job) : undefined,
-        eq(conversations.venue, 'handoff'), eq(conversations.member, viewer.id), this.policy(viewer, getTableColumns(conversations))))
-      .orderBy(desc(jobTrace.seq)).limit(page).all().reverse();
+        after === null ? undefined : gt(jobTrace.seq, after), this.mine(viewer, input.conversation)));
+    return after === null ? found.orderBy(desc(jobTrace.seq)).limit(page).all().reverse() : found.orderBy(asc(jobTrace.seq)).limit(page).all();
+  }
+
+  /** Whether a job's steps are past their keep time: it has none, and it was queued longer ago than a step is kept.
+   * A step's row goes when it expires, so this is how a reader tells "its steps are no longer kept" from "it never
+   * reported one". Worked out from the job's age; nothing is stored for it. False for anybody who may not read the trace. */
+  expired(viewer: Viewer, input: { conversation: string; job: string }): boolean {
+    if (viewer.kind !== 'member') return false;
+    const job = this.db.select({ queuedAt: jobs.queuedAt }).from(jobs).innerJoin(conversations, eq(conversations.id, jobs.conversation))
+      .where(and(eq(jobs.id, input.job), this.mine(viewer, input.conversation))).get();
+    if (!job || Date.parse(job.queuedAt) > Date.parse(traceCutoff(this.now()))) return false;
+    return !this.db.select({ seq: jobTrace.seq }).from(jobTrace).where(and(eq(jobTrace.conversation, input.conversation), eq(jobTrace.job, input.job))).limit(1).get();
   }
 
   /** Open the kept words. The rows are read again afterwards under the viewer's current rule: a step that is no
@@ -117,8 +166,12 @@ export function jobTraceFields(service: JobTraceQueries): GraphQLFieldConfigMap<
   } });
   return {
     sessionTrace: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(step))),
-      args: { conversation: text, job: { type: GraphQLString }, limit: { type: GraphQLInt, defaultValue: 100 } },
-      resolve: (_row, args: { conversation: string; job?: string | null; limit?: number | null }, context, info) =>
+      args: { conversation: text, job: { type: GraphQLString }, limit: { type: GraphQLInt, defaultValue: TRACE_PAGE_DEFAULT },
+        after: { type: GraphQLInt, description: 'Only steps after this seq, earliest first. A stored step never changes, so a reader that has some asks only for newer ones.' } },
+      resolve: (_row, args: { conversation: string; job?: string | null; limit?: number | null; after?: number | null }, context, info) =>
         selectedQueryFields(info).has('words') ? service.opened(context.viewer, args, until => keepReadUntil(context, until)) : service.steps(context.viewer, args) },
+    sessionTraceExpired: { type: new GraphQLNonNull(GraphQLBoolean), args: { conversation: text, job: text },
+      description: 'The job has no steps and is older than a step is kept: any it reported are no longer kept.',
+      resolve: (_row, args: { conversation: string; job: string }, context) => service.expired(context.viewer, args) },
   };
 }

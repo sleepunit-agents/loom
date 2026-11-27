@@ -246,6 +246,29 @@ it.each(['handed off','not delegated','on another word','ordinary thread'] as co
   expect(messages.at(-1)).toMatchObject({kind:'reply',clientId:'review-result',words:'Findings'});
  }finally{harness.mockRestore();}
 });
+it('goes on working when loom refuses a step, and sends a step\'s tool as one clean line',async()=>{
+ // Loom refuses a step past its caps (core/conversations/job-trace.ts). The step is dropped; the job and its reply are not.
+ const f=fixture(),value=JSON.parse(f.input.toString());
+ Object.assign(value.job,{venue:'handoff',thread:null,review:true});
+ const answer=f.options.fetch;
+ const fetcher=vi.fn<typeof fetch>(async(url,init)=>{
+  const body=JSON.parse(String(init?.body));
+  if(String(url).endsWith('/message')&&body.input.kind==='card'){f.calls.push({path:'message',body});return Response.json({ok:false,code:'invalid',message:'This job has reported 2000 steps, the most loom keeps for one job.'},{status:400});}
+  return answer(url,init);
+ });
+ const line=(row:object)=>JSON.stringify(row)+'\n';
+ const harness=vi.spyOn(adapters,'bodyHarness').mockImplementation((_name,input)=>async()=>{
+  input.pairOutput?.(Buffer.from(line({event:'tool_call',name:'odd\ntool\u202e\u200bname'})+line({event:'tool_call',name:'\u200b'})));
+  return {text:'Findings',model:'observed',actions:[]};
+ });
+ try{
+  expect(await bodyProgram({...f.options,fetch:fetcher,native:undefined,stdin:async()=>Buffer.from(JSON.stringify(value))})).toBe(0);
+  const messages=f.calls.filter(row=>row.path==='message').map(row=>row.body.input as Record<string,string>);
+  expect(messages.filter(input=>input.kind==='card').map(card=>card.tool)).toEqual(['oddtoolname','Tool']);
+  expect(messages.at(-1)).toMatchObject({kind:'reply',clientId:'review-result',words:'Findings'});
+  expect(f.error).not.toHaveBeenCalled();
+ }finally{harness.mockRestore();}
+});
 it('refuses an unknown venue before accepting any mail',async()=>{
  const f=fixture(),value=JSON.parse(f.input.toString());value.job.venue='unregistered';
  expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value))})).toBe(BODY_EXIT.assignment);

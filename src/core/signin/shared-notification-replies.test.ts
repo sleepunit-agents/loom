@@ -147,6 +147,25 @@ it('keeps the choice the browser\'s own: enrolling again keeps it, and another p
  expect((await f.as('notifications/subscribe',{sub:sub('phone'),device:'x',replies:'yes'})).status).toBe(400);
 });
 
+it('answers an enrolment the same whether or not the endpoint was another person\'s, and hands nothing of theirs over',async()=>{
+ // A push endpoint is one browser, and loom cannot ask a browser to prove it holds one: whoever is signed in on it
+ // takes the row. So a taken row carries nothing of the last person's, and the answer never says there was one.
+ const f=await fixture();await f.enrol('phone',true);await f.reply('one');expect(f.rows()).toHaveLength(1);
+ const body=async(name:string)=>{const response=await f.as('notifications/subscribe',{sub:{...sub(name),keys:{p256dh:'q'.repeat(87),auth:'b'.repeat(22)}},device:'Theirs'},bobCookie);return[response.status,await response.text()];};
+ expect(await body('phone')).toEqual(await body('never-seen'));
+ // Every choice starts again: replies off, the taker's keys, name and session, and nothing queued for the last person.
+ expect(f.db.select().from(s.notificationDevices).where(eq(s.notificationDevices.endpoint,sub('phone').endpoint)).get()).toMatchObject({member:'bob',session:credentialHash(bobCookie),device:'Theirs',replies:false,keys:JSON.stringify({p256dh:'q'.repeat(87),auth:'b'.repeat(22)})});
+ expect(f.rows()).toEqual([]);expect(f.db.select().from(s.notificationQueue).all()).toEqual([]);
+ expect(f.root.services.notifications!.read('alice').devices).toEqual([]);
+ // The last person's later replies go nowhere, and the taker is told nothing of them.
+ await f.reply('two');await f.wait();expect(f.pushes).toEqual([]);expect(f.rows()).toEqual([]);
+ // The same person on another of their browsers taking the endpoint keeps their own choice: it is theirs.
+ await f.enrol('tablet',true);
+ const other='f'.repeat(64);f.db.insert(s.sessions).values({id:credentialHash(other),token:credentialHash(raw.member),device:'Browser 2',via:'link',isAgent:false,issuedAt:new Date(f.clock.now()).toISOString(),seenAt:new Date(f.clock.now()).toISOString(),provedAt:new Date(f.clock.now()).toISOString()}).run();
+ await f.enrol('tablet',undefined,other);
+ expect(f.db.select().from(s.notificationDevices).where(eq(s.notificationDevices.endpoint,sub('tablet').endpoint)).get()).toMatchObject({member:'alice',session:credentialHash(other),replies:true});
+});
+
 it('deletes what was queued with the thread',async()=>{
  const f=await fixture();await f.enrol('phone',true);await f.reply('one');expect(f.rows()).toHaveLength(1);
  expect((await f.as('comms/change',{thread:f.thread.id,change:'delete'})).status).toBe(200);

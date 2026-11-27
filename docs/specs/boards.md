@@ -114,7 +114,7 @@ a thread's open boards, left to right, in the order they last joined it.
    repository as lowercase `owner/repo`, `#` and a number, which is how loom writes a change's id, and the only
    reference that may hold a `#`; a knowledge page is its slug, which may be 200 long and holds no `:` or `@`. It is checked for shape only, so
    it may name no record, and it is shown only as an id (see "Names" under "The page"). The only free text the agent
-   gives a board is its title. Known limit: an id-shaped string such as `contact:call-me` is still accepted and is
+   gives a board is its title, which is one clean line (see "Records"). Known limit: an id-shaped string such as `contact:call-me` is still accepted and is
    shown, small and in monospace, beside a brick that says it is unavailable.
 2. **A new brick is a change to loom.** It arrives with side, compact, chip and hover, and with primary if it can be
    big; a fit for each board form it has; the changes it flags itself for; a parameter schema with a default for every parameter that is not a record reference, its actions, its link key if it
@@ -150,7 +150,12 @@ Five tables for boards, one for a session's steps and one for the tickets a sess
 **`board_threads`**: `thread`, `since`. A thread that has the second window: its member has sent from this page.
 Only in such a thread is an agent told about boards or allowed to open one. A board nobody can see is never made.
 
-**`boards`**: `id`; `thread`; `title` (at most 80 characters, may be empty, stored exactly as given);
+**`boards`**: `id`; `thread`; `title` (at most 80 characters, may be empty, stored exactly as given; a **single
+clean line**: it holds no control character (Unicode Cc: a line break, a tab), no format character (Cf: a direction
+override, a zero-width character, a soft hyphen) and no line or paragraph separator, and a title that does is refused
+with the reason, never repaired. The rule has one home, `src/core/line-name.ts`, and a blueprint's name and
+description and a session step's tool are held to it too. A title stored before the rule is not rewritten: wherever
+loom repeats it, to a job or to the page, the forbidden characters are left out);
 `blueprint` (the one it was opened from, or null); `revision` (1 when opened; goes up by exactly one for each later
 operation that writes a `board_changes` row); `agent_seen` (a revision; 0 until the agent has been handed the board);
 `opened_at`; `trail_at` (when it last joined the trail: set on open and on reopen); `changed_at`; `closed_at` (null
@@ -161,7 +166,8 @@ board is always between one member and one agent. Two members never share one.
 **`board_placements`**: `board`; `id` (unique across all boards, never reused); `brick`; `params` (JSON, valid for that brick's schema, stored
 with every default filled in); `rank`; `placed_by_kind` (`agent` or `member`); `placed_at`; `removed_at` (null while
 live); `flagged_at` (when the agent last flagged it, null once the member has seen it). Among a board's live placements the ranks are exactly 0 to n−1. No two live placements on a board have the same
-brick and the same params. A board may have no live placements. Removed placements stay as rows. Visibility follows the
+brick and the same params. A board may have no live placements. Removed placements stay as rows; they are not loaded with the board, only
+looked up by id to name one in a sentence. Visibility follows the
 board.
 
 **`board_changes`**: `board`; `revision`; `seq` (order within one revision, from 0); `at`; `actor_kind` (`agent` or
@@ -172,26 +178,36 @@ taken in `to_value` for `place`, otherwise null); `action` (for `act`: the name 
 `detail` (for `act`: JSON matching that action's declared schema, which holds only choices and ids). Placements
 shifted by another's `place`, `remove`, `rank` or `maximize` get no rows of their own. Visibility follows the board.
 
-**`blueprints`**: `id`; `agent`; `name` (unique per agent, at most 80 characters); `description` (at most 300
-characters); `parameters` (JSON: a list of `{name, kind}` in order of first use in the design; kind is one of `session`, `project`,
+**`blueprints`** (schema 52 added `member`): `id`; `agent`; `member` (the member of the thread it was saved in);
+`name` (unique per agent and member, 1 to 80 characters, a single clean line, trimmed); `description` (at most 300
+characters, a single clean line, trimmed); `parameters` (JSON: a list of `{name, kind}` in order of first use in the design; kind is one of `session`, `project`,
 `ticket`, `change`, `repository`, `person`, `agent`, `inbox item`, `approval`, `knowledge page`, `knowledge topic`);
 `design` (JSON: an ordered list of `{brick, params}` in rank order, where a record-reference param's value is either
-fixed or `{"open": "<parameter name>"}`); `created_at`; `used_at`; `uses`. A blueprint is readable and usable by its
-agent in any of that agent's threads. No member reads `blueprints`.
+fixed or `{"open": "<parameter name>"}`); `created_at`; `used_at`; `uses`. A blueprint belongs to its agent and
+its member together: it is listed, opened and replaced only by a job of that agent working in a thread of that
+member, in any such thread. A job of the same agent for another member does not see it, cannot open it (its id is
+answered exactly as an unknown one) and cannot replace it by saving under its name, which makes a blueprint of that
+member's own. A thread that is no one member's has no blueprints. No member reads `blueprints`. Deleting a thread
+does not delete a blueprint saved in it. The upgrade to schema 52 deleted the blueprints saved before it: a
+blueprint had never recorded the board or thread it was saved from, so none could be given its member; a board
+opened from one kept its placements and no longer names a blueprint.
 
 **`job_trace`** (schema 49): `conversation`, `seq`, `job`, `at`, `tool`, `card_state` (`running`, `done`, `failed`),
 `client_id`, `words`, `keep_until`. One row for each work step the body of a handed-off job reports, under the child
 conversation and numbered within it. `keep_until` is 90 days after `at` for a row written since 2026-11-27; a row
 written before that keeps the limit it was stamped with then (the Comms keep time of that day, 14 days at most). It is not a board record: it is what the `session` brick's big form reads (see
-"Sessions"). `words` is sealed with the household's words key, as a message's words are. A row is written only for a
-conversation whose venue is `handoff`, that has a member, and whose result returns to that member's open thread; a
-step for any other handoff is refused, as every such step was before. No row is written to `messages`, `turns` or
+"Sessions"). `words` is sealed with the household's words key, as a message's words are; `tool` is kept in the clear
+and is a single clean line of at most 200 characters. A row is deleted when it is past its keep time. A row is
+written only by the body of a job that is that conversation's own, for a conversation whose venue is `handoff`, that
+has a member, and whose result returns to that member's open thread, and never for a job working on anybody else's
+word; a step for any other is refused, and all of this is checked by loom at the door, not only by the body. No row is written to `messages`, `turns` or
 `threads` for a step.
 
 **`conversation_tasks`** (schema 50): `conversation`, `task`. One row for each ticket a handed-off session was said
 to be for: the ids the handing-off agent gave as `tickets` in `conversation.handoff`. It holds no words. It is not a
 board record: it is what the `ticket` brick's "Sessions" reads (see "A ticket's sessions"). A row goes when its ticket
-or its conversation row is deleted; nothing in loom deletes a conversation row today. Nothing writes a row but
+or its conversation row is deleted, and when the thread the session was handed off from is deleted; nothing in loom
+deletes a conversation row today. Nothing writes a row but
 `conversation.handoff`.
 
 A board holds no record data and none of a conversation's words.
@@ -205,14 +221,14 @@ is when that change is applied, the changes of one call being applied in order.
 ### For the agent
 
 These are the operations as a job's body may call them, and only for boards in that job's own thread, only when
-that thread has a `board_threads` row, and only for blueprints of that job's own agent; anything else from a body is
-denied. Where a member may call an operation of the same name, what
+that thread has a `board_threads` row, and only for blueprints of that job's own agent and that thread's member;
+anything else from a body is denied. Where a member may call an operation of the same name, what
 the member may pass is under "For the member".
 
 - `bricks.catalogue()` → for every brick: name, one line on what it shows, parameter schema with defaults, which
   parameters are references and of what kind, link key, whether it can be big, what it flags itself for, and its
   actions. Any member may call it too; it holds nothing private.
-- `blueprints.list()` → every blueprint of this agent: id, name, description, parameters, uses. The agent chooses by
+- `blueprints.list()` → every blueprint of this agent for this thread's member: id, name, description, parameters, uses. The agent chooses by
   reading. There is no search in this version.
 - `boards.list()` → every board in the thread, open ones in trail order and then the closed: id, title, open or
   closed, `trail_at`, and its big placement or null.
@@ -239,8 +255,10 @@ the member may pass is under "For the member".
 
   A rank outside its range is refused. The changes are applied in order, in one revision; if any is refused, none is
   stored. A call on a closed board is refused.
-- `boards.read({board, since?})` → the board, and the `board_changes` rows with a revision greater than `since`
-  (default 0).
+- `boards.read({board, since?, limit?})` → the board, and the `board_changes` rows with a revision greater than
+  `since` (default 0), oldest first, at most `limit` rows (100 by default, from 50 to 500) and always whole
+  revisions; `more` is true when there are later rows, and the caller reads on with `since` set to the last revision
+  it was given.
 - `boards.close({board})`, `boards.reopen({board})` → each writes its row and raises the revision. Closing a closed
   board, or reopening an open one, is refused. Reopening sets
   `trail_at`, so the board is last on the trail.
@@ -248,13 +266,14 @@ the member may pass is under "For the member".
   naming which live placements to keep, in the order given. `open` maps a record-reference param of that placement to
   a parameter name, for example `{"project": "project"}`; other params cannot be opened and keep their values. Two
   params may share a parameter name only if they are of the same record kind. The save is refused if two entries of
-  the resulting design have the same brick and the same params. Saving under a name this agent already uses replaces
-  that blueprint's description, parameters and design and keeps its `id`, `uses` and `used_at`.
+  the resulting design have the same brick and the same params. Saving under a name this agent already uses for this
+  member replaces that blueprint's description, parameters and design and keeps its `id`, `uses` and `used_at`. A
+  name or a description that is not a single clean line is refused.
 
 `boards.open`, `boards.change`, `boards.close` and `boards.reopen`, called by the agent, return: the board's id (as
 `board`), title, revision, whether it is closed, its live placements in rank order, each with its id (as `placement`),
 brick, params, rank and whether it is flagged; the same as text; and **meanwhile**, the member's `board_changes` rows
-with a revision greater than `agent_seen`, as sentences. The call then sets `agent_seen` to the board's revision. So a
+with a revision greater than `agent_seen`, as sentences (the latest 50, then a line counting any earlier ones). The call then sets `agent_seen` to the board's revision. So a
 member change to a board made while a job is running reaches the agent in the next writing call it makes on that
 board. A change to another board waits for the next job's brief. `boards.read` returns the board and the rows it was
 asked for, with no meanwhile, and leaves `agent_seen` alone. `blueprints.save` returns the blueprint's id, name and
@@ -278,7 +297,9 @@ Each is denied unless the caller is the thread's member.
 
 `boards.act` records what the page reports. It does not prove the action happened. The owner accepted this on
 2026-11-26: "its always a two player game where one player is an agent". The only caller is the thread's own member,
-and the only reader is that member's agent, which can read the record itself.
+and the only reader is that member's agent, which can read the record itself. So the agent is told it as a report
+and not as a fact ("The member's page reported: used approve on …"), and its standing instructions tell it to read
+the record itself before relying on a reported action.
 
 The page reads `boards` and `board_placements` through live reads: the thread's boards for the trail, and the shown
 board's live placements.
@@ -288,6 +309,32 @@ board's live placements.
 A `place` with an unknown brick, or params that fail the schema, is refused with the reason. A `place` whose params are
 well formed but name a record that does not exist, is of another kind, or that the member may not read, is accepted:
 the brick draws "unavailable", the same in each case. Operations check shape. Visibility stays in the read.
+
+## Limits
+
+Each number is written once, in `src/core/boards/limits.ts` (boards) or `src/core/conversations/job-trace.ts` (a
+session's steps). A call that would pass one is refused with a message that says what to do instead. Nothing is
+closed or deleted to make room.
+
+- Open boards on one thread's trail: 20. Opening or reopening past it is refused: close one, or change one.
+- Boards one thread has had, open and closed: 200. Opening past it is refused: reopen a closed one or change an open
+  one. There is no way to delete a board short of deleting the thread.
+- Live placements on one board, and placements one blueprint keeps: 40.
+- Changes in one `boards.change` call: 40.
+- Blueprints of one agent for one member: 100. A new name past it is refused; saving under an existing name still
+  replaces that one. There is no operation that deletes a blueprint.
+- A brick's `params`, an action's `detail` and a blueprint's `arguments`, checked before the brick's own schema reads
+  them: at most 40 names, each of at most 80 characters, and at most 8,000 characters as JSON.
+- `boards.read`: 100 change rows by default, from 50 to 500 when asked, whole revisions only.
+- Sentences about the member's changes handed to a job at once, in a brief or in a call's meanwhile: the latest 50,
+  then one line counting the earlier ones. All of them are marked told.
+- A session's steps: 2,000 for one job and 10,000 for one handoff conversation. A step past either is refused and the
+  body drops it; the work and its reply are not affected. A step's words are at most 100,000 characters at the door
+  and the body cuts them at 16,000; its tool is at most 200 characters.
+- `sessionTrace`: 100 steps by default and 200 at most in one read.
+
+`board_changes` rows and removed placements are never deleted while their thread exists, so both still grow with
+use; what is bounded is how much of them any one call loads or returns.
 
 ## What the agent is told
 
@@ -319,8 +366,13 @@ board by id and the placement by brick and params:
 - `remove`: "The member removed trend(days=30, project=loom) from board B." Params are written in name order.
 - `close`, `reopen`: "The member closed board B." / "The member reopened board B."
 - `maximize`: "The member made trend(days=30, project=loom) the big one on board B."
-- `act`: "The member used close on ticket(ticket=t-2441) on board B." An action whose detail is not empty
-  ends ": " and the detail, as `answer` does: "…on board B: answer=yes."
+- `act`: "The member's page reported: used close on ticket(ticket=t-2441) on board B." An action whose detail is not
+  empty ends ": " and the detail, as `answer` does: "…on board B: answer=yes." It is worded as a report because that
+  is what it is: `boards.act` stores what the page said and loom did not see the action happen.
+
+At most 50 such sentences are written, the latest across the thread's boards, then one line saying how many earlier
+changes are not listed and that `boards.read` has them. The title is written as a JSON string, so a quote in it
+cannot end it, and without any character the title rule forbids.
 
 With no shown board the text says so. Apart from a board's title, everything in the text is an id, a brick name, a
 choice or a whole number. If a job dies
@@ -338,7 +390,8 @@ new one when it is not; remove what no longer serves; make big the brick that an
 board to three to five bricks; save a board worth returning to, and always when it finds itself building the same
 board a second time; when no brick shows what is needed, say so and file a ticket for the brick; when the member has
 chosen the big one, flag before changing it, and change it only when it cannot wait; never write a board or placement
-id in its reply; and hand off work that writes code or runs long, placing a `session` brick for it. The text is
+id in its reply; treat what the member did on a board as their page's report, and read the record itself before
+relying on a reported action; and hand off work that writes code or runs long, placing a `session` brick for it. The text is
 `boardsMail` in `src/core/boards/brief.ts`, and that file is the wording. These are judgment. No suite checks them.
 
 ## The page
@@ -528,7 +581,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `repository` | yes: each open pull request with its title and where it stands | never |
 | `question` | no | never: being on the board is the flag |
 | `approval` | no: the page has a primary form for it, with the record's history, but the catalogue does not let it be big, so a board draws it side or compact | never: being on the board is the flag |
-| `session` | yes: what it was asked, its state, the tools it has used, how it ended, and its steps as they are reported; "Its steps are no longer kept." once every step's words have been erased | it finishes, it fails, it is stopped by someone else |
+| `session` | yes: what it was asked, its state, the tools it has used, how it ended, and its steps as they are reported; "Its steps are no longer kept." once they are past their keep time and deleted | it finishes, it fails, it is stopped by someone else |
 | `inbox` | yes: every folder's count, and up to fifty of the folder's items newest first, each with its words as a chip that places its `question` brick, who asked, when, its state, read or unread, and Mark read on an unread one; the outcomes of the member's own actions where the Inbox lists them, each with Dismiss; Newer and Older for a longer folder. Small: the folder's count and its first four items as chips. Folded: one line of counts | more waits on the member than before (the count of `needs` goes up) |
 | `approvals` | yes: every pending request oldest first, or every answered one newest first, each with its title as a chip that places its `approval` brick, its state, kind, agent, project, when it was asked, why, what it allows and, once answered, who answered. Small: the count and the first four as chips. Folded: one line of counts | a new request is waiting (the count of pending goes up) |
 | `ticket`, added 2026-11-27 | yes: also its description, its linked tickets with their titles, and the Edit and Links forms; small, its priority, who filed it, why it closed and its links as chips | as above; an edit or a link flags nothing |
@@ -855,11 +908,19 @@ token shaped like one are replaced by "Tool" and by "Output withheld."; words pa
 not in the thread: the thread's transcript, its turns and its unread state are untouched, and the child's final
 reply is relayed to the thread exactly as before. A retried report writes one row.
 
-The page reads them with `sessionTrace(conversation, job, limit)`: the latest `limit` steps (100 by default, 200 at
-most), oldest first. It answers only a signed-in member who is the member of that handoff conversation, which is
+The page reads them with `sessionTrace(conversation, job, limit, after)`: the latest `limit` steps (100 by default,
+200 at most), oldest first; or, with `after`, the earliest `limit` steps whose `seq` is greater, so a reader that
+has some steps asks only for newer ones and no step is opened twice (a stored step never changes). The page does not
+use `after` yet: it re-reads its latest 100, and so re-opens up to 100 steps, each time a step arrives.
+`sessionTraceExpired(conversation, job)` is true when that job has no step and was queued more than 90 days ago: an
+expired step's row is deleted, and this is how the page tells "its steps are no longer kept" from "it reported
+none". It is worked out from the job's age and nothing is stored for it; a job that old that never reported a step
+is told the same, and steps that went early at a limit stamped before 2026-11-27 read as "No steps were recorded."
+Both reads answer the same people. It answers only a signed-in member who is the member of that handoff conversation, which is
 the member of the originating thread, and only while the conversation rule every Comms read uses lets them see it.
 Another member, a household owner who is not that member, an agent and the job's own body all read an empty list.
-Words are opened only when asked for, and are null once they are no longer kept. The read is live like any other.
+Words are opened only when asked for, and are null on a read past their keep time that comes before the sweep has
+deleted the row. The read is live like any other.
 
 The big form draws them under "Steps" with the conversation's own work-trace cards (`web/src/pair/work-trace.tsx`):
 a call and its result are one card, a subagent's steps sit inside its card, the newest is at the bottom and stays in
@@ -872,10 +933,11 @@ words are kept 90 days from when the step was written. The household's Comms kee
 most) does not shorten or lengthen that: it is a message's keep time and no longer a step's. The number is written
 once (`TRACE_KEEP_DAYS`, `src/core/conversations/trace-keep-days.ts`) and every deadline is worked out in
 `src/core/conversations/retention.ts`: `keep_until` is stamped from it when the step is written; the sweep that
-erases expired message words erases a step's words at the earlier of `keep_until` and 90 days after `at`; the timer
+erases expired message words deletes a step's row at the earlier of `keep_until` and 90 days after `at`; the timer
 that runs that sweep is set for the next such time; and a read past it gives no words even before the sweep has
-run. The row without its words (tool, state, time) stays, as a message's row does, and the big form then says "Its
-steps are no longer kept." Rows stored before this rule keep their earlier `keep_until`; nothing was backfilled.
+run. Nothing of an expired step stays: not its tool, its state or its time (changed 2026-11-27; before, the row
+stayed without its words, and such rows go at the next sweep). The big form then says "Its steps are no longer
+kept." Rows stored before this rule keep their earlier `keep_until`; nothing was backfilled.
 
 **What this costs, said plainly.** A step holds what the session did and saw: the command it ran and what the
 command printed, the file it read and the lines read, a subagent's brief and answer, each up to 16,000 characters.
@@ -886,7 +948,7 @@ and the relayed result with them, are erased at the Comms keep time, and the ste
 to 90 days. Against that: a step's words are sealed at rest with the household's words key, the one a message's
 words are sealed with, and the database file holds no step in the clear; they are read only by the member of the
 originating thread (below: not another member, not a household owner who is not that member, not an agent, not the
-job's own body); at 90 days they are erased from the row, not hidden; and deleting the originating thread deletes
+job's own body); at 90 days the rows are deleted, not hidden; and deleting the originating thread deletes
 the rows at once, words and all. A member who wants a session's steps gone before 90 days deletes the thread. There
 is no other way to remove them early, and no setting for the 90 days. The one place loom tells a person the Comms
 keep time, the household settings card (`src/proposal-words.ts`), now says that it is a message's keep time and
@@ -895,6 +957,10 @@ that these steps are kept 90 days whatever it is set to.
 **What ends a trace before 90 days, and what does not.**
 
 - Deleting the originating thread (`comms` delete): the rows are deleted at once. This is the only early end.
+  The same delete takes the thread's boards with their placements and changes, its `board_threads` row, the reply
+  notices queued for it, and the ticket links (`conversation_tasks`) of the sessions handed off from it, so a ticket
+  no longer lists such a session. It leaves the member's blueprints, the handoff conversations and their job rows
+  (nothing in loom deletes those; a job's title and brief stay readable to that member by the ordinary job reads).
 - A row stamped before this rule: at its stamped `keep_until`.
 - Archiving the originating thread: no new step is kept from then on (and the result is not relayed, as before).
   Steps already kept stay and stay readable.
@@ -904,8 +970,10 @@ that these steps are kept 90 days whatever it is set to.
   "Asked" is the job's own `brief` column, which is not swept.
 - The conversation row and the job row: nothing in loom deletes either. The 90-day rollup in `history.ts` deletes
   `turns` rows only, and no trace read uses them. So the trace's foreign keys and its read rule lose nothing to an
-  expiry. If something ever deletes a handoff conversation, `job_trace` has no cascade and that delete would be
-  refused by the foreign key.
+  expiry. If something ever deletes a handoff conversation or a job, `job_trace` references both with no cascade
+  and that delete would be refused by the foreign key while a step remains; `conversation_tasks` cascades from the
+  conversation and the ticket. The keys were left as they are on 2026-11-27 (changing them rebuilds the tables);
+  `src/shared-session-trace.test.ts` pins what a thread's deletion takes and leaves.
 - The member leaving the conversation: the read rule is the member's own conversation rule, so once the
   conversation is another member's, or the member no longer has the agent, they read nothing. The rows stay.
 
@@ -947,7 +1015,7 @@ Its limits, 2026-11-27:
 - The link is made at the handoff and never changed: there is no way to add a ticket to a session afterwards or to
   take one off, short of deleting the ticket.
 - A session listed on a ticket outlives its steps: after 90 days the chip still opens the session, which says its
-  steps are no longer kept.
+  steps are no longer kept. It does not outlive its thread: deleting the thread it was handed off from unlinks it.
 - Two members never see each other's sessions on a shared ticket. That is the conversation rule, kept as it is.
 
 Its limits, 2026-11-27:
@@ -1200,15 +1268,18 @@ the three, so there is nothing to draw or release.
 A session's steps have their own suites, outside the numbered checks: `src/shared-session-trace.test.ts` (kept,
 sealed, read by the thread's member alone and not by a full owner, absent from the thread, the relay unchanged; a
 step written now still read with its words at day 89 and at the last millisecond before day 90, withheld on a read
-at day 90 before the sweep, and erased by loom's own sweep at day 90, with `comms_days` at 1 and at 14, while the
-thread's message is erased at `comms_days`; a row with an earlier stamped limit ending at that limit; an archived
-thread keeping what it has; the rows deleted with the thread), `src/single-home.contract.test.ts` (the 90 written
+at day 90 before the sweep, and deleted by loom's own sweep at day 90, with `comms_days` at 1 and at 14, while the
+thread's message is erased at `comms_days`; `sessionTraceExpired` false until then and true after, for the member
+alone; a row with an earlier stamped limit ending at that limit; an archived
+thread keeping what it has; the rows deleted with the thread; a step past the cap for a job and for a session
+refused with its message; a tool that is not one clean line refused; `after` reading only newer steps and opening
+only those; a job on anybody else's word refused at the door; and what a deleted thread takes and leaves), `src/single-home.contract.test.ts` (the 90 written
 once, the trace's arithmetic, and `job-trace.ts` asking nothing of the Comms keep time), `src/proposal-words.test.ts`
 (the settings card saying the keep time is a message's and that steps are kept 90 days),
 `src/runtime/body-program.test.ts` (which jobs report steps, and the redaction),
 `src/shared-conversation-handoff.test.ts` (a recorded Codex stream through the real adapter and doors) and
 `web/src/boards/session-trace.test.tsx` (the big and small forms from fake data, and the "no longer kept" line when
-every step's words are gone).
+loom says the job is past the keep time).
 
 A ticket's sessions: `src/shared-ticket-sessions.test.ts`, over the real doors (a handoff with `tickets` stores the
 links once; an unknown id, a ticket the body may not read, an empty list, more than 20 and a note to its own body
@@ -1441,7 +1512,9 @@ something unrelated, and a second board opens to the right and closes back to th
 ## Decided by the owner, 2026-11-26
 
 1. **A blueprint belongs to the agent.** Whether to reuse one as it is or change it for the person asking is the
-   agent's judgment.
+   agent's judgment. Narrowed on 2026-11-27 after a security review, not yet confirmed by the owner: it belongs to
+   the agent and to the member of the thread it was saved in, because an agent-wide blueprint carried one member's
+   words (its name and description) and design into another member's jobs. See "Records".
 2. **A board saves as it goes; a blueprint is a promotion.** The agent promotes, or the member asks.
 3. **The narrow screen** has an always-present bar for the agent, and the conversation opens from it as a sheet.
 4. **What leaves a board** is the agent's judgment, and the member's asking.

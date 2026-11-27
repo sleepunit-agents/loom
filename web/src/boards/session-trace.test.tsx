@@ -5,11 +5,11 @@ import { createElement as h } from 'react';
 import { act, create } from 'react-test-renderer';
 import type { TraceStep } from './session-trace';
 
-const f = vi.hoisted(() => ({ asked: [] as { document: string; variables: Record<string, unknown>; options?: { pause?: boolean } }[], venue: 'handoff', steps: [] as unknown[] }));
+const f = vi.hoisted(() => ({ asked: [] as { document: string; variables: Record<string, unknown>; options?: { pause?: boolean } }[], venue: 'handoff', steps: [] as unknown[], gone: false }));
 vi.mock('../data/graphql', () => ({ useDataQuery: (document: string, variables: Record<string, unknown>, options?: { pause?: boolean }) => {
   f.asked.push({ document, variables, options });
   if (document.includes('BrickSessionJob')) return { status: 'live', data: { rows: [{ brief: 'Compare the fictional pumps', logTail: null, endedNote: null, claimedAt: '2026-11-27T10:00:00.000Z', endedAt: null }] } };
-  if (document.includes('BrickSessionTrace')) return { status: 'live', data: { steps: f.steps } };
+  if (document.includes('BrickSessionTrace')) return { status: 'live', data: { steps: f.steps, gone: f.gone } };
   if (document.includes('BrickSessionStep')) return { status: 'live', data: { steps: f.steps.slice(-1) } };
   return { status: 'live', data: { jobs: [{ id: 'child-job', title: 'Compare pumps', state: 'running', queuedAt: '2026-11-27T10:00:00.000Z', usage: { model: 'fictional-model', harness: 'claude', tools: [{ name: 'Bash', count: 2 }] } }], cv: { agent: 'art', label: 'Compare pumps', venue: f.venue } } };
 } }));
@@ -25,7 +25,7 @@ await loadBricks();
 vi.stubGlobal('requestAnimationFrame', (fn: () => void) => setTimeout(fn, 0));
 vi.stubGlobal('cancelAnimationFrame', (id: ReturnType<typeof setTimeout>) => clearTimeout(id));
 let tree: ReturnType<typeof create>;
-afterEach(async () => { await act(async () => tree?.unmount()); f.asked.length = 0; f.venue = 'handoff'; f.steps = []; });
+afterEach(async () => { await act(async () => tree?.unmount()); f.asked.length = 0; f.venue = 'handoff'; f.steps = []; f.gone = false; });
 const call = '1'.repeat(24), other = '2'.repeat(24);
 const step = (seq: number, id: string, tool: string, cardState: TraceStep['cardState'], words: string | null): TraceStep =>
   ({ seq, job: 'child-job', at: '2026-11-27T10:0' + seq + ':00.000Z', tool, cardState, clientId: `child-job:pair.${id}.-.${seq}`, words });
@@ -84,17 +84,23 @@ it('hands the transcript\'s work-trace cards a step whose words are no longer ke
   expect(traceEvents([step(1, call, 'Terminal', 'done', null)])).toEqual([{ thread: '', sender: '', kind: 'card', seq: 1, at: '2026-11-27T10:01:00.000Z', run: 'child-job', tool: 'Terminal', cardState: 'done', clientId: `child-job:pair.${call}.-.1`, words: null }]);
 });
 
-it('says plainly that the steps are no longer kept once every step\'s words are gone, in place of "none recorded"', async () => {
-  f.steps = [step(1, call, 'Terminal', 'done', null), step(2, other, 'Read', 'done', null)];
+it('says plainly that the steps are no longer kept when loom says the job is past the keep time, in place of "none recorded"', async () => {
+  // An expired step is deleted, so the read has no steps; loom tells the page the job is older than a step is kept.
+  f.gone = true;
   const drawn = await draw('primary');
   const gone = tree.root.find((node: { props: Record<string, unknown> }) => node.props['data-session-trace-gone'] === '');
-  expect(gone.children.join('')).toBe('Its steps are no longer kept. It reported 2 steps; loom keeps a step’s words for a limited time and then erases them.');
+  expect(gone.children.join('')).toBe('Its steps are no longer kept. Loom keeps a step for a limited time and then deletes it.');
   expect(drawn).not.toContain('No steps were recorded.');
   expect(drawn).not.toContain('No steps reported yet.');
   expect(slots(tree.toJSON(), 'trace')).toHaveLength(0);
-  // While any step still has its words, the steps are drawn.
+  expect(f.asked.find((q) => q.document.includes('BrickSessionTrace'))!.document).toContain('gone:sessionTraceExpired(conversation:$c,job:$j)');
+  // A job with no steps that is not past the keep time never had any.
   await act(async () => tree.unmount());
-  f.steps = [step(1, call, 'Terminal', 'done', null), step(2, other, 'Read', 'done', 'Read')];
+  f.gone = false;
+  expect(await draw('primary')).not.toContain('no longer kept');
+  // While any step is kept, the steps are drawn.
+  await act(async () => tree.unmount());
+  f.steps = [step(1, call, 'Terminal', 'done', 'ls'), step(2, other, 'Read', 'done', 'Read')];
   expect(await draw('primary')).not.toContain('no longer kept');
   expect(slots(tree.toJSON(), 'trace')).toHaveLength(2);
 });
