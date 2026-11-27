@@ -116,6 +116,35 @@ function useTicketAction(act: Act, own: () => void = () => {}) {
   }
   return { busy, error, run };
 }
+type WorkedBy = { conversation: string; title: string; state: string | null; at: string };
+const sessionRunning = (state: string | null) => state === 'queued' || state === 'starting' || state === 'running';
+/** The sessions that worked a ticket: the handed-off work whose agent said it was for this ticket, newest first,
+ * as loom lists them for the member looking (their own, and no one else's). A closed ticket keeps them. */
+function TicketSessions({ ticket, form }: { ticket: string; form: Form }) {
+  const read = useDataQuery<{ rows: WorkedBy[] }>(
+    'query BrickTicketSessions($t:String!){rows:ticketSessions(ticket:$t){conversation title state at}}', { t: ticket }, { keep: true });
+  const rows = read.data?.rows ?? [];
+  if (form !== 'primary') return rows.length ? <p className="board-line text-muted-foreground" data-ticket-sessions="">{rows.length === 1 ? '1 session' : `${rows.length} sessions`} worked this</p> : null;
+  return (
+    <dl style={{ marginTop: '.8rem' }} data-ticket-sessions="">
+      <div>
+        <dt>Sessions</dt>
+        <dd>
+          {read.status === 'loading' ? <Loading />
+            : read.status !== 'live' ? <p className="text-muted-foreground">Its sessions are unavailable.</p>
+            : !rows.length ? <p className="text-muted-foreground">No session is recorded for this ticket.</p>
+            : rows.map((r) => (
+                <div className="board-line" key={r.conversation}>
+                  <Chip place={{ brick: 'session', params: { session: r.conversation } }}>{r.title || 'Session'}</Chip>
+                  <span className="board-state" data-running={sessionRunning(r.state)}>{r.state ?? 'not started'}</span>
+                  <span className="text-muted-foreground">{new Date(r.at).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+                </div>
+              ))}
+        </dd>
+      </div>
+    </dl>
+  );
+}
 function Ticket({ params, form, act, raise }: { params: Params; form: Form; act: Act; raise: Raise }) {
   const id = words(params.ticket);
   const read = useDataQuery<{ ticket: Task | null }>(
@@ -160,6 +189,7 @@ function Ticket({ params, form, act, raise }: { params: Params; form: Form; act:
         </form>
       )}
       {error && <p role="alert" className="text-destructive">{error}</p>}
+      <TicketSessions ticket={id} form={form} />
     </>
   );
 }

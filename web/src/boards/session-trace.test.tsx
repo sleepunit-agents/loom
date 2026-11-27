@@ -80,3 +80,18 @@ it('gives the small form the latest step as one line, without asking for any wor
 it('hands the transcript\'s work-trace cards a step whose words are no longer kept', () => {
   expect(traceEvents([step(1, call, 'Terminal', 'done', null)])).toEqual([{ thread: '', sender: '', kind: 'card', seq: 1, at: '2026-11-27T10:01:00.000Z', run: 'child-job', tool: 'Terminal', cardState: 'done', clientId: `child-job:pair.${call}.-.1`, words: null }]);
 });
+
+it('says plainly that the steps are no longer kept once every step\'s words are gone, in place of "none recorded"', async () => {
+  f.steps = [step(1, call, 'Terminal', 'done', null), step(2, other, 'Read', 'done', null)];
+  const drawn = await draw('primary');
+  const gone = tree.root.find((node: { props: Record<string, unknown> }) => node.props['data-session-trace-gone'] === '');
+  expect(gone.children.join('')).toBe('Its steps are no longer kept. It reported 2 steps; loom keeps a step’s words for a limited time and then erases them.');
+  expect(drawn).not.toContain('No steps were recorded.');
+  expect(drawn).not.toContain('No steps reported yet.');
+  expect(slots(tree.toJSON(), 'trace')).toHaveLength(0);
+  // While any step still has its words, the steps are drawn.
+  await act(async () => tree.unmount());
+  f.steps = [step(1, call, 'Terminal', 'done', null), step(2, other, 'Read', 'done', 'Read')];
+  expect(await draw('primary')).not.toContain('no longer kept');
+  expect(slots(tree.toJSON(), 'trace')).toHaveLength(2);
+});

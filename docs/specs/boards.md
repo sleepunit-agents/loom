@@ -145,7 +145,7 @@ There is no note brick. What the agent has to say goes in the conversation.
 
 ## Records
 
-Five tables for boards and one for a session's steps, all in the shared schema.
+Five tables for boards, one for a session's steps and one for the tickets a session is for, all in the shared schema.
 
 **`board_threads`**: `thread`, `since`. A thread that has the second window: its member has sent from this page.
 Only in such a thread is an agent told about boards or allowed to open one. A board nobody can see is never made.
@@ -181,11 +181,18 @@ agent in any of that agent's threads. No member reads `blueprints`.
 
 **`job_trace`** (schema 49): `conversation`, `seq`, `job`, `at`, `tool`, `card_state` (`running`, `done`, `failed`),
 `client_id`, `words`, `keep_until`. One row for each work step the body of a handed-off job reports, under the child
-conversation and numbered within it. It is not a board record: it is what the `session` brick's big form reads (see
+conversation and numbered within it. `keep_until` is 90 days after `at` for a row written since 2026-11-27; a row
+written before that keeps the limit it was stamped with then (the Comms keep time of that day, 14 days at most). It is not a board record: it is what the `session` brick's big form reads (see
 "Sessions"). `words` is sealed with the household's words key, as a message's words are. A row is written only for a
 conversation whose venue is `handoff`, that has a member, and whose result returns to that member's open thread; a
 step for any other handoff is refused, as every such step was before. No row is written to `messages`, `turns` or
 `threads` for a step.
+
+**`conversation_tasks`** (schema 50): `conversation`, `task`. One row for each ticket a handed-off session was said
+to be for: the ids the handing-off agent gave as `tickets` in `conversation.handoff`. It holds no words. It is not a
+board record: it is what the `ticket` brick's "Sessions" reads (see "A ticket's sessions"). A row goes when its ticket
+or its conversation row is deleted; nothing in loom deletes a conversation row today. Nothing writes a row but
+`conversation.handoff`.
 
 A board holds no record data and none of a conversation's words.
 
@@ -429,14 +436,14 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `project` | yes | never |
 | `lanes` | yes | never |
 | `trend` | yes: opened and closed per day over `days`, and a picked day lists its tickets | never |
-| `ticket` | yes | it is closed or reopened by someone else |
+| `ticket` | yes: also why and done when, and "Sessions", the sessions handed off for it, newest first, each a `session` chip with its title, state and when; small, a line counting them when there are any; folded, unchanged | it is closed or reopened by someone else |
 | `comments` | yes | a comment arrives from someone else |
 | `person` (a member or a contact), `agent` | not yet | never |
 | `pull` | yes: also its branch and author, its failing and running checks by name, the people on it, whether it can be merged, its tickets with their titles | its checks go to failing, it is merged, it is closed |
 | `repository` | yes: each open pull request with its title and where it stands | never |
 | `question` | no | never: being on the board is the flag |
 | `approval` | no: the page has a primary form for it, with the record's history, but the catalogue does not let it be big, so a board draws it side or compact | never: being on the board is the flag |
-| `session` | yes: what it was asked, its state, the tools it has used, how it ended, and its steps as they are reported | it finishes, it fails, it is stopped by someone else |
+| `session` | yes: what it was asked, its state, the tools it has used, how it ended, and its steps as they are reported; "Its steps are no longer kept." once every step's words have been erased | it finishes, it fails, it is stopped by someone else |
 
 **What the five bricks drawn on 2026-11-27 show.** Each reads what the desktop reads for the same record, and says
 it in the desktop's words.
@@ -521,10 +528,90 @@ The big form draws them under "Steps" with the conversation's own work-trace car
 a call and its result are one card, a subagent's steps sit inside its card, the newest is at the bottom and stays in
 view unless the member has scrolled up. It asks for the trace only when the conversation's venue is `handoff`.
 
-Steps are kept as long as a message's words: `keep_until` is stamped from the household's keep time when the step
-is written, the sweep that erases expired message words erases a step's words at the earlier of that and the
-current keep time, a read past that time gives no words before the sweep has run, and deleting the originating
-thread deletes the rows. The row without its words (tool, state, time) stays, as a message's row does.
+**How long a step is kept: 90 days, on its own clock.** Decided by the owner, 2026-11-27: "record things period,
+because we might want to review the session that made something later on... if we look at a closed ticket, having
+the session that made it makes sense to me. at least for a while." and, on how long, "90 sounds good". A step's
+words are kept 90 days from when the step was written. The household's Comms keep time (`comms_days`, 14 days at
+most) does not shorten or lengthen that: it is a message's keep time and no longer a step's. The number is written
+once (`TRACE_KEEP_DAYS`, `src/core/conversations/trace-keep-days.ts`) and every deadline is worked out in
+`src/core/conversations/retention.ts`: `keep_until` is stamped from it when the step is written; the sweep that
+erases expired message words erases a step's words at the earlier of `keep_until` and 90 days after `at`; the timer
+that runs that sweep is set for the next such time; and a read past it gives no words even before the sweep has
+run. The row without its words (tool, state, time) stays, as a message's row does, and the big form then says "Its
+steps are no longer kept." Rows stored before this rule keep their earlier `keep_until`; nothing was backfilled.
+
+**What this costs, said plainly.** A step holds what the session did and saw: the command it ran and what the
+command printed, the file it read and the lines read, a subagent's brief and answer, each up to 16,000 characters.
+The body replaces a secret it holds, its own credentials and anything shaped like a token before it reports
+(above), but it cannot know that a file's contents or a command's output are private in some other way, so a step
+can hold anything the session read or printed. These words now outlive the chat's own words: the thread's messages,
+and the relayed result with them, are erased at the Comms keep time, and the steps of the work behind them stay up
+to 90 days. Against that: a step's words are sealed at rest with the household's words key, the one a message's
+words are sealed with, and the database file holds no step in the clear; they are read only by the member of the
+originating thread (below: not another member, not a household owner who is not that member, not an agent, not the
+job's own body); at 90 days they are erased from the row, not hidden; and deleting the originating thread deletes
+the rows at once, words and all. A member who wants a session's steps gone before 90 days deletes the thread. There
+is no other way to remove them early, and no setting for the 90 days. The one place loom tells a person the Comms
+keep time, the household settings card (`src/proposal-words.ts`), now says that it is a message's keep time and
+that these steps are kept 90 days whatever it is set to.
+
+**What ends a trace before 90 days, and what does not.**
+
+- Deleting the originating thread (`comms` delete): the rows are deleted at once. This is the only early end.
+- A row stamped before this rule: at its stamped `keep_until`.
+- Archiving the originating thread: no new step is kept from then on (and the result is not relayed, as before).
+  Steps already kept stay and stay readable.
+- The chat's words expiring at the Comms keep time (`conversations.expire`, `CommsMessages.expire`): the same sweep
+  runs the trace's own rule and takes nothing from a trace early. The brief a session was handed (an inbox item's
+  words) and the result relayed to the thread do go at the Comms keep time. What the `session` brick shows under
+  "Asked" is the job's own `brief` column, which is not swept.
+- The conversation row and the job row: nothing in loom deletes either. The 90-day rollup in `history.ts` deletes
+  `turns` rows only, and no trace read uses them. So the trace's foreign keys and its read rule lose nothing to an
+  expiry. If something ever deletes a handoff conversation, `job_trace` has no cascade and that delete would be
+  refused by the foreign key.
+- The member leaving the conversation: the read rule is the member's own conversation rule, so once the
+  conversation is another member's, or the member no longer has the agent, they read nothing. The rows stay.
+
+**A ticket's sessions.** Loom recorded no link between a piece of agent work and the ticket it was for. What there
+was, found 2026-11-27: a ticket filed from a conversation names that conversation (`tasks.source_kind`,
+`source_id`), which says where it was filed and not who worked it; a review job is tied to a pull request and
+through it to the tickets the pull request mentions (`change_review_rounds`, `change_tasks`); an agent's activity
+post may reference a ticket (`agent_post_work_refs`), with no job; and a claim sets `tasks.assignee` to the agent
+and starts no job. None of them says "this session worked this ticket", so one link was added and nothing is
+inferred from words.
+
+`conversation.handoff` takes an optional `tickets`: 1 to 20 ticket ids, for a work role, a harness or a brief to
+another agent (not for a note to the agent's own body, `to`, which opens no session). Each must be a ticket the
+handing-off body may read at that moment, working for the conversation's member, by the tasks rule; an id that is
+no ticket or that it may not read refuses the whole handoff with "Unknown ticket: …" and nothing is written. The
+ids are stored in `conversation_tasks` against the child conversation when it is opened. A retry of the same brief
+returns the same conversation and writes nothing. The agent is told about the field where it is told about
+handoffs (`src/runtime/body-program.ts`, and `boardsMail` in `src/core/boards/brief.ts`).
+
+The page reads them with `ticketSessions(ticket)`: for each linked conversation its id, its agent, and its latest
+job's id, title, state and queued time (the conversation's label and opening time where it has no job yet), newest
+first. It answers a signed-in member, for a ticket that member may read, and lists only conversations the
+conversation rule lets them read and only jobs the job rule does (`policy.ts`, `conversation` and `inTalk`). A
+handed-off conversation is its member's alone, so another member who reads the same ticket, a household owner who
+is not that member, an agent and a job's body all read an empty list. Closing the ticket changes nothing.
+
+The `ticket` brick draws them in the big form under "Sessions", each a chip that places the `session` brick, with
+its state and when; "No session is recorded for this ticket." when there is none. The small form has one line,
+"N sessions worked this", only when there is at least one. The folded form is unchanged.
+
+Its limits, 2026-11-27:
+
+- Only a handoff whose agent named the ticket is listed. Whether an agent names it is judgment; no suite checks it.
+- Ordinary ticket work is not covered: an agent that claims a ticket and works it in its own thread, a wake or a
+  lane, a terminal session, and a review job have no link and are not listed. Nor is any session handed off before
+  schema 50.
+- A brief to another agent joins the one conversation that agent has for the handing-off job, so two briefs from
+  one job share one session and its tickets are all those any of them named.
+- The link is made at the handoff and never changed: there is no way to add a ticket to a session afterwards or to
+  take one off, short of deleting the ticket.
+- A session listed on a ticket outlives its steps: after 90 days the chip still opens the session, which says its
+  steps are no longer kept.
+- Two members never see each other's sessions on a shared ticket. That is the conversation rule, kept as it is.
 
 Its limits, 2026-11-27:
 
@@ -663,10 +750,29 @@ the thread's member. No model is involved. Each check sets up its own board unle
 `web/src/boards/trend.test.ts` and `build.test.ts`: the trend's days and the new-build test.
 
 A session's steps have their own suites, outside the numbered checks: `src/shared-session-trace.test.ts` (kept,
-sealed, read by the thread's member alone, absent from the thread, the relay unchanged, erased and deleted),
+sealed, read by the thread's member alone and not by a full owner, absent from the thread, the relay unchanged; a
+step written now still read with its words at day 89 and at the last millisecond before day 90, withheld on a read
+at day 90 before the sweep, and erased by loom's own sweep at day 90, with `comms_days` at 1 and at 14, while the
+thread's message is erased at `comms_days`; a row with an earlier stamped limit ending at that limit; an archived
+thread keeping what it has; the rows deleted with the thread), `src/single-home.contract.test.ts` (the 90 written
+once, the trace's arithmetic, and `job-trace.ts` asking nothing of the Comms keep time), `src/proposal-words.test.ts`
+(the settings card saying the keep time is a message's and that steps are kept 90 days),
 `src/runtime/body-program.test.ts` (which jobs report steps, and the redaction),
 `src/shared-conversation-handoff.test.ts` (a recorded Codex stream through the real adapter and doors) and
-`web/src/boards/session-trace.test.tsx` (the big and small forms from fake data).
+`web/src/boards/session-trace.test.tsx` (the big and small forms from fake data, and the "no longer kept" line when
+every step's words are gone).
+
+A ticket's sessions: `src/shared-ticket-sessions.test.ts`, over the real doors (a handoff with `tickets` stores the
+links once; an unknown id, a ticket the body may not read, an empty list, more than 20 and a note to its own body
+are refused with nothing written; `ticketSessions` lists the linked sessions newest first by latest job for the
+member they belong to, still on a closed ticket, and nothing for another member who reads the ticket, an agent, the
+body, an unreadable ticket and an unknown one; deleting a ticket removes its links). `web/src/boards/bricks.test.tsx`
+(the ticket brick's Sessions on a closed ticket from fake data: the big form's chips, states and empty and
+unavailable lines, the small form's count line, the folded form asking for nothing). `src/core/data/upgrade.test.ts`
+and `schema.test.ts` hold schema 50 to its pinned shape. Not tested: a handoff with `tickets` through a work role
+or a harness (the suite hands off to a peer agent; the link is written by the same lines for all three, and the
+listing test builds role-shaped conversations by hand); the page's `ticketSessions` selection against a running
+server; live redrawing when a link or a job changes; anything in a browser; a real agent choosing to name a ticket.
 
 In `web/src/boards/bricks-drawn.test.tsx`, with a fake data hook and a fake `fetch`: for `pull`, `repository`,
 `question`, `approval` and a contact, all three forms, the compact form as one line, the unavailable and loading
@@ -749,6 +855,11 @@ something unrelated, and a second board opens to the right and closes back to th
    flag. A brick's own flag is silent: it wakes nobody.
 7. **The agent in the thread is the one who decides and dispatches.** Long work is a session handed off through loom
    and shown as a brick; quick subagents for reading are fine and are shown in the conversation.
+
+8. **A session's steps are recorded and kept 90 days.** "record things period, because we might want to review the
+   session that made something later on... if we look at a closed ticket, having the session that made it makes
+   sense to me. at least for a while." "90 sounds good". The steps have their own clock, apart from the Comms keep
+   time; see "Sessions" for what that costs and what ends a trace early.
 
 ## Open
 

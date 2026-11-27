@@ -39,7 +39,7 @@ export function conversationLifetime(db: DataDatabase, clock: Clock, service: Co
     for(const item of privateInboxExpiries(db,days))next=Math.min(next,item.until);
     const bridgeWords=oldestPrivateBridgeWords(db);if(bridgeWords!==undefined)next=Math.min(next,ageLimit(bridgeWords,days));
     const session=oldestConversationSession(db);if(session!==undefined)next=Math.min(next,ageLimit(session,days));
-    const trace=nextJobTraceExpiry(db,days);if(trace!==undefined)next=Math.min(next,trace);
+    const trace=nextJobTraceExpiry(db);if(trace!==undefined)next=Math.min(next,trace);
     cancel = clock.at(Math.max(now, next), () => {
       cancel = undefined; if (closed) return;
       try { sweep(); schedule(); }

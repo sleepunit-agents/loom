@@ -1499,6 +1499,15 @@ CREATE TABLE `job_trace` (
 
 CREATE UNIQUE INDEX `job_trace_client_id_unique` ON `job_trace` (`conversation`,`client_id`);
 CREATE INDEX `job_trace_keep_until_idx` ON `job_trace` (`keep_until`);
+CREATE TABLE `conversation_tasks` (
+	`conversation` text NOT NULL,
+	`task` text NOT NULL,
+	PRIMARY KEY(`conversation`, `task`),
+	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`task`) REFERENCES `tasks`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX `conversation_tasks_task_idx` ON `conversation_tasks` (`task`);
 CREATE TABLE `project_claim_directions` (
 	`seq` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`project` text NOT NULL,

@@ -427,7 +427,7 @@ it('proposes a change, sees the approval waiting, and reads its own inbox',async
   const filed=(await art.call('propose',{change:'settings',input:{commsDays:7},why:'FICTIONAL_REASON\n# heading <img> `code`'})).text;
   expect(filed).toMatch(/^Filed approval a-[0-9a-f-]+\. It waits for a household owner\.$/);
   const pending=(await art.call('approvals',{state:'pending'})).text;
-  expect(pending).toContain('## Have Comms keep words for 7 days');expect(pending).not.toContain('Days Comms keeps words: 7');expect(pending).toContain('Why: FICTIONAL_REASON &#35; heading &#60;img&#62; &#96;code&#96;');
+  expect(pending).toContain('## Have Comms keep a message’s words for 7 days');expect(pending).not.toContain('Days Comms keeps a message’s words: 7');expect(pending).toContain('Why: FICTIONAL_REASON &#35; heading &#60;img&#62; &#96;code&#96;');
   // An agent reading its own pending asks reads the card's sentence and plain facts: never the raw input.
   expect(pending).not.toContain('{"');
   expect((await art.call('approvals',{state:'denied'})).text).toBe('No approvals are denied.');

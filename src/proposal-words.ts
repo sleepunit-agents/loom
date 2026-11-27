@@ -11,6 +11,7 @@
  * It never guesses a name. Where an owner is reading and loom holds none, it says so in words. */
 import { outsideTierMayReceiveDirect } from './policy.js';
 import { parseOutsidePersonKey } from './pieces/bridges/keys.js';
+import { TRACE_KEEP_DAYS } from './core/conversations/trace-keep-days.js';
 
 export interface CardFact { label: string; value: string; /** A raw id kept for certainty: drawn small, and last. */ small?: boolean }
 /** A name loom already holds, and where it came from. */
@@ -378,17 +379,19 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
         ...(isNew ? { ifYes: 'Full owners will have the new agent.' } : {}) };
     }
     case 'settings': {
-      const words: Record<string, string> = { defaultAgent: 'Default agent', timezone: 'Time zone', commsDays: 'Days Comms keeps words', githubOwner: 'GitHub owner',
+      const words: Record<string, string> = { defaultAgent: 'Default agent', timezone: 'Time zone', commsDays: 'Days Comms keeps a message’s words', githubOwner: 'GitHub owner',
         backupTarget: 'Backups go to', backupAt: 'Backup time', backupKeep: 'Backups kept', backupRecipients: 'Keys backups are locked to' };
       const said = (key: string, value: unknown) => value === null || value === undefined || value === '' ? 'Not set' : key === 'defaultAgent' ? name(value) : Array.isArray(value) ? numbered(strings(value)) : str(value);
       const keys = Object.keys(input);
       const told = changes(before, keys.map(key => field(words[key] ?? key, key, value => said(key, value))));
       const only = keys.length === 1 ? keys[0]! : '', value = input[only], set = said(only, value);
       const one: Record<string, string> = { defaultAgent: value ? 'Make ' + set + ' the household’s default agent' : 'Leave the household with no default agent', timezone: 'Set the household’s time zone to ' + set,
-        commsDays: 'Have Comms keep words for ' + count(Number(value), 'day'), githubOwner: value ? 'Set the household’s GitHub owner to ' + set : 'Clear the household’s GitHub owner',
+        commsDays: 'Have Comms keep a message’s words for ' + count(Number(value), 'day'), githubOwner: value ? 'Set the household’s GitHub owner to ' + set : 'Clear the household’s GitHub owner',
         backupTarget: value ? 'Send the household’s backups to ' + set : 'Stop sending the household’s backups anywhere', backupAt: 'Take the household’s backup at ' + set,
         backupKeep: 'Keep ' + count(Number(value), 'backup') + ' of the household', backupRecipients: 'Change the keys the household’s backups are locked to' };
-      return { title: one[only] ?? 'Change ' + count(keys.length, 'household setting'), ...told };
+      // The keep time is a message's. What it does not cover is said on the card, so nobody reads it as "everything".
+      const notAll = keys.includes('commsDays') ? { ifYes: 'This is how long a message’s words are kept. The work steps of a session handed off from a thread are not covered: they are kept ' + count(TRACE_KEEP_DAYS, 'day') + ' whatever this is set to, and go at once when the thread is deleted.' } : {};
+      return { title: one[only] ?? 'Change ' + count(keys.length, 'household setting'), ...told, ...notAll };
     }
     case 'rule': {
       const kinds: Record<string, string> = { merge: 'merging a pull request', command: 'running a command on a machine', setting: 'changing a setting', dangerous: 'a dangerous action' };
