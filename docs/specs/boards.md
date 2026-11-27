@@ -143,7 +143,7 @@ There is no note brick. What the agent has to say goes in the conversation.
 
 ## Records
 
-Five tables, all in the shared schema.
+Five tables for boards and one for a session's steps, all in the shared schema.
 
 **`board_threads`**: `thread`, `since`. A thread that has the second window: its member has sent from this page.
 Only in such a thread is an agent told about boards or allowed to open one. A board nobody can see is never made.
@@ -176,6 +176,14 @@ characters); `parameters` (JSON: a list of `{name, kind}` in order of first use 
 `design` (JSON: an ordered list of `{brick, params}` in rank order, where a record-reference param's value is either
 fixed or `{"open": "<parameter name>"}`); `created_at`; `used_at`; `uses`. A blueprint is readable and usable by its
 agent in any of that agent's threads. No member reads `blueprints`.
+
+**`job_trace`** (schema 49): `conversation`, `seq`, `job`, `at`, `tool`, `card_state` (`running`, `done`, `failed`),
+`client_id`, `words`, `keep_until`. One row for each work step the body of a handed-off job reports, under the child
+conversation and numbered within it. It is not a board record: it is what the `session` brick's big form reads (see
+"Sessions"). `words` is sealed with the household's words key, as a message's words are. A row is written only for a
+conversation whose venue is `handoff`, that has a member, and whose result returns to that member's open thread; a
+step for any other handoff is refused, as every such step was before. No row is written to `messages`, `turns` or
+`threads` for a step.
 
 A board holds no record data and none of a conversation's words.
 
@@ -426,7 +434,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `repository` | not yet | not drawn |
 | `question`, `approval` | no | not drawn; meant: never, being on the board is the flag |
 | `person` (a contact) | not yet | not drawn |
-| `session` | yes: what it was asked, its state, the tools it has used, how it ended | it finishes, it fails, it is stopped by someone else |
+| `session` | yes: what it was asked, its state, the tools it has used, how it ended, and its steps as they are reported | it finishes, it fails, it is stopped by someone else |
 
 **Not drawn, 2026-11-27.** `pull`, `repository`, `question`, `approval` and a `person` who is a contact are in the
 catalogue, can be placed, and draw one line saying the page does not draw them yet. Their actions in the table above
@@ -438,14 +446,49 @@ as `[label](loom:<brick>/<key>)` is not built; only a bare ticket id becomes a c
 has today: it opens a child conversation for the same agent, member and project and returns that conversation's id,
 and the child's result comes back to the thread as a reply that wakes the agent. `session` takes that id. It shows the
 latest job in that conversation, or in any conversation with jobs that the member may read. Small: its title, its
-state, how long it has run, the tools it has used most. Big: also what it was asked, what it runs on, and how it
-ended. The member can stop it, by `runtime.jobStop`, which loom allows a member for an agent on their list. A harness's
+state, how long it has run, the tools it has used most, and (the side form, for a handed-off session) its latest
+step as one line. Big: also what it was asked, what it runs on, how it ended, and its steps. The member can stop it, by `runtime.jobStop`, which loom allows a member for an agent on their list. A harness's
 own subagents inside one job are not sessions and loom keeps no record of them for an ordinary job.
 
-Three things loom does not have today, found 2026-11-27, each its own change if wanted:
+**A session's steps.** The body of a job handed off from a member's thread (the worker's assignment says `review`)
+on the owners' word reports each tool call and each result as a card, by the same decoding of the harness's output
+and the same disclosure check as the pairing thread's cards (`src/runtime/body-program.ts`,
+`src/runtime/pair-events.ts`): a tool name or a step's words that say a secret the body holds, one of its own credentials, or a
+token shaped like one are replaced by "Tool" and by "Output withheld."; words past 16,000 characters are cut. Loom keeps each card in `job_trace` under the child conversation (`src/core/conversations/job-trace.ts`),
+not in the thread: the thread's transcript, its turns and its unread state are untouched, and the child's final
+reply is relayed to the thread exactly as before. A retried report writes one row.
 
-- **No step-by-step trace.** A job's tool cards are written only into a thread, and a handed-off conversation has no
-  thread. So the big form shows tool counts, not what the session is doing now.
+The page reads them with `sessionTrace(conversation, job, limit)`: the latest `limit` steps (100 by default, 200 at
+most), oldest first. It answers only a signed-in member who is the member of that handoff conversation, which is
+the member of the originating thread, and only while the conversation rule every Comms read uses lets them see it.
+Another member, a household owner who is not that member, an agent and the job's own body all read an empty list.
+Words are opened only when asked for, and are null once they are no longer kept. The read is live like any other.
+
+The big form draws them under "Steps" with the conversation's own work-trace cards (`web/src/pair/work-trace.tsx`):
+a call and its result are one card, a subagent's steps sit inside its card, the newest is at the bottom and stays in
+view unless the member has scrolled up. It asks for the trace only when the conversation's venue is `handoff`.
+
+Steps are kept as long as a message's words: `keep_until` is stamped from the household's keep time when the step
+is written, the sweep that erases expired message words erases a step's words at the earlier of that and the
+current keep time, a read past that time gives no words before the sweep has run, and deleting the originating
+thread deletes the rows. The row without its words (tool, state, time) stays, as a message's row does.
+
+Its limits, 2026-11-27:
+
+- Only work handed off with a work role or a harness from a member's own thread has steps. A wake, a bridge
+  conversation, a brief handed to another agent, and an ordinary thread's job outside the pairing thread have none.
+- Only a harness whose output `pair-events.ts` decodes reports any, and only what it decodes: tool calls, shell
+  commands and their output, subagent calls, plans. Not the model's words between calls, and not its reasoning.
+- A body built before this change reports none. A loom built before it refuses them, and the body ignores the refusal.
+- The big form shows the latest 100 steps of the latest job and says so when there are more; there is no paging back.
+- An archived originating thread stops new steps being kept; the result is also not relayed then, as before.
+- Every such handed-off job reports its steps, whether or not a `session` brick is on a board. Nothing reads them but
+  the brick.
+- Not run: a real model. The body's part is tested with fed harness output and with a recorded Codex stream run
+  through the real harness adapter; the page's part with fake data; nobody has watched a live session in a browser.
+
+Two things loom does not have today, found 2026-11-27, each its own change if wanted:
+
 - **No way to speak to one.** `comms.send` needs a thread. The member commands a session by stopping it, or by asking
   the agent in the conversation.
 - **It does not flag itself for "waiting on the member".** A question or an approval from a session arrives in the
@@ -565,7 +608,12 @@ the thread's member. No model is involved. Each check sets up its own board unle
 3 to 6, 7 (operations only), 8 to 12, 14 to 17 (operations only), 20 (the catalogue only), 24, 26, 27, 28. In
 `web/src/boards/layout.test.ts`: 25 and the layout's rules. In `src/runtime/body-program.test.ts`: 29. In
 `web/src/boards/trend.test.ts` and `build.test.ts`: the trend's days and the new-build test. **No suite:** every check
-of what the page draws (2, 13, 18, 19, 21, 22, 23, and the page halves of 1, 7, 8, 15, 16 and 20). Those were run by
+of what the page draws (2, 13, 18, 19, 21, 22, 23, and the page halves of 1, 7, 8, 15, 16 and 20). A session's steps
+have their own suites, outside the numbered checks: `src/shared-session-trace.test.ts` (kept, sealed, read by the
+thread's member alone, absent from the thread, the relay unchanged, erased and deleted),
+`src/runtime/body-program.test.ts` (which jobs report steps, and the redaction),
+`src/shared-conversation-handoff.test.ts` (a recorded Codex stream through the real adapter and doors) and
+`web/src/boards/session-trace.test.tsx` (the big and small forms from fake data). Those were run by
 hand in a browser on an example household and on the owner's own, and are not pinned.
 
 **Rules with no check at all:** writes to one board applied in arrival order; a blueprint description's limit; the
