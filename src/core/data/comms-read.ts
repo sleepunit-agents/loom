@@ -1,6 +1,6 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, sql, type SQL } from 'drizzle-orm';
 import type { DataDatabase } from './database.js';
-import { conversations, threads } from './schema.js';
+import { conversations, messages, threads } from './schema.js';
 import { commsKeepDays } from './comms-days.js';
 
 function visibleThread(id:SQL,allowed:SQL){return sql`exists(select 1 from ${threads} inner join ${conversations} on ${conversations.id}=${threads.conversation} where ${threads.id}=${id} and ${allowed})`;}
@@ -51,6 +51,12 @@ export function readCommsThreads(db: DataDatabase, allowed: SQL, input: { id?: s
     },
     orderBy: f => [desc(f.pinned), desc(sql`julianday(${f.lastAt})`), asc(f.id)], limit: input.count, offset: input.offset,
   }).sync().flatMap(({ conversationRow, ...row }) => conversationRow ? [{ ...row, ...conversationRow }] : []);
+}
+/** Whether a thread row already read under the viewer's authority holds a reply from its agent after the
+ * member's read mark: Home's own rule for an unread thread (comms-home.ts), asked of one row. No words are loaded. */
+export function readThreadUnread(db: DataDatabase, row: { id: string; readSeq: number; agent: string }) {
+  return !!db.select({ seq: messages.seq }).from(messages)
+    .where(and(eq(messages.thread, row.id), eq(messages.kind, 'reply'), gt(messages.seq, row.readSeq), eq(messages.sender, row.agent))).limit(1).get();
 }
 export function readCommsFolders(db: DataDatabase, allowed: SQL, member: string) {
   const rows = db.query.threads.findMany({ columns: { archivedAt: true }, where: f => {

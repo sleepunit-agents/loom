@@ -2,9 +2,10 @@ import { taskPath } from '../../../../src/task-route';
 import { useMemo } from 'react';
 import { useSelection, type QuerySelection } from '../../data/graphql/selection';
 import { useDataQuery, type DataQuerySnapshot } from '../../data/graphql';
-import type { InboxAnswer, InboxFolders, InboxItem } from '../inbox-view/model';
+import { approvalRequestId, type InboxAnswer, type InboxFolders, type InboxItem, type InboxActionResult } from '../inbox-view/model';
+import { approvalTitle } from '../approval-view/model';
+import { inboxApprovalsQuery } from '../../data/work-query';
 import { memberOperation } from '../../data/operation';
-import type { InboxActionResult } from '../inbox-view/outcomes';
 export const inboxPageSize = 50;
 const titlesQuery = 'query InboxProposalTitles($ids:[String!]!) { inboxProposalTitles(ids:$ids) { approval title } }';
 /** The server returns names only for household proposals this viewer may read. */
@@ -12,6 +13,16 @@ export function useInboxProposalTitles(ids: string[]) {
   const reading = useDataQuery<{inboxProposalTitles: {approval:string; title:string}[]}>(titlesQuery, {ids}, {pause: !ids.length});
   const rows = reading.status === 'live' ? reading.data?.inboxProposalTitles : undefined;
   return useMemo(() => ({ready: !!rows, named: new Map(rows?.map(row => [row.approval, row.title]))}), [rows]);
+}
+/** An approval's item is said as its card says it now: a household change by the plain title made when it is
+ * read, in place of the words stored when it was filed. Undefined for every other item, and where the card is
+ * not readable: the stored words stay. The same two reads the Inbox makes for its rows. */
+export function useInboxItemWords(items: readonly InboxItem[]): (row: InboxItem) => string | undefined {
+  const ids = [...new Set(items.flatMap(row => approvalRequestId(row) ?? []))].sort();
+  const reading = useDataQuery<{approvals?: {id:string; operation?:string|null; what:string; details:string}[]}>(inboxApprovalsQuery, {ids}, {pause: !ids.length});
+  const household = (reading.status === 'live' ? reading.data?.approvals ?? [] : []).filter(card => card.operation === 'household.change');
+  const {named} = useInboxProposalTitles(household.map(card => card.id).sort());
+  return row => { const card = household.find(card => card.id === approvalRequestId(row)); return card ? named.get(card.id) ?? approvalTitle(card) : undefined; };
 }
 
 /** Recording an answer to an Inbox item: the one action, for the Inbox and for Home's band. */

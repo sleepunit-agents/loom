@@ -81,6 +81,8 @@
 .board-action { font-size: .84rem; border: 1px solid var(--surface-edge); border-radius: 8px; padding: .15rem .6rem; color: var(--foreground); background: var(--popover); }
 .board-action:hover:enabled { border-color: var(--ring); }
 .board-action:disabled { opacity: .45; }
+.board-action[aria-pressed='true'] { border-color: var(--foreground); font-weight: 600; }
+.board-placement label.board-line > span { flex: none; min-width: 5.5rem; }
 .board-input { flex: 1; min-width: 8rem; font-size: .88rem; border: 1px solid var(--surface-edge); border-radius: 8px; padding: .2rem .5rem; background: var(--popover); color: var(--foreground); }
 .board-notes { display: grid; gap: .7rem; margin-top: .8rem; }
 .board-notes small { display: block; color: var(--muted-foreground); font-size: .78rem; }
@@ -132,6 +134,20 @@
 /* Art's sprite is one 56 by 84 cell holding a bust about 33 by 43, centred near (28, 43). The frame shows the bust. */
 .boards-presence .boards-face { flex: none; position: relative; width: 52px; height: 52px; border-radius: 12px; overflow: hidden; background: var(--popover); border: 1px solid var(--surface-edge); }
 .boards-presence .boards-face .art-portrait { position: absolute; left: -2px; top: -17px; zoom: 1; }
+.boards-presence .boards-face[data-drawn='true'] { display: grid; place-items: center; padding: 3px; }
+/* The presence, the control that lists the member's conversations, and the list it opens under them. */
+.boards-top { position: relative; display: flex; align-items: center; }
+.boards-top .boards-presence { flex: 1; min-width: 0; }
+.boards-threads-open { flex: none; margin-right: 1.25rem; }
+.boards-threads { position: absolute; z-index: 20; top: 100%; left: 1.25rem; right: 1.25rem; max-height: 60dvh; overflow: auto; padding: .4rem;
+  background: var(--popover); border: 1px solid var(--surface-edge); border-radius: 12px; box-shadow: 0 10px 30px -12px var(--contact); }
+.boards-threads ul { display: grid; gap: .15rem; }
+.boards-threads a, .boards-threads li > button { display: flex; flex-wrap: wrap; align-items: baseline; gap: .15rem .5rem; width: 100%; padding: .45rem .6rem; border-radius: 8px; text-align: left; }
+.boards-threads [data-active='true'] { background: var(--accent); }
+.boards-threads [aria-current='page'] { font-weight: 600; }
+.boards-threads small { color: var(--muted-foreground); }
+.boards-thread { padding: 0 1.25rem .5rem; display: grid; gap: .4rem; }
+.boards-thread-title { font-weight: 600; overflow-wrap: anywhere; }
 .boards-log { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .boards-ask { padding: .75rem 1.25rem 1.25rem; }
 .boards-page[data-board='false'] .boards-ask textarea { font-size: 1.15rem; }
@@ -145,6 +161,8 @@
   .boards-page[data-board='true'] .boards-talk { position: fixed; inset: auto 0 0 0; height: auto; max-height: 86dvh; z-index: 10; border-left: 0;
     border-top: 1px solid var(--surface-edge); background: var(--card); border-radius: 18px 18px 0 0; box-shadow: 0 -10px 30px -12px var(--contact); }
   .boards-page[data-board='true'] .boards-talk[data-sheet='false'] .boards-log { display: none; }
+  .boards-page[data-board='true'] .boards-talk[data-sheet='false'] .boards-thread { display: none; }
+  .boards-page[data-board='true'] .boards-threads { top: auto; bottom: 100%; }
   .boards-page[data-board='true'] .boards-talk[data-sheet='true'] .boards-log { height: 55dvh; flex: none; }
 }
 

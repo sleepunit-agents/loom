@@ -640,3 +640,25 @@ it('pages activity by explicit ticket reference, inherits replies and rechecks t
   f.onOpen(()=>f.revoke());
   expect(await read()).toEqual([]);
 });
+it('says of each listed thread whether its agent has replied since the member read it, by Home\'s rule', async () => {
+  const f = await fixture();
+  const quiet = f.comms.threads.open({ id: 'th:quiet', member: 'alice', agent: 'art', title: 'Quiet' });
+  await f.comms.send({ thread: quiet.id, sender: 'alice', kind: 'message', words: 'Mine is not unread' });
+  await f.comms.send({ thread: quiet.id, sender: 'art', kind: 'card', words: 'Progress is not unread' });
+  const wrongSender = f.comms.threads.open({ id: 'th:wrong', member: 'alice', agent: 'art', title: 'Wrong sender' });
+  await f.comms.send({ thread: wrongSender.id, sender: 'art', kind: 'reply', words: 'Changed sender' });
+  f.db.update(messages).set({ sender: 'mark' }).where(eq(messages.thread, wrongSender.id)).run();
+  const bob = f.comms.threads.open({ id: 'th:bob', member: 'bob', agent: 'art', title: 'Bob' });
+  await f.comms.send({ thread: bob.id, sender: 'art', kind: 'reply', words: 'For Bob' });
+  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: commsQueryFields(f.service) }) });
+  const read = async () => Object.fromEntries(((await graphql({ schema, source: '{ commsThreads(archived:false) { id unread } }', contextValue: { viewer: alice } })).data!.commsThreads as { id: string; unread: boolean }[]).map(row => [row.id, row.unread]));
+  // The fixture's thread holds a reply at seq 2 and nothing is read. Another member's thread is not listed at all.
+  expect(await read()).toEqual({ 'th:alice': true, 'th:quiet': false, 'th:wrong': false });
+  f.comms.threads.read(f.thread.id, 2);
+  expect(await read()).toEqual({ 'th:alice': false, 'th:quiet': false, 'th:wrong': false });
+  await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'reply', words: 'Another' });
+  expect((await read())['th:alice']).toBe(true);
+  f.statements.splice(0);
+  await graphql({ schema, source: '{ commsThreads(archived:false) { id unread } }', contextValue: { viewer: alice } });
+  expect(f.statements.join('\n')).not.toContain('"words"');
+});

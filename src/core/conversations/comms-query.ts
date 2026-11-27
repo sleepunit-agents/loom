@@ -4,7 +4,7 @@ import { noticeInfo } from './legacy-notice.js';
 import { legacyStepWords, legacyToolCard } from './legacy-tool-card.js';
 import { archivedQuestionsField } from './archived-questions.js';
 import { readAll } from '../data/execution.js';
-import { readCommsFolders, readCommsThreads, readCommsRefs, readCommsPage, readCommsSet, type CommsReadSet } from '../data/comms-read.js';
+import { readCommsFolders, readCommsThreads, readThreadUnread, readCommsRefs, readCommsPage, readCommsSet, type CommsReadSet } from '../data/comms-read.js';
 import { selectedQueryFields } from '../data/queries.js';
 import { readCommsHome } from '../data/comms-home.js';
 import { wordsDeadline, wordsKept } from './retention.js';
@@ -146,6 +146,8 @@ export function commsQueryFields(service: CommsQueries): GraphQLFieldConfigMap<u
     ...Object.fromEntries(['project', 'member', 'archivedAt', 'workingSince', 'workingBeat'].map(name => [name, { type: GraphQLString }])),
     ...Object.fromEntries(['pinned', 'working', 'stopRequested'].map(name => [name, { type: new GraphQLNonNull(GraphQLBoolean) }])),
     readSeq: { type: new GraphQLNonNull(GraphQLInt) },
+    // Home's rule for an unread thread, for one row of the list. The row was read under the viewer's authority.
+    unread: { type: new GraphQLNonNull(GraphQLBoolean), resolve: (row: { id: string; readSeq: number; agent: string }) => readThreadUnread(service.db, row) },
   } });
   const notice = new GraphQLObjectType({ name:'ArchivedCommsNotice', fields:{
     error:{type:new GraphQLNonNull(GraphQLString)}, attempt:{type:GraphQLInt}, settled:{type:GraphQLBoolean},

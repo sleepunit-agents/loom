@@ -1,13 +1,8 @@
 import { useRef, useState } from 'react';
 import { LinkButton, NoteRow } from '../../kit';
-import { when, type InboxSnapshot } from './model';
-
-export interface InboxActionResult {
-  id: string; at: string; ok: boolean; text: string; page?: string | null; readAt?: string | null;
-}
-export interface InboxResultsSnapshot {
-  status: InboxSnapshot['status']; results: readonly InboxActionResult[];
-}
+import { currentNotices, when, type InboxActionResult, type InboxResultsSnapshot } from './model';
+export { currentNotices } from './model';
+export type { InboxActionResult, InboxResultsSnapshot } from './model';
 
 /** The outcome of something this person did, as a quiet row among the list's rows: what happened, when, a link to
  * the page it happened on, and one way to dismiss it. */
@@ -29,11 +24,6 @@ export function InboxNotice({ result, dismiss, zone }: { result: InboxActionResu
     </>}>
     {failed && <span role="alert" className="loom-kit-status">Could not dismiss this notice. Try again.</span>}
   </NoteRow>;
-}
-
-/** The undismissed outcomes of a live query; `errorsOnly` keeps the ones that failed. */
-export function currentNotices(snapshot: InboxResultsSnapshot | undefined, errorsOnly?: boolean): InboxActionResult[] {
-  return snapshot?.status === 'live' ? snapshot.results.filter(row => !row.readAt && (!errorsOnly || !row.ok)) : [];
 }
 
 /** Query status withdraws retained outcomes immediately. Dismissal is acknowledged

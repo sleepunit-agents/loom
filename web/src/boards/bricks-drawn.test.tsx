@@ -113,7 +113,7 @@ it('heads every brick by its name and shows a reference only in the small line',
     }
   }
   expect(bricks.repository.sub({ repository: 'acme/app', project: 'pond' })).toBe('acme/app · pond');
-  expect(Object.keys(bricks).sort()).toEqual(['agent', 'approval', 'comments', 'lanes', 'person', 'project', 'pull', 'question', 'repository', 'session', 'ticket', 'trend']);
+  expect(Object.keys(bricks).sort()).toEqual(['activity', 'agent', 'agents', 'approval', 'approvals', 'backlog', 'comments', 'inbox', 'knowledge', 'knowledge-page', 'lanes', 'new-ticket', 'people', 'person', 'project', 'pull', 'question', 'repository', 'session', 'threads', 'ticket', 'trend', 'unfiled']);
 });
 
 it('shows a pull request with its state, checks, review, who it waits on, and the tickets the member may read as chips', async () => {

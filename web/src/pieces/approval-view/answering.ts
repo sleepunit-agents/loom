@@ -40,6 +40,9 @@ export const answerFailed = 'Could not save your answer. Reconnect and try again
 /** Said beside the second yes. */
 export const secondYesWords = 'This cannot be undone.';
 
+/** Said before a standing answer is sent, by a view that asks first: what it does beyond this one request. */
+export const standingWords = 'This allows this merge now and makes a standing rule: later merges it covers are allowed without asking you. The rule stays until someone who may answer changes it.';
+
 /** The question is said under the title only when it says more than the title with a question mark. */
 export const same = (words: string) => words.trim().replace(/[?.!\s]+$/, '').toLowerCase();
 /** Who a private request is for: "for you" when it is the viewer's own, the person's name otherwise. */
@@ -119,11 +122,12 @@ export type ApprovalReading = ReturnType<typeof approvalReading>;
  *
  * `open` says whether any control is drawn. Allow is one press, except for a dangerous action: there `allow` only
  * asks, and `confirm` sends. One call is in flight at a time; while it is, `busy` is true and every press is
- * dropped. A failed Allow has the composition read the request again. */
-export function useAnswering(approval: Approval, actions?: ApprovalActions) {
+ * dropped. A failed Allow has the composition read the request again. A standing answer is one press on the desktop;
+ * a view that passes `askStanding` gets it in two: the question, then the yes. */
+export function useAnswering(approval: Approval, actions?: ApprovalActions, options: { /** A standing answer is sent only after it was asked about. */ askStanding?: boolean } = {}) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [confirming, setConfirming] = useState(false);
   const [allowed, setAllowed] = useState(false);
-  const [reason, setReason] = useState('');
+  const [reason, setReason] = useState(''), [standing, setStanding] = useState(false);
   const dangerous = needsSecondYes(approval);
   const active = useRef(false);
   async function send(action: () => Promise<void>, allowing = false) {
@@ -153,6 +157,9 @@ export function useAnswering(approval: Approval, actions?: ApprovalActions) {
     cancel() { setConfirming(false); },
     deny() { if (open) void send(() => sendDeny(approval, actions, reason)); },
     /** A standing answer, where the composition offers one for this very request. */
-    always: always && { label: always.label, run() { void send(() => always.run(approval.id)); } },
+    always: always && { label: always.label, run() { if (options.askStanding && !standing) return; setStanding(false); void send(() => always.run(approval.id)); },
+      /** For a view that asks before a standing answer (askStanding): `ask` only asks (said with standingWords),
+       * `cancel` takes the question back, and `run` sends only as the yes to that question. */
+      asking: standing, ask() { setStanding(true); }, cancel() { setStanding(false); } },
   };
 }
