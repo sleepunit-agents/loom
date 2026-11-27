@@ -38,7 +38,8 @@ import type { WorkerSchedule, WorkerAssignment } from './worker.js';
 import { BODY_EXIT } from './job-exit.js';
 import { deniedTools, bodyReach, hasFileTools, hasGuest, withUnknownSender, workingFor } from './harness-traits.js';
 import { REPORT_MS } from './silence.js';
-import {SESSION_HISTORY_KEYS} from '../core/conversations/session-limit.js';
+import {SESSION_BYTES,SESSION_HISTORY_KEYS} from '../core/conversations/session-limit.js';
+import {threadRunKey} from '../core/conversations/history-context.js';
 import { BODY_TOKEN } from './body-token.js';
 import { BODY_START_BYTES } from './body-input-limit.js';
 // `reach` is the machine operator's choice of what a body here may use. 'loom' (the default) gives it loom's
@@ -62,7 +63,7 @@ export async function bodyProgram(input: {
   startup?: (job: WorkerAssignment, bootstrap: BodyBootstrap, signal: AbortSignal) => Promise<void>;
   /** Trusted in-process seam; production reads the current body's declared Memory. */
   loadMemory?: (agent:string,signal:AbortSignal)=>Promise<string|null>;
-  /** The same seam for a bridge conversation's kept harness session. */
+  /** The same seam for a conversation's kept harness session. */
   sessions?: BodySessions;
   /** The same seam for the files sent with bridge messages. */
   saveAttachments?: typeof saveBodyAttachments;
@@ -137,22 +138,28 @@ export async function bodyProgram(input: {
     if (signal.aborted) throw new Error();
     work='Working on accepted mail';
     exit=BODY_EXIT.mail;
-    // A bridge conversation's body continues the session the last one left, when loom hands one over
-    // (body-session.ts). Continue with new mail and the retained channel lines missing from that session.
-    // With none, it starts fresh and is told the conversation's kept history with its mail.
+    // The body of a bridge conversation, or of a member's own thread with the agent, continues the session the
+    // last one left, when loom hands one over (body-session.ts). Continue with new mail and the retained lines
+    // missing from that session. With none, it starts fresh and is told the conversation's kept history with its mail.
+    // Not a wake or a handed-off session: each is one job, with nothing before it to continue.
     // Not on anybody else's word: a kept session is the record of what an owners' body read and used. Such a
     // body asks for none and leaves none, and starts fresh with the kept history. loom's doors refuse it both
     // on loom's own reading of the word (shared-conversation-sessions.ts), so one that asked would get nothing.
-    if(bridge&&!hasGuest(job.run?.policy)){
+    // loom also refuses a thread that is no one member's, or archived: that body keeps none either.
+    const ownThread=job.venue==='loom'&&!!job.thread&&!job.review;
+    if((bridge||ownThread)&&!hasGuest(job.run?.policy)){
       sessionClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal:jobSignal,onJobEnded,fetch:input.fetch,clock:input.clock});
       keeper=input.sessions??(input.native?undefined:bodySessions(sessionClient,job.harness,input.env));
     }
     let resume=await keeper?.take();
+    if(keeper?.refused){keeper=undefined;resume=undefined;}
     if(signal.aborted)throw new Error();
     // Keys identify individual posts even when two replies have identical text and timestamps.
     const keyOf=(id:string)=>createHash('sha256').update(id).digest('hex');
     const covered=new Set(keeper?.covered), seen=new Set<string>();
-    const continued:string[]=[];let oldestErased:string|undefined;
+    const continued:string[]=[];let oldestErased:string|undefined,firstErased:string|undefined,answeredBefore=false;
+    // When the first of the erasable words handed in will be erased: a session holding them is kept no longer (sessions.ts).
+    const erasedAt=(until:string|null)=>{if(until!==null&&(firstErased===undefined||Date.parse(until)<Date.parse(firstErased)))firstErased=until;};
     // loom read who is in the room when it claimed the job. The body takes everything waiting, so mail from
     // outside the household may have arrived since; nobody looked that sender up, so they count as a guest.
     let deliveredItems = 0;
@@ -186,11 +193,17 @@ export async function bodyProgram(input: {
       // The oldest word handed in that will be erased: a session started from them is counted from then.
       for(const line of item.history)if(line.keepUntil!==null&&(oldestErased===undefined||Date.parse(line.at)<Date.parse(oldestErased)))oldestErased=line.at;
       if(job.venue==='loom' && item.source==='handoff' && item.words!==null){
-        context.push('Your delegated worker returned the following result. Continue the originating request using the findings.');
+        const returned='Your delegated worker returned the following result. Continue the originating request using the findings.';
+        context.push(returned);continued.push(returned);
       }
       const words=bodyMailContext(item);
       if(words!==null){
         context.push(words);
+        erasedAt(item.keepUntil);if(item.question)erasedAt(item.questionKeepUntil);for(const line of item.history)erasedAt(line.keepUntil);
+        // A thread's lines are keyed by the mail a message was delivered as, and by the job that said a reply
+        // (core/conversations/history-context.ts): this mail is in the session this body leaves.
+        if(ownThread)seen.add(keyOf(item.id));
+        if(item.history.some(line=>line.kind==='reply'))answeredBefore=true;
         for(const line of item.history)if(line.sourceKey)seen.add(keyOf(line.sourceKey));
         const missing=item.history.filter(line=>!line.sourceKey || !covered.has(keyOf(line.sourceKey)));
         continued.push(bodyMailContext({...item,history:missing})!);
@@ -346,6 +359,16 @@ export async function bodyProgram(input: {
         secrets:!guest,alsoSecret:secrets.values});
     }
     if(signal.aborted)throw new Error();
+    // The member is told, in their own thread, when a job that could have continued the thread's session did not:
+    // a step among the thread's cards, in loom's fixed words, which no later body is told as history. Only where
+    // this body keeps sessions at all, and only when the thread was answered before: a first job continues nothing.
+    // Never a reason to fail the work.
+    const sessionNote=async(id:string,words:string)=>{
+      if(!ownThread||jobSignal.aborted)return;
+      try{await client!.card({tool:'Session',words,cardState:'done',clientId:id});}catch{/* the work goes on */}
+    };
+    if(keeper&&!resume&&answeredBefore)await sessionNote('session-fresh','Started fresh: loom handed this job no session to continue. None was kept for this thread and harness, or the one kept was past its keep time, saved under another family of models, behind the thread\'s last answer, or could not be put back. The job was told the thread\'s kept history instead.');
+    if(signal.aborted)throw new Error();
     exit=BODY_EXIT.harness;
     let failureReport:UsageReport|undefined;
     const shellEnv={...input.env};
@@ -386,6 +409,7 @@ export async function bodyProgram(input: {
       catch (error) {
         // The harness could not continue the session and did nothing: the same work, afresh, with the history.
         if(!(error instanceof HarnessResumeUnavailable)||!afresh||signal.aborted)throw error;
+        await sessionNote('session-fresh','Started fresh: the harness could not continue the session kept for this thread. The job was told the thread\'s kept history instead.');
         answer = await afresh(room, context.join('\n\n'), signal, {});covered.clear();
       }
       // No secret this body was handed is said in its answer: one it used, or one it was started with.
@@ -431,9 +455,11 @@ export async function bodyProgram(input: {
     // Save the record IDs the harness knows, including its reply even if the provider posts it later.
     try{
       if(keeper){
-        const current=new Set([...seen,keyOf(replyId)]);
+        // In a thread, everything this job said there is keyed by the job (history-context.ts, threadRunKey).
+        const current=new Set([...seen,keyOf(replyId),...(ownThread?[keyOf(threadRunKey(job.id))]:[])]);
         const previous=[...covered].filter(key=>!current.has(key));
-        await keeper.save(answer.session,oldestErased,[...previous,...current].slice(-SESSION_HISTORY_KEYS));
+        const kept=await keeper.save(answer.session,oldestErased,[...previous,...current].slice(-SESSION_HISTORY_KEYS),firstErased);
+        if(kept===false)await sessionNote('session-unkept',`This job's session was not kept for the next one: it is larger than ${SESSION_BYTES/1024} KB packed, the harness left none, or loom did not take it. The next job in this thread starts fresh with the thread's kept history.`);
       }
       saved=true;
     }catch{/* loom sees the kept session is behind the answer */}
