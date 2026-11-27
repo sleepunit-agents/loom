@@ -352,6 +352,24 @@ One page per thread. Its address is `/app/b/<board id>`, or `/app/t/<thread id>`
 - **Threads.** The switcher from the branch is kept as it is. Renaming and archiving a thread are not part of this
   spec.
 
+## A restart
+
+The owner, 2026-11-27: "we should survive a loom reboot without the user being excessively aware." The case that
+matters: the member asks for something no brick shows, the agent hands off a session to build the brick, loom is
+deployed with it, and the agent places it. The member sees a brick arrive. They do not reload anything.
+
+- **The page.** It holds no state of its own (rule 3), so a reload opens the same board. When its live read comes
+  back after loom was away, the page asks its own address for the current page; if that runs a different script from
+  the one running, the page reloads, once the input is empty and nothing is being sent. Run 2026-11-27 against a
+  restart with a new build: the page was on the new build, on the same board, about ten seconds after loom was back.
+  While loom is away the board is drawn empty; that is a fault to fix.
+- **A brick the page does not know.** A page that has not yet reloaded draws it as "not drawn yet" and nothing else
+  changes.
+- **The agent.** Nothing is asked of the job in the thread: it is not running while the session works. The session's
+  result is a reply in the thread, which wakes the agent, and the agent places the new brick. Not run. Not known: what
+  a deploy does to the session that started it, and whether its result still reaches the thread when loom restarts
+  under it.
+
 ## The first bricks
 
 The first demo is "everything about a project", and the set is what that pulls in by following references.

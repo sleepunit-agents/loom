@@ -15,6 +15,7 @@ import { MessageScroller, MessageScrollerButton, MessageScrollerContent, Message
 import { emptyTail, threadId, TranscriptPage, type ThreadTail } from '../pair/transcript';
 import { brickView, type Params, type Place } from './bricks';
 import { layout, type Slot } from './layout';
+import { buildChanged } from './build';
 import '../pair/screen.css';
 import './board.css';
 
@@ -154,6 +155,12 @@ function Page({ member, thread, agent }: { member: string; thread: string; agent
     } catch { setError('Delivery unconfirmed. Send the same message to retry.'); }
     finally { sending.current = false; setBusy(false); }
   }
+  // A deploy while the page is open: when the live read comes back, see whether loom serves a newer page, and
+  // take it once nothing typed would be lost. The board is a record and the address holds its id, so the new
+  // page opens on the same board. This is how a brick that did not exist a minute ago gets drawn.
+  const [stale, setStale] = useState(false);
+  useEffect(() => { if (read.status === 'live') void buildChanged().then((changed) => changed && setStale(true)); }, [read.status]);
+  useEffect(() => { if (stale && !words.trim() && !busy) location.reload(); }, [stale, words, busy]);
   const mood: FaceState = error ? 'error' : !ready || tail.status === 'connecting' ? 'thinking' : tail.working ? 'working' : tail.update ? 'talking' : 'idle';
   const status = error || (!ready ? 'Connecting…' : tail.working ? (tail.tool ? 'Working · ' + tail.tool.split(' → ').at(-1) : 'Working') : tail.update ? 'Has a reply for you' : 'Here when you need me.');
   const name = agent === 'art' ? 'Art' : agent;
