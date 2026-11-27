@@ -1,6 +1,8 @@
 import { clearReadDeadline } from './read-lease.js';
 import { ExecutionDrain } from './execution.js';
 import type { LivePace } from './live-pace.js';
+import { recordReads, type ReadRecord, type WrittenTables } from './table-tracker.js';
+import { describeWritten, reportViolation, type LiveScope, type LiveScopeViolation } from './live-scope.js';
 import { execute, getOperationAST, parse, validate, type ExecutionArgs, type GraphQLSchema } from 'graphql/index.js';
 
 /** Paths address the selected GraphQL result, including aliases. Values are
@@ -49,10 +51,13 @@ export class DataLive {
    * commit that comes alone is still read at once, and commits that come faster than this are read together: once
    * when the time is up, and so always once after the last of them. A selection's first answer never waits.
    * `relaxedMs`: the same time for a selection opened `relaxed` (./live-pace.ts). It is never shorter than
-   * `settleMs`, whatever is given. */
-  constructor(private readonly measure?: MeasureRead, private readonly settleMs = 0, relaxedMs = settleMs) { this.relaxedMs = Math.max(settleMs, relaxedMs); }
+   * `settleMs`, whatever is given.
+   * `scope` (./live-scope.ts): `shadow` records what each reading read and checks, against each answer, whether
+   * skipping the readings no written table touched would have been right. It changes no reading. */
+  constructor(private readonly measure?: MeasureRead, private readonly settleMs = 0, relaxedMs = settleMs,
+    private readonly scope: LiveScope = 'off', private readonly report: (violation: LiveScopeViolation) => void = reportViolation) { this.relaxedMs = Math.max(settleMs, relaxedMs); }
   private readonly relaxedMs: number;
-  private listeners = new Set<() => void>();
+  private listeners = new Set<(written: WrittenTables) => void>();
   private stopped = false;
   private version = 0;
   private readVersions = new WeakMap<object, number>();
@@ -76,24 +81,26 @@ export class DataLive {
     return guard;
   }
 
-  changed() { this.version++; for (const listener of [...this.listeners]) listener(); }
+  /** `written`: the tables the commit wrote (./table-tracker.ts), `unknown` when not known. Every open selection is
+   * read again either way; only the shadow check looks at it. */
+  changed(written: WrittenTables = 'unknown') { this.version++; for (const listener of [...this.listeners]) listener(written); }
   /** Wake readers without making an otherwise current read invalidate its own
    * publication. Only for times loom stamps as it is used (a credential's last
    * use, a machine's last report, a timing row): they cannot change who may see
    * what or withdraw private data. The composition calls this rarely
    * (next-data.ts, STAMP_WAKE_MS). Real data and access writes must always use
    * changed(). */
-  metadataChanged() { for (const listener of [...this.listeners]) listener(); }
+  metadataChanged() { for (const listener of [...this.listeners]) listener('unknown'); }
   close() { this.stopped = true; this.changed(); this.listeners.clear(); }
 
   /** After stopping admission, wait for actual resolvers, including executions
    * whose consumer already cancelled. Cancellation cannot cancel their IO. */
   async drain() { await this.executions.drain(); }
 
-  private async read(args: ExecutionArgs, initial: boolean) {
+  private async read(args: ExecutionArgs, initial: boolean, recorded?: (record: ReadRecord) => void) {
     if (this.stopped) throw new Error('Live data access ended');
     this.captureRead(args.contextValue);
-    const read = () => execute(args);
+    const read = recorded ? () => { const { record, value } = recordReads(() => execute(args)); recorded(record); return value; } : () => execute(args);
     return this.executions.run(() => initial && this.measure ? this.measure(read) : read());
   }
 
@@ -138,8 +145,16 @@ export class DataLive {
     const between = options.pace === 'relaxed' ? this.relaxedMs : this.settleMs;
     // Asked for now, and not yet answered by a reading that began after the asking.
     let asked = false;
-    const signal = () => { dirty = true; if (this.stopped) { cancel?.(); hurry?.(); } wake?.(); wake = undefined; };
-    const now = () => { if (ended) return; asked = true; dirty = true; hurry?.(); wake?.(); wake = undefined; };
+    // Shadow scope only: what the last accepted reading read, and what was written since it began.
+    const shadow = this.scope === 'shadow';
+    let depends: ReadRecord | undefined, written: Set<string> | 'unknown' = new Set();
+    const wrote = (tables: WrittenTables) => {
+      if (written === 'unknown') return;
+      if (tables === 'unknown') written = 'unknown'; else for (const table of tables) written.add(table);
+    };
+    const selection = options.operationName ?? options.query.replace(/\s+/g, ' ').trim().slice(0, 160);
+    const signal = (tables: WrittenTables) => { if (shadow) wrote(tables); dirty = true; if (this.stopped) { cancel?.(); hurry?.(); } wake?.(); wake = undefined; };
+    const now = () => { if (ended) return; if (shadow) wrote('unknown'); asked = true; dirty = true; hurry?.(); wake?.(); wake = undefined; };
     let forget: (() => void) | undefined;
     const finish = () => { ended = true; cancel?.(); hurry?.(); this.listeners.delete(signal); forget?.(); forget = undefined; wake?.(); wake = undefined; };
     // Register before the initial read: a commit cannot fall between the first
@@ -174,10 +189,17 @@ export class DataLive {
           const cancellation = new Promise<typeof cancelled>(resolve => { cancel = () => resolve(cancelled); });
           const measure = initial; initial = false;
           const readVersion = this.version;
+          // What this reading answers for: everything written since the last accepted reading began. A reading
+          // that is not accepted hands it back to the next.
+          const since = written, previousDepends = depends;
+          let record: ReadRecord | undefined;
+          if (shadow) written = new Set();
           const result = await Promise.race([
-            this.read({ schema, document, variableValues: options.variables, operationName: options.operationName, contextValue: options.contextValue }, measure),
+            this.read({ schema, document, variableValues: options.variables, operationName: options.operationName, contextValue: options.contextValue }, measure, shadow ? found => { record = found; } : undefined),
             cancellation,
           ]);
+          const accepted = () => { if (shadow) depends = record; };
+          const rejected = () => { if (shadow) { const later = written; written = since; wrote(later); } };
           cancel = undefined;
           if (ended) break;
           if (this.stopped || result === cancelled) throw new Error('Live data access ended');
@@ -185,13 +207,21 @@ export class DataLive {
           if (result.errors?.length) {
             // Only a committed change makes an error stale. Metadata wakeups
             // must not hide a stable resolver failure.
-            if (this.version !== readVersion) continue;
+            if (this.version !== readVersion) { rejected(); continue; }
             throw result.errors[0];
           }
           // The generator resolves asynchronously. A commit while execution
           // yielded invalidates that result before any words leave this stream.
-          if (dirty) continue;
+          if (dirty) { rejected(); continue; }
           const patches = revision === 0 ? [{ path: [], value: result.data }] : dataDiff(previous, result.data);
+          // Shadow: scoping would have skipped this reading when the last one depended only on tables, and nothing
+          // written since touched them. A changed answer means skipping would have been wrong.
+          if (shadow) {
+            if (revision > 0 && patches.length && wouldSkip(previousDepends, since)) {
+              this.report({ selection, read: [...previousDepends!.tables].sort(), written: describeWritten(since) });
+            }
+            accepted();
+          }
           previous = result.data;
           // Asking sets the dirty bit, so this reading began after the last asking: it is the answer to it.
           const confirm = asked; asked = false;
@@ -203,4 +233,13 @@ export class DataLive {
     };
     return { next, return: async () => { finish(); return { done: true, value: undefined }; }, [Symbol.asyncIterator]() { return this; } };
   }
+}
+
+/** Whether scoping would skip a reading: the last one ran SQL of the tracked connection, all its dependencies are
+ * tables, and none of them was written. Anything not known (no record, an unscoped dependency, an unknown write)
+ * wakes it. */
+export function wouldSkip(depends: ReadRecord | undefined, written: ReadonlySet<string> | 'unknown'): boolean {
+  if (!depends || written === 'unknown' || depends.unscoped.size || !depends.statements) return false;
+  for (const table of written) if (depends.tables.has(table)) return false;
+  return true;
 }
