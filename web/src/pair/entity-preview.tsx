@@ -1,7 +1,7 @@
 import type { ReactElement, ReactNode } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from './ui/hover-card';
-import type { Project } from './ticket-view';
+type Project = {name:string;goal:string|null;lifecycle:string};
 
 export function EntityPreview({
   link,

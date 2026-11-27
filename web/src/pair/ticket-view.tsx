@@ -8,20 +8,31 @@ import { ModuleCard } from './module-card';
 import { EntityPreview, ProjectPreview } from './entity-preview';
 import { Reply } from './reply';
 
-type TicketView = { ticket: string; kind: 'ticket' | 'pull' | 'comment'; ref?: string; intent?: 'work' };
-export type View = TicketView | { kind: 'project'; project: string };
+type TicketView = { ticket: string; kind: 'ticket' | 'comment'; ref?: string; intent?: 'work' };
+export type ScopeView = { kind: 'repository' | 'agent' | 'member'; project: string; ref: string };
+export type PullView = { kind: 'pull'; ref: string; ticket?: string };
+export type View = TicketView | PullView | ScopeView | { kind: 'project'; project: string };
 export const ticketView = (ticket: string): TicketView => ({ ticket, kind: 'ticket' });
 export const viewKey = (v: View) =>
-  v.kind === 'project'
-    ? JSON.stringify([v.kind, v.project])
-    : JSON.stringify([v.kind, v.kind === 'pull' ? '' : v.ticket, v.ref, v.intent]);
+  'project' in v
+    ? JSON.stringify(v.kind === 'project' ? [v.kind, v.project] : [v.kind, v.project, v.ref])
+    : JSON.stringify([v.kind, v.kind === 'pull' ? '' : v.ticket, v.ref, 'intent' in v ? v.intent : null]);
 export function viewLabel(v: View) {
   if (v.kind === 'project') return 'Overview · ' + v.project;
+  if ('project' in v) return v.ref.replace(/^github:/, '') + ' · ' + v.project;
   if (v.kind === 'comment') return v.ticket + ' · note ' + v.ref;
   if (v.kind === 'pull') return 'Review ' + v.ref?.split('/').slice(-3).join('/').replace('/pull/', '#');
   return (v.intent === 'work' ? 'Work on ' : 'Review ') + v.ticket;
 }
-type Related = { id: string; title: string; status: string; assignee: string | null; goal: string };
+export type Related = {
+  type: string;
+  changedAt: string;
+  id: string;
+  title: string;
+  status: string;
+  assignee: string | null;
+  goal: string;
+};
 type Pull = {
   repository: string;
   number: number;
@@ -42,7 +53,7 @@ export interface Ticket extends Related {
   changeTasksByTask: { changeRow: Pull | null }[];
   taskCommentsByTask: Note[];
 }
-const relatedFields = 'id title status assignee goal';
+export const relatedFields = 'id title type status assignee goal changedAt';
 export const detailsQuery = `query PairTicketView($id:String!){ticket:tasksSingle(where:{id:{eq:$id}}){
   ${relatedFields} project why doneWhen description
   taskLinksByDependsOn{type taskRow{${relatedFields}}} taskLinksByTask{type dependsOnRow{${relatedFields}}}
@@ -50,7 +61,7 @@ export const detailsQuery = `query PairTicketView($id:String!){ticket:tasksSingl
   taskCommentsByTask(orderBy:{seq:{direction:desc,priority:0}}){seq text actor at}
 }}`;
 type Row = { title: string; state?: string; heading?: string; meta?: string; detail: string; target: View };
-type Group = { name: string; rows: Row[]; boardProject?: string };
+export type Group = { content?: ReactNode; name: string; rows: Row[]; boardProject?: string };
 type PanelState = { page: number; item?: string };
 export type SecondaryState = { selected: string; panels: Record<string, PanelState> };
 function SecondaryPanel({
@@ -254,7 +265,7 @@ function BoardPanel({
     />
   );
 }
-function Secondary({
+export function Secondary({
   groups,
   work,
   memory,
@@ -300,7 +311,13 @@ function Secondary({
                 aria-hidden={g !== group}
                 className="col-start-1 row-start-1 min-w-0 data-[state=inactive]:invisible"
               >
-                {g.boardProject ? (
+                {g.content ? (
+                  g === group && (
+                    <div className="pair-board-panel">
+                      <div className="absolute inset-x-0 top-0">{g.content}</div>
+                    </div>
+                  )
+                ) : g.boardProject ? (
                   g === group && (
                     <div className="pair-board-panel">
                       <BoardPanel project={g.boardProject} state={panel} update={updatePanel} work={work} />
@@ -317,75 +334,14 @@ function Secondary({
     </aside>
   );
 }
-const ticketRow = (r: Related): Row => ({
+export const ticketRow = (r: Related): Row => ({
   title: r.title,
-  state: r.status.replaceAll('_', ' '),
+  state: [r.type === 'epic' && 'Epic', r.status.replaceAll('_', ' ')].filter(Boolean).join(' · '),
   meta: [r.id, r.status.replaceAll('_', ' '), r.assignee].filter(Boolean).join(' · '),
   detail: r.goal,
   target: ticketView(r.id),
 });
 
-export interface Project {
-  id: string;
-  name: string;
-  goal: string;
-  lifecycle: string;
-}
-export interface ProjectOverview {
-  project: Project | null;
-  working: Related[];
-  recent: Related[];
-}
-const recentTickets =
-  'orderBy:{changedAt:{direction:desc,priority:1},id:{direction:asc,priority:0}},limit:10';
-export const projectQuery = `query PairProject($id:String!){
-  project:projectsSingle(where:{id:{eq:$id}}){id name goal lifecycle}
-  working:tasks(where:{project:{eq:$id},status:{eq:in_progress}},${recentTickets}){${relatedFields}}
-  recent:tasks(where:{project:{eq:$id}},${recentTickets}){${relatedFields}}
-}`;
-export function ProjectCanvas({
-  project,
-  working,
-  recent,
-  work,
-  memory,
-}: {
-  project: Project;
-  working: Related[];
-  recent: Related[];
-  work: (v: View) => void;
-  memory: Map<string, SecondaryState>;
-}) {
-  const groups: Group[] = [
-    { name: 'In progress', rows: working.map(ticketRow) },
-    { name: 'Recently updated', rows: recent.map(ticketRow) },
-    { name: 'Board', rows: [], boardProject: project.id },
-  ];
-  return (
-    <>
-      <ModuleCard
-        title={project.name}
-        description="Project overview"
-        action={<Badge variant="secondary">{project.lifecycle}</Badge>}
-      >
-        {project.goal && (
-          <section>
-            <h2 className="font-medium">Goal</h2>
-            <div className="text-card-body text-sm">
-              <Reply words={project.goal} />
-            </div>
-          </section>
-        )}
-      </ModuleCard>
-      <Secondary
-        view={{ kind: 'project', project: project.id }}
-        groups={groups.filter((g) => g.rows.length || g.boardProject)}
-        work={work}
-        memory={memory}
-      />
-    </>
-  );
-}
 export function TicketCanvas({
   ticket: t,
   projectOpen,
@@ -401,31 +357,14 @@ export function TicketCanvas({
 }) {
   const pulls = t.changeTasksByTask.flatMap((l) => (l.changeRow ? [l.changeRow] : []));
   const parent: Group = { name: 'Source ticket', rows: [ticketRow(t)] };
-  if (view.kind !== 'ticket') {
-    const pr = view.kind === 'pull' && pulls.find((p) => p.url === view.ref);
+  if (view.kind === 'comment') {
     const note = view.kind === 'comment' && t.taskCommentsByTask.find((n) => String(n.seq) === view.ref);
     return (
       <>
         <ModuleCard
-          title={pr ? pr.title : note ? 'Comment on ' + t.id : 'Record unavailable'}
-          description={
-            pr
-              ? pr.repository + ' #' + pr.number
-              : note
-                ? note.actor + ' · ' + new Date(note.at).toLocaleString()
-                : t.id
-          }
+          title={note ? 'Comment on ' + t.id : 'Record unavailable'}
+          description={note ? note.actor + ' · ' + new Date(note.at).toLocaleString() : t.id}
         >
-          {pr && (
-            <>
-              <p>
-                {pr.state} · Checks {pr.checks}
-              </p>
-              <a className="underline" href={pr.url} target="_blank" rel="noreferrer">
-                Open pull request
-              </a>
-            </>
-          )}
           {note && <Reply words={note.text} />}
         </ModuleCard>
         <Secondary view={view} memory={memory} groups={[parent]} work={work} />
@@ -513,6 +452,7 @@ export function TicketCanvas({
                 {' · '}
               </>
             )}
+            {t.type === 'epic' && 'Epic · '}
             {t.id}
             {t.assignee && ' · Assigned to ' + t.assignee}
           </>

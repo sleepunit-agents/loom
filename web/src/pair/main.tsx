@@ -12,7 +12,8 @@ import { Portrait } from '../contexts/portrait';
 import type { FaceState } from '../face';
 import type { IdleTiming } from '../contexts/portrait-player';
 import { Button } from './ui/button';
-import { projectQuery, ProjectCanvas, type ProjectOverview, detailsQuery, ticketView, TicketCanvas, viewKey, viewLabel, type Ticket, type View, type SecondaryState } from './ticket-view';
+import { projectQuery, ProjectCanvas, type ProjectOverview, entityQueries, EntityCanvas, type EntityData } from './project-entities';
+import { detailsQuery, ticketView, TicketCanvas, viewKey, viewLabel, type Ticket, type View, type SecondaryState } from './ticket-view';
 import { useViewRing } from './view-ring';
 import { ModuleCard } from './module-card';
 import { Attachment, AttachmentAction, AttachmentActions, AttachmentContent, AttachmentGroup, AttachmentTitle, AttachmentMedia } from "./ui/attachment";
@@ -330,10 +331,14 @@ function Workspace({
   const ring = useViewRing(JSON.stringify(['pair-views',member,id]),root);
   const active = ring.active;
   const projectId = active?.kind === 'project' ? active.project : '';
-  const ticketId = active && active.kind !== 'project' ? active.ticket : '';
+  const ticketId = active?.kind === 'ticket' || active?.kind === 'comment' ? active.ticket : '';
+  const entity = active && (active.kind === 'pull' || active.kind === 'repository' || active.kind === 'agent' || active.kind === 'member') ? active : null;
+  const other = useDataQuery<EntityData>(entityQueries[entity?.kind || 'pull'],
+    entity?.kind === 'repository' ? {id:entity.project,repo:entity.ref.replace(/^github:/,'')} :
+    entity && 'project' in entity ? {id:entity.project,ref:entity.ref} : {ref:entity?.ref || ''},{pause:!entity});
   const details = useDataQuery<{ticket: Ticket | null}>(detailsQuery,{id:ticketId},{pause:!ticketId});
   const project = useDataQuery<ProjectOverview>(projectQuery,{id:projectId},{pause:!projectId});
-  const viewStatus = projectId ? project.status : details.status;
+  const viewStatus = entity ? other.status : projectId ? project.status : details.status;
   const secondaryState = useRef(new Map<string, SecondaryState>());
   const viewNav = useRef<HTMLElement>(null);
   const canvasScroll = useRef<HTMLDivElement>(null);
@@ -516,8 +521,9 @@ function Workspace({
     composing.current = true;
     sending(true);
     fail('');
-    const subject = active && (active.kind === 'project' ? active.project : active.kind === 'ticket' ? active.ticket : active.ticket + ' · ' + viewLabel(active));
-    const message = subject ? (projectId ? '[Project workspace · ' : '[Ticket workspace · ') + subject + ']\n' + value : value;
+    const subject = active && (active.kind === 'project' ? active.project : active.kind === 'ticket' ? active.ticket : active.kind === 'pull' ? active.ref : 'project' in active ? active.kind + ' ' + active.ref + ' in ' + active.project : viewLabel(active));
+    const contextLabel = projectId ? 'Project workspace' : entity ? 'Entity workspace' : 'Ticket workspace';
+    const message = subject ? '['+contextLabel+' · '+subject+']\n'+value : value;
     try {
       const payload = bar || !files.length ? {} : {files: await Promise.all(files.map(async file => {
         const contents = await new Promise<string>((resolve,reject) => {
@@ -566,10 +572,13 @@ function Workspace({
           </nav>}
         <div ref={canvasScroll} className="pair-canvas-scroll" onScroll={e=>{if(viewStatus === 'live') positions.current.set(activeKey,e.currentTarget.scrollTop);}}>
           <div className="pair-zones" key={activeKey}>
-            {active?.kind === 'project' ? project.data?.project?.id === projectId && project.status === 'live' ?
-              <ProjectCanvas working={project.data.working} recent={project.data.recent} project={project.data.project} work={workOn} memory={secondaryState.current}/> :
+            {entity ? other.status === 'live' && other.data ?
+              <EntityCanvas view={entity} data={other.data} work={workOn} memory={secondaryState.current}/> :
+              <p role="status">{other.status==='loading' ? 'Opening view…' : 'Record unavailable.'}</p> :
+              active?.kind === 'project' ? project.data?.project?.id === projectId && project.status === 'live' ?
+              <ProjectCanvas data={project.data} work={workOn} memory={secondaryState.current}/> :
               <p role="status">{project.status === 'loading' ? 'Opening project…' : 'Project unavailable.'}</p> :
-              active ? details.data?.ticket?.id === active.ticket && details.status==='live' ?
+              active ? details.data?.ticket?.id === ticketId && details.status==='live' ?
               <TicketCanvas projectOpen={ring.views.some(v=>v.kind === 'project' && v.project === details.data?.ticket?.project)} ticket={details.data.ticket} view={active} work={workOn} memory={secondaryState.current}/> :
               <p role="status">{details.status === 'loading' ? 'Opening view…' : 'Ticket unavailable.'}</p>
               : <ContextCanvas place={place}/>}
