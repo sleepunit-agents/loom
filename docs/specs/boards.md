@@ -598,7 +598,7 @@ the thread's member. No model is involved. Each check sets up its own board unle
 3 to 6, 7 (operations only), 8 to 12, 14 to 17 (operations only), 20 (the catalogue only), 24, 26, 27, 28. In
 `web/src/boards/layout.test.ts`: 25 and the layout's rules. In `src/runtime/body-program.test.ts`: 29. In
 `web/src/boards/trend.test.ts` and `build.test.ts`: the trend's days and the new-build test. In
-`web/src/boards/bricks.test.tsx`, with a fake data hook and a fake `fetch`: for `pull`, `repository`, `question`,
+`web/src/boards/bricks-drawn.test.tsx`, with a fake data hook and a fake `fetch`: for `pull`, `repository`, `question`,
 `approval` and a contact, all three forms, the compact form as one line, the unavailable and loading lines, the
 heading rule, a pull request's own flag being raised, a question's answers reaching `/api/inbox/answer` and then
 `boards.act`, and an approval having no control in any kind, state or form. In `brick-queries.test.ts`: the pull and

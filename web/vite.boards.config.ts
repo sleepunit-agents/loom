@@ -3,6 +3,19 @@ import react from '@vitejs/plugin-react';
 import tailwind from '@tailwindcss/vite';
 
 // Verify the shipped graph, including lazy chunks. Shared behavior is opt-in.
+// What the drawn bricks share with the desktop, each named whole: words for stored states, selections and the
+// calls that send an answer. Each is plain TypeScript with no component and no stylesheet, and so is everything it
+// imports. Never `kit/index`, a component or a sheet: a brick that needs one of those needs a pure module instead.
+const shared = new Set([
+  'kit/words.ts', // displayName
+  'kit/time.ts', // the shared date formats
+  'pieces/change-view/model.ts', // a pull request's state words (imports kit/words.ts)
+  'pieces/inbox-view/model.ts', // an Inbox item's state words and the rule for what is answered elsewhere (imports kit/time.ts)
+  'pieces/approval-view/model.ts', // an approval's title and kind words
+  'pieces/attention/inbox-query.ts', // the Inbox's selection of one item and its inbox.answer call (imports data/ only)
+  'memory/queries.ts', // the People selection of one person
+  'memory/query.ts', // its decoder over the data hook
+]);
 const isolation: Plugin = {
   name: 'boards-visual-isolation',
   generateBundle(_, bundle) {
@@ -14,7 +27,8 @@ const isolation: Plugin = {
           id &&
           !/^(access\.ts$|boards\/|pair\/|contexts\/(?:portrait\.tsx|portrait-player\.ts|manifest\.json|sheet\.png)$|data\/|signin\/use-session\.ts$|lib\/utils\.ts$|pieces\/comms\/use-deadline\.ts$)/.test(
             id,
-          )
+          ) &&
+          !shared.has(id)
         )
           this.error('Desktop dependency in boards page: ' + id);
       }
