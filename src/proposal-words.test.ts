@@ -1,3 +1,4 @@
+import { TRACE_KEEP_DAYS } from './core/conversations/trace-keep-days.js';
 import { expect, it } from 'vitest';
 import { householdChanges } from './shared-household-proposals.js';
 import { outsideKitGrantTitle, factLines, proposalCard, storedProposal, type CardNames } from './proposal-words.js';
@@ -23,7 +24,7 @@ const kinds: Record<string, Array<[input: unknown, title: string, facts?: string
   projectJoin: [[{ project: 'pond', agent: 'mark' }, 'Let Mark work on the project pond']],
   member: [[{ id: 'lee', role: 'owner', fullOwner: false, agents: ['art'] }, 'Set Lee as an owner of the household', ['Role: Owner of the household', 'Their agents: Art']]],
   agent: [[{ id: 'art', about: 'Keeps the pond', markBg: '#000000', markFg: '#ffffff', faceShape: 'pebble', faceEyes: 'dot' }, 'Change how Art is described and drawn', ['About: Keeps the pond', 'Face: pebble with dot eyes']]],
-  settings: [[{ timezone: 'America/Chicago' }, 'Set the household’s time zone to America/Chicago'], [{ commsDays: 7 }, 'Have Comms keep words for 7 days'], [{ defaultAgent: 'art' }, 'Make Art the household’s default agent'], [{ timezone: 'America/Chicago', commsDays: 7 }, 'Change 2 household settings', ['Days Comms keeps words: 7']]],
+  settings: [[{ timezone: 'America/Chicago' }, 'Set the household’s time zone to America/Chicago'], [{ commsDays: 7 }, 'Have Comms keep a message’s words for 7 days'], [{ defaultAgent: 'art' }, 'Make Art the household’s default agent'], [{ timezone: 'America/Chicago', commsDays: 7 }, 'Change 2 household settings', ['Days Comms keeps a message’s words: 7']]],
   rule: [[{ kind: 'merge', scope: 'project:pond', person: 'gage', tier: 'do' }, 'Set a standing rule for merging a pull request (the project pond), when asked for Gage: Just do it', ['Answer: Just do it']],
     [{ kind: 'setting', scope: '*', person: '', tier: null }, 'Remove the standing rule for changing a setting (everything)']],
   bodyPolicy: [[{ agent: 'art', people: [{ ...gage, tier: 2 }], deniedTools: [{ pattern: 'Bash', guestsOnly: true }] }, 'Change Art’s outside contacts and tool restrictions',
@@ -265,4 +266,15 @@ it('clips the short Inbox grant title at the same whole character as the preview
   const preview=proposalCard('kitGrant',input,{before:{value:null},names})!;
   expect(preview.title).toBe('Let '+'a'.repeat(234)+'…');
   expect(outsideKitGrantTitle(true,'Art','garden',gage,held,names)).toBe(preview.title);
+});
+
+it('says on a keep-time card that a handed-off session\'s steps are not covered by it', () => {
+  const steps = 'The work steps of a session handed off from a thread are not covered: they are kept ' + TRACE_KEEP_DAYS + ' days whatever this is set to, and go at once when the thread is deleted.';
+  for (const input of [{ commsDays: 7 }, { timezone: 'America/Chicago', commsDays: 1 }]) {
+    const card = proposalCard('settings', input)!;
+    expect(card.ifYes).toBe('This is how long a message’s words are kept. ' + steps);
+    // Nothing on the card says the keep time covers every word loom holds.
+    expect(everything(card)).not.toMatch(/keeps? words|all words|every word/i);
+  }
+  expect(proposalCard('settings', { timezone: 'America/Chicago' })!.ifYes).toBeUndefined();
 });

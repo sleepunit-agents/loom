@@ -25,6 +25,8 @@ export function SessionTrace({ conversation, job, running }: { conversation: str
   useEffect(() => { const el = box.current; if (el && follow.current) el.scrollTop = el.scrollHeight; }, [last]);
   if (read.status === 'loading') return <p role="status" className="text-muted-foreground">Loading…</p>;
   if (read.status !== 'live') return <p className="text-muted-foreground">Its steps are unavailable.</p>;
+  // A step outlives its words: once they are past their keep time loom erases them and the row says only that it happened.
+  if (steps.length && steps.every((s) => s.words === null)) return <p className="text-muted-foreground" data-session-trace-gone="">Its steps are no longer kept. It reported {steps.length === TRACE_STEPS ? `at least ${steps.length} steps` : steps.length === 1 ? '1 step' : `${steps.length} steps`}; loom keeps a step’s words for a limited time and then erases them.</p>;
   if (!steps.length) return <p className="text-muted-foreground">{running ? 'No steps reported yet.' : 'No steps were recorded.'}</p>;
   const latestTerminal = steps.findLast((s) => s.tool.endsWith('Terminal') && s.cardState !== 'running')?.seq;
   return (

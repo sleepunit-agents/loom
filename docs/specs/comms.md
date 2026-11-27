@@ -172,7 +172,10 @@ choice, and the body's brief. The new parts follow.
   `src/delivery.mjs`; 14 is also agent-runtime.md's ceiling). For `loom`, 14 days is the window this doc assumes, and
   Comms' history is tied to it. A household that shortens the runtime's window for `loom` (its
   `LOOM_RUNTIME_CONTINUITY` setting) should shorten Comms' too: the window is household.json's `comms_days` (1–14,
-  default 14), set to match by the owner. Comms never keeps words longer than `comms_days`.
+  default 14), set to match by the owner. Comms never keeps a message's words longer than `comms_days`. One thing
+  loom keeps is outside it, decided by the owner on 2026-11-27: the work steps of a session handed off from a thread
+  (`job_trace`) are kept 90 days on their own clock, whatever `comms_days` is, and go at once when the thread is
+  deleted (docs/specs/boards.md, "Sessions").
 - **Delivering a member's message.** Core delivers it as its own delivery, through `deliverAsOwner` (source `loom`).
   That's how the Inbox's Reply already delivers the owner's words (conversations.md, "Needs you").
   - Core's own delivery skips the checks that are for pieces: a declared venue, and `from: person` only from an

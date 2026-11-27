@@ -137,6 +137,50 @@ describe('lanes', () => {
 });
 
 describe('ticket', () => {
+  const worked = [
+    { conversation: 'cv-2', title: 'Second pass', state: 'running', at: '2026-11-27T10:00:00.000Z' },
+    { conversation: 'cv-1', title: 'First pass', state: 'done', at: '2026-11-20T10:00:00.000Z' },
+    { conversation: 'cv-0', title: '', state: null, at: '2026-11-19T10:00:00.000Z' },
+  ];
+  const closed = { ...task, status: 'closed', assignee: 'art', assigneeKind: 'agent' };
+  const section = (root: Node) => root.findAll((n) => n.props['data-ticket-sessions'] === '');
+  it('lists the sessions that worked a closed ticket in the big form, each a chip that places its session brick', async () => {
+    data({ BrickTicket: live({ ticket: closed }), BrickTicketSessions: live({ rows: worked }) });
+    const { root } = await draw('ticket', { ticket: 't-7' }, 'primary');
+    const [sessions] = section(root);
+    expect(text(sessions.findAllByType('dt')[0])).toBe('Sessions');
+    // In the order loom gave them (newest first), each with its title, its state and when.
+    const chips = sessions.findAllByType('button');
+    expect(chips.map((b) => JSON.parse(b.props['data-place']))).toEqual(['cv-2', 'cv-1', 'cv-0'].map((session) => ({ brick: 'session', params: { session } })));
+    expect(chips.map(text)).toEqual(['Second pass', 'First pass', 'Session']);
+    expect(sessions.findAll((n) => n.props.className === 'board-state').map(text)).toEqual(['running', 'done', 'not started']);
+    expect(text(sessions)).toContain('2026');
+    expect(f.queries.find((q) => q.query.includes('BrickTicketSessions'))).toMatchObject({ variables: { t: 't-7' } });
+    // The ticket is still a closed ticket: only Reopen is offered.
+    expect(root.findAllByType('button').filter((b) => !b.props['data-place']).map(text)).toEqual(['Reopen']);
+  });
+  it('says so in the big form when no session is recorded, or the list cannot be read', async () => {
+    data({ BrickTicket: live({ ticket: closed }), BrickTicketSessions: live({ rows: [] }) });
+    expect(text(section((await draw('ticket', { ticket: 't-7' }, 'primary')).root)[0])).toBe('SessionsNo session is recorded for this ticket.');
+    data({ BrickTicket: live({ ticket: closed }), BrickTicketSessions: { status: 'error' } });
+    expect(text(section((await draw('ticket', { ticket: 't-7' }, 'primary')).root)[0])).toBe('SessionsIts sessions are unavailable.');
+  });
+  it('gives the side form a count line, and the compact form nothing', async () => {
+    data({ BrickTicket: live({ ticket: closed }), BrickTicketSessions: live({ rows: worked }) });
+    const side = await draw('ticket', { ticket: 't-7' }, 'side');
+    expect(section(side.root).map(text)).toEqual(['3 sessions worked this']);
+    expect(side.root.findAll((n) => n.type === 'button' && /"session"/.test(n.props['data-place'] ?? ''))).toEqual([]);
+    data({ BrickTicket: live({ ticket: closed }), BrickTicketSessions: live({ rows: worked.slice(0, 1) }) });
+    expect(section((await draw('ticket', { ticket: 't-7' }, 'side')).root).map(text)).toEqual(['1 session worked this']);
+    data({ BrickTicket: live({ ticket: closed }), BrickTicketSessions: live({ rows: [] }) });
+    expect(section((await draw('ticket', { ticket: 't-7' }, 'side')).root)).toEqual([]);
+    data({ BrickTicket: live({ ticket: closed }), BrickTicketSessions: live({ rows: worked }) });
+    f.queries = [];
+    const compact = await draw('ticket', { ticket: 't-7' }, 'compact');
+    expect(text(compact.root.findAllByType('p')[0])).toBe('closed Mend the gate');
+    expect(section(compact.root)).toEqual([]);
+    expect(f.queries.some((q) => q.query.includes('BrickTicketSessions'))).toBe(false);
+  });
   const names = () => tree!.root.findAll((n) => n.type === 'button' && n.props.className === 'board-action').map(text);
   it('offers Claim and Close on an open ticket nobody holds', async () => {
     data();

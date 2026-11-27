@@ -1,11 +1,12 @@
 import {slug} from '../../slug.js';
 import {reviewRequest,reviewPlace,reviewThread} from './review-place.js';
-import {conversations,jobs,memberAgents,threads} from '../data/schema.js';
+import {conversations,conversationTasks,jobs,memberAgents,tasks,threads} from '../data/schema.js';
+import {taskVisibility} from '../data/visibility.js';
 import {handoffPeersAssigned,handoffTarget} from './handoff-access.js';
 import {MESSAGE_WORDS_MAX} from './words.js';
 /** A current native body hands a brief to another assigned agent. Labels and
  * parent place come from its live conversation, never from caller claims. */
-import {and,desc,eq,inArray,sql} from 'drizzle-orm';
+import {and,desc,eq,getTableColumns,inArray,sql} from 'drizzle-orm';
 import {z} from 'zod';
 import type {OnWord} from '../../policy.js';
 import {inbox} from '../data/schema.js';
@@ -16,6 +17,8 @@ import type {CommsMessages} from './messages.js';
 import {handoffDeadline,sealHandoff} from './handoff-words.js';
 import {threadTitle} from './title.js';
 import { commsKeepDays } from '../data/comms-days.js';
+/** The most tickets one handoff may be said to be for. */
+export const HANDOFF_TICKETS_MAX=20;
 const cancelledSchedule='The originating conversation cancelled the scheduled handoff.';
 /** Where a note to the agent's own body goes: a conversation it has, or a channel (and thread) it has a rule for. */
 const toSelf=z.union([z.object({conversation:z.string().min(1).max(200)}).strict(),
@@ -133,8 +136,9 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
  operations.register(operation({...common,name:'conversation.handoff',
   // To another agent (`agent`), as a brief in a conversation of its own; or to this agent's own body in
   // another conversation (`to`), as mail there that starts its job like any message.
-  input:z.object({notBefore:z.iso.datetime().refine(value=>!/\.\d{4,}Z$/.test(value),'Use at most millisecond precision').transform(value=>new Date(value).toISOString()).optional().describe('Earliest UTC start for a private work role or Codex handoff. Its brief must still be retained then.'),role:slug(64).optional(),harness:z.literal('codex').optional(),agent:z.string().min(1).max(200).optional(),to:toSelf.optional(),clientId:z.string().min(1).max(200),label:threadTitle,words:z.string().trim().min(1).max(MESSAGE_WORDS_MAX)}).strict()
-   .refine(value=>[value.agent,value.to,value.harness,value.role].filter(v=>v!==undefined).length===1 && (!value.notBefore || !!(value.role || value.harness))),
+  input:z.object({notBefore:z.iso.datetime().refine(value=>!/\.\d{4,}Z$/.test(value),'Use at most millisecond precision').transform(value=>new Date(value).toISOString()).optional().describe('Earliest UTC start for a private work role or Codex handoff. Its brief must still be retained then.'),role:slug(64).optional(),harness:z.literal('codex').optional(),agent:z.string().min(1).max(200).optional(),to:toSelf.optional(),clientId:z.string().min(1).max(200),label:threadTitle,words:z.string().trim().min(1).max(MESSAGE_WORDS_MAX),
+   tickets:z.array(z.string().min(1).max(200)).min(1).max(HANDOFF_TICKETS_MAX).optional().describe('Ids of the tickets this work is for, when it is for any. Recorded with the session so the ticket can show it; not for a note to your own body (to).')}).strict()
+   .refine(value=>[value.agent,value.to,value.harness,value.role].filter(v=>v!==undefined).length===1 && (!value.notBefore || !!(value.role || value.harness)) && (!value.tickets || !value.to)),
   output:z.object({conversation:z.string(),item:z.string()}).strict(),
   may(viewer,input){
    const found=current(viewer);if(!found)return false;
@@ -195,6 +199,14 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    // and whether it was a direct message.
    // The composition's rule for a hand-off of any kind: one hop on anybody else's word.
    const hop=self?.hop({job});if(hop)throw new OperationError('denied',hop);
+   // The tickets the work is for are stated by the agent, never read out of its words. Each must be one this
+   // body may read now, working for this conversation's member; an unknown or unreadable id refuses the handoff.
+   const tickets=[...new Set(input.tickets??[])];
+   if(tickets.length){
+    const readable=new Set(db.select({id:tasks.id}).from(tasks).where(and(inArray(tasks.id,tickets),taskVisibility(ctx.viewer).tasks!(getTableColumns(tasks)))).all().map(row=>row.id));
+    const unknown=tickets.filter(id=>!readable.has(id));
+    if(unknown.length)throw new OperationError('invalid','Unknown ticket: '+unknown.join(', '));
+   }
    if(input.notBefore){
     const start=Date.parse(input.notBefore),now=service.now();
     if(start<=Date.parse(now) || start>=handoffDeadline({at:now,words:prepared as string},commsKeepDays(db)))
@@ -210,6 +222,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    const place=delegated?reviewPlace(parent,input.clientId,role):job.id;
    const target=cvs.open({agent:recipient,venue:'handoff',place,label:input.label,project:cv.project,member:cv.member,direct:cv.direct,handoffNotBefore:input.notBefore});
    if(target.handoffNotBefore!==(input.notBefore??null)||target.project!==cv.project||target.member!==cv.member||target.direct!==cv.direct)throw new OperationError('conflict','Handoff scope changed');
+   if(tickets.length)db.insert(conversationTasks).values(tickets.map(task=>({conversation:target.id,task}))).onConflictDoNothing().run();
    const word=self?.word({job});
    const item=cvs.send({conversation:target.id,toKind:'agent',to:recipient,source:'handoff',sourceId,fromKind:'agent',fromId:cv.agent,words:prepared as string,...(word?{onWordKind:word.kind,onWord:word.id}:{})});
    cvs.turn({conversation:target.id,kind:'message',fromKind:'agent',fromId:cv.agent,outcome:'progressed'});self?.handed({job});

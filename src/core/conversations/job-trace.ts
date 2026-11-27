@@ -4,21 +4,21 @@
  * work steps cannot be messages. They are kept here instead, beside the child conversation, and never enter the
  * originating thread's transcript: only the child's final reply does (review-result.ts).
  *
- * Words are sealed with the household's words key, stamped with the keep time a message written at the same
- * moment gets, erased by the same sweep, and removed when the originating thread is deleted. They are read
+ * Words are sealed with the household's words key and kept on the trace's own clock (retention.ts,
+ * TRACE_KEEP_DAYS from when the step was written), whatever the household's Comms keep time is. The sweep that
+ * erases expired message words erases them, and deleting the originating thread removes the rows. They are read
  * by the member the child conversation belongs to, who is the member of the originating thread, and by nobody else. */
 import { and, desc, eq, getTableColumns, inArray, isNotNull, like, max, min, or, sql } from 'drizzle-orm';
 import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
-import { commsKeepDays } from '../data/comms-days.js';
 import { selectedQueryFields } from '../data/queries.js';
 import { keepReadUntil } from '../data/read-lease.js';
 import { conversations, jobs, jobTrace } from '../data/schema.js';
 import { OperationError } from '../operations/index.js';
 import type { CommsQueryPolicy } from './comms-query.js';
 import type { CommsMessages } from './messages.js';
-import { ageLimit, keepUntilFor, validKeepDays, wordsDeadline, wordsKept } from './retention.js';
+import { traceCutoff, traceDeadline, traceKeepUntil, traceKept } from './retention.js';
 import { reviewParent, reviewThread } from './review-place.js';
 import type { WordsKey } from './words.js';
 
@@ -41,25 +41,25 @@ export async function prepareJobTrace(service: CommsMessages, cv: typeof convers
     if (!origin()) throw new OperationError('not-found', NO_TRACE);
     const retry = saved();
     if (retry) return retry;
-    const days = commsKeepDays(db), at = service.now();
-    if (!validKeepDays(days)) throw new Error('Invalid Comms keep time');
+    const at = service.now();
     const seq = (db.select({ seq: max(jobTrace.seq) }).from(jobTrace).where(eq(jobTrace.conversation, cv.id)).get()?.seq ?? 0) + 1;
-    db.insert(jobTrace).values({ conversation: cv.id, seq, job, at, tool: card.tool, cardState: card.cardState, clientId, words, keepUntil: keepUntilFor(at, days) }).run();
+    db.insert(jobTrace).values({ conversation: cv.id, seq, job, at, tool: card.tool, cardState: card.cardState, clientId, words, keepUntil: traceKeepUntil(at) }).run();
     return { seq };
   };
 }
 
-/** The sweep's part (CommsMessages.expire): the same two limits a message's words have. */
-export function expireJobTrace(db: DataDatabase, at: string, cutoff: string): number {
+/** The sweep's part (CommsMessages.expire): a step's words go at the earlier of its stamped limit and the trace's age limit. */
+export function expireJobTrace(db: DataDatabase, at: string): number {
+  const cutoff = traceCutoff(at);
   return db.update(jobTrace).set({ words: null }).where(and(isNotNull(jobTrace.words),
     or(sql`julianday(${jobTrace.keepUntil}) <= julianday(${at})`, sql`julianday(${jobTrace.at}) <= julianday(${cutoff})`))).returning({ seq: jobTrace.seq }).all().length;
 }
 
 /** When the sweep is next needed for a step's words, for the one timer that runs it (lifetime.ts). */
-export function nextJobTraceExpiry(db: DataDatabase, days: number): number | undefined {
+export function nextJobTraceExpiry(db: DataDatabase): number | undefined {
   const oldest = db.select({ at: min(jobTrace.at), until: min(jobTrace.keepUntil) }).from(jobTrace).where(isNotNull(jobTrace.words)).get();
-  const ends = [oldest?.at ? ageLimit(Date.parse(oldest.at), days) : NaN, Date.parse(oldest?.until ?? '')].filter(Number.isFinite);
-  return ends.length ? Math.min(...ends) : undefined;
+  const next = oldest?.at ? traceDeadline({ at: oldest.at, keepUntil: oldest.until }) : NaN;
+  return Number.isFinite(next) ? next : undefined;
 }
 
 /** A deleted thread takes the traces of the work handed off from it, as it takes its messages. Call before the thread row goes. */
@@ -90,19 +90,19 @@ export class JobTraceQueries {
   /** Open the kept words. The rows are read again afterwards under the viewer's current rule: a step that is no
    * longer readable, or whose words changed or expired while they were being opened, gives none. */
   async opened(viewer: Viewer, input: Parameters<JobTraceQueries['steps']>[1], retain: (at: number) => void) {
-    const kept = (row: Step, days: number) => !!row.words && wordsKept(row, days, this.now());
-    const before = this.steps(viewer, input), days = commsKeepDays(this.db), texts = new Map<number, string>();
-    for (const row of before) if (kept(row, days)) texts.set(row.seq, await this.key.open(row.words!));
-    const was = new Map(before.map(row => [row.seq, row])), keep = commsKeepDays(this.db);
+    const kept = (row: Step) => !!row.words && traceKept(row, this.now());
+    const before = this.steps(viewer, input), texts = new Map<number, string>();
+    for (const row of before) if (kept(row)) texts.set(row.seq, await this.key.open(row.words!));
+    const was = new Map(before.map(row => [row.seq, row]));
     return this.steps(viewer, input).map(row => {
-      const prior = was.get(row.seq), same = keep === days && kept(row, keep) && !!prior?.words && prior.words.equals(row.words!) && texts.has(row.seq);
-      if (same) retain(wordsDeadline(row, keep));
+      const prior = was.get(row.seq), same = kept(row) && !!prior?.words && prior.words.equals(row.words!) && texts.has(row.seq);
+      if (same) retain(traceDeadline(row));
       return { ...row, text: same ? texts.get(row.seq)! : null };
     });
   }
 
   keepUntil(row: Step): string | null {
-    const deadline = row.words ? wordsDeadline(row, commsKeepDays(this.db)) : NaN;
+    const deadline = row.words ? traceDeadline(row) : NaN;
     return Number.isFinite(deadline) && deadline > Date.parse(this.now()) ? new Date(deadline).toISOString() : null;
   }
 }

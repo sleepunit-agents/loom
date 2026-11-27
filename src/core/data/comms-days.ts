@@ -1,5 +1,6 @@
 /** How long Comms keeps a message's words. The household sets it in Setup; the database holds the setting
- * and its default (household-settings.ts answers before the row exists). */
+ * and its default (household-settings.ts answers before the row exists). It is not how long everything is kept:
+ * a handed-off session's work steps have their own, longer clock (conversations/retention.ts). */
 import type { DataDatabase } from './database.js';
 import { householdSettings } from './household-settings.js';
 

@@ -1,4 +1,5 @@
-/** The bricks drawn from loom's own records: pull, repository, question, approval and a person who is a contact
+/** The bricks drawn from loom's own records: pull, repository, question, approval (its answer is in
+ * bricks-approval.test.tsx) and a person who is a contact
  * (docs/specs/boards.md, "The first bricks"). The data hook is a fake; the member's operations go to a fake fetch,
  * so what is checked is the request loom would receive. */
 import { readFileSync } from 'node:fs';
@@ -252,54 +253,8 @@ it('shows an answered question with its answer and no controls, and offers none 
   expect(sent).not.toHaveBeenCalled();
 });
 
-it('draws an approval read-only: what it allows, why, for which agent, its state, and no way to answer it', async () => {
-  const states = ['pending', 'allowed', 'denied', 'used', 'withdrawn', 'expired'];
-  for (const kind of ['dangerous', 'command', 'merge', 'setting']) for (const state of states) for (const form of ['primary', 'side', 'compact'] as const) {
-    answer({ InlineApproval: { approvals: [{ ...approval, kind, state }], approvalRecord: [] } });
-    await draw('approval', { approval: 'a-1' }, form);
-    // No button, field, form or link in any kind, state or form. Chips place bricks; they answer nothing.
-    expect(controls(), `${kind} ${state} ${form}`).toEqual([]);
-    expect(tree!.root.findAll((node) => typeof node.props.onClick === 'function' || typeof node.props.onSubmit === 'function'), `${kind} ${state} ${form}`).toEqual([]);
-    expect(text()).toContain(state);
-  }
-  answer({ InlineApproval: { approvals: [approval], approvalRecord: [] } });
-  await draw('approval', { approval: 'a-1' }, 'side');
-  expect(feed.mock.calls.at(-1)![1]).toEqual({ id: 'a-1' });
-  for (const shown of ['Drain the pond', 'Drain the pond tonight?', 'The liner leaks.', 'The pond is emptied.', 'It keeps leaking.', 'dangerous action', 'pond/pump', 'pump --drain --all', 'pending', 'Sam'])
-    expect(text(), shown).toContain(shown);
-  expect(text()).toContain('It is answered in Approvals on the desktop, not here.');
-  expect(placed()).toEqual([{ brick: 'agent', params: { agent: 'art' } }, { brick: 'project', params: { project: 'pond' } }]);
-  // Answered: who answered, and no note about where to answer.
-  answer({ InlineApproval: { approvals: [{ ...approval, state: 'denied', decidedBy: 'sam' }], approvalRecord: [{ seq: 2, at: approval.askedAt, event: 'deny', approval: 'a-1', agent: 'art', note: 'sam' }] } });
-  await draw('approval', { approval: 'a-1' }, 'side');
-  expect(text()).toContain('Answered by Sam');
-  expect(text()).not.toContain('on the desktop');
-  // Another approval's row is never drawn in this one's place.
-  answer({ InlineApproval: { approvals: [{ ...approval, id: 'a-2' }], approvalRecord: [] } });
-  await draw('approval', { approval: 'a-1' }, 'side');
-  expect(said(tree!.root as Node)).toBe('This approval is unavailable.');
-  expect(sent).not.toHaveBeenCalled();
-  expect(reported).not.toHaveBeenCalled();
-});
-
-it('shows of a household change only its public title, why and state, as the desktop does without the owner\'s reading', async () => {
-  const details = JSON.stringify({ change: 'members.role', member: 'robin', role: 'owner' });
-  answer({ InlineApproval: { approvals: [{ ...approval, kind: 'setting', operation: 'household.change', what: 'stored words', ask: 'stored ask', ifYes: 'stored yes', ifNo: 'stored no', target: 'stored-target', details }], approvalRecord: [] } });
-  await draw('approval', { approval: 'a-1' }, 'side');
-  // The title is the desktop's own (approvalTitle): the card's title where the program can word the change, else `what`.
-  expect(said(tree!.root.findAll((node) => node.props.className === 'board-lead')[0])).toBe('stored words');
-  for (const hidden of ['stored ask', 'stored yes', 'stored no', 'stored-target', 'robin']) expect(text(), hidden).not.toContain(hidden);
-  expect(text()).toContain('The liner leaks.');
-  expect(text()).toContain('pending');
-  expect(placed()).toEqual([]);
-  expect(controls()).toEqual([]);
-});
-
-it('keeps every way of answering an approval out of the approval brick', () => {
-  const source = readFileSync(new URL('./bricks-approval.tsx', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
-  for (const way of ['memberOperation', 'sendWorkAnswer', 'sendWorkAlways', 'fetch', 'work-answer', 'work-always', 'data/operation', 'onClick', 'onSubmit', '<button', '<input', '<form', 'act(', 'Act'])
-    expect(source, way).not.toContain(way);
-  // The pull request brick answers no merge either.
+// The approval brick's own suite is bricks-approval.test.tsx.
+it('keeps every way of answering a merge out of the pull request brick', () => {
   const pull = readFileSync(new URL('./bricks-pull.tsx', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
   for (const way of ['memberOperation', 'sendWorkAnswer', 'fetch', 'data/operation', 'onClick', '<button']) expect(pull, way).not.toContain(way);
 });

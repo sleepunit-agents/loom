@@ -292,8 +292,8 @@ export class CommsMessages {
     expired += expireArchivedQuestions(this.db,at,cutoff);
     // A kept harness session holds its conversation's words: it goes at the same keep time.
     expired+=expireConversationSessions(this.db,cutoff);
-    // The work trace of a handed-off job is kept as long as a message's words are.
-    expired+=expireJobTrace(this.db,at,cutoff);
+    // The work trace of a handed-off job has its own, longer clock (retention.ts); this sweep only runs it.
+    expired+=expireJobTrace(this.db,at);
     for(const item of handoffExpiries(this.db,days))if(item.until<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}
     return expired+this.db.update(messages).set({ words: null, archivedStepWords:null }).where(and(or(isNotNull(messages.words),isNotNull(messages.archivedStepWords)),
       or(sql`julianday(${messages.keepUntil}) <= julianday(${at})`, sql`julianday(${messages.at}) <= julianday(${cutoff})`))).returning({ seq: messages.seq }).all().length;
