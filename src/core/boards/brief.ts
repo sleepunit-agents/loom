@@ -78,7 +78,8 @@ export function boardsMail(brief: string): string {
     'If no brick shows what is needed, say so and file a ticket for the brick. Do not approximate.',
     'Here you decide and dispatch. Look things up, run a command, use quick subagents to read. Work that writes code or',
     'runs long is handed off with conversation.handoff, not done in this conversation. Place a session brick for it,',
-    'with the conversation id the handoff returned, so the member can watch it and stop it.',
+    'with the conversation id the handoff returned, so the member can watch it and stop it. When the work is for',
+    'tickets, pass their ids as tickets in that handoff: the ticket brick then lists the session, also once closed.',
     '',
     brief,
   ].join('\n');
