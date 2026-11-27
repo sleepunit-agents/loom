@@ -61,26 +61,83 @@ export const detailsQuery = `query PairTicketView($id:String!){ticket:tasksSingl
   taskCommentsByTask(orderBy:{seq:{direction:desc,priority:0}}){seq text actor at}
 }}`;
 type Row = { title: string; state?: string; heading?: string; meta?: string; detail: string; target: View };
-export type Group = { content?: ReactNode; name: string; rows: Row[]; boardProject?: string };
+export const listPageSize = 5;
+export type ListPage = { rows: Row[]; hasNext: boolean; total?: number; status?: string };
+export type Group = {
+  browse?: (offset: number, render: (page?: ListPage) => ReactNode) => ReactNode;
+  total?: number;
+  content?: ReactNode;
+  name: string;
+  rows: Row[];
+  boardProject?: string;
+};
 type PanelState = { page: number; item?: string };
 export type SecondaryState = { selected: string; panels: Record<string, PanelState> };
+function ListPager({
+  name,
+  page,
+  size,
+  count,
+  total,
+  hasNext,
+  update,
+}: {
+  name: string;
+  page: number;
+  size: number;
+  count: number;
+  total?: number;
+  hasNext: boolean;
+  update: (state: PanelState) => void;
+}) {
+  if (!page && !hasNext) return null;
+  const start = page * size;
+  return (
+    <nav
+      aria-label={name + ' pages'}
+      className="mt-2 flex flex-wrap items-center justify-between gap-1 border-t pt-1"
+    >
+      <span aria-live="polite" aria-atomic="true" className="text-xs tabular-nums text-muted-foreground">
+        {count ? start + 1 + '–' + (start + count) + (total != null ? ' of ' + total : '') : ''}
+      </span>
+      <div className="flex gap-1">
+        <Button size="sm" variant="ghost" disabled={page === 0} onClick={() => update({ page: page - 1 })}>
+          <ChevronLeftIcon /> Previous
+        </Button>
+        <Button size="sm" variant="outline" disabled={!hasNext} onClick={() => update({ page: page + 1 })}>
+          Next <ChevronRightIcon />
+        </Button>
+      </div>
+    </nav>
+  );
+}
 function SecondaryPanel({
   group,
   renderList,
+  remote,
   state,
   update,
   work,
 }: {
   group: Group;
+  remote?: ListPage;
   renderList?: (open: (row: Row) => void) => ReactNode;
   state: PanelState;
   update: (next: PanelState) => void;
   work: (v: View) => void;
 }) {
-  const start = state.page * 5 < group.rows.length ? state.page * 5 : 0;
-  const selected = group.rows.find((row) => viewKey(row.target) === state.item);
+  const page =
+    group.browse || renderList
+      ? state.page
+      : Math.min(state.page, Math.max(0, Math.ceil(group.rows.length / listPageSize) - 1));
+  const start = page * listPageSize;
+  const rows = remote ? remote.rows : group.rows.slice(start, start + listPageSize);
+  const total = remote?.total ?? group.total ?? (group.browse ? undefined : group.rows.length);
+  const hasNext = remote?.hasNext ?? start + listPageSize < group.rows.length;
+  const records = renderList ? group.rows : rows;
+  const selected = records.find((row) => viewKey(row.target) === state.item);
   const [previous, setPrevious] = useState<string>();
-  const detail = selected || group.rows.find((row) => viewKey(row.target) === previous);
+  const detail = selected || records.find((row) => viewKey(row.target) === previous);
   const list = useRef<HTMLDivElement>(null);
   const back = useRef<HTMLButtonElement>(null);
   const moveFocus = useRef(false);
@@ -118,8 +175,9 @@ function SecondaryPanel({
           renderList(openRow)
         ) : (
           <>
+            {remote?.status && <p role="status">{remote.status}</p>}
             <ul className="divide-y">
-              {group.rows.slice(start, start + 5).map((row) => (
+              {rows.map((row) => (
                 <li key={viewKey(row.target)}>
                   <button
                     type="button"
@@ -136,16 +194,15 @@ function SecondaryPanel({
                 </li>
               ))}
             </ul>
-            {group.rows.length > 5 && (
-              <div className="flex gap-3 text-sm">
-                {start > 0 && <button onClick={() => update({ page: start / 5 - 1 })}>Previous</button>}
-                {start + 5 < group.rows.length && (
-                  <button onClick={() => update({ page: start / 5 + 1 })}>
-                    +{group.rows.length - start - 5} more
-                  </button>
-                )}
-              </div>
-            )}
+            <ListPager
+              name={group.name}
+              page={page}
+              size={listPageSize}
+              count={rows.length}
+              total={total}
+              hasNext={hasNext}
+              update={update}
+            />
           </>
         )}
       </div>
@@ -252,14 +309,14 @@ function BoardPanel({
               ))}
             </div>
           )}
-          {(state.page > 0 || tickets.length > boardPageSize) && (
-            <div className="mt-3 flex gap-3 text-sm">
-              {state.page > 0 && <button onClick={() => update({ page: state.page - 1 })}>Previous</button>}
-              {tickets.length > boardPageSize && (
-                <button onClick={() => update({ page: state.page + 1 })}>More tickets</button>
-              )}
-            </div>
-          )}
+          <ListPager
+            name="Board"
+            page={state.page}
+            size={boardPageSize}
+            count={rows.length}
+            hasNext={tickets.length > boardPageSize}
+            update={update}
+          />
         </>
       )}
     />
@@ -323,6 +380,16 @@ export function Secondary({
                       <BoardPanel project={g.boardProject} state={panel} update={updatePanel} work={work} />
                     </div>
                   )
+                ) : g.browse && g === group ? (
+                  g.browse(panel.page * listPageSize, (remote) => (
+                    <SecondaryPanel
+                      group={g}
+                      remote={remote}
+                      state={panel}
+                      update={updatePanel}
+                      work={work}
+                    />
+                  ))
                 ) : (
                   <SecondaryPanel group={g} state={panel} update={updatePanel} work={work} />
                 )}

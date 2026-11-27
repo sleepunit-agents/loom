@@ -1,9 +1,12 @@
 import { lazy, Suspense, type ReactNode } from 'react';
+import { useDataQuery } from '../data/graphql';
 import { Badge } from './ui/badge';
 import { ModuleCard } from './module-card';
 import { Reply } from './reply';
 import {
   relatedFields,
+  listPageSize,
+  type ListPage,
   Secondary,
   ticketRow,
   ticketView,
@@ -44,8 +47,8 @@ export type ProjectOverview = {
   claims: { agent: string; paused: boolean }[];
   mapped: { projects: { id: string; repositories: string[] }[] } | null;
 };
-const recentTickets =
-  'orderBy:{changedAt:{direction:desc,priority:1},id:{direction:asc,priority:0}},limit:10';
+const ticketOrder = 'orderBy:{changedAt:{direction:desc,priority:1},id:{direction:asc,priority:0}}';
+const recentTickets = ticketOrder + ',limit:10';
 export const projectQuery = `query PairProject($id:String!){
   project:projectsSingle(where:{id:{eq:$id}}){id name goal lifecycle projectMembersByProject{member}}
   claims:projectClaimStates(project:$id){agent paused}
@@ -126,14 +129,72 @@ function pullRow(p: PullSummary) {
     target: { kind: 'pull' as const, ref: 'https://github.com/' + repo + '/pull/' + p.number },
   };
 }
+type CollectionData = { tickets?: Related[]; pulls?: PullSummary[]; scope?: Scope | null };
+function CollectionPage({
+  query,
+  variables,
+  offset,
+  render,
+}: {
+  query: string;
+  variables: Record<string, string>;
+  offset: number;
+  render: (page?: ListPage) => ReactNode;
+}) {
+  const read = useDataQuery<CollectionData>(query, { ...variables, offset }, { pause: offset === 0 });
+  if (!offset) return render();
+  const rows =
+    read.data?.tickets?.map(ticketRow) ?? (read.data?.scope?.pulls ?? read.data?.pulls ?? []).map(pullRow);
+  return render({
+    rows: rows.slice(0, listPageSize),
+    total: read.data?.scope?.pullCount,
+    hasNext: read.data?.scope
+      ? offset + listPageSize < read.data.scope.pullCount
+      : rows.length > listPageSize,
+    status:
+      read.status === 'loading'
+        ? 'Loading page…'
+        : read.status !== 'live'
+          ? 'Page unavailable.'
+          : !rows.length
+            ? 'No more items.'
+            : undefined,
+  });
+}
+function collection(query: string, variables: Record<string, string>): Group['browse'] {
+  return (offset, render) => (
+    <CollectionPage query={query} variables={variables} offset={offset} render={render} />
+  );
+}
+function ticketCollection(id: string, filter = '', assignee?: string) {
+  const query = `query PairTicketList($id:String!,$offset:Int!${assignee ? ',$ref:String!' : ''}){
+    tickets:tasks(where:{project:{eq:$id}${filter}},${ticketOrder},offset:$offset,limit:${listPageSize + 1}){${relatedFields}}}`;
+  return collection(query, assignee ? { id, ref: assignee } : { id });
+}
 export function ProjectCanvas({ data, work, memory }: { data: ProjectOverview; work: Work; memory: Memory }) {
   const p = data.project!;
   const scope = data.scope;
   const groups: Group[] = [
-    { name: 'In progress', rows: data.working.map(ticketRow) },
-    { name: 'Recently updated', rows: data.recent.map(ticketRow) },
-    { name: 'Active epics', rows: data.epics.map(ticketRow) },
-    { name: 'Recent PRs', rows: scope?.pulls.map(pullRow) || [] },
+    {
+      name: 'In progress',
+      browse: ticketCollection(p.id, ',status:{eq:in_progress}'),
+      rows: data.working.map(ticketRow),
+    },
+    { name: 'Recently updated', browse: ticketCollection(p.id), rows: data.recent.map(ticketRow) },
+    {
+      name: 'Active epics',
+      browse: ticketCollection(p.id, ',type:{eq:epic},status:{ne:closed}'),
+      rows: data.epics.map(ticketRow),
+    },
+    {
+      name: 'Recent PRs',
+      total: scope?.pullCount,
+      browse: collection(
+        `query PairProjectPullPage($id:String!,$offset:Int!){scope:contextScopeWork(project:$id,offset:$offset){pullCount pulls{${pullFields}}}}`,
+        { id: p.id },
+      ),
+      rows: scope?.pulls.map(pullRow) || [],
+    },
     { name: 'Board', rows: [], boardProject: p.id },
     {
       name: 'Trends',
@@ -339,8 +400,23 @@ export function EntityCanvas({
     )
       return <p role="status">Record unavailable in this project.</p>;
     groups = repo
-      ? [{ name: 'Recent PRs', rows: (data.pulls || []).map(pullRow) }]
-      : [{ name: 'Recent assignments', rows: (data.assigned || []).map(ticketRow) }];
+      ? [
+          {
+            name: 'Recent PRs',
+            browse: collection(
+              `query PairRepoPage($id:String!,$repo:String!,$offset:Int!){pulls:changes(where:{repository:{eq:$repo},project:{eq:$id}},orderBy:{updatedAt:{direction:desc,priority:1},id:{direction:asc,priority:0}},offset:$offset,limit:${listPageSize + 1}){${pullFields}}}`,
+              { id: view.project, repo: view.ref.replace(/^github:/, '') },
+            ),
+            rows: (data.pulls || []).map(pullRow),
+          },
+        ]
+      : [
+          {
+            name: 'Recent assignments',
+            browse: ticketCollection(view.project, ',assignee:{eq:$ref}', view.ref),
+            rows: (data.assigned || []).map(ticketRow),
+          },
+        ];
     const latest = groups[0].rows[0];
     core = (
       <ModuleCard
