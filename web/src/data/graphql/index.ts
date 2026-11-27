@@ -4,6 +4,8 @@ import { createRequest, type AnyVariables, type TypedDocumentNode } from '@urql/
 import type { DocumentNode } from 'graphql';
 import type { generatedDataClient } from './client';
 import { Remembered, RememberedWatch } from './remembered';
+import { answerArrived, Pace, paceSender, relaxedKey, stampAnswer } from './pace';
+import type { LivePace } from '../../../../src/core/data/live-pace';
 
 /** `settling` is set only on a kept snapshot (`data` answers this hook's previous
  * variables while the current ones load) or a remembered one (`data` is the last
@@ -16,15 +18,24 @@ export interface DataQueryOptions {
   keep?: boolean;
   /** Open nothing and report `loading` (a by-id selection with nothing selected). */
   pause?: boolean;
+  /** How often loom reads the selection again (./pace.ts). Left out, a hook under a `Pace` scope is relaxed and
+   * every other hook is eager, as ever. Said, it is what was said: a brick's one read that must keep up with its
+   * record (a running session's steps) says `eager`. */
+  pace?: LivePace;
 }
 let shared: Promise<ReturnType<typeof generatedDataClient>> | undefined;
+let now: ((keys: string[]) => Promise<string[]>) | undefined;
 function client() {
   // The shell may read preferences before any tile loads. Keep the socket and
   // cache implementation off that initial import graph, but share one client.
-  return shared ??= import('./client').then(({ generatedDataClient, browserQueryTransport }) =>
-    generatedDataClient(browserQueryTransport(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/graphql`)),
-  ).catch(error => { shared = undefined; throw error; });
+  return shared ??= import('./client').then(({ generatedDataClient, browserQueryTransport }) => {
+    const transport = browserQueryTransport(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/graphql`);
+    now = keys => transport.now?.(keys) ?? Promise.resolve([]);
+    return generatedDataClient(transport);
+  }).catch(error => { shared = undefined; now = undefined; throw error; });
 }
+// Asking for selections now goes over the socket that holds them, and never opens one to ask.
+paceSender(keys => (shared ? shared.then(() => now?.(keys) ?? []) : Promise.resolve([])));
 type Client = Awaited<ReturnType<typeof client>>;
 interface Held<T> { key: number; doc: number; snapshot: DataQuerySnapshot<T>; from?: Client; /** The snapshot is a remembered answer, not yet replaced. */ remembered?: boolean }
 /** What a hook shows between a change of variables and the first answer to it. */
@@ -46,7 +57,10 @@ function between<T>(held: Held<T>, doc: number, keep: boolean): DataQuerySnapsho
  * Under a `Remembered` provider (./remembered.ts; the boards page, and nothing of
  * the desktop) a hook also starts from the last live answer this page had to
  * the same selection, marked `settling`, whatever `keep` says, and drops it on
- * the same occasions. */
+ * the same occasions.
+ *
+ * Under a `Pace` scope (./pace.ts; a placement on the boards page, and nothing of
+ * the desktop) the selection is opened relaxed and can be asked for now. */
 export function useDataQuery<T, V extends AnyVariables = AnyVariables>(document: DocumentNode | TypedDocumentNode<T, V> | string, variables?: V, options?: DataQueryOptions): DataQuerySnapshot<T> {
   const keep = options?.keep === true, pause = options?.pause === true;
   const request = createRequest(document, variables as V);
@@ -54,7 +68,8 @@ export function useDataQuery<T, V extends AnyVariables = AnyVariables>(document:
   const stable = useMemo(() => request, [key]);
   // The same number for the same document, whatever the variables.
   const doc = useMemo(() => createRequest(document, undefined as V).key, [document]);
-  const memory = useContext(Remembered), watch = useContext(RememberedWatch);
+  const memory = useContext(Remembered), watch = useContext(RememberedWatch), scope = useContext(Pace);
+  const relaxed = (options?.pace ?? (scope ? 'relaxed' : 'eager')) === 'relaxed';
   const recalled = (): Held<T> | undefined => {
     const found = pause ? undefined : memory?.get(key);
     return found && found.data !== undefined ? { key, doc, snapshot: { status: 'live', data: found.data as T, settling: true }, from: found.from as Client, remembered: true } : undefined;
@@ -68,16 +83,20 @@ export function useDataQuery<T, V extends AnyVariables = AnyVariables>(document:
       if (stopped) return;
       // A kept answer must not outlive the client that gave it.
       setState(held => held.key === key && held.snapshot.settling && held.from !== value ? { key, doc, snapshot: { status: 'loading' } } : held);
-      const sub = value.query<T, V>(stable.query, stable.variables as V, { requestPolicy: 'network-only' }).subscribe(result => {
+      // A relaxed selection is its own operation, named on the socket by its number so that it can be asked for.
+      const wire = relaxedKey(key), read = relaxed ? scope?.open(String(wire), answerArrived(memory?.get(key)?.data)) : undefined;
+      const source = relaxed ? value.executeQuery<T, V>({ ...stable, key: wire } as typeof stable, { requestPolicy: 'network-only', pace: 'relaxed' })
+        : value.query<T, V>(stable.query, stable.variables as V, { requestPolicy: 'network-only' });
+      const sub = source.subscribe(result => {
         if (stopped) return;
         // What the page remembers follows the feed: the newest live answer, and nothing once it fails.
-        if (result.error) memory?.drop(key); else if (result.data) memory?.set(key, result.data, value);
+        if (result.error) { memory?.drop(key); read?.failed(); } else if (result.data) { stampAnswer(result.data); memory?.set(key, result.data, value); read?.answered(); }
         setState({ key, doc, from: value, snapshot: result.error ? { status: 'offline' } : result.data ? { status: 'live', data: result.data } : { status: 'loading' } });
       });
-      unsubscribe = () => sub.unsubscribe();
+      unsubscribe = () => { sub.unsubscribe(); read?.close(); };
     }).catch(() => { if (!stopped) { memory?.drop(key); setState({ key, doc, snapshot: { status: 'offline' } }); } });
     return () => { stopped = true; unsubscribe?.(); };
-  }, [key, stable, doc, keep, pause, memory]);
+  }, [key, stable, doc, keep, pause, memory, relaxed, scope]);
   const current = state.key === key;
   const shown = current ? state.snapshot : between(state, doc, keep);
   const remembered = current && !pause && !!state.remembered && !!shown.settling;

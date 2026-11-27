@@ -7,7 +7,7 @@ import { createElement as h } from 'react';
 import { act, create } from 'react-test-renderer';
 
 const f = vi.hoisted(() => ({ query: vi.fn(), sinks: [] as ((result: unknown) => void)[] }));
-vi.mock('../data/graphql/client', () => ({ browserQueryTransport: () => ({}), generatedDataClient: () => ({ query: f.query }) }));
+vi.mock('../data/graphql/client', () => ({ browserQueryTransport: () => ({}), generatedDataClient: () => ({ query: f.query, executeQuery: (request: { query: unknown; variables: unknown }, context: unknown) => f.query(request.query, request.variables, context) }) }));
 import { useDataQuery } from '../data/graphql';
 import { Remembered, rememberedAnswers } from '../data/graphql/remembered';
 import { useOwnFlag, useSettling } from './brick-kit';

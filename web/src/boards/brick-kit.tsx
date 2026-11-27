@@ -4,6 +4,7 @@
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { briefTime, fullTime } from '../kit/time';
 import { knowledgePageRef } from '../../../src/core/boards/refs';
+import { LIVE_RELAXED_MS } from '../../../src/core/data/live-pace';
 import type { Form } from './layout';
 
 export type Params = Record<string, string | number | undefined>;
@@ -14,15 +15,21 @@ export type Act = (action: string, detail: Record<string, string>) => void;
 export type Raise = (name: string) => void;
 export type BodyProps = { params: Params; form: Form; act: Act; raise: Raise };
 
+/** How long after the member's own action here a change to the same value is taken to be that action. The page asks
+ * for a brick's data the moment its own write is answered, so the change is usually back in a tenth of a second;
+ * if that asking is lost, it arrives with the next relaxed reading, which this still covers. */
+export const OWN_ACTION_MS = LIVE_RELAXED_MS + 2000;
 /** Watches one value of a brick's record. When it changes while the page is open, and the change was not the
- * member's own doing here a moment ago, the brick flags itself with the name the change is given. */
+ * member's own doing here a moment ago, the brick flags itself with the name the change is given. A brick's data is
+ * read every few seconds, so several changes may arrive as one: the flag is for the difference between what was
+ * shown and what is shown now, once. */
 export function useOwnFlag<T>(value: T | undefined, raise: Raise, name: (before: T, now: T) => string | null) {
   const before = useRef<T | undefined>(undefined), mine = useRef(0);
   useEffect(() => {
     const was = before.current;
     before.current = value;
     if (was === undefined || value === undefined || was === value) return;
-    if (Date.now() - mine.current < 5000) { mine.current = 0; return; }
+    if (Date.now() - mine.current < OWN_ACTION_MS) { mine.current = 0; return; }
     const called = name(was, value);
     if (called) raise(called);
   });
@@ -260,6 +267,11 @@ export function when(at: string | number, now: number = Date.now()): string {
   const span = far < 60 ? `${far} min` : far < 1440 ? `${Math.round(far / 60)} h` : '';
   if (span) return minutes > 0 ? span + ' ago' : 'in ' + span;
   return briefTime(new Date(then).toISOString(), undefined, now).replace(/, \d+:\d+.*$/, '');
+}
+/** When a brick's data was last confirmed, for the mark on its placement: to the second while that is under a minute. */
+export function asOf(at: number, now: number = Date.now()): string {
+  const seconds = Math.max(0, Math.round((now - at) / 1000));
+  return 'as of ' + (seconds < 60 ? seconds + ' s ago' : when(at, now));
 }
 /** `clock` writes the time of day alone, for a row under its day's heading; with `zone` it is that zone's clock (the
  * household's, where a brick's days are the household's days: the brick says the zone once, quietly). */
