@@ -1,4 +1,5 @@
 import {pairEvents} from './pair-events.js';
+import {PAIR_THREAD} from './pair-thread.js';
 import {boardsMail} from '../core/boards/brief.js';
 /** Fixed private child: bootstrap enters on stdin only, after the parent's
  * running ACK. Native execution and mail acceptance happen in this program.
@@ -355,7 +356,7 @@ export async function bodyProgram(input: {
     const privateValues = [parsed.bootstrap.token, harnessTools(tools?.config)?.authorization.slice(7), tools?.houseSend, tools?.houseNote,...Object.entries(shellEnv)
       .filter(([key])=>/token|secret|password|api.?key|authorization/i.test(key))
       .map(([,value])=>value)].filter((v):v is string=>typeof v==='string'&&v.length>=8);
-    const pairOutput = coordinating && !guest && /^th:pair-[a-f0-9]{64}$/.test(job.thread||'')
+    const pairOutput = coordinating && !guest && PAIR_THREAD.test(job.thread||'')
       ? pairEvents(step=>{
           const sensitive=(value:string)=>!(tools??secrets).allowsReply(value)||privateValues.some(v=>value.includes(v))||
             /(?:Bearer\s+[A-Za-z0-9_.+/=-]{12,}|-----BEGIN [^\n]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{16,})/i.test(value);

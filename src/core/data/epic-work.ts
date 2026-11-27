@@ -105,7 +105,7 @@ export function epicWorkFields(db: DataDatabase): GraphQLFieldConfigMap<unknown,
           .where(allowed)
           .groupBy(changes.state)
           .all();
-        if (args.state != null && !['open', 'merged', 'closed'].includes(args.state))
+        if (args.state != null && !(changes.state.enumValues as readonly string[]).includes(args.state))
           throw Error('Unknown pull request state');
         const pulls = db
           .select({

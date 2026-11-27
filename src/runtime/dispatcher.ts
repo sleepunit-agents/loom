@@ -1,6 +1,7 @@
 /** Trusted control plane for a runner door. The outside door must derive box
  * from the authenticated runner; installed callers use this directly. Nothing
  * here executes a process, opens credentials or invents another transport. */
+import { PAIR_THREAD } from './pair-thread.js';
 import { jobMatchesConversation, reviewThread, reviewRequest, reviewBriefExpired, REVIEW_ROLE_CHANGED } from '../core/conversations/review-place.js';
 import { handoffDeadline } from '../core/conversations/handoff-words.js';
 import { commsKeepDays } from '../core/data/comms-days.js';
@@ -134,7 +135,7 @@ export class Dispatcher {
         const candidates:Parameters<typeof decidePlacement>[1] = { agent: job.agent, now: at, eligibleBoxes: round ? this.coldReviewBoxes : review ? this.reviewBoxes : undefined, roles: workRole ? eligibleModels(workRole,roles,this.nativeHarnesses) : review ? roles.filter(role=>role.harness==='codex') : roles, needs, prefers: job.prefers ?? [], wants: this.wants(job.conversation),
           cannotRun: harness => this.cannotRun(harness, policy) };
         // Prefer an eligible runner that can publish native work events for this room.
-        const pairing = cv?.venue==='loom' && /^th:pair-[a-f0-9]{64}$/.test(cv.place||'') && this.pairingBoxes.size
+        const pairing = cv?.venue==='loom' && PAIR_THREAD.test(cv.place||'') && this.pairingBoxes.size
           ? decidePlacement(this.db,{...candidates,eligibleBoxes:this.pairingBoxes}) : undefined;
         const {placement,decision,signInBlocked}=pairing?.placement?pairing:decidePlacement(this.db,candidates);
         // A job on anybody else's word runs with loom's tools only, and a harness that always has a shell does
