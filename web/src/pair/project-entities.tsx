@@ -141,19 +141,24 @@ function CollectionPage({
   offset: number;
   render: (page?: ListPage) => ReactNode;
 }) {
-  const read = useDataQuery<CollectionData>(query, { ...variables, offset }, { pause: offset === 0 });
+  const read = useDataQuery<CollectionData>(
+    query,
+    { ...variables, offset },
+    { keep: true, pause: offset === 0 },
+  );
   if (!offset) return render();
   const rows =
     read.data?.tickets?.map(ticketRow) ?? (read.data?.scope?.pulls ?? read.data?.pulls ?? []).map(pullRow);
   return render({
     rows: rows.slice(0, listPageSize),
+    pending: read.settling || read.status === 'loading',
     total: read.data?.scope?.pullCount,
     hasNext: read.data?.scope
       ? offset + listPageSize < read.data.scope.pullCount
       : rows.length > listPageSize,
     status:
       read.status === 'loading'
-        ? 'Loading page…'
+        ? undefined
         : read.status !== 'live'
           ? 'Page unavailable.'
           : !rows.length
@@ -177,10 +182,16 @@ export function ProjectCanvas({ data, work, memory }: { data: ProjectOverview; w
   const groups: Group[] = [
     {
       name: 'In progress',
+      total: scope?.totals.find((r) => r.status === 'in_progress')?.count,
       browse: ticketCollection(p.id, ',status:{eq:in_progress}'),
       rows: data.working.map(ticketRow),
     },
-    { name: 'Recently updated', browse: ticketCollection(p.id), rows: data.recent.map(ticketRow) },
+    {
+      name: 'Recently updated',
+      total: scope?.totals.reduce((sum, row) => sum + row.count, 0),
+      browse: ticketCollection(p.id),
+      rows: data.recent.map(ticketRow),
+    },
     {
       name: 'Active epics',
       browse: ticketCollection(p.id, ',type:{eq:epic},status:{ne:closed}'),

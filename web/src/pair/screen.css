@@ -661,3 +661,10 @@
 @container (min-width: 31rem) {
   .pair-board { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .625rem; }
 }
+
+/* Keep pagination at the tab rail while successive pages use the space below it. */
+.pair-pager { display: grid; justify-content: stretch; justify-items: start; gap: .125rem; margin: .25rem 0 .375rem; }
+.pair-pager ul { width: min(19rem, 100%); }
+.pair-pager li:focus-within:has(select) { background: var(--accent); border-radius: var(--radius); }
+.pair-drill:has(.pair-pager) { min-height: 15rem; }
+.pair-drill:has(.pair-pager) > .pair-drill-list { position: absolute; inset: 0 0 auto; }

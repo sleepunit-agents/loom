@@ -4,6 +4,13 @@ import { useDataQuery } from '../data/graphql';
 import { Badge } from './ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/tabs';
 import { Button } from './ui/button';
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationEllipsis,
+} from './ui/pagination';
 import { ModuleCard } from './module-card';
 import { EntityPreview, ProjectPreview } from './entity-preview';
 import { Reply } from './reply';
@@ -62,7 +69,7 @@ export const detailsQuery = `query PairTicketView($id:String!){ticket:tasksSingl
 }}`;
 type Row = { title: string; state?: string; heading?: string; meta?: string; detail: string; target: View };
 export const listPageSize = 5;
-export type ListPage = { rows: Row[]; hasNext: boolean; total?: number; status?: string };
+export type ListPage = { rows: Row[]; hasNext: boolean; pending?: boolean; total?: number; status?: string };
 export type Group = {
   browse?: (offset: number, render: (page?: ListPage) => ReactNode) => ReactNode;
   total?: number;
@@ -78,6 +85,7 @@ function ListPager({
   page,
   size,
   count,
+  pending,
   total,
   hasNext,
   update,
@@ -86,29 +94,93 @@ function ListPager({
   page: number;
   size: number;
   count: number;
+  pending?: boolean;
   total?: number;
   hasNext: boolean;
   update: (state: PanelState) => void;
 }) {
   if (!page && !hasNext) return null;
   const start = page * size;
+  const current = page + 1;
+  const last = total == null ? current + Number(hasNext) : Math.max(current, Math.ceil(total / size));
+  const firstVisible = Math.max(1, Math.min(current - 1, last - 2));
+  const numbers = [
+    ...new Set([1, firstVisible, Math.min(firstVisible + 1, last), Math.min(firstVisible + 2, last), last]),
+  ].sort((a, b) => a - b);
   return (
-    <nav
-      aria-label={name + ' pages'}
-      className="mt-2 flex flex-wrap items-center justify-between gap-1 border-t pt-1"
-    >
-      <span aria-live="polite" aria-atomic="true" className="text-xs tabular-nums text-muted-foreground">
-        {count ? start + 1 + '–' + (start + count) + (total != null ? ' of ' + total : '') : ''}
+    <Pagination aria-label={name + ' pages'} className="pair-pager">
+      <PaginationContent>
+        <PaginationItem>
+          <PaginationLink
+            size="icon-sm"
+            aria-label="Previous"
+            disabled={!page}
+            onClick={() => update({ page: page - 1 })}
+          >
+            <ChevronLeftIcon />
+          </PaginationLink>
+        </PaginationItem>
+        {numbers.flatMap((n, i) => {
+          const from = numbers[i - 1] + 1;
+          const gap =
+            n > from ? (
+              <PaginationItem key={'gap' + i} className="relative">
+                <PaginationEllipsis className="size-7" />
+                <select
+                  className="absolute inset-0 w-full cursor-pointer opacity-0"
+                  aria-label={'Jump to pages ' + from + ' through ' + (n - 1)}
+                  value=""
+                  onChange={(event) => update({ page: Number(event.target.value) - 1 })}
+                >
+                  <option disabled value="">
+                    Jump to page
+                  </option>
+                  {Array.from({ length: n - from }, (_, j) => (
+                    <option key={from + j} value={from + j}>
+                      {from + j}
+                    </option>
+                  ))}
+                </select>
+              </PaginationItem>
+            ) : null;
+          return [
+            gap,
+            <PaginationItem key={n}>
+              <PaginationLink
+                size="icon-sm"
+                className="w-auto min-w-7 px-1 tabular-nums"
+                aria-label={'Page ' + n}
+                isActive={current === n}
+                onClick={() => update({ page: n - 1 })}
+              >
+                {n}
+              </PaginationLink>
+            </PaginationItem>,
+          ];
+        })}
+        <PaginationItem className="ml-auto">
+          <PaginationLink
+            size="icon-sm"
+            aria-label="Next"
+            disabled={!hasNext}
+            onClick={() => update({ page: page + 1 })}
+          >
+            <ChevronRightIcon />
+          </PaginationLink>
+        </PaginationItem>
+      </PaginationContent>
+      <span
+        aria-live="polite"
+        aria-atomic="true"
+        className="block h-4 text-xs tabular-nums text-muted-foreground"
+      >
+        {pending
+          ? 'Loading page ' + current + '…'
+          : count
+            ? start + 1 + '–' + (start + count) + (total != null ? ' of ' + total : '')
+            : ''}
       </span>
-      <div className="flex gap-1">
-        <Button size="sm" variant="ghost" disabled={page === 0} onClick={() => update({ page: page - 1 })}>
-          <ChevronLeftIcon /> Previous
-        </Button>
-        <Button size="sm" variant="outline" disabled={!hasNext} onClick={() => update({ page: page + 1 })}>
-          Next <ChevronRightIcon />
-        </Button>
-      </div>
-    </nav>
+    </Pagination>
   );
 }
 function SecondaryPanel({
@@ -131,9 +203,16 @@ function SecondaryPanel({
       ? state.page
       : Math.min(state.page, Math.max(0, Math.ceil(group.rows.length / listPageSize) - 1));
   const start = page * listPageSize;
-  const rows = remote ? remote.rows : group.rows.slice(start, start + listPageSize);
+  const rows = remote
+    ? remote.pending && !remote.rows.length
+      ? group.rows.slice(0, listPageSize)
+      : remote.rows
+    : group.rows.slice(start, start + listPageSize);
   const total = remote?.total ?? group.total ?? (group.browse ? undefined : group.rows.length);
-  const hasNext = remote?.hasNext ?? start + listPageSize < group.rows.length;
+  const hasNext =
+    total != null
+      ? start + listPageSize < total
+      : (remote?.hasNext ?? start + listPageSize < group.rows.length);
   const records = renderList ? group.rows : rows;
   const selected = records.find((row) => viewKey(row.target) === state.item);
   const [previous, setPrevious] = useState<string>();
@@ -175,8 +254,18 @@ function SecondaryPanel({
           renderList(openRow)
         ) : (
           <>
+            <ListPager
+              name={group.name}
+              page={page}
+              size={listPageSize}
+              count={rows.length}
+              pending={remote?.pending}
+              total={total}
+              hasNext={hasNext}
+              update={update}
+            />
             {remote?.status && <p role="status">{remote.status}</p>}
-            <ul className="divide-y">
+            <ul className="divide-y" aria-busy={remote?.pending} inert={remote?.pending}>
               {rows.map((row) => (
                 <li key={viewKey(row.target)}>
                   <button
@@ -194,15 +283,6 @@ function SecondaryPanel({
                 </li>
               ))}
             </ul>
-            <ListPager
-              name={group.name}
-              page={page}
-              size={listPageSize}
-              count={rows.length}
-              total={total}
-              hasNext={hasNext}
-              update={update}
-            />
           </>
         )}
       </div>
@@ -256,6 +336,7 @@ function BoardPanel({
   const read = useDataQuery<{ projectBoardTickets: BoardTicket[] }>(
     'query PairProjectBoard($project:String!,$offset:Int!,$limit:Int!){projectBoardTickets(project:$project,offset:$offset,limit:$limit){id title lane reason assignee}}',
     { project, offset: state.page * boardPageSize, limit: boardPageSize + 1 },
+    { keep: true },
   );
   const tickets = read.data?.projectBoardTickets || [];
   const rows: Row[] = tickets.slice(0, boardPageSize).map((t) => ({
@@ -273,6 +354,15 @@ function BoardPanel({
       work={work}
       renderList={(open) => (
         <>
+          <ListPager
+            name="Board"
+            page={state.page}
+            pending={read.settling}
+            size={boardPageSize}
+            count={rows.length}
+            hasNext={tickets.length > boardPageSize}
+            update={update}
+          />
           {read.status !== 'live' ? (
             <p role="status">{read.status === 'loading' ? 'Opening board…' : 'Board unavailable.'}</p>
           ) : rows.length === 0 ? (
@@ -280,7 +370,7 @@ function BoardPanel({
               {state.page ? 'No more active tickets.' : 'No active tickets on this board.'}
             </p>
           ) : (
-            <div className="pair-board">
+            <div className="pair-board" aria-busy={read.settling} inert={read.settling}>
               {['Working', 'Verifying', 'Waiting'].map((lane) => (
                 <section key={lane} aria-label={lane}>
                   <h3 className="mb-2 border-b pb-1 text-sm font-semibold">{lane}</h3>
@@ -309,14 +399,6 @@ function BoardPanel({
               ))}
             </div>
           )}
-          <ListPager
-            name="Board"
-            page={state.page}
-            size={boardPageSize}
-            count={rows.length}
-            hasNext={tickets.length > boardPageSize}
-            update={update}
-          />
         </>
       )}
     />
