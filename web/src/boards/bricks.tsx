@@ -77,7 +77,7 @@ function Lanes({ params, form }: { params: Params; form: Form }) {
       {['Working', 'Verifying', 'Waiting'].map((lane) => {
         const rows = read.data!.projectBoardTickets.filter((t) => t.lane === lane);
         return (
-          <section key={lane} aria-label={lane}>
+          <section key={lane} aria-label={lane} data-empty={rows.length === 0}>
             <h3><span>{lane}</span><span>{rows.length}</span></h3>
             <ul>
               {rows.slice(0, cap).map((t) => (
@@ -300,7 +300,7 @@ const later = (name: string, about: string): BrickView => ({ fits: fit([420, 640
 export const bricks: Record<string, BrickView> = {
   project: { fits: fit([440, 680, 820, 300], 190), title: () => 'Project', sub: (p) => words(p.project), Body: Project },
   lanes: { fits: fit([520, 820, 980, 480], 330), title: () => 'Lanes', sub: (p) => words(p.project), Body: Lanes },
-  trend: { fits: fit([460, 720, 860, 360], 200), title: () => 'Opened and closed', sub: (p) => `${words(p.project)} · ${words(p.days)} days`,
+  trend: { fits: fit([460, 720, 860, 360], 232), title: () => 'Opened and closed', sub: (p) => `${words(p.project)} · ${words(p.days)} days`,
     Body: ({ params, form }) => <Trend project={words(params.project)} days={Number(params.days) || 30} form={form} chip={ticketChip} /> },
   ticket: { fits: fit([460, 700, 820, 380], 230), title: () => 'Ticket', sub: (p) => words(p.ticket), Body: Ticket },
   person: { fits: fit([420, 640, 760, 260], 150), title: (p) => words(p.person).split(':')[1] || 'Person', sub: (p) => words(p.person).split(':')[0],
