@@ -3,7 +3,7 @@ import { createContext, useContext, useRef, useId, useState, type ReactElement, 
 import { useDataQuery } from '../data/graphql';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from './ui/hover-card';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from './ui/context-menu';
-import { indexNames, viewKey, type View, type Related } from './ticket-view';
+import { indexNames, viewKey, type View, type Related } from './view';
 type Project = { name: string; goal: string | null; lifecycle: string };
 
 export const ViewMenuActions = createContext<{

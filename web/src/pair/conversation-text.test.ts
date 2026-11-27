@@ -1,9 +1,19 @@
 import { expect, it } from 'vitest';
-import { splitPrompt } from '../contexts/split';
-import { reviewRequest } from '../contexts/evidence';
 import { conversationText } from './conversation-text';
 
 const envelope = '[Loom context · t-2 · decision]\n';
+// The words the removed context prototype stored, kept here as it wrote them: threads still hold such messages.
+const draft = { title: '', goal: '', why: '', doneWhen: '' };
+const splitPrompt = (request: string, id: string, parent: string) =>
+  'Prepare a split proposal ' + id + ' for ' + parent + '. Read the ticket and its related work. Return just JSON ' +
+  JSON.stringify({ proposal: id, drafts: [draft, draft] }) +
+  '. Fill the two drafts with concrete independent outcomes. This is a preview only. Leave all tickets untouched.\nRequest: ' + request;
+const reviewRequest = (id: string, latest: number) =>
+  'Review the decision evidence for ' + id + ' through note ' + latest + '. Read the current ticket and comments in Loom. ' +
+  'Identify the unresolved decision and up to three distinct findings that bear on it, including evidence that supersedes older claims. ' +
+  'For each finding, quote one exact continuous passage from a numbered ticket comment. Return JSON only in this shape: ' +
+  '{"ticket":"' + id + '","through":' + latest + ',"question":"...","findings":[{"seq":1,"quote":"..."}]}. ' +
+  'Keep this a read-only review.';
 
 it('shows the request inside stored context commands', () => {
   const request = 'Show "history". Current modules: all?\nThanks.';
