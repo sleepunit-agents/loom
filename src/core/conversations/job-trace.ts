@@ -78,13 +78,13 @@ export class JobTraceQueries {
   /** The latest steps, oldest first. The viewer must be the member the handoff conversation belongs to, under
    * the same conversation rule every Comms read uses; anybody else, and any other venue, reads nothing. */
   steps(viewer: Viewer, input: { conversation: string; job?: string | null; limit?: number | null }): Step[] {
-    const count = input.limit ?? 100;
-    if (!Number.isInteger(count) || count < 1 || count > 200) throw new Error('Invalid trace page size');
+    const page = input.limit ?? 100;
+    if (!Number.isInteger(page) || page < 1 || page > 200) throw new Error('Invalid trace page size');
     if (viewer.kind !== 'member') return [];
     return this.db.select(getTableColumns(jobTrace)).from(jobTrace).innerJoin(conversations, eq(conversations.id, jobTrace.conversation))
       .where(and(eq(jobTrace.conversation, input.conversation), input.job ? eq(jobTrace.job, input.job) : undefined,
         eq(conversations.venue, 'handoff'), eq(conversations.member, viewer.id), this.policy(viewer, getTableColumns(conversations))))
-      .orderBy(desc(jobTrace.seq)).limit(count).all().reverse();
+      .orderBy(desc(jobTrace.seq)).limit(page).all().reverse();
   }
 
   /** Open the kept words. The rows are read again afterwards under the viewer's current rule: a step that is no

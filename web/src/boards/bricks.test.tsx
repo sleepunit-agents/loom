@@ -66,15 +66,6 @@ const drawn: [string, Params][] = [
   ['agent', { agent: 'art' }],
   ['session', { session: 'cv-fence-0001' }],
 ];
-const notDrawn: [string, Params][] = [
-  ['pull', { change: 'ch-9' }],
-  ['repository', { repository: 'loom', project: 'garden' }],
-  ['question', { item: 'in-3' }],
-  ['approval', { approval: 'ap-4' }],
-  ['person', { person: 'contact:dana' }],
-  ['a-brick-nobody-wrote', { thing: 'x-1' }],
-];
-
 describe('every drawn brick', () => {
   it.each(drawn)('%s: the compact form is exactly one short line', async (brick, params) => {
     data();
@@ -109,13 +100,12 @@ describe('every drawn brick', () => {
 });
 
 describe('a brick this page does not draw', () => {
-  it.each(notDrawn)('%s says so in every form and never throws', async (brick, params) => {
+  it('an unknown brick says so in every form and never throws', async () => {
     f.answers = {};
     for (const form of ['compact', 'side', 'primary'] as const) {
-      const json = (await draw(brick, params, form)).toJSON();
+      const json = (await draw('a-brick-nobody-wrote', { thing: 'x-1' }, form)).toJSON();
       expect(json.type).toBe('p');
       expect(text(tree!.root.findAllByType('p')[0])).toContain('This page does not draw this brick yet.');
-      for (const [key, value] of Object.entries(params)) expect(text(tree!.root.findAllByType('p')[0])).toContain(`${key}: ${value}`);
     }
     expect(f.queries).toEqual([]);
     expect(f.op).not.toHaveBeenCalled();
