@@ -24,6 +24,14 @@ export interface ApprovalActions {
   always?: { label: string; approval: string; run(id: string): Promise<void> };
 }
 export type Name = (id: string) => string;
+/** A change the program can check against what it would apply, as a before and an after in plain words
+ * (pieces/tempo/change.ts, pieces/measuring/change.ts). A view draws these rows in place of the stored summary and
+ * the stored details, which say the same change as raw values. */
+export interface ChangeWords {
+  label: string; heading: string; note: string;
+  before: readonly ChangeRow[]; after: readonly ChangeRow[];
+}
+export interface ChangeRow { label: string; value: string; /** A value that may be one long unbroken word. */ long?: true }
 
 /** The longest reason `approvals.answer` takes. */
 export const reasonLimit = 2000;
