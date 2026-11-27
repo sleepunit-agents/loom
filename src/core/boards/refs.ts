@@ -12,3 +12,7 @@ export const knowledgeLists = ['all', 'recent', 'due'] as const;
 export const knowledgeAnnotations = ['note', 'outdated', 'intent', 'no-longer-owned', 'in-use'] as const;
 /** The People app's folders, which are the two kinds of card (web/src/pieces/people/model.ts, contacts). */
 export const peopleFolders = ['all', 'person', 'agent'] as const;
+/** A Tempo trigger's id, as Tempo addresses one (`tempo.stop`, `tempo.runNow`, the desktop's /p/tempo/trigger/<id>):
+ * `tr-` and a UUID where loom made it, a short name where its setter gave one. The shape of an id and nothing else;
+ * a trigger whose id holds anything else cannot be placed, and the page then says its name without a chip. */
+export const triggerRef = /^[A-Za-z0-9][A-Za-z0-9:._\/@-]{0,119}$/;

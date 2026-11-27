@@ -6,8 +6,9 @@ import { useState, type FormEvent } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { taskTypes } from '../pieces/tasks/words';
 import { Loading, Unavailable, ticketChip, words, type Act, type Params } from './brick-kit';
-import { Pick, TicketField, ticketChoicesQuery, useSummary, useTaskChoices, useTaskCommand } from './bricks-work';
+import { Pick, ticketChoicesQuery, useSummary, useTaskChoices, useTaskCommand } from './bricks-work';
 import type { Form } from './layout';
+import { TicketPicker } from './ticket-picker';
 
 type Type = keyof typeof taskTypes;
 export const newTicketQuery = 'query BrickNewTicket($id:String!){project:projectsSingle(where:{id:{eq:$id}}){id name lifecycle}}';
@@ -42,7 +43,7 @@ export function NewTicket({ params, form, act }: { params: Params; form: Form; a
       {big && <>
         <Pick<Type> label="Type" value={type} options={typeChoices} onChange={setType} disabled={busy} />
         <Pick<string> label="Owner" value={owner} options={[{ value: 'household', label: 'Household' }, ...choices.people.map((who) => ({ value: `${who.kind}:${who.id}`, label: who.label }))]} onChange={setOwner} disabled={busy} />
-        <div className="board-line"><span className="text-muted-foreground">Parent</span><TicketField label="Parent ticket" value={parent} onChange={setParent} tickets={offered} disabled={busy} /></div>
+        <div className="board-line"><span className="text-muted-foreground">Parent</span><TicketPicker label="Parent ticket" value={parent} onChange={setParent} tickets={offered} disabled={busy} /></div>
       </>}
       <div className="board-line">
         <button type="submit" className="board-action" disabled={busy || !ready}>File ticket</button>

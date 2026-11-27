@@ -1,7 +1,7 @@
 import { registerChatFileRead } from './chat-files.js';
 import {DAY} from '../day.js';
 import {registerConversationHandoff} from './handoff.js';
-import { registerConversationBodyOutput } from './body-output.js';
+import { registerConversationBodyOutput, type Replied } from './body-output.js';
 import { ConversationHistory } from './history.js';
 import { ConversationMail } from './mail.js';
 import { sameMailScope } from './body-input.js';
@@ -25,9 +25,9 @@ export type BodyQuestionAuthority=(viewer:Viewer,scope:Readonly<{id:string;agent
  *  - `quiet`: such a body's status report is answered and writes nothing to the agent's one status row. */
 export interface OnWord{privateDecision?(work:BodyWork,question:{to:string;answers:string;refs?:string[];link?:string;waitsOnKind?:string}):string|false|undefined;question(work:BodyWork,question:Readonly<{to:string;link?:string;waitsOnKind?:string}>):{line:string;outside?:string}|undefined;summary(work:BodyWork):string|undefined;quiet(work:BodyWork):boolean;maySendProgress?(viewer:Viewer):boolean}
 type BodyWork=NonNullable<ReturnType<ReturnType<typeof conversationBodyScope>>>;
-export function registerConversationBodyOperations(operations:Operations, service:CommsMessages, proof:BodyProof, privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,questionAllowed:BodyQuestionAuthority,selfHandoff?:HandoffToSelf,onWord?:OnWord): void {
+export function registerConversationBodyOperations(operations:Operations, service:CommsMessages, proof:BodyProof, privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,questionAllowed:BodyQuestionAuthority,selfHandoff?:HandoffToSelf,onWord?:OnWord,replied?:Replied): void {
  if(operations.db!==service.db.$client)throw Error('Body reports need the shared connection');
- registerConversationBodyOutput(operations,service,proof,privateAssignment,onWord?.quiet,onWord?.maySendProgress);
+ registerConversationBodyOutput(operations,service,proof,privateAssignment,onWord?.quiet,onWord?.maySendProgress,replied);
  registerConversationHandoff(operations,service,proof,privateAssignment,selfHandoff);
  const conversationsService=service.threads.conversations,db=service.db;
  const current=conversationBodyScope(db,proof,privateAssignment);

@@ -1,17 +1,9 @@
-export const machineHostingFields = 'owner revokedAt hostsAny reportOnly boxAgentsByBox { agent lent }';
-
-export type MachineHosting = {
-  owner: string;
-  revokedAt: string | null;
-  hostsAny: boolean;
-  reportOnly: boolean;
-  boxAgentsByBox: { agent: string; lent: boolean }[];
-};
+import {hostingWord, listedAgents, type MachineHosting} from './machine-hosting-model';
+export {machineHostingFields, type MachineHosting} from './machine-hosting-model';
 
 export function MachineHostingDetails({box}: {box: MachineHosting}) {
-  const listed = box.boxAgentsByBox.map(({agent, lent}) => lent ? `${agent} (lent)` : agent);
-  const hosting = box.revokedAt ? 'Enrollment revoked' : box.reportOnly ? 'Reporting only'
-    : box.hostsAny ? 'Listed agents and agents of the owner' : 'Listed agents only';
+  const listed = listedAgents(box);
+  const hosting = hostingWord(box);
   return <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
     <dt>Owner</dt><dd>{box.owner}</dd>
     <dt>Hosting</dt><dd>{hosting}</dd>

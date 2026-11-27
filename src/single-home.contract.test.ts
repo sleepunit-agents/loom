@@ -450,7 +450,7 @@ it('writes the shape of a SHA-256 digest in hex once', () => {
   expect([SHA256_HEX.test(digest), LOGIN_PATH.test('/login/' + digest)]).toEqual([true, true]);
   expect([SHA256_HEX.test(digest.toUpperCase()), SHA256_HEX.test(digest + '0'), SHA256_HEX.test(digest.slice(1)), LOGIN_PATH.test('/login/' + digest + '/'), LOGIN_PATH.test('x/login/' + digest)]).toEqual([false, false, false, false, false]);
   // The app checks the link it is handed with the same pattern, written out: it does not import the program.
-  expect(text('web/src/signin/DeviceLink.tsx')).toContain('/' + LOGIN_PATH.source + '/.test(');
+  expect(text('web/src/signin/device-link.ts')).toContain('/' + LOGIN_PATH.source + '/.test(');
 });
 
 it('caps a private secret read in one place', () => {

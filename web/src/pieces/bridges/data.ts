@@ -29,3 +29,11 @@ export function bridgesSnapshot(query: DataQuerySnapshot<BridgesData>): BridgesS
     filters: data.bridgeChannelFilters, channels: data.bridgeChannels, people: data.bridgePeople,
     sends: data.bridgeSends, activity: data.bridgeActivity.map(({ id, ...counts }) => ({ connection: id, ...counts })) };
 }
+
+/** A reply that has not gone out and is not put aside: what "Pending sends" lists. */
+export const awaitingReview = (send: { state: string }) => ['pending', 'held', 'sending', 'uncertain'].includes(send.state);
+/** What a reply in doubt and a held reply say under their words. */
+export const sendNotes = { uncertain: 'Delivery could not be confirmed. Review before sending again.', held: 'This send waits for a person to release or dismiss it.' };
+/** The Bridges folders' names, and a connection's activity over the last day. */
+export const bridgeLabels = { connections: 'Connections', channels: 'Channel rules', people: 'Person links', sends: 'Pending sends' } as const;
+export const activityLine = (activity: { received: number; delivered: number; held: number }) => `${activity.received} received · ${activity.delivered} delivered · ${activity.held} held`;

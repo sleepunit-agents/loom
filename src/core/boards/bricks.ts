@@ -36,18 +36,32 @@ import threads from './bricks/threads.js';
 import ticket from './bricks/ticket.js';
 import trend from './bricks/trend.js';
 import unfiled from './bricks/unfiled.js';
+import tempo from './bricks/tempo.js';
+import trigger from './bricks/trigger.js';
+import account from './bricks/account.js';
+import appearance from './bricks/appearance.js';
+import secrets from './bricks/secrets.js';
+import machines from './bricks/machines.js';
+import subscriptions from './bricks/subscriptions.js';
+import usage from './bricks/usage.js';
+import bridges from './bricks/bridges.js';
+import household from './bricks/household.js';
+import sharing from './bricks/sharing.js';
 
 export { recordKinds, type Brick, type RecordKind } from './bricks/kit.js';
 export { questionAnswers } from './bricks/question.js';
 export { inboxFolders } from './bricks/inbox.js';
 export { ticketPriorities } from './bricks/backlog.js';
 export { threadScopes } from './bricks/threads.js';
-export { knowledgeAnnotations, knowledgeLists, knowledgePageRef, knowledgeTopicRef, peopleFolders } from './refs.js';
+export { knowledgeAnnotations, knowledgeLists, knowledgePageRef, knowledgeTopicRef, peopleFolders, triggerRef } from './refs.js';
 
 /** The catalogue, in the order `bricks.catalogue` lists it to an agent. A new brick goes at the end. */
 export const bricks: readonly Brick[] = [
   project, lanes, trend, ticket, comments, pull, repository, person, agent, question, approval, session,
   inbox, approvals, newTicket, backlog, unfiled, knowledgePage, knowledge, people, activity, threads, agents,
+  tempo, trigger,
+  account, appearance, secrets,
+  machines, subscriptions, usage, bridges, household, sharing,
 ];
 
 const byName = new Map(bricks.map((b) => [b.name, b]));

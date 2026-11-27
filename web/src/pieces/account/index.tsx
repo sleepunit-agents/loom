@@ -3,30 +3,23 @@ import {fullTime} from '../../kit/time';
 import {useHouseholdZone} from '../../data/zone';
 import {sessionChange} from '../../signin/session-change';
 import DeviceLink from '../../signin/DeviceLink';
-import { decode as dec } from './encoding';
+import { PASSKEY_WORDS, addPasskey, post } from './passkey';
+import { accountQuery as query, type Account } from './query';
 import { enableNotifications as enableBrowserNotifications } from './notifications';
 import { useState, type FormEvent } from 'react';
 import { useDataQuery } from '../../data/graphql';
 import { memberOperation } from '../../data/operation';
 import { AppFrame, Button, Input, Section, Field, Fields, Empty, Error as ErrorView, Loading } from '../../kit';
-interface Account { member:string;notifications?:{publicKey:string|null;devices:Array<{ref:string;device:string;createdAt:string;seenAt:string}>};passkeys:Array<{ref:string;label:string;createdAt:string;lastUsedAt:string|null;ended:boolean}>;sessions:Array<{ref:string;device:string;issuedAt:string;seenAt:string;ended:boolean}> }
-const query=`{ account { member notifications { publicKey devices { ref device createdAt seenAt } } passkeys { ref label createdAt lastUsedAt ended } sessions { ref device issuedAt seenAt ended } } }`;
-const enc=(buf:ArrayBuffer)=>btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-async function post(path:string,input:unknown){const r=await fetch(path,{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify(input),redirect:'error'});const value=await r.json();if(!r.ok)throw Error(value.error??'Sign-in request refused');return value;}
 function Registration({enabled}:{enabled:boolean}){
   const [busy,setBusy]=useState(false),[message,say]=useState('');
   const submit=async(event:FormEvent<HTMLFormElement>)=>{
     event.preventDefault();if(!enabled||busy)return;
     const label=String(new FormData(event.currentTarget).get('label')??'').trim();setBusy(true);say('');
     try{
-      const o=await post('/passkeys/options',{});
-      const c=await navigator.credentials.create({publicKey:{...o,user:{...o.user,id:dec(o.user.id)},challenge:dec(o.challenge),excludeCredentials:o.excludeCredentials.map((x:{id:string})=>({type:'public-key',id:dec(x.id)})),attestation:'none'}}) as PublicKeyCredential|null;
-      if(!c)throw Error('Passkey creation cancelled');const r=c.response as AuthenticatorAttestationResponse;
-      if(!r.getPublicKey||!r.getAuthenticatorData||!r.getPublicKey())throw Error('This browser cannot register a passkey here');
-      await post('/passkeys',{label,id:enc(c.rawId),clientDataJSON:enc(r.clientDataJSON),authenticatorData:enc(r.getAuthenticatorData()),publicKey:enc(r.getPublicKey()!),publicKeyAlgorithm:r.getPublicKeyAlgorithm()});say('Passkey added.');
+      await addPasskey(label);say('Passkey added.');
     }catch(e){say(e instanceof Error?e.message:'Could not add the passkey');}finally{setBusy(false);}
   };
-  return <form aria-label="Add a passkey" className="grid gap-3" onSubmit={event=>void submit(event)}><p>Add a passkey within ten minutes of signing in. Your device asks for its lock.</p><Fields disabled={!enabled||busy} className="flex flex-wrap gap-2"><Field label="Passkey name"><Input name="label" maxLength={60} required /></Field><Button disabled={!enabled||busy} type="submit">{busy?'Waiting for device…':'Add a passkey'}</Button></Fields>{message&&<p role="status">{message}</p>}</form>;
+  return <form aria-label="Add a passkey" className="grid gap-3" onSubmit={event=>void submit(event)}><p>{PASSKEY_WORDS}</p><Fields disabled={!enabled||busy} className="flex flex-wrap gap-2"><Field label="Passkey name"><Input name="label" maxLength={60} required /></Field><Button disabled={!enabled||busy} type="submit">{busy?'Waiting for device…':'Add a passkey'}</Button></Fields>{message&&<p role="status">{message}</p>}</form>;
 }
 
 export default function AccountApp({go=()=>{},active=true}:{path?:string;go?:(path:string)=>void;active?:boolean}={}){

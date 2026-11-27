@@ -22,6 +22,10 @@ export const triggerHistoryQuery = `query TriggerHistory($id: String!) {
     seq trigger at event note
   }
 }`;
+export const programDetailsQuery = 'query ProgramDetails($id:String!){tempoProgram(id:$id)}';
+export const journalDetailsQuery = 'query JournalDetails($id:String!){tempoJournal(id:$id)}';
+export type ProgramDetails = { tempoProgram: { program: { name: string }; programState: unknown; lastResult: string | null } | null };
+export type JournalDetails = { tempoJournal: { lessons: string; state: string; stateChangedAt: string | null } | null };
 export interface TempoData {
   tempoTimezone?: string | null;
   triggers: Trigger[];

@@ -177,6 +177,7 @@ it('lets no second module write a household table unless it is listed here and i
     model_accounts: { owner: 'src/shared-model-account-admin.ts', others: ['src/runtime/account-usage.ts', 'src/runtime/account-windows.ts'] },
     notification_devices: { owner: signin, others: [] },
     notification_queue: { owner: signin, others: [] },
+    notification_replies: { owner: signin, others: [] },
     passkeys: { owner: signin, others: [] },
     projects: { owner: 'src/shared-projects.ts', others: ['src/apps/household.ts'] },
     sessions: { owner: signin, others: ['src/shared-credentials.ts'] },

@@ -127,7 +127,8 @@ area("signin", "Signing in",
     ("session", "id", "The session that turned notifications on.", "sessions"),
     ("keys", "text", "The two keys needed to send to this device.", ""),
     ("device", "text", "A description of it.", ""),
-    ("created_at, seen_at", "time", "When it was turned on and last confirmed.", "")]),
+    ("created_at, seen_at", "time", "When it was turned on and last confirmed.", ""),
+    ("replies", "yes/no", "Whether this device is also told when an agent replies in one of its member's conversations.", "")]),
  ])
 
 # ───────────────────────── Tasks
@@ -868,6 +869,7 @@ PLUMBING = [
  ("migrations", "The list of changes already made to the database's shape, so each is applied once."),
  ("operation_results", "The result of each recent write, kept 30 days, so a retry after a dropped connection returns the same answer and nothing happens twice."),
  ("notification_queue", "Notifications waiting to be sent to each device, and whether each arrived."),
+ ("notification_replies", "The newest agent reply each device is to be told of, one for each device and conversation, and whether it was sent. No words."),
  ("bridge_raw_events", "Events exactly as Discord and Slack sent them, kept until they are turned into incoming messages: up to a day for one that cannot be read yet, and an hour from arrival once it has been. The one place loom stores something it does not look inside."),
  ("bridge_resume", "Where each Discord connection left off, so it can pick up after a restart, and the credential it was made under."),
  ("bridge_send_parts", "The id the app gave each posted part of a reply, in order. A long reply goes out in parts; these say how far it got and which outside messages are the bot's own."),

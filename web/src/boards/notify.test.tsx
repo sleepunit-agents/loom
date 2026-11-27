@@ -118,7 +118,7 @@ describe('the control on the page', () => {
   });
   it('reads Account\'s own notifications selection and nothing else', async () => {
     browser(); await open(account());
-    expect(notifyQuery).toBe('{ account { notifications { publicKey devices { ref } } } }');
+    expect(notifyQuery).toBe('{ account { notifications { publicKey devices { ref replies } } } }');
     expect(f.asked).toEqual(['Account']);
   });
   it('closes on Escape and on a second press', async () => {

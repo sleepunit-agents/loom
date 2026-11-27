@@ -5,10 +5,8 @@ import { AppFrame, Button } from '../../kit';
 import { Switch, SwitchRow } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useMemberPreferences } from '../../shell/member-preferences';
+import { FOLLOW, GROUNDS, SAVE_UNCONFIRMED, SWITCHES, type SwitchKey } from './choices';
 import './appearance.css';
-
-const FOLLOW = [{ value: 'follow', label: 'Follow this device' }, { value: 'on', label: 'On' }, { value: 'off', label: 'Off' }] as const;
-const GROUNDS = [{ value: 'depth', label: 'Depth' }, { value: 'contours', label: 'Contours' }, { value: 'wash', label: 'Wash' }] as const;
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return <section className="next-appearance-section" aria-label={title}><h2>{title}</h2>{children}</section>;
@@ -38,11 +36,11 @@ export default function AppearanceApp({ go = () => {} }: { path?: string; go?: (
       await memberOperation('household.setPreferences',patch);
       if(mounted.current){retry.current=undefined;setState({pending:false,saved:true});}
     } catch {
-      if(mounted.current)setState({pending:false,message:'Could not confirm the save. Your live choices are still shown.'});
+      if(mounted.current)setState({pending:false,message:SAVE_UNCONFIRMED});
     } finally {locked.current=false;}
   }
-  const toggle = (key: 'sound' | 'pixel' | 'haptics' | 'oneWindow' | 'zoom', label: string, hint: string, fallback: boolean) =>
-    <SwitchRow><b>{label}</b><small>{hint}</small><Switch aria-label={label} checked={prefs?.[key] ?? fallback} disabled={disabled} onCheckedChange={on => {void save({ [key]: on });}} /></SwitchRow>;
+  const toggle = (key: SwitchKey) => { const { label, hint, fallback } = SWITCHES[key];
+    return <SwitchRow><b>{label}</b><small>{hint}</small><Switch aria-label={label} checked={prefs?.[key] ?? fallback} disabled={disabled} onCheckedChange={on => {void save({ [key]: on });}} /></SwitchRow>; };
   const status = snapshot.status === 'denied' ? 'Sign in again to change appearance.'
     : snapshot.status === 'offline' ? 'Offline. Reconnect before changing appearance.'
     : snapshot.status === 'loading' ? 'Loading appearance…'
@@ -55,19 +53,19 @@ export default function AppearanceApp({ go = () => {} }: { path?: string; go?: (
       <Section title="How it looks">
         <Choice label="Look" value={lookOf(prefs?.look, prefs?.mode)} options={LOOKS.map(look => ({ value: look.look, label: look.name }))} disabled={disabled} pick={look => {void save({ look: look as Prefs['look'] });}} />
         <Choice label="Desk background" value={prefs?.ground ?? 'depth'} options={GROUNDS} disabled={disabled} pick={ground => {void save({ ground: ground as Prefs['ground'] });}} />
-        {toggle('pixel', 'Pixel faces', 'Agents with a pixel portrait wear it.', true)}
+        {toggle('pixel')}
       </Section>
       <Section title="Sound and touch">
-        {toggle('sound', 'Sound', 'Short sounds as you use loom.', false)}
-        {toggle('haptics', 'Haptics', 'A small tap you can feel, on a phone.', true)}
+        {toggle('sound')}
+        {toggle('haptics')}
       </Section>
       <Section title="Motion and contrast">
         <Choice label="Reduce motion" value={prefs?.motion ?? 'follow'} options={FOLLOW} disabled={disabled} pick={motion => {void save({ motion: motion as Prefs['motion'] });}} />
         <Choice label="Higher contrast" value={prefs?.contrast ?? 'follow'} options={FOLLOW} disabled={disabled} pick={contrast => {void save({ contrast: contrast as Prefs['contrast'] });}} />
       </Section>
       <Section title="Windows">
-        {toggle('oneWindow', 'One window at a time', 'Show one app at a time. The others stay in the dock.', false)}
-        {toggle('zoom', 'Allow zoom', 'Pinch or double-tap to zoom, on a phone.', false)}
+        {toggle('oneWindow')}
+        {toggle('zoom')}
       </Section>
     </div>
   </AppFrame>;

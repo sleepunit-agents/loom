@@ -61,7 +61,7 @@ it('shows why a closed ticket was closed', async () => {
 it('edits a ticket through tasks.command as the desktop form does, and tells the board only that it was edited', async () => {
   b.answer(data());
   await b.draw('ticket', { ticket: 't-7' }, 'primary');
-  expect(b.labels()).toEqual(['Edit…', 'Links…', 'Claim', 'Close…']);
+  expect(b.labels()).toEqual(['Edit…', 'Links…', 'Ask a person…', 'Promote to epic…', 'Claim', 'Close…']);
   await b.press('Edit…');
   expect(Object.fromEntries(b.fields().map((f) => [f.props['aria-label'], f.props.value]))).toEqual(
     { Title: 'Mend the gate', Goal: 'A gate that shuts.', Why: 'It swings.', 'Done when': 'It latches.', Description: 'The top hinge is loose.' });

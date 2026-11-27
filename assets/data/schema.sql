@@ -220,8 +220,10 @@ CREATE TABLE `notification_devices` (
 	`device` text NOT NULL,
 	`created_at` text NOT NULL,
 	`seen_at` text NOT NULL,
+	`replies` integer DEFAULT false NOT NULL,
 	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`session`) REFERENCES `sessions`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "notification_devices_replies_boolean" CHECK("notification_devices"."replies" in (0, 1)),
 	CONSTRAINT "notification_devices_created_at_utc" CHECK("notification_devices"."created_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "notification_devices"."created_at") = "notification_devices"."created_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "notification_devices"."created_at") = "notification_devices"."created_at", 0)),
 	CONSTRAINT "notification_devices_seen_at_utc" CHECK("notification_devices"."seen_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "notification_devices"."seen_at") = "notification_devices"."seen_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "notification_devices"."seen_at") = "notification_devices"."seen_at", 0))
 );
@@ -1973,6 +1975,20 @@ CREATE TABLE `notification_queue` (
 	FOREIGN KEY (`item`) REFERENCES `inbox`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "notificationQueue_queuedAt_utc" CHECK("notification_queue"."queued_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "notification_queue"."queued_at") = "notification_queue"."queued_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "notification_queue"."queued_at") = "notification_queue"."queued_at", 0)),
 	CONSTRAINT "notificationQueue_sentAt_utc" CHECK("notification_queue"."sent_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "notification_queue"."sent_at") = "notification_queue"."sent_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "notification_queue"."sent_at") = "notification_queue"."sent_at", 0))
+);
+
+CREATE TABLE `notification_replies` (
+	`device` text NOT NULL,
+	`thread` text NOT NULL,
+	`seq` integer NOT NULL,
+	`queued_at` text NOT NULL,
+	`sent_at` text,
+	`attempts` integer DEFAULT 0 NOT NULL,
+	PRIMARY KEY(`device`, `thread`),
+	FOREIGN KEY (`device`) REFERENCES `notification_devices`(`endpoint`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`thread`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "notificationReplies_queuedAt_utc" CHECK("notification_replies"."queued_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "notification_replies"."queued_at") = "notification_replies"."queued_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "notification_replies"."queued_at") = "notification_replies"."queued_at", 0)),
+	CONSTRAINT "notificationReplies_sentAt_utc" CHECK("notification_replies"."sent_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "notification_replies"."sent_at") = "notification_replies"."sent_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "notification_replies"."sent_at") = "notification_replies"."sent_at", 0))
 );
 
 CREATE TABLE `bridge_raw_events` (

@@ -53,10 +53,10 @@ export function registerSharedAccount(operations: Operations, db: DataDatabase, 
   operations.register({name:'account.revokeSession',write:true,recheckPolicy:true,input:reference,output:z.object({revoked:z.literal(true)}),may:member,
     run(ctx,input){const result=service.revokeSession(ctx.viewer.id,input.ref);ctx.changed('core.access',ctx.viewer.id);return result;}});
 }
-export function sharedAccountFields(db: DataDatabase, clock: Clock, notifications?: (member: string) => {publicKey:string|null;devices:{ref:string;device:string;createdAt:string;seenAt:string}[]}): GraphQLFieldConfigMap<unknown,{viewer:Viewer}> {
+export function sharedAccountFields(db: DataDatabase, clock: Clock, notifications?: (member: string) => {publicKey:string|null;devices:{ref:string;device:string;createdAt:string;seenAt:string;replies:boolean}[]}): GraphQLFieldConfigMap<unknown,{viewer:Viewer}> {
   const passkey=new GraphQLObjectType({name:'PersonalPasskey',fields:{ref:{type:GraphQLString},label:{type:GraphQLString},createdAt:{type:GraphQLString},lastUsedAt:{type:GraphQLString},ended:{type:GraphQLBoolean}}});
   const session=new GraphQLObjectType({name:'PersonalBrowser',fields:{ref:{type:GraphQLString},device:{type:GraphQLString},issuedAt:{type:GraphQLString},seenAt:{type:GraphQLString},ended:{type:GraphQLBoolean}}});
-  const device=new GraphQLObjectType({name:'PersonalNotificationDevice',fields:{ref:{type:GraphQLString},device:{type:GraphQLString},createdAt:{type:GraphQLString},seenAt:{type:GraphQLString}}});
+  const device=new GraphQLObjectType({name:'PersonalNotificationDevice',fields:{ref:{type:GraphQLString},device:{type:GraphQLString},createdAt:{type:GraphQLString},seenAt:{type:GraphQLString},replies:{type:GraphQLBoolean}}});
   const push=new GraphQLObjectType({name:'PersonalNotifications',fields:{publicKey:{type:GraphQLString},devices:{type:new GraphQLList(device)}}});
   const account=new GraphQLObjectType({name:'PersonalAccount',fields:{member:{type:GraphQLString},notifications:{type:push},passkeys:{type:new GraphQLList(passkey)},sessions:{type:new GraphQLList(session)}}});
   const service=sharedAccount(db,clock);

@@ -13,9 +13,13 @@ import { conversationBodyScope, requireBodyScope, bodyOperationDefaults, type Bo
 import type { CommsMessages } from './messages.js';
 import { MESSAGE_WORDS_MAX } from './words.js';
 import { ConversationMail } from './mail.js';
+/** Told, inside the reply's own write, that an agent's reply was stored in a loom thread that is one member's own:
+ * a reply and not a progress message, a card, or a handed-off session's result brought to its origin thread (the
+ * agent is woken by that one and answers it itself). The composition notifies that member's devices. */
+export type Replied=(reply:{member:string;thread:string;seq:number})=>void;
 const privateWork={working:'Working privately',waiting:'Waiting privately',idle:'',offline:''}as const;
 /** `quiet` names a body whose status report writes nothing to the agent's status row (one on anybody else's word). */
-export function registerConversationBodyOutput(operations:Operations,service:CommsMessages,proof:BodyProof,privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,quiet?:(work:NonNullable<ReturnType<ReturnType<typeof conversationBodyScope>>>)=>boolean,maySendProgress?:(viewer:Viewer)=>boolean):void {
+export function registerConversationBodyOutput(operations:Operations,service:CommsMessages,proof:BodyProof,privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,quiet?:(work:NonNullable<ReturnType<ReturnType<typeof conversationBodyScope>>>)=>boolean,maySendProgress?:(viewer:Viewer)=>boolean,replied?:Replied):void {
  const db=service.db,current=conversationBodyScope(db,proof,privateAssignment);
  const requireCurrent=requireBodyScope(current);
  const threadFor=(viewer:Viewer)=>{
@@ -102,6 +106,7 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
      model:input.model,outcome:input.outcome,latencyMs:input.latencyMs});
    }
    if(input.kind==='reply')for(const id of new ConversationMail(service).settle(found.cv.id,found.job.id))ctx.changed('inbox',id);
+   if(input.kind==='reply'&&found.cv.venue==='loom'&&found.cv.member)replied?.({member:found.cv.member,thread:found.thread.id,seq:message.seq});
    ctx.changed('messages',found.thread.id);ctx.changed('turns',found.cv.id);ctx.changed('conversations',found.cv.id);return {saved:true as const,seq:message.seq};},
  }));
 

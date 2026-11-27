@@ -4,7 +4,7 @@ import {createHash,randomBytes} from 'node:crypto';
 import {eq,inArray} from 'drizzle-orm';
 import type {DataDatabase} from '../data/database.js';
 import {credentialFingerprint,isAgentBrowser,sessionEnds} from '../data/authentication.js';
-import {notificationQueue,notificationDevices,sessions,signinLinks,tokens} from '../data/schema.js';
+import {notificationQueue,notificationReplies,notificationDevices,sessions,signinLinks,tokens} from '../data/schema.js';
 import {browserDevice} from './browser-device.js';
 type Session = typeof sessions.$inferSelect;
 /** Sign a browser in on a member's current token, inside the caller's write transaction. Returns the
@@ -38,6 +38,7 @@ export function endBrowser(db:DataDatabase,id:string){
  for(const made of db.select({id:sessions.id}).from(sessions).where(eq(sessions.madeBy,id)).all())endBrowser(db,made.id);
  db.delete(signinLinks).where(eq(signinLinks.session,id)).run();
  db.delete(notificationQueue).where(inArray(notificationQueue.device,db.select({endpoint:notificationDevices.endpoint}).from(notificationDevices).where(eq(notificationDevices.session,id)))).run();
+ db.delete(notificationReplies).where(inArray(notificationReplies.device,db.select({endpoint:notificationDevices.endpoint}).from(notificationDevices).where(eq(notificationDevices.session,id)))).run();
  db.delete(notificationDevices).where(eq(notificationDevices.session,id)).run();
  db.delete(sessions).where(eq(sessions.id,id)).run();
 }

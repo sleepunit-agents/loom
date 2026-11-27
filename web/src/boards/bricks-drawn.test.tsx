@@ -237,7 +237,7 @@ it('shows an answered question with its answer and no controls, and offers none 
   const closed: [string, object][] = [
     ['the member may not answer it', { canAnswer: false }],
     ['it is an approval, answered on its own card', { source: 'approval', waitsOnKind: 'approval', waitsOnId: 'a-1' }],
-    ['it is a task question', { source: 'task', waitsOnKind: 'task', waitsOnId: 't-12' }],
+    ['it is a secret request, answered in Secrets', { source: 'secret-request', sourceId: 'sr-1' }],
     ['it takes no answer', { answers: null }],
     ['its words are gone', { body: null }],
     ['its private words are past their keep time', { thread: 'th:1', bodyKeepUntil: '2020-01-01T00:00:00Z' }],

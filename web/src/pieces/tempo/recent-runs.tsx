@@ -1,22 +1,6 @@
 import { talkPath } from '../comms/shared-query';
-
-export interface TriggerRun {
-  event: number;
-  kind: 'mail' | 'program';
-  at: string;
-  job: {state:string; startedAt:string|null; endedAt:string|null} | null;
-  usage: {tokensOut:number|null; largestContext:number|null; wallMs:number|null} | null;
-  conversation: {id:string; venue:string; place:string} | null;
-}
-
-function runDuration(run: TriggerRun) {
-  const ms = run.usage?.wallMs ?? (run.job?.startedAt && run.job.endedAt
-    ? Date.parse(run.job.endedAt) - Date.parse(run.job.startedAt) : null);
-  if (ms == null || !Number.isFinite(ms) || ms < 0) return;
-  if (ms < 1000) return ms+' ms';
-  const seconds = Math.floor(ms / 1000);
-  return seconds < 60 ? seconds+' s' : Math.floor(seconds / 60)+' min '+seconds % 60+' s';
-}
+import { runDuration, type TriggerRun } from './runs';
+export type { TriggerRun } from './runs';
 
 export function RecentRuns({runs,format,go}:{runs:TriggerRun[];format:Intl.DateTimeFormat;go?:(path:string)=>void}) {
   if (!runs.length) return null;

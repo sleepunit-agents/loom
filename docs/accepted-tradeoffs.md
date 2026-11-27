@@ -355,7 +355,10 @@ Entries are grouped by the part of the program they belong to.
   as the database, so sealing would protect only a copy of the database taken without the home, and against
   that the keys are worth little: they encrypt a message to that one browser, and sending one also needs
   the push-signing key, which is not in the database. A push carries no words (a fixed title and a link to
-  the Inbox). Sealing would also make enrolling a browser wait on the key, where it is one synchronous
+  the Inbox; for an agent's reply, on a device that chose replies, a fixed title, a tag that is a fingerprint
+  of the thread's id, and the thread's two addresses, which hold its id). So the push service learns that
+  something happened in loom for that browser and when, and a person holding the device can learn which
+  thread by pressing; neither learns a word, a thread's title or an agent's name. Sealing would also make enrolling a browser wait on the key, where it is one synchronous
   write now.
 - What would change it: pushes carrying words, or the root keys moving out of the home (the entry above).
   Then these are sealed under the key that moved.

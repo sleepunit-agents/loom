@@ -1,6 +1,7 @@
 import {ToolbarFrame} from '../kit/toolbar';
 import type { ReactNode } from 'react';
 import {fullTime} from '../kit/time';
+import { USE_WORDS as useLabels, WRITE_ONLY_WORDS } from './settings/words';
 import { Button, Fact, Facts, Meta, Reader, Section, Title, Empty, Error, List, Loading, Row, Split } from '../kit';
 
 export interface SecretRow { name: string; description: string; changedAt: string; changedBy: string }
@@ -31,7 +32,6 @@ export interface SecretsSnapshot {
 export type SecretsFolder = 'secrets' | 'requests' | 'grants' | 'pieces' | 'add';
 export interface SecretsSelection { folder: SecretsFolder; id: string }
 const labels = { secrets: 'Secrets', requests: 'Requests', grants: 'Grants', pieces: 'Piece settings' };
-const useLabels = { started: 'Delivery unconfirmed', released: 'Delivered', failed: 'Failed' };
 const time = (at:string,zone?:string) => <time dateTime={at}>{fullTime(at,zone)}</time>;
 const grantDetails = (grant: SecretGrantRow,zone?:string) => <Facts>
   <Fact label="Agent">{grant.agent}</Fact><Fact label="Scope">{grant.job || 'Agent-wide'}</Fact>
@@ -75,7 +75,7 @@ export function SecretsView({ snapshot, member, zone, folder, selected, select, 
       </Section>
       {uses.length>0 && <Section label="Recorded use">{uses.map(value => <p key={value.id}>{time(value.at,zone)} · {value.agent} · Job: {value.job} · {useLabels[value.state]}</p>)}</Section>}
       {changes.length>0 && <Section label="Changes">{changes.map(value => <p key={value.id}>{time(value.at,zone)} · {value.action} · {value.by}</p>)}</Section>}
-      <p>The value is write-only. It cannot be read back here.</p>{cards?.secret?.(secret.name)}
+      <p>{WRITE_ONLY_WORDS}</p>{cards?.secret?.(secret.name)}
     </Reader>;
   } else if (request) reader = <Reader className="p-5"><Title as="h1">{request.agent} asks for {request.secret}</Title><p>{request.why}</p>
     <Meta>{request.state} · {request.minutes} minutes</Meta>
@@ -88,7 +88,7 @@ export function SecretsView({ snapshot, member, zone, folder, selected, select, 
   </Reader>;
   else if (grant) reader = <Reader className="p-5"><Title as="h1">{grant.secret}</Title>{grantDetails(grant,zone)}{cards?.grant?.(grant.id)}</Reader>;
   else if (folder === 'pieces' && active && pieces.some(piece => piece.id === active)) reader = <Reader className="p-5"><Title as="h1">{pieces.find(piece => piece.id === active)!.label}</Title>{cards?.piece?.(active)}</Reader>;
-  else if (folder === 'add') reader = <Reader className="p-5"><Title as="h1">Add a secret</Title><p>The value is write-only. It cannot be read back here.</p>{cards?.add?.()}</Reader>;
+  else if (folder === 'add') reader = <Reader className="p-5"><Title as="h1">Add a secret</Title><p>{WRITE_ONLY_WORDS}</p>{cards?.add?.()}</Reader>;
   const rows = folder === 'requests' ? snapshot.requests.map(value => row(value.id, `${value.agent}: ${value.secret}`, value.why, value.state))
     : folder === 'grants' ? snapshot.grants.map(value => row(value.id, `${value.agent}: ${value.secret}`, value.job ? `Job: ${value.job}` : 'Agent-wide', `Expires ${fullTime(value.expiresAt,zone)}`))
     : folder === 'pieces' ? pieces.map(value => <Row key={value.id} title={value.label} meta={value.description} onClick={value.open} />)

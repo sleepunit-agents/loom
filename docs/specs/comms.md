@@ -818,6 +818,11 @@ Neon OS's own, not copied from any game.
   another thread doesn't hold it back. It uses the existing push path
   (`src/ui/push.ts`), to that member's subscriptions only, titled as "Push and privacy" says.
 - A tap opens the thread.
+- **As built in the shared program (2026-11-27).** The rules above are the earlier program's. A reply is pushed
+  only to a device that chose replies, 10 seconds after it was stored and only if the thread's read mark is still
+  before it; there is no "in front" call and no two minutes. The push says no words, no thread title and no agent
+  name: a fixed title and the thread's two addresses. The whole rule is in docs/specs/boards.md, "Coming back, and
+  installing".
 
 ## Work in this thread
 

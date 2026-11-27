@@ -2,7 +2,7 @@
  * ticket command (data/task-command.ts, the one the Tasks forms send through), its choices of project and owner
  * (pieces/tasks/query.ts), its words for a priority, and the plain controls a brick's form is made of. What a
  * member types goes to tasks.command and nowhere else; the board is told the action's name and, at most, a choice. */
-import { useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { liveAgents } from '../data/live-agents';
 import { taskCommandSender, type TaskCommandResult } from '../data/task-command';
@@ -55,17 +55,6 @@ export function Words({ label, value, onChange, long, disabled }: { label: strin
     </label>
   );
 }
-/** Another ticket, named by its id: typed, with the tickets the member may read offered as they type. */
-export function TicketField({ label, value, onChange, tickets, disabled }: { label: string; value: string; onChange(value: string): void; tickets: readonly { id: string; title: string }[]; disabled?: boolean }) {
-  const list = useId();
-  return (
-    <>
-      <input className="board-input" aria-label={label} placeholder="t-…" list={list} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value.trim())} />
-      <datalist id={list}>{tickets.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}</datalist>
-    </>
-  );
-}
-
 type Choices = { projects: { id: string; name: string; projectMembersByProject: { member: string }[] }[]; agents: { id: string; removedAt?: string | null }[]; members: { id: string }[] };
 export type Owner = { kind: 'member' | 'agent'; id: string; label: string };
 /** The projects a ticket may be put in and the people and agents it may be given to, as the desktop's Tasks screen

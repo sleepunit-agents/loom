@@ -4,7 +4,8 @@
  * count, and the outcomes of the member's own actions), and its rows are chosen, ordered and worded by the Inbox's
  * own rules (pieces/inbox-view/model.ts). An item is answered in the `question` brick, which each row's chip
  * places; nothing here answers one. What the list itself does is what the desktop's list does: an unread item is
- * marked read (`inbox.read`) and an outcome is dismissed (`inbox.dismissResult`). */
+ * marked read (`inbox.read`) and an outcome is dismissed (`inbox.dismissResult`). The big form has the desktop's
+ * search: what is typed goes to the Inbox's own read as its `search`, as the desktop sends it. */
 import { useMemo, useRef, useState } from 'react';
 import { memberOperation } from '../data/operation';
 import { inboxPageSize, inboxSelection, retainedInboxItem, useInboxItemWords, useInboxSelection } from '../pieces/attention/inbox-query';
@@ -19,9 +20,11 @@ const few = 4;
 export function Inbox({ params, form, act, raise }: { params: Params; form: Form; act: Act; raise: Raise }) {
   const folder = folders.some(([id]) => id === params.folder) ? words(params.folder) : folderWords[0][0];
   const [offset, setOffset] = useState(0), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  // What the member typed to search for: this page's state, sent to the Inbox's read and never to the board.
+  const [typed, setTyped] = useState('');
   const lock = useRef(false);
-  const page = form === 'primary' ? offset : 0;
-  const reading = useInboxSelection(useMemo(() => inboxSelection(folder, '', page), [folder, page]));
+  const page = form === 'primary' ? offset : 0, search = form === 'primary' ? typed : '';
+  const reading = useInboxSelection(useMemo(() => inboxSelection(folder, search, page), [folder, search, page]));
   const data = reading.status === 'live' ? reading.data : undefined;
   const stored = data?.items.slice(0, inboxPageSize) ?? [];
   const now = useDeadline(stored.flatMap((row) => [row.bodyKeepUntil, row.answerKeepUntil]));
@@ -73,6 +76,12 @@ export function Inbox({ params, form, act, raise }: { params: Params; form: Form
     <>
       <p className="board-lead">{label}: {count(folder)}</p>
       <p className="board-line text-muted-foreground">{folders.map(([id, name]) => <span key={id}>{name} {count(id)}</span>)}</p>
+      {folder !== errorsFolder[0] && (
+        <div className="board-line">
+          <input type="search" className="board-input" aria-label="Search asks" placeholder="Search asks" value={typed} onChange={(e) => { setTyped(e.target.value); setOffset(0); }} />
+          {reading.settling && <span role="status" className="text-muted-foreground">Searching…</span>}
+        </div>
+      )}
       {entries.length ? (
         <ol className="board-notes">
           {entries.map(({ id, row, notice }) => row ? (
@@ -97,7 +106,7 @@ export function Inbox({ params, form, act, raise }: { params: Params; form: Form
             </li>
           ))}
         </ol>
-      ) : <p className="text-muted-foreground">No items here.</p>}
+      ) : <p className="text-muted-foreground">{search.trim() ? `Nothing matches “${search.trim()}”.` : 'No items here.'}</p>}
       {folder !== errorsFolder[0] && (offset > 0 || hasNext) && (
         <div className="board-line" role="group" aria-label="Inbox pages">
           <button type="button" className="board-action" disabled={offset === 0} onClick={() => setOffset((value) => Math.max(0, value - inboxPageSize))}>Newer</button>

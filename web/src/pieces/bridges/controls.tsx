@@ -4,16 +4,11 @@ import { Button,Input } from '../../kit';
 import { newId } from '../../data/id';
 import type { BridgeConnectionRow,BridgeChannelRow,BridgePersonRow,BridgeSendRow,BridgesSnapshot } from '../bridges-view';
 import {useSettingRequest,type Navigation} from '../attention/setting-request';
-export async function bridgeCommand(input:object,request:typeof fetch=fetch){
- try{
-  const response=await request('/api/bridges/command',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({id:newId(),input})});
-  if(!response.ok)return false;
-  const result:unknown=await response.json();return !!result&&typeof result==='object'&&'ok' in result&&result.ok===true&&'value' in result&&!!result.value&&typeof result.value==='object'&&'saved' in result.value&&result.value.saved===true;
- }catch{return false;}
-}
+import {bridgeCommand,commandWords} from './command';
+export {bridgeCommand} from './command';
 function useCommand(){
  const pending=useRef(false),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
- return {busy,message,async run(input:object){if(pending.current)return;pending.current=true;setBusy(true);setMessage('');try{setMessage(await bridgeCommand(input)?'Saved.':'Change not confirmed. Check the current item before starting a new change.');}finally{pending.current=false;setBusy(false);}}};
+ return {busy,message,async run(input:object){if(pending.current)return;pending.current=true;setBusy(true);setMessage('');try{setMessage(await bridgeCommand(input)?commandWords.saved:commandWords.notConfirmed);}finally{pending.current=false;setBusy(false);}}};
 }
 const field=(data:FormData,name:string)=>String(data.get(name)??'').trim();
 const lines=(data:FormData,name:string)=>field(data,name).split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
