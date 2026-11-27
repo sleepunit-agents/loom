@@ -145,6 +145,19 @@ it("logs a brick's action only for an action the brick has (check 12)", async ()
   expect((await f.member('boards.act', { board, placement: ticket, action: 'close', detail: { reason: 'secret' } })).ok).toBe(false);
   expect((await f.agent('boards.act', { board, placement: ticket, action: 'reopen', detail: {} })).ok).toBe(false);
   expect(f.store.takeBrief('th:mine')).toContain(`The member used close on ticket(ticket=t-2441) on board ${board}.`);
+  // A question's answer is one of inbox.answer's fixed answers. Words the member typed are refused here.
+  const asked = (await f.agent('boards.change', { board, changes: [place('question', { item: 'i-7' }), place('approval', { approval: 'a-7' }), place('pull', { change: 'github:acme/app#7' })] })).value.placements as { placement: string }[];
+  const [question, approval, pull] = asked.slice(3).map((p) => p.placement);
+  expect((await f.member('boards.act', { board, placement: question, action: 'answer', detail: { answer: 'yes' } })).ok).toBe(true);
+  expect((await f.member('boards.act', { board, placement: question, action: 'answer', detail: { answer: 'words' } })).ok).toBe(true);
+  for (const detail of [{}, { choice: 'yes' }, { answer: 'maybe' }, { answer: 'I typed this' }, { answer: 'words', words: 'I typed this' }])
+    expect((await f.member('boards.act', { board, placement: question, action: 'answer', detail })).ok, JSON.stringify(detail)).toBe(false);
+  // Nothing on a board answers an approval or a merge, so there is no such action to log.
+  for (const [placement, action] of [[approval, 'approve'], [approval, 'refuse'], [approval, 'answer'], [pull, 'answer']])
+    expect((await f.member('boards.act', { board, placement, action, detail: {} })).ok, action).toBe(false);
+  const brief = f.store.takeBrief('th:mine');
+  expect(brief).toContain(`The member used answer on question(item=i-7) on board ${board}: answer=yes.`);
+  expect(brief).not.toContain('I typed this');
   await f.member('boards.close', { board });
   expect((await f.member('boards.act', { board, placement: ticket, action: 'reopen', detail: {} })).ok).toBe(false);
 });
