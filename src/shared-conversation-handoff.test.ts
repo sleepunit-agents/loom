@@ -515,6 +515,11 @@ it.each(['success','failure','archive','transient','occupied','work-role','mixed
   const usage=db.select().from(s.jobUsage).where(eq(s.jobUsage.job,assignment.id)).get();
   expect(usage).toMatchObject({tokensIn:1200,tokensOut:85,cacheRead:400,toolCalls:5,
    tools:{'collab_tool_call.spawn_agent.completed':3,'collab_tool_call.spawn_agent.failed':1,'collab_tool_call.wait':1}});
+  // The real harness's steps are that session's trace, beside the child conversation and in order; none entered the thread.
+  const steps=db.select().from(s.jobTrace).where(eq(s.jobTrace.conversation,child)).orderBy(s.jobTrace.seq).all();
+  expect(steps.map(step=>[step.job,step.tool,step.cardState])).toEqual([
+   ...['done','done','done','failed','done'].flatMap((state,index)=>[[assignment.id,'Subagent · '+(index===4?'wait':'spawn_agent'),'running'],[assignment.id,'Subagent · '+(index===4?'wait':'spawn_agent'),state]])]);
+  expect(db.select().from(s.messages).where(eq(s.messages.kind,'card')).all()).toEqual([]);
  }
  await sdk.reply(reply);
  const replies=db.select().from(s.messages).where(and(eq(s.messages.thread,f.thread.id),eq(s.messages.kind,'reply'))).all();

@@ -351,12 +351,16 @@ export async function bodyProgram(input: {
     if(tools?.houseSend)shellEnv.LOOM_BODY_HOUSE_SEND=tools.houseSend;
     delete shellEnv.LOOM_BODY_HOUSE_NOTE;
     if(tools?.houseNote)shellEnv.LOOM_BODY_HOUSE_NOTE=tools.houseNote;
-    // Only the owner's dedicated pairing room opts in to native work cards.
+    // Native work cards are published by two kinds of job, both on the owners' word: one in the owner's dedicated
+    // pairing room, whose cards enter its thread; and one handed off from an owner's thread (job.review), whose
+    // cards loom keeps beside the handoff conversation as that session's trace (core/conversations/job-trace.ts).
+    // Both pass the one disclosure check below.
+    const traced = !guest && (coordinating && PAIR_THREAD.test(job.thread||'') || job.venue==='handoff' && job.review===true && policy?.word==='owners');
     let posted = Promise.resolve();
     const privateValues = [parsed.bootstrap.token, harnessTools(tools?.config)?.authorization.slice(7), tools?.houseSend, tools?.houseNote,...Object.entries(shellEnv)
       .filter(([key])=>/token|secret|password|api.?key|authorization/i.test(key))
       .map(([,value])=>value)].filter((v):v is string=>typeof v==='string'&&v.length>=8);
-    const pairOutput = coordinating && !guest && PAIR_THREAD.test(job.thread||'')
+    const pairOutput = traced
       ? pairEvents(step=>{
           const sensitive=(value:string)=>!(tools??secrets).allowsReply(value)||privateValues.some(v=>value.includes(v))||
             /(?:Bearer\s+[A-Za-z0-9_.+/=-]{12,}|-----BEGIN [^\n]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{16,})/i.test(value);

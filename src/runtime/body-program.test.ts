@@ -219,6 +219,33 @@ it.each(['wake','handoff'] as const)('finishes %s mail without a Comms thread, r
  expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:''});
  expect(bytes.every(byte=>byte===0)).toBe(true);expect(f.error).not.toHaveBeenCalled();
 });
+it.each(['handed off','not delegated','on another word','ordinary thread'] as const)('reports native work steps as cards for a job handed off from an owner\'s thread, redacted (%s)',async mode=>{
+ const f=fixture(),value=JSON.parse(f.input.toString());
+ if(mode!=='ordinary thread')Object.assign(value.job,{venue:'handoff',thread:null,...(mode==='not delegated'?{}:{review:true})});
+ if(mode==='on another word')value.job.run.policy.word='others';
+ const line=(row:object)=>JSON.stringify(row)+'\n';
+ const use=(id:string,command:string)=>line({type:'assistant',message:{content:[{type:'tool_use',id,name:'Bash',input:{command}}]}});
+ const result=(id:string,content:string)=>line({type:'user',message:{content:[{type:'tool_result',tool_use_id:id,content}]}});
+ const harness=vi.spyOn(adapters,'bodyHarness').mockImplementation((_name,input)=>async()=>{
+  input.pairOutput?.(Buffer.from(use('call-1','ls house')+result('call-1','notes.md')+use('call-2','printenv')+result('call-2','TOKEN='+raw)));
+  return {text:'Findings',model:'observed',actions:[]};
+ });
+ try{
+  expect(await bodyProgram({...f.options,native:undefined,stdin:async()=>Buffer.from(JSON.stringify(value))})).toBe(0);
+  expect(harness.mock.calls[0][1].pairOutput===undefined).toBe(mode!=='handed off');
+  const cards=f.calls.filter(row=>row.path==='message').map(row=>row.body.input as Record<string,string>).filter(input=>input.kind==='card');
+  if(mode!=='handed off'){expect(cards).toEqual([]);return;}
+  // In the order the harness reported them; the output that says the body's own credential is withheld.
+  expect(cards.map(card=>[card.tool,card.cardState,card.words])).toEqual([
+   ['Terminal','running','ls house'],['Terminal','done','notes.md'],['Terminal','running','printenv'],['Terminal','done','Output withheld.']]);
+  for(const card of cards)expect(card.clientId).toMatch(/^pair\.[a-f0-9]{24}\.-\.[\w-]+$/);
+  expect(cards[0].clientId.slice(0,30)).toBe(cards[1].clientId.slice(0,30));
+  expect(JSON.stringify(f.calls)).not.toContain(raw);
+  // Its answer is still the one reply that returns to the originating thread, after the steps.
+  const messages=f.calls.filter(row=>row.path==='message').map(row=>row.body.input as Record<string,string>);
+  expect(messages.at(-1)).toMatchObject({kind:'reply',clientId:'review-result',words:'Findings'});
+ }finally{harness.mockRestore();}
+});
 it('refuses an unknown venue before accepting any mail',async()=>{
  const f=fixture(),value=JSON.parse(f.input.toString());value.job.venue='unregistered';
  expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value))})).toBe(BODY_EXIT.assignment);
