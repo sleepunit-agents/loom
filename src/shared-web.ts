@@ -19,12 +19,14 @@ export function sharedWeb(webRoot:string){
   if(/^\/(api|graphql|auth|login|logout|live|mcp|events|collections)(\/|$)/.test(path))return c.notFound();
   const asset=path.startsWith('/app/'),publicAsset=/^\/(icons|fonts)\//.test(path);
   if(!asset&&!publicAsset&&(extname(path)||/^\/(assets|faces|pixel-icons)(\/|$)/.test(path)))return c.notFound();
-  const base=publicAsset?publicRoot:root,candidate=publicAsset?resolve(base,'.'+path):asset?resolve(root,'.'+path.slice(4)):resolve(root,'next.html');
+  // A board's address and a thread's hold one id and nothing else; both are the boards page (docs/specs/boards.md).
+  const board=/^\/app\/(boards|b\/[^/]+|t\/[^/]+)$/.test(path);
+  const base=publicAsset?publicRoot:root,candidate=publicAsset?resolve(base,'.'+path):board?resolve(root,'board.html'):asset?resolve(root,'.'+path.slice(4)):resolve(root,'next.html');
   if(!candidate.startsWith(base+sep)||!existsSync(candidate))return c.notFound();
   const file=realpathSync(candidate);
   if(!file.startsWith(base+sep)||!statSync(file).isFile())return c.notFound();
   return new Response(readFileSync(file),{headers:{
-   'content-type':getMimeType(file)??'application/octet-stream','cache-control':asset && extname(path)!=='.html'?'public, max-age=31536000, immutable':'no-store','x-content-type-options':'nosniff',
+   'content-type':getMimeType(file)??'application/octet-stream','cache-control':asset && !board && extname(path)!=='.html'?'public, max-age=31536000, immutable':'no-store','x-content-type-options':'nosniff',
    'content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'",
   }});
  });
