@@ -258,7 +258,7 @@ export async function bodyProgram(input: {
       try{
         const brief=await memoryClient.command('boards.brief',{},randomUUID());
         const text=brief.ok&&(brief.value as {text?:unknown}|null)?.text;
-        if(typeof text==='string'){const told=boardsMail(text);context.push(told);continued.push(told);}
+        if(typeof text==='string'){const told=boardsMail(text);context.unshift(told);continued.unshift(told);}
       }catch{/* A brief that cannot be read is no reason to refuse the work. */}
       if(signal.aborted)throw new Error();
     }
