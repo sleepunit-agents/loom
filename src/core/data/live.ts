@@ -1,5 +1,6 @@
 import { clearReadDeadline } from './read-lease.js';
 import { ExecutionDrain } from './execution.js';
+import type { LivePace } from './live-pace.js';
 import { execute, getOperationAST, parse, validate, type ExecutionArgs, type GraphQLSchema } from 'graphql/index.js';
 
 /** Paths address the selected GraphQL result, including aliases. Values are
@@ -46,8 +47,11 @@ export class DataLive {
   /** `settleMs`: how soon after one reading of an open selection began the next may begin. Off (0), every commit
    * reads every open selection again, so twenty commits a few milliseconds apart are twenty readings of each. On, a
    * commit that comes alone is still read at once, and commits that come faster than this are read together: once
-   * when the time is up, and so always once after the last of them. A selection's first answer never waits. */
-  constructor(private readonly measure?: MeasureRead, private readonly settleMs = 0) {}
+   * when the time is up, and so always once after the last of them. A selection's first answer never waits.
+   * `relaxedMs`: the same time for a selection opened `relaxed` (./live-pace.ts). It is never shorter than
+   * `settleMs`, whatever is given. */
+  constructor(private readonly measure?: MeasureRead, private readonly settleMs = 0, relaxedMs = settleMs) { this.relaxedMs = Math.max(settleMs, relaxedMs); }
+  private readonly relaxedMs: number;
   private listeners = new Set<() => void>();
   private stopped = false;
   private version = 0;
@@ -103,6 +107,13 @@ export class DataLive {
     valid(): boolean;
     /** Pure transport lifecycle check; authentication stays at read/release. */
     active?(): boolean;
+    /** How often it is read again: `relaxed` waits the longer time between readings. Anything else is eager. */
+    pace?: LivePace;
+    /** Given the way to ask for this selection now, once, as it opens; what it returns is called as the selection
+     * ends. Asked "now", the selection is read again without waiting out a relaxed time, though never sooner
+     * than the settle time after its last reading began, and it answers even when nothing changed: with a
+     * revision that has no patches, so whoever asked knows the reading was made. */
+    refresh?(now: () => void): () => void;
   }): AsyncIterableIterator<DataDelta> {
     if (this.stopped) throw new Error('Live data access ended');
     const document = parse(options.query);
@@ -124,12 +135,18 @@ export class DataLive {
     let cancel: (() => void) | undefined;
     // When the last reading began, and the way out of the wait for the next one's turn.
     let readAt = -Infinity, hurry: (() => void) | undefined;
+    const between = options.pace === 'relaxed' ? this.relaxedMs : this.settleMs;
+    // Asked for now, and not yet answered by a reading that began after the asking.
+    let asked = false;
     const signal = () => { dirty = true; if (this.stopped) { cancel?.(); hurry?.(); } wake?.(); wake = undefined; };
-    const finish = () => { ended = true; cancel?.(); hurry?.(); this.listeners.delete(signal); wake?.(); wake = undefined; };
+    const now = () => { if (ended) return; asked = true; dirty = true; hurry?.(); wake?.(); wake = undefined; };
+    let forget: (() => void) | undefined;
+    const finish = () => { ended = true; cancel?.(); hurry?.(); this.listeners.delete(signal); forget?.(); forget = undefined; wake?.(); wake = undefined; };
     // Register before the initial read: a commit cannot fall between the first
     // snapshot and subscription. Slow consumers retain one dirty bit, not an
     // unbounded queue of snapshots or patches against an unsent revision.
     this.listeners.add(signal);
+    forget = options.refresh?.(now);
     const next = async (): Promise<IteratorResult<DataDelta>> => {
       if (reading) throw new Error('Concurrent live reads are not supported');
       reading = true;
@@ -139,7 +156,10 @@ export class DataLive {
           if (!dirty) { await new Promise<void>(resolve => { wake = resolve; }); continue; }
           // The dirty bit stays set while this waits, so nothing committed meanwhile is missed: the reading that
           // follows the wait is of everything committed up to its own start. Ending or closing does not wait.
-          const wait = revision > 0 && this.settleMs > 0 ? readAt + this.settleMs - performance.now() : 0;
+          // A selection asked for now waits only the settle time, as an eager one does; it is asked again each time round,
+          // so one asked for while it waits out a relaxed time leaves that wait at once.
+          const pause = asked ? this.settleMs : between;
+          const wait = revision > 0 && pause > 0 ? readAt + pause - performance.now() : 0;
           if (wait > 0) {
             await new Promise<void>(resolve => {
               const timer = setTimeout(resolve, wait);
@@ -173,7 +193,9 @@ export class DataLive {
           if (dirty) continue;
           const patches = revision === 0 ? [{ path: [], value: result.data }] : dataDiff(previous, result.data);
           previous = result.data;
-          if (patches.length) return { done: false, value: { revision: ++revision, patches } };
+          // Asking sets the dirty bit, so this reading began after the last asking: it is the answer to it.
+          const confirm = asked; asked = false;
+          if (patches.length || confirm) return { done: false, value: { revision: ++revision, patches } };
         }
         return { done: true, value: undefined };
       } catch (error) { finish(); throw error; }

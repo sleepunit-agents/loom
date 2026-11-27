@@ -439,3 +439,26 @@ it('matches a reconnecting desk to the member authenticated on that socket befor
   const correct=await f.open(undefined,{expectedMember:'sam'});
   expect((await read(correct,()=>correct.send(JSON.stringify(selection)))).type).toBe('next');
 });
+
+it('asks a named selection for now over the same socket, answers with the names that were open, and keeps the socket', async () => {
+  const f = await setup(), ws = await f.open(), other = await f.open();
+  const named = (id: string, key: string) => ({ type: 'subscribe', id, payload: {
+    query: 'subscription($query: String!, $pace: String, $key: String) { observe(query: $query, pace: $pace, key: $key) { revision patches { path removed value } } }',
+    variables: { query: '{ tasks { id title } }', pace: 'relaxed', key },
+  } });
+  expect((await read(ws, () => ws.send(JSON.stringify(named('one', 'k1'))))).payload.data.observe.revision).toBe(1);
+  expect((await read(ws, () => ws.send(JSON.stringify(named('two', 'k2'))))).payload.data.observe.revision).toBe(1);
+  expect((await read(other, () => other.send(JSON.stringify(named('theirs', 'k1'))))).payload.data.observe.revision).toBe(1);
+  const frames: { id: string; type: string; payload?: { data?: Record<string, unknown> } }[] = [], foreign: unknown[] = [];
+  ws.on('message', raw => frames.push(JSON.parse(String(raw))));
+  other.on('message', raw => foreign.push(JSON.parse(String(raw))));
+  ws.send(JSON.stringify({ type: 'subscribe', id: 'ask', payload: { query: 'mutation($keys: [String!]!) { now(keys: $keys) }', variables: { keys: ['k1', 'gone'] } } }));
+  await vi.waitFor(() => expect(frames).toHaveLength(3));
+  // The asking is answered and complete; the selection named is read again and, nothing having changed, says so.
+  expect(frames.filter(frame => frame.id === 'ask')).toEqual([{ id: 'ask', type: 'next', payload: { data: { now: ['k1'] } } }, { id: 'ask', type: 'complete' }]);
+  expect(frames.filter(frame => frame.id === 'one')).toEqual([{ id: 'one', type: 'next', payload: { data: { observe: { revision: 2, patches: [] } } } }]);
+  // The selection not named said nothing, and neither did another socket's selection of the same name.
+  await new Promise(resolve => setTimeout(resolve, 30));
+  expect(frames).toHaveLength(3); expect(foreign).toEqual([]);
+  expect(ws.readyState).toBe(WebSocket.OPEN);
+});

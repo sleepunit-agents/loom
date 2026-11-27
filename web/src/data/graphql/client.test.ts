@@ -192,3 +192,31 @@ it('times out an unacknowledged handshake even when the server sends a pong',asy
     expect(codes).toContain(4504);
   }finally{transport.close();vi.unstubAllGlobals();vi.useRealTimers();}
 });
+
+it('sends an eager selection exactly as it always was, and a relaxed one with its pace and its name beside it', async () => {
+  const { createRequest } = await import('@urql/core');
+  const { relaxedKey } = await import('./pace');
+  const wire = new Transport(), client = generatedDataClient(wire);
+  const request = createRequest(query, {}), relaxed = { ...request, key: relaxedKey(request.key) };
+  const eager: unknown[] = [], slow: unknown[] = [];
+  const first = client.query(query, {}, { requestPolicy: 'network-only' }).subscribe(result => eager.push(result.data));
+  const second = client.executeQuery(relaxed, { requestPolicy: 'network-only', pace: 'relaxed' }).subscribe(result => slow.push(result.data));
+  // Two selections on the socket: the same query at two paces is never one feed.
+  expect(wire.feeds).toHaveLength(2);
+  expect(wire.feeds[0].request.query).toBe('subscription LoomData($query: String!, $variables: DataValue, $operationName: String) { observe(query: $query, variables: $variables, operationName: $operationName) { revision patches { path removed value } } }');
+  expect(Object.keys(wire.feeds[0].request.variables!)).toEqual(['query', 'variables', 'operationName']);
+  expect(wire.feeds[1].request.query).toContain('pace: $pace, key: $key');
+  expect(wire.feeds[1].request.variables).toMatchObject({ query: wire.feeds[0].request.variables!.query, pace: 'relaxed', key: String(relaxed.key) });
+  expect(relaxed.key).not.toBe(request.key);
+  // Loom's word that a selection was read and nothing changed (a revision with no patches) is an answer: the reader
+  // is told, with the same data, and the next change still applies to it.
+  const rows = { tasks: [{ __typename: 'TasksSelectItem', id: 't-1', title: 'Pump' }] };
+  wire.feeds[1].sink.next({ data: { observe: { revision: 1, patches: [{ path: [], removed: false, value: rows }] } } });
+  const told = slow.length;
+  wire.feeds[1].sink.next({ data: { observe: { revision: 2, patches: [] } } });
+  expect(slow.length).toBe(told + 1);
+  expect(slow.at(-1)).toMatchObject({ tasks: [{ id: 't-1', title: 'Pump' }] });
+  wire.feeds[1].sink.next({ data: { observe: { revision: 3, patches: [{ path: ['tasks', 0, 'title'], removed: false, value: 'Fits' }] } } });
+  expect(slow.at(-1)).toMatchObject({ tasks: [{ id: 't-1', title: 'Fits' }] });
+  first.unsubscribe(); second.unsubscribe(); expect(wire.feeds).toHaveLength(0);
+});

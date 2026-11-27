@@ -10,9 +10,15 @@ interface Delta { revision: number; patches: Patch[] }
 export interface QueryTransport {
   subscribe(request: SubscribePayload, sink: Sink<FormattedExecutionResult>): () => void;
   connectionChanged(listener: (connected: boolean) => void): () => void;
+  /** Ask loom to read the selections of these names again now; it answers with the names it had open. */
+  now?(keys: string[]): Promise<string[]>;
   close(): void;
 }
 const envelope = 'subscription LoomData($query: String!, $variables: DataValue, $operationName: String) { observe(query: $query, variables: $variables, operationName: $operationName) { revision patches { path removed value } } }';
+
+// A relaxed selection says its pace and gives itself a name; every other selection is sent exactly as it always was.
+const relaxedEnvelope = 'subscription LoomData($query: String!, $variables: DataValue, $operationName: String, $pace: String, $key: String) { observe(query: $query, variables: $variables, operationName: $operationName, pace: $pace, key: $key) { revision patches { path removed value } } }';
+const nowRequest = 'mutation LoomNow($keys: [String!]!) { now(keys: $keys) }';
 
 /** Apply ordered result patches without mutating values retained by Graphcache
  * or React. A protocol gap clears the stream instead of guessing its base. */
@@ -72,7 +78,8 @@ export function liveQueryExchange(transport: QueryTransport): Exchange {
             observer.next({ operation, data: undefined, hasNext: true, stale: false });
           }
         });
-        const stop = transport.subscribe({ query: envelope, variables: { query: print(operation.query), variables: operation.variables, operationName: operation.query.definitions.find(def => def.kind === 'OperationDefinition')?.name?.value } }, {
+        const selection = { query: print(operation.query), variables: operation.variables, operationName: operation.query.definitions.find(def => def.kind === 'OperationDefinition')?.name?.value };
+        const stop = transport.subscribe(operation.context.pace === 'relaxed' ? { query: relaxedEnvelope, variables: { ...selection, pace: 'relaxed', key: String(operation.key) } } : { query: envelope, variables: selection }, {
           next(result) {
             if (stopped) return;
             try {
@@ -138,6 +145,18 @@ export function browserQueryTransport(url: string): QueryTransport {
       return ()=>{subscriptions.delete(stop);stop();};
     },
     connectionChanged(listener){listeners.add(listener);return ()=>{listeners.delete(listener);};},
+    now(keys){
+      return new Promise<string[]>(resolve=>{
+        if(disposed||!keys.length){resolve([]);return;}
+        let open:string[]=[];
+        const stop=socket.subscribe<{now?:unknown}>({query:nowRequest,variables:{keys}},{
+          next:value=>{const named=value.data?.now;if(Array.isArray(named))open=named.filter((key):key is string=>typeof key==='string');},
+          error:()=>{subscriptions.delete(stop);resolve([]);},
+          complete:()=>{subscriptions.delete(stop);resolve(open);},
+        });
+        subscriptions.add(stop);
+      });
+    },
     close(){
       disposed=true;listeners.clear();clearWatchdog();
       for(const stop of subscriptions)stop();

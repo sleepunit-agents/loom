@@ -1,5 +1,6 @@
 /** The boards page (docs/specs/boards.md): a conversation, and a second window the agent fills from bricks.
  * The page draws the thread's boards and nothing else there; what is on screen is a record, never page state. */
+import { afterOwnWrite } from './own-writes';
 import { Component, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ArrowUpIcon } from 'lucide-react';
@@ -24,6 +25,7 @@ import { Notify, useNotifyWorker } from './notify';
 import { usePageTitle } from './title';
 import { reducedMotion, wearMotion } from '../access';
 import { Remembered } from '../data/graphql/remembered';
+import { refreshRelaxed } from '../data/graphql/pace';
 import { forgetAnswers, rememberedFor } from './remember';
 import { Wear } from './wear';
 import '../pair/screen.css';
@@ -33,6 +35,13 @@ import './board-kit.css';
 // This page has no boot script, so it starts by following the device (access.ts answers what moves). Once the
 // member is known it wears their own Reduce motion, and of their Appearance nothing else (./wear.ts).
 wearMotion('follow');
+
+// A brick's data is read again every few seconds (../data/graphql/pace.ts). What the member does here is not kept
+// waiting for that: the moment loom answers a write of this page, the bricks on screen are asked for now. Two
+// writes change no brick's data and ask nothing: looking at a flagged placement, and the report of a brick's
+// action, which follows the action's own write.
+const QUIET_WRITES = new Set(['/api/boards/seen', '/api/boards/act']);
+afterOwnWrite((path) => { if (!QUIET_WRITES.has(path)) refreshRelaxed(); });
 
 /** How long the trail takes to slide to another board (./board.css, `.boards-trail`). */
 const SLIDE_MS = 600;
@@ -169,6 +178,13 @@ export function Page({ member, thread, agent, at, exists = false }: { member: st
     return () => clearTimeout(late);
   }, [onScreen.leaving, onScreen.shown, arrived]);
   const answers = useMemo(() => rememberedFor(member), [member]);
+  // A tab that was hidden and is seen again asks for its bricks' data now. A board that comes back on screen needs
+  // no asking: its bricks open their reads anew, and a selection's first answer never waits.
+  useEffect(() => {
+    const seen = () => { if (document.visibilityState === 'visible') refreshRelaxed(); };
+    document.addEventListener?.('visibilitychange', seen);
+    return () => document.removeEventListener?.('visibilitychange', seen);
+  }, []);
 
   const change = useCallback((board: string, changes: object[]) => memberOperation('boards.change', { board, changes }).catch(() => {}), []);
   const place = useCallback((p: Place) => {

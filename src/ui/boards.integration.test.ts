@@ -14,6 +14,7 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { chromium, type Browser, type BrowserContext, type BrowserContextOptions, type Locator, type Page } from 'playwright-core';
 import { clock } from '../core/clock.js';
+import { LIVE_RELAXED_MS } from '../core/data/live-pace.js';
 import { agents, memberAgents, members, projectAgents, projectMembers, projects, tasks } from '../core/data/schema.js';
 import { sharedUiProgram } from '../../test/fixtures/shared-ui-program.js';
 
@@ -37,6 +38,9 @@ const LANES = /^lanes$/i, TICKET = /^ticket$/i, APPROVAL = /^approval$/i, AGENTS
  * nothing can point (a phone): `reachable` below is the test of that. */
 const frameButtons = (of: Locator) => of.locator('header').first().getByRole('button');
 const MAXIMIZE = /big|maximi[sz]e|enlarge|expand/i;
+/** Refresh is the one named for it; while a placement is getting new data its header holds a status that says so. */
+const REFRESH = /^refresh/i;
+const GETTING = '[role="status"][aria-label="Getting new data"]';
 /** The board's own controls are buttons outside every placement. */
 const boardButton = (page: Page, name: RegExp) => page.getByRole('button', { name }).and(page.locator(`:not(${PLACEMENT} *)`));
 const CLOSE = /^close$/i, REOPEN = /^reopen$/i;
@@ -274,9 +278,9 @@ describe.runIf(chrome && existsSync(join(root, 'board.html')))('the boards page 
     const lanes = placement(page, LANES), ticket = placement(page, TICKET), approval = placement(page, APPROVAL);
     await expect.poll(() => lanes.getAttribute('data-form')).toBe('primary');
     // The big one and the small-only one have one control (remove); the small one that can be big has two.
-    await expect.poll(() => frameButtons(ticket).count()).toBe(2);
+    await expect.poll(() => frameButtons(ticket).count()).toBe(3);
     expect(await frameButtons(ticket).and(page.getByRole('button', { name: MAXIMIZE })).count()).toBe(1);
-    expect(await frameButtons(approval).count()).toBe(1);
+    expect(await frameButtons(approval).count()).toBe(2);
     expect(await frameButtons(approval).and(page.getByRole('button', { name: MAXIMIZE })).count()).toBe(0);
     expect(await frameButtons(lanes).and(page.getByRole('button', { name: MAXIMIZE })).count()).toBe(0);
     await mark(lanes, 'lanes'); await mark(ticket, 'ticket');
@@ -299,9 +303,9 @@ describe.runIf(chrome && existsSync(join(root, 'board.html')))('the boards page 
     expect(await page.locator(PLACEMENT).evaluateAll((all) => all.filter((el) => el.getAttribute('data-form') !== 'primary').sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top).map((el) => (el as unknown as { kept?: string }).kept ?? ''))).toEqual(['lanes', '']);
     // Moved, not redrawn.
     expect(await marked(lanes)).toBe('lanes'); expect(await marked(ticket)).toBe('ticket');
-    await expect.poll(() => frameButtons(ticket).count()).toBe(1);
+    await expect.poll(() => frameButtons(ticket).count()).toBe(2);
     await expect.poll(() => frameButtons(lanes).and(page.getByRole('button', { name: MAXIMIZE })).count()).toBe(1);
-    expect(await frameButtons(approval).count()).toBe(1);
+    expect(await frameButtons(approval).count()).toBe(2);
     await expect.poll(() => layoutFaults(page)).toEqual([]);
     await holdsNoState(page, [id, thread]);
   });
@@ -516,6 +520,70 @@ describe.runIf(chrome && existsSync(join(root, 'board.html')))('the boards page 
     await placement(page, LANES).locator(chipFor('ticket', 't-21')).waitFor();
     expect(await moving()).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.dataset.motion)).toBe('reduce');
+  });
+
+  // "Live reads and their cost": a brick's data is read every few seconds, at once after the member's own action, and
+  // at once when asked for; the page's own reads are as immediate as ever.
+  it('follows an outside change within the relaxed time, the member\'s own click at once, and an outside change at once when refreshed', async () => {
+    const page = await open(), thread = newThread();
+    // What the page sends on its socket: each selection's envelope, and each asking for "now".
+    const opened: { name: string; pace?: string }[] = [], asked: string[][] = [];
+    page.on('websocket', (socket) => socket.on('framesent', ({ payload }) => {
+      const sent = JSON.parse(String(payload)) as { type: string; payload?: { query: string; variables: { query?: string; pace?: string; keys?: string[] } } };
+      if (sent.type !== 'subscribe') return;
+      if (sent.payload!.variables.keys) asked.push(sent.payload!.variables.keys);
+      else opened.push({ name: /query (\w+)/.exec(sent.payload!.variables.query!)?.[1] ?? '', pace: sent.payload!.variables.pace });
+    }));
+    await visit(page, thread);
+    await board(page, thread, { brick: 'lanes', params: { project: 'pond' } }, { brick: 'ticket', params: { ticket: 't-65' } });
+    const lanes = placement(page, LANES), ticket = placement(page, TICKET).filter({ hasText: 'Paint the bench' });
+    const claim = ticket.getByRole('button', { name: CLAIM }), release = ticket.getByRole('button', { name: RELEASE });
+    await claim.waitFor(); await lanes.locator(chipFor('ticket', 't-21')).waitFor();
+    // The bricks' selections are relaxed; the board's own placements and the conversation are not.
+    expect(opened.filter((o) => o.name.startsWith('Brick')).length).toBeGreaterThan(1);
+    expect(opened.filter((o) => o.name.startsWith('Brick')).map((o) => o.pace)).not.toContain(undefined);
+    expect(new Set(opened.filter((o) => o.name.startsWith('Brick')).map((o) => o.pace))).toEqual(new Set(['relaxed']));
+    // The board's placements, the thread's own row and the conversation are sent as they always were.
+    for (const name of ['ThreadBoards', 'BoardsThreadHead', 'PairLog']) expect(opened.filter((o) => o.name === name).map((o) => o.pace ?? 'eager'), name).toEqual(['eager']);
+    /** A change from outside the page: the member's own command from another client, which this page never sees sent. */
+    const outside = async (action: string) => {
+      const reply = await page.context().request.post(program.url + '/api/tasks/command', { headers: { origin: program.url }, data: { input: { action, id: 't-65' }, id: crypto.randomUUID() } });
+      expect(reply.ok()).toBe(true);
+    };
+    try {
+      // 1. From outside: the brick follows within the relaxed time and a little, with nothing asked of the page.
+      const before = asked.length;
+      await outside('claim');
+      expect(status('t-65')).toBe('in_progress');
+      await release.waitFor({ timeout: LIVE_RELAXED_MS + 4000 });
+      expect(asked.length).toBe(before);
+      // It was read a moment ago, so the next outside change is not read for some seconds: the brick is not eager.
+      await outside('unclaim');
+      expect(status('t-65')).toBe('open');
+      await page.waitForTimeout(1500);
+      expect(await release.count()).toBe(1); expect(await claim.count()).toBe(0);
+      // 2. Asked for: the refresh control brings it in at once, and names this placement's selections only.
+      await ticket.hover();
+      await frameButtons(ticket).and(page.getByRole('button', { name: REFRESH })).click();
+      await claim.waitFor({ timeout: 2000 });
+      expect(asked.length).toBe(before + 1);
+      // Asked again with nothing changed, loom still answers: the mark that says it is getting new data goes.
+      await frameButtons(ticket).and(page.getByRole('button', { name: REFRESH })).click();
+      await expect.poll(() => asked.length).toBe(before + 2);
+      await expect.poll(() => ticket.locator(GETTING).count(), { timeout: 3000 }).toBe(0);
+      expect(asked[before + 1]).toEqual(asked[before]);
+      // Only that placement was asked for: the lanes beside it still show the ticket as worked, until their own turn.
+      expect(await lanes.locator(chipFor('ticket', 't-65')).count()).toBe(1);
+      await expect.poll(() => lanes.locator(chipFor('ticket', 't-65')).count(), { timeout: LIVE_RELAXED_MS + 4000 }).toBe(0);
+      // 3. The member's own click: this brick and the one beside it show it at once.
+      await claim.click();
+      await release.waitFor({ timeout: 2000 });
+      await expect.poll(() => lanes.locator(chipFor('ticket', 't-65')).count(), { timeout: 2000 }).toBe(1);
+      // That asking named more selections than the one placement's: every brick on screen.
+      expect(asked.at(-1)!.length).toBeGreaterThan(asked[before].length);
+    } finally {
+      if (status('t-65') === 'in_progress') await outside('unclaim');
+    }
   });
 
   it('raised no error in any page, nor in loom', async () => {

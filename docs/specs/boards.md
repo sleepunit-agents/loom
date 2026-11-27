@@ -131,7 +131,11 @@ a thread's open boards, left to right, in the order they last joined it.
 6. **A click never waits for a model.** Placing from a chip starts no job.
 7. **A change is drawn when it lands.** Each stored change to the board on screen is drawn at once, while the job that
    made it is still running.
-8. **Bricks are live.** A brick's data changes on screen when the records change, with no reload and no job.
+8. **Bricks follow the records.** A brick's data changes on screen when the records change, with no reload and no
+   job: within a few seconds of a change made elsewhere (at most about five, as mail arrives), at once after the
+   member's own action on the page, and at once when the member asks for it (the placement's refresh control). The
+   conversation and the board's own placements are immediate (rule 7): they do not wait those seconds. How, and
+   what it costs, is "Live reads and their cost".
 9. **The presence and the input are always on screen** on the page of a thread the member owns, at every width, with
    or without a board.
 10. **A flag never moves anything, and never starts a job.** What happens in loom and whether an agent is woken for
@@ -465,7 +469,30 @@ ids, making it with `comms.open` if it does not exist.
   control of the `secrets` brick, wait for the fresh answer. A brick's own flag compares the remembered value with
   the fresh one, so a record that changed while its board was off screen flags its brick when the board returns:
   that is "this changed while you were not looking", and it is raised on purpose.
-- **A closed board.** Its address draws it as it was, with no remove or maximize controls and one control to reopen
+- **How fresh a brick is (built 2026-11-27, the owner's ruling: "the comparison I'd give is email").** Every read a
+  brick makes is **relaxed**: loom reads it again at most once in five seconds (`LIVE_RELAXED_MS`), so a change made
+  elsewhere reaches a brick within about that. The page's own reads are **eager**, as every read was before: the
+  conversation's transcript and tail, the thread's own row, the thread's boards and the shown board's placements
+  (so a brick the agent places still appears at once), the list of conversations, and what the page reads to open
+  itself. One read of a brick is eager too: the `session` brick's step list in the big form while its job is
+  running, because watching a session work is what it is for; once the job has ended it is relaxed like the rest
+  (the small form's one line of the latest step is always relaxed). The page asks loom to read its bricks' data
+  **now** on three occasions. *After the member's own write*: the moment loom answers any write this page sends
+  (an operation, or one of the desktop's command doors the bricks reuse: every POST to `/api/…`, watched in one
+  place, `web/src/boards/own-writes.ts`), every brick on screen is asked for, so a click is still shown at once,
+  in its own brick and in the others; the two writes that change no brick's data ask nothing (`boards.seen`,
+  `boards.act`). *On request*: each open placement has a third quiet control among its tools, a refresh, named
+  "Refresh <brick's name>" for assistive technology, which asks for that placement's reads only. *When the tab is
+  seen again* after being hidden. A board that comes back on screen needs no asking: its bricks open their reads
+  anew, and a read's first answer never waits. While an asking is unanswered the placement shows the same small
+  mark as above, "Getting new data"; pointing at it says when what is drawn was last confirmed ("Getting new data,
+  as of 12 s ago": seconds under a minute, then the kit's `Time` wording), and assistive technology is given the
+  same words as the mark's description. A brick that is only waiting out its five seconds shows nothing. Asking
+  never opens a read again, so it never shows the loading line and never drops what is drawn. A brick's own flag
+  is raised once for the difference between what was drawn and what is drawn now, however many changes that was,
+  and not for the member's own action here: the change that follows it within `OWN_ACTION_MS` (the relaxed time
+  and two seconds) is taken to be theirs, whether it came by the asking or, that failing, by the next reading.
+- **A closed board.** Its address draws it as it was, with no refresh, remove or maximize controls and one control to reopen
   it. Its bricks are drawn and do nothing: no action, no chip, no input in them responds.
 - **Not yours.** A board or thread id that does not exist, or that the member may not read, draws one line saying
   there is nothing here, and no presence and no input.
@@ -1217,7 +1244,57 @@ statements and 180 ms. Commits 100 ms or more apart cost what they did.
    once when its selection is refused or its feed closes, it is never written to disk, it is emptied when the
    signed-in member changes or the session ends, and the server is still asked every time.
 3. *A longer settle time.* 250 ms would hold a board of ten to four readings a second whatever is written, and
-   would make every window, the conversation as it streams included, up to a quarter of a second late.
+   would make every window, the conversation as it streams included, up to a quarter of a second late. What was
+   built instead (below) is a longer time for the reads that can bear it, chosen read by read.
+
+**Two paces, and "now" (built 2026-11-27, as the owner decided).** "As long as chat is quick, which it already is,
+the rest can be faked however makes efficient sense"; a brick is as fresh as mail: "I get it quickly. ish. most of
+the time."
+
+- *The paces* (`src/core/data/live-pace.ts`). A live selection is **eager** (what every selection was: at most one
+  reading in `LIVE_SETTLE_MS`, 100 ms) or **relaxed** (at most one in `LIVE_RELAXED_MS`, 5 s). Relaxed keeps every
+  promise of the settle time, on the same loop (`DataLive.watch`): the first answer never waits; a commit that
+  comes alone after five quiet seconds is read at once; there is always a reading after the last commit; a commit
+  that lands during a reading or during the wait is in the next reading; ending a selection or closing loom does
+  not wait and leaves no timer.
+- *On the wire.* The client chooses, selection by selection. The subscription envelope
+  (`observe(query, variables, operationName)`) has two optional arguments: `pace`, a word, and `key`, the client's
+  own name for the selection on its socket. Only the word `relaxed` is relaxed. Leaving it out, misspelling it,
+  or sending a number or anything else is eager, so no client can ask for anything faster than eager, and a client
+  that sends neither argument (the desktop, every program, every older page) sends and gets exactly the bytes it
+  did. The page sends them only for a brick's reads, and opens a relaxed read as its own selection, so the same
+  query read eagerly by the page is never slowed by a brick, nor the other way round.
+- *Now.* The socket's schema has one mutation, `now(keys)`. It writes nothing. It asks loom to read again the
+  selections of that socket that carry those names, and answers with the names that were open. A selection asked
+  for is read without waiting out its five seconds, and it answers even when nothing changed: a revision with no
+  patches, which is how the page knows the reading was made and takes its mark away.
+- *The limit on asking.* A selection asked for now is still read no sooner than the settle time (100 ms) after
+  its last reading began, however often it is asked, and one asking is one reading. So a client that asks without
+  pause gets each of its own selections read at most ten times a second: what an eager selection already costs
+  under a stream of commits, and no more. A name reaches only the selections of the socket that gave it; one
+  asking names at most 200 selections, and a name is at most 64 characters.
+- *Who is relaxed, when the page asks, and what the member sees*: "The page", "How fresh a brick is".
+
+**What it costs now.** Measured 2026-11-27 with `src/ui/boards-live-cost.integration.test.ts` (run on request; its
+head says how): the built page in Chrome over a fictitious household, a board of ten bricks (session big with its
+job running, ticket, lanes, comments, agent, pull, question, inbox, trend, project), which holds 28 selections: 18
+of bricks, now relaxed, and 10 eager (nine of the page and the conversation, and the running session's steps).
+"Before" is the same page with every selection made eager and no asking sent. One commit read by all 28 is 410
+statements and about 55 ms of loom's processor.
+
+| Case (three runs each) | Before: statements, processor | Now: statements, processor |
+|---|---|---|
+| 20 commits to a table no brick reads, 300 ms apart | 8,479 to 8,853, 1,087 to 1,173 ms | 4,413 to 4,681, 434 to 617 ms |
+| One click of the member's (claim a ticket: its command, then the report to the board) and the 6.5 s after it | 1,209 to 1,872, 186 to 245 ms | 1,477 to 1,599, 172 to 354 ms |
+| A session reporting 30 steps over 10 s, its brick big on screen | 12,270 to 13,152, 1,565 to 1,705 ms | 6,435 to 6,668, 674 to 969 ms |
+
+A click costs what it did: it is read at once, as it must be. The processor figures include the writes themselves
+and vary from run to run; the statement counts are the steadier measure. One commit that comes alone still costs
+410 statements, because a relaxed read that has been quiet for five seconds is read at once.
+
+What is left is the eager ten: about 200 statements a commit, half of what all 28 cost, and they are read for
+every commit as before. They are the conversation and the page's own reads, and making them cheaper is item 1
+above (wake a selection only for what it reads), not a pace.
 
 ## What goes
 
@@ -1341,6 +1418,23 @@ and archive (asked first), the presence of the thread's own agent, marking read,
 their loading and unavailable lines, the agent's stop (asked first, `runtime.jobStop`, nothing in the detail) and its
 flag. In `agents-queries.test.ts`: their own selections against the fields loom serves. In
 `src/core/conversations/comms-query.test.ts`: `unread` on a thread row.
+
+**The two paces and "now", 2026-11-27.** In `src/core/data/live.test.ts`: a relaxed selection is read at once
+when it opens, at most once in its time under a stream of commits, once after the last, at once for a commit that
+comes alone, and loses nothing committed during a reading or a wait; asked for now it is read at once, changed or
+not, never sooner than the settle time however often it is asked; its timer and its name are gone when it ends
+or loom closes; an eager selection is as it was; any pace but the word `relaxed` is eager, and a relaxed time is
+never shorter than the settle time; a name reaches only its own socket's selections. In `socket.test.ts`: the same
+over a real socket, which stays open. In `web/src/data/graphql/client.test.ts`: the two envelopes, and a revision
+with no patches. In `web/src/boards/pace.test.tsx` (the real hook and placement over a faked client): brick reads
+are opened relaxed and the page's eager; the running session's steps eager, relaxed once ended, with no loading
+line between; the refresh control asks for its own placement only; the page's asking names every placement on
+screen and no page read; the mark and its "as of" words; a board that returns opens its reads anew; the own flag
+once for a net change and not for the member's own action. In `page.test.tsx` ("now"): the page asks after any
+write loom answered through any door, not after a refused one, a read, `boards.seen` or `boards.act`, and when
+the tab is seen again. In the real-browser suite: an outside change reaches a brick within the relaxed time and
+not at once, the refresh control brings one in at once for its placement alone, an asking with nothing changed
+still ends the mark, and the member's own click shows at once in its brick and the one beside it.
 
 **The bricks for running the household, 2026-11-27.** `machines`, `subscriptions`, `usage`, `bridges`, `household`
 and `sharing` each read what the desktop's app of that name reads, through modules with no component that the

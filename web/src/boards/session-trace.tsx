@@ -47,7 +47,9 @@ function Step({ node, latestTerminal }: { node: WorkNode; latestTerminal?: numbe
 export function SessionTrace({ conversation, job, running }: { conversation: string; job: string; running: boolean }) {
   const read = useDataQuery<{ steps: TraceStep[]; gone: boolean }>(
     'query BrickSessionTrace($c:String!,$j:String!,$n:Int!){steps:sessionTrace(conversation:$c,job:$j,limit:$n){seq job at tool cardState clientId words} gone:sessionTraceExpired(conversation:$c,job:$j)}',
-    { c: conversation, j: job, n: TRACE_STEPS }, { keep: true });
+    // Watching a session work is what this list is for: while its job runs it keeps up with every step, as the
+    // conversation does. Once the job has ended it is read like the rest of the brick, every few seconds.
+    { c: conversation, j: job, n: TRACE_STEPS }, { keep: true, pace: running ? 'eager' : undefined });
   const steps = read.data?.steps ?? [], last = steps.at(-1)?.seq ?? 0;
   const box = useRef<HTMLOListElement>(null), follow = useRef(true);
   useEffect(() => { const el = box.current; if (el && follow.current) el.scrollTop = el.scrollHeight; }, [last]);

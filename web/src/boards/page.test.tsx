@@ -12,6 +12,7 @@ const f = vi.hoisted(() => {
     listeners: new Set<() => void>(), version: 0,
     status: 'live', boards: [] as unknown[], answers: {} as Record<string, { status: string; data?: unknown }>,
     op: vi.fn(), build: vi.fn(), reload: vi.fn(), stored: vi.fn(), went: [] as string[],
+    /** Loom's door as the page's writes reach it, and the page asking for its bricks' data now. */ door: vi.fn(), asked: vi.fn(),
     area: { w: 1200, h: 800 },
     /** The page's motion is reduced: nothing slides. */ reduced: true,
     /** How many mounted hooks hold each query open, by its name. */ open: new Map<string, number>(),
@@ -30,6 +31,7 @@ const f = vi.hoisted(() => {
   g.requestAnimationFrame = (frame: () => void) => { queueMicrotask(frame); return 1; };
   g.cancelAnimationFrame = () => {};
   g.addEventListener = () => {}; g.removeEventListener = () => {};
+  g.fetch = (...sent: unknown[]) => f.door(...sent);
   return f;
 });
 vi.mock('react-dom/client', () => ({ createRoot: () => ({ render() {} }) }));
@@ -53,6 +55,7 @@ vi.mock('../pair/transcript', async () => {
     TranscriptPage: ({ id }: { id: string }) => createElement('transcript-of', { id }) };
 });
 vi.mock('./build', () => ({ buildChanged: f.build }));
+vi.mock('../data/graphql/pace', async (real) => ({ ...(await real<typeof import('../data/graphql/pace')>()), refreshRelaxed: f.asked }));
 vi.mock('../data/operation', () => ({ memberOperation: f.op }));
 vi.mock('../data/graphql', async () => {
   const { useSyncExternalStore, useEffect } = await import('react');
@@ -605,5 +608,59 @@ describe('a body that has not arrived', () => {
     await type('');
     expect(f.reload).toHaveBeenCalledTimes(1);
     quiet.mockRestore();
+  });
+});
+
+describe('now', () => {
+  // Which selections an asking names, and what the placement shows meanwhile, is in ./pace.test.tsx.
+  const post = (path: string, ok = true, init: object = { method: 'POST' }) => { f.door.mockResolvedValueOnce({ ok }); return fetch(path, init); };
+  it('asks for the bricks\' data the moment loom answers a write of this page, whichever helper sent it', async () => {
+    await one([lanes(), ticket()]);
+    f.asked.mockClear();
+    // An operation, and the desktop's own command doors the bricks reuse.
+    for (const path of ['/api/tasks/command', '/api/tempo/runNow', '/api/bridges/command', '/api/secrets/set', '/api/inbox/answer', '/api/comms/send']) {
+      const reply = await post(path);
+      expect(reply).toEqual({ ok: true });
+      expect(f.asked).toHaveBeenCalledTimes(1); f.asked.mockClear();
+    }
+    // The request went to loom as it was given.
+    expect(f.door.mock.calls.at(-1)).toEqual(['/api/comms/send', { method: 'POST' }]);
+  });
+  it('asks nothing for a write loom refused, for a read, for another door, or for the two writes that change no brick', async () => {
+    await one([lanes(), ticket()]);
+    f.asked.mockClear();
+    await post('/api/tasks/command', false);
+    await post('/api/tasks/command', true, {});
+    await post('/app/boards', true, { method: 'GET' });
+    await post('/appearance/prefs');
+    await post('/api/boards/seen');
+    await post('/api/boards/act');
+    f.door.mockRejectedValueOnce(new Error('offline'));
+    await expect(fetch('/api/tasks/command', { method: 'POST' })).rejects.toThrow('offline');
+    expect(f.asked).not.toHaveBeenCalled();
+  });
+  it('asks when the tab is seen again after being hidden, and not while it is hidden', async () => {
+    const heard: (() => void)[] = [], page = document as unknown as Record<string, unknown>;
+    page.addEventListener = (name: string, fn: () => void) => { if (name === 'visibilitychange') heard.push(fn); };
+    page.removeEventListener = (_name: string, fn: () => void) => { heard.splice(heard.indexOf(fn), 1); };
+    try {
+      await one([lanes(), ticket()]);
+      f.asked.mockClear();
+      page.visibilityState = 'hidden';
+      for (const fn of [...heard]) fn();
+      expect(f.asked).not.toHaveBeenCalled();
+      page.visibilityState = 'visible';
+      for (const fn of [...heard]) fn();
+      expect(f.asked).toHaveBeenCalledTimes(1);
+      await act(async () => tree?.unmount()); tree = undefined;
+      expect(heard).toEqual([]);
+    } finally { delete page.addEventListener; delete page.removeEventListener; delete page.visibilityState; }
+  });
+  it('gives every open placement a refresh control named for its brick, and a closed board none', async () => {
+    await one([lanes({ big: true }), ticket()]);
+    expect(articles().map((a) => a.findAll((n) => n.props.className === 'board-refresh').map((b) => [b.props['aria-label'], b.props.title]))).toEqual([[['Refresh Lanes', 'Refresh']], [['Refresh Ticket', 'Refresh']]]);
+    await act(async () => tree?.unmount());
+    await draw([board('b-1', [ticket()], { closed: true })], { path: '/app/b/b-1' });
+    expect(tree!.root.findAll((n) => n.props.className === 'board-refresh')).toEqual([]);
   });
 });

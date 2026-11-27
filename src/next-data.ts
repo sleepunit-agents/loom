@@ -23,6 +23,7 @@ import { dataAuthentication } from './core/data/authentication.js';
 import { dataHttp } from './core/data/http.js';
 import type { memoryQueryFields } from './transport/memory-queries.js';
 import { DataLive, type MeasureRead } from './core/data/live.js';
+import { LIVE_RELAXED_MS } from './core/data/live-pace.js';
 import { dataQueries } from './core/data/queries.js';
 import { dataSocket } from './core/data/socket.js';
 import { tempoVisibility } from './core/tempo/visibility.js';
@@ -48,7 +49,8 @@ export const STAMP_WAKE_MS = 60_000;
 /** How soon after one reading of an open selection began the next may begin (core/data/live.ts, `settleMs`). A
  * commit that comes alone is read at once. Commits that come faster than this, as when a session reports its steps
  * or several agents write at once, are read together, so what an open window shows can be this much behind the
- * last of them and no more: docs/specs/boards.md, "Live reads and their cost". */
+ * last of them and no more: docs/specs/boards.md, "Live reads and their cost". A selection its client opened
+ * `relaxed` waits `LIVE_RELAXED_MS` instead (core/data/live-pace.ts), and this time when the client asks for it now. */
 export const LIVE_SETTLE_MS = 100;
 export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>, measure?: MeasureRead, programRecords?: (viewer:Viewer)=>readonly string[]|undefined, canReadUsage: (viewer:Viewer)=>boolean = () => true, canReadProgram: (viewer:Viewer)=>boolean = canReadUsage) {
   const summaries = (viewer:Viewer) => new JobSummaries(db, () => ({ ...talkVisibility(viewer), ...conversationVisibility(viewer), ...boxVisibility(viewer), ...taskVisibility(viewer), ...tempoVisibility(viewer) }), () => clock.now(), () => { if (!currentJobsRead) { currentJobsRead = true; schedule(); } });
@@ -69,7 +71,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     const auth = resolve(request);
     return auth && { ...auth, valid: () => admitted() && auth.valid() && accounts.valid(auth.viewer) };
   };
-  const live = new DataLive(measure, LIVE_SETTLE_MS);
+  const live = new DataLive(measure, LIVE_SETTLE_MS, LIVE_RELAXED_MS);
   const bridges = new BridgeQueries(db, () => clock.now());
   let activityRead = false, currentJobsRead = false;
   const ownFields = { ...boardQueryFields(db), ...contextTicketFields(db), ...epicWorkFields(db), ...workspaceDirectoryFields(db), ...workJobFields(db, () => clock.now(), () => { if (!currentJobsRead) { currentJobsRead = true; schedule(); } }), ...backlogWindowFields(db), ...workBoardFields(db), ...changeReviewFields(db), ...bridgeSecretsReaderFields(db), ...bridgeQueryFields(bridges, viewer => {

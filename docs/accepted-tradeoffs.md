@@ -687,6 +687,26 @@ replacement worker can leave another asleep if the mount is still hung.
 - **What would change the answer.** A screen that must follow writes faster than ten times a second; or
   knowing which selections a commit can have changed, which would make most of these readings unnecessary.
 
+### A brick on the boards page can be five seconds behind a change made elsewhere
+
+- **What.** A live selection its client opens as `relaxed` is read again at most once in five seconds
+  (`LIVE_RELAXED_MS` in `src/core/data/live-pace.ts`). The boards page opens every read of a brick that way, so
+  a change made elsewhere can take about five seconds to show in a brick. The conversation, the board's own
+  placements and every other window are eager, as above.
+- **What is enforced.** The same promises as the settle time: a first answer never waits, a commit that comes
+  alone after five quiet seconds is read at once, there is always a reading after the last commit, and nothing
+  committed during a reading or a wait is missed. The page asks for its bricks' data now, over the same socket,
+  the moment loom answers the member's own write, when a placement's refresh control is used and when its tab
+  is seen again; a selection asked for is read at once, and never sooner than 100 ms after its last reading
+  began however often it is asked. A client names a pace by word and can ask for nothing faster than eager.
+  `src/core/data/live.test.ts`, `web/src/boards/pace.test.tsx` and the real-browser suite hold these.
+- **Why accepted.** The owner, 2026-11-27: a brick should be as fresh as mail, "quickly. ish. most of the time";
+  only the conversation has to be quick. Twenty unrelated commits over six seconds cost a board of ten about
+  half the statements and under half the processor they did (docs/specs/boards.md, "Live reads and their cost").
+- **What would change the answer.** A brick that must be watched as it changes (the running session's steps
+  already are eager); or knowing which selections a commit can have changed, which would make the wait
+  unnecessary.
+
 ### A queued job has one deadline, whatever keeps it queued
 
 - **What.** A job no machine has taken 24 hours after it could first be claimed is ended as failed
