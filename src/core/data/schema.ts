@@ -2497,7 +2497,89 @@ export const messageFiles = sqliteTable('message_files', {
 
 export const expireMessageFiles = 'CREATE TRIGGER message_files_expire AFTER UPDATE OF words ON messages WHEN NEW.words IS NULL BEGIN DELETE FROM message_files WHERE thread=NEW.thread AND seq=NEW.seq; END;';
 
+// A board is the second window of one Comms thread: the bricks an agent placed there (docs/specs/boards.md).
+// It holds which bricks and their parameters, never the records they show or a conversation's words.
+export const blueprints = sqliteTable('blueprints', {
+  id: text('id').primaryKey().notNull(),
+  agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
+  name: text('name').notNull(),
+  description: text('description').notNull(),
+  parameters: text('parameters').notNull(),
+  design: text('design').notNull(),
+  createdAt: text('created_at').notNull(),
+  usedAt: text('used_at'),
+  uses: integer('uses').notNull().default(0),
+}, t => [
+  check('blueprints_created_at_utc', utc(t.createdAt)),
+  check('blueprints_used_at_utc', utc(t.usedAt)),
+  check('blueprints_name_length', sql`length(${t.name}) between 1 and 80`),
+  check('blueprints_description_length', sql`length(${t.description}) <= 300`),
+  check('blueprints_parameters_json', sql`json_valid(${t.parameters})`),
+  check('blueprints_design_json', sql`json_valid(${t.design})`),
+  uniqueIndex('blueprints_agent_name').on(t.agent, t.name),
+]);
+
+export const boards = sqliteTable('boards', {
+  id: text('id').primaryKey().notNull(),
+  thread: text('thread').notNull().references((): AnySQLiteColumn => threads.id, { onDelete: 'cascade' }),
+  title: text('title').notNull().default(''),
+  blueprint: text('blueprint').references((): AnySQLiteColumn => blueprints.id, { onDelete: 'set null' }),
+  revision: integer('revision').notNull().default(1),
+  agentSeen: integer('agent_seen').notNull().default(0),
+  openedAt: text('opened_at').notNull(),
+  trailAt: text('trail_at').notNull(),
+  changedAt: text('changed_at').notNull(),
+  closedAt: text('closed_at'),
+}, t => [
+  check('boards_opened_at_utc', utc(t.openedAt)),
+  check('boards_trail_at_utc', utc(t.trailAt)),
+  check('boards_changed_at_utc', utc(t.changedAt)),
+  check('boards_closed_at_utc', utc(t.closedAt)),
+  check('boards_title_length', sql`length(${t.title}) <= 80`),
+  check('boards_revision_range', sql`${t.revision} >= 1 and ${t.agentSeen} between 0 and ${t.revision}`),
+  index('boards_thread_trail').on(t.thread, t.trailAt),
+]);
+
+export const boardPlacements = sqliteTable('board_placements', {
+  id: text('id').primaryKey().notNull(),
+  board: text('board').notNull().references((): AnySQLiteColumn => boards.id, { onDelete: 'cascade' }),
+  brick: text('brick').notNull(),
+  params: text('params').notNull(),
+  rank: integer('rank').notNull(),
+  placedByKind: text('placed_by_kind', { enum: ['agent', 'member'] }).notNull(),
+  placedAt: text('placed_at').notNull(),
+  removedAt: text('removed_at'),
+}, t => [
+  check('board_placements_placed_at_utc', utc(t.placedAt)),
+  check('board_placements_removed_at_utc', utc(t.removedAt)),
+  check('board_placements_placed_by_kind_choice', sql`${t.placedByKind} in ('agent', 'member')`),
+  check('board_placements_params_json', sql`json_valid(${t.params})`),
+  check('board_placements_rank_range', sql`${t.rank} >= 0`),
+  index('board_placements_board_rank').on(t.board, t.removedAt, t.rank),
+]);
+
+export const boardChanges = sqliteTable('board_changes', {
+  board: text('board').notNull().references((): AnySQLiteColumn => boards.id, { onDelete: 'cascade' }),
+  revision: integer('revision').notNull(),
+  seq: integer('seq').notNull(),
+  at: text('at').notNull(),
+  actorKind: text('actor_kind', { enum: ['agent', 'member'] }).notNull(),
+  change: text('change', { enum: ['open', 'place', 'remove', 'rank', 'title', 'close', 'reopen', 'act'] }).notNull(),
+  placement: text('placement'),
+  from: text('from_value'),
+  to: text('to_value'),
+  action: text('action'),
+  detail: text('detail'),
+}, t => [
+  primaryKey({ columns: [t.board, t.revision, t.seq] }),
+  check('board_changes_at_utc', utc(t.at)),
+  check('board_changes_actor_kind_choice', sql`${t.actorKind} in ('agent', 'member')`),
+  check('board_changes_change_choice', sql`${t.change} in ('open', 'place', 'remove', 'rank', 'title', 'close', 'reopen', 'act')`),
+  check('board_changes_detail_json', sql`${t.detail} is null or json_valid(${t.detail})`),
+]);
+
 export const plumbing = {
+  blueprints, boards, boardPlacements, boardChanges,
   messageFiles,
   projectClaimDirections, taskBacklogEvents,
   bridgePersonSightings,
