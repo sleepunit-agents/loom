@@ -110,7 +110,9 @@ a thread's open boards, left to right, in the order they last joined it.
    markup, a query, a style or a rectangle. Every parameter is a record reference, a choice from a fixed list, or a
    whole number in a stated range; a schema may mark a parameter optional. A **record reference** is shaped like an
    id and nothing else: an ASCII letter or digit, then up to 119 of ASCII letters, digits and `: . _ / @ -`; a ticket
-   is `t-` and a number; a person is `member:` or `contact:` and a lowercase slug. It is checked for shape only, so
+   is `t-` and a number; a person is `member:` or `contact:` and a lowercase slug; a change is `github:`, the
+   repository as lowercase `owner/repo`, `#` and a number, which is how loom writes a change's id, and the only
+   reference that may hold a `#`. It is checked for shape only, so
    it may name no record, and it is shown only as an id (see "Names" under "The page"). The only free text the agent
    gives a board is its title. Known limit: an id-shaped string such as `contact:call-me` is still accepted and is
    shown, small and in monospace, beside a brick that says it is unavailable.
@@ -303,7 +305,7 @@ board by id and the placement by brick and params:
 - `close`, `reopen`: "The member closed board B." / "The member reopened board B."
 - `maximize`: "The member made trend(days=30, project=loom) the big one on board B."
 - `act`: "The member used close on ticket(ticket=t-2441) on board B." An action whose detail is not empty
-  ends ": " and the detail, as `answer` does: "…on board B: choice=yes."
+  ends ": " and the detail, as `answer` does: "…on board B: answer=yes."
 
 With no shown board the text says so. Apart from a board's title, everything in the text is an id, a brick name, a
 choice or a whole number. If a job dies
@@ -406,12 +408,12 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `trend` | `project`: project id; `days`: 7, 30 or 90, default 30 | none | none |
 | `ticket` | `ticket`: ticket id | `claim {}`, `unclaim {}`, `close {}`, `reopen {}`, each the `tasks.command` action of that name | the ticket id |
 | `comments` | `ticket`: ticket id | `comment {}`, by `tasks.command` | none |
-| `pull` | `change`: change id | none | the change id |
-| `repository` | `repository`: repository id as `project_repositories` stores it; `project`: project id, optional | none | the repository id |
+| `pull` | `change`: change id, `github:owner/repo#number` | none: a merge is answered through its approval, on the desktop | the change id |
+| `repository` | `repository`: `owner/repo`, in any spelling `project_repositories` holds (a leading `github:`, capitals and a trailing `.git` are dropped); `project`: project id, optional | none | the repository id |
 | `person` | `person`: `member:<member id>` or `contact:<contact slug>` | none | the same string |
 | `agent` | `agent`: agent id | none | the agent id |
-| `question` | `item`: inbox item id | `answer {choice}`, by `inbox.answer` | the item id |
-| `approval` | `approval`: approval id | `approve {}`, `refuse {}`, both by `approvals.answer` | the approval id |
+| `question` | `item`: inbox item id | `answer {answer}`, by `inbox.answer`; `answer` is one of `yes`, `no`, `words`, `done`, `dismiss` | the item id |
+| `approval` | `approval`: approval id | none: it is drawn read-only and answered on the desktop | the approval id |
 | `session` | `session`: conversation id | `stop {}`, by `runtime.jobStop` | the conversation id |
 
 | Brick | Can be big | Flags itself when |
@@ -421,18 +423,49 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `trend` | yes: opened and closed per day over `days`, and a picked day lists its tickets | never |
 | `ticket` | yes | it is closed or reopened by someone else |
 | `comments` | yes | a comment arrives from someone else |
-| `person` (a member), `agent` | not yet | never |
-| `pull` | not yet | not drawn; meant: a check fails, it is merged or closed |
-| `repository` | not yet | not drawn |
-| `question`, `approval` | no | not drawn; meant: never, being on the board is the flag |
-| `person` (a contact) | not yet | not drawn |
+| `person` (a member or a contact), `agent` | not yet | never |
+| `pull` | yes: also its branch and author, its failing and running checks by name, the people on it, whether it can be merged, its tickets with their titles | its checks go to failing, it is merged, it is closed |
+| `repository` | yes: each open pull request with its title and where it stands | never |
+| `question`, `approval` | no | never: being on the board is the flag |
 | `session` | yes: what it was asked, its state, the tools it has used, how it ended | it finishes, it fails, it is stopped by someone else |
 
-**Not drawn, 2026-11-27.** `pull`, `repository`, `question`, `approval` and a `person` who is a contact are in the
-catalogue, can be placed, and draw one line saying the page does not draw them yet. Their actions in the table above
-(`answer`, `approve`, `refuse`) are declared and nothing on the page calls them; the `question` action's detail is a
-guess and must be set against `inbox.answer` before it is drawn. No brick has a hover form. Writing a brick in words
-as `[label](loom:<brick>/<key>)` is not built; only a bare ticket id becomes a chip.
+**What the five bricks drawn on 2026-11-27 show.** Each reads what the desktop reads for the same record, and says
+it in the desktop's words.
+
+- `pull`: the `changes` row and its `change_checks`, `change_people` and `change_tasks` rows. Title, number,
+  repository (a `repository` chip), open, draft, merged or closed, checks, review, who it waits on, and its tickets as
+  `ticket` chips. A ticket the member may not read is left out. It has no action. `changes.answer` exists and a
+  member the household lets answer may call it, but it is a merge approval's answer and needs the approval that is
+  waiting for that commit; it stays on the desktop with the approval.
+- `repository`: the open `changes` rows of that repository, in one project when `project` is given, latest first, at
+  most 30, each a `pull` chip. Loom gives a member no read of `project_repositories`, so the brick cannot tell a
+  repository that is bound to a project and has never had a pull request from one that does not exist: both draw
+  "unavailable". It shows nothing else about a repository because loom keeps nothing else a member may read.
+- `question`: the Inbox's own read of one item (`inboxItem`). Its words, why, what yes and no mean, who asked, what
+  it is about as chips, and its state. It is answered by `inbox.answer` with exactly what the Inbox sends: Yes and No
+  where the question takes them, an answer in words, Mark done, Dismiss. The controls are drawn only where the
+  desktop draws them: the item waits, takes an answer, still has its words, loom says the member may answer it, and
+  it is not one answered somewhere else (an approval, a task question, a secret request). Words the member types go
+  to `inbox.answer`; `boards.act` is told `answer=words` and never the words. An answered question shows its answer
+  and no controls. `inbox.discuss` (open a conversation about an FYI) and `inbox.dismissResult` (clear the notice of
+  one's own action) are not about a question and are not on the brick. The brick does not mark the item read.
+- `approval`: **read-only.** What is asked, why, what allowing and denying do, exactly what it allows (kind and
+  target), its details, the agent, the project, who it is for, its state, and who answered. Of a household change it
+  shows the title, why and state only, as the desktop does for anyone without the owner's reading of it. It has no
+  control of any kind. The desktop's card answers behind four safeguards: only a member loom says may answer is
+  offered the buttons (`workAnswerOwner`); a household change is shown as the program reads it now and is allowed
+  only with that reading's version (`review`); a dangerous action takes a second yes (`confirm`); and a refusal is
+  said in the program's words and the card is read again. That code is the desktop's composition
+  (`web/src/data/work-views.tsx`) and its kit, which this page does not load, so the choice was a second copy of it
+  or none. There is none. `approve` and `refuse` are gone from the catalogue.
+- `person` with `contact:<slug>`: the shared card People opens (`memoryPerson`, id `commons:<slug>`): name, summary,
+  how to reach them, linked projects. Relationship cards, evidence, sightings and conversations are People's and are
+  not on the brick. A member is drawn as before, by their open tickets.
+
+**Still not drawn, 2026-11-27.** No brick has a hover form. Writing a brick in words as `[label](loom:<brick>/<key>)`
+is not built; only a bare ticket id becomes a chip. An approval cannot be answered from a board, nor a merge. Not
+checked: whether `memoryPerson` updates live as rule 8 requires (open question 1). None of the five has been looked
+at in a browser: they are drawn with the classes the other bricks use, and their look is unjudged.
 
 **Sessions.** A job in the thread hands work off with `conversation.handoff` (a work role or a harness), which loom
 has today: it opens a child conversation for the same agent, member and project and returns that conversation's id,
@@ -564,12 +597,18 @@ the thread's member. No model is involved. Each check sets up its own board unle
 **Which checks have a suite, 2026-11-27.** In `src/core/boards/model.test.ts` and `operations.test.ts`: 1 (the rows),
 3 to 6, 7 (operations only), 8 to 12, 14 to 17 (operations only), 20 (the catalogue only), 24, 26, 27, 28. In
 `web/src/boards/layout.test.ts`: 25 and the layout's rules. In `src/runtime/body-program.test.ts`: 29. In
-`web/src/boards/trend.test.ts` and `build.test.ts`: the trend's days and the new-build test. **No suite:** every check
+`web/src/boards/trend.test.ts` and `build.test.ts`: the trend's days and the new-build test. In
+`web/src/boards/bricks.test.tsx`, with a fake data hook and a fake `fetch`: for `pull`, `repository`, `question`,
+`approval` and a contact, all three forms, the compact form as one line, the unavailable and loading lines, the
+heading rule, a pull request's own flag being raised, a question's answers reaching `/api/inbox/answer` and then
+`boards.act`, and an approval having no control in any kind, state or form. In `brick-queries.test.ts`: the pull and
+repository selections run against the generated schema. **No suite:** every check
 of what the page draws (2, 13, 18, 19, 21, 22, 23, and the page halves of 1, 7, 8, 15, 16 and 20). Those were run by
 hand in a browser on an example household and on the owner's own, and are not pinned.
 
 **Rules with no check at all:** writes to one board applied in arrival order; a blueprint description's limit; the
-heading rule; a brick's own flag (raised, cleared on looking, cleared when its condition ends); a closed board being
+heading rule for the bricks drawn before 2026-11-27; a brick's own flag cleared on looking or when its condition ends
+(nothing clears one when its condition ends: the page only raises); a closed board being
 read-only on the page; the reload onto a new build; no flag queueing a job (nothing in the flag path can queue one,
 and no test proves a negative); rules 10 and 11 and the standing instructions, which are judgment.
 
