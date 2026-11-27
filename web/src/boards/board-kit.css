@@ -53,10 +53,12 @@ button.board-more:is(:hover, :focus-visible) { color: var(--foreground); backgro
 .board-brief .board-time { font-size: inherit; color: inherit; }
 
 /* Getting new data: one small breathing mark in the header's margin while a brick is drawn from what the page remembered. It takes no room. */
-.board-settling { position: absolute; left: .42rem; top: calc(var(--bk-3) + .5lh - 2px); width: 4px; height: 4px; border-radius: 50%; background: var(--board-accent); opacity: .8; }
+.board-settling { position: absolute; left: .42rem; top: calc(var(--bk-3) + .5lh - 2px); width: 4px; height: 4px; border-radius: 50%; background: var(--board-accent); opacity: 0; animation: board-settling-in 0s linear .35s forwards; }
+/* A refresh that is answered in a blink shows nothing: the mark waits a third of a second before it appears. */
+@keyframes board-settling-in { to { opacity: .8; } }
 .board-placement[data-form='primary'] .board-settling { left: .8rem; top: calc(var(--bk-4) + .5lh - 2px); }
 .board-placement[data-form='compact'] .board-settling { top: calc(var(--bk-25) + .5lh - 2px); }
-@media (prefers-reduced-motion: no-preference) { .board-settling { animation: board-breathe 1.6s ease-in-out infinite; } }
+@media (prefers-reduced-motion: no-preference) { .board-settling { animation: board-settling-in 0s linear .35s forwards, board-breathe 1.6s ease-in-out .35s infinite; } }
 
 /* The flag: a word in the waiting tone and a rim of the same, never a filled badge. */
 .board-flag { align-self: center; display: inline-flex; align-items: center; gap: var(--bk-15); margin-right: var(--bk-1); padding: 0; border-radius: 0; background: none;
