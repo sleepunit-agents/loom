@@ -21,7 +21,7 @@ function fixture() {
   const key = { seal: async (words: string) => Buffer.from('SEALED:' + Buffer.from(words).toString('hex')), open: async (blob: Uint8Array) => Buffer.from(Buffer.from(blob).toString().slice(7), 'hex').toString(), hash: (words: string) => words };
   const sessions = new ConversationSessions(db, now, key);
   const files = Buffer.from('record').toString('base64');
-  const save = async (more: Partial<{ harness: string; model: string; session: string; files: string; since: string }> = {}) => sessions.store(await sessions.seal({ conversation: cv, harness: 'claude', model: 'claude-opus-5-5', session: 'abcd-1234', files, ...more }));
+  const save = async (more: Partial<{ harness: string; model: string; session: string; files: string; since: string; until: string }> = {}) => sessions.store(await sessions.seal({ conversation: cv, harness: 'claude', model: 'claude-opus-5-5', session: 'abcd-1234', files, ...more }));
   return { db, cv, key, sessions, save, files, now, later: (ms: number) => { at += ms; } };
 }
 
@@ -148,4 +148,37 @@ it.each(['startup sweep','repeat deletion'])('removes legacy checkpoints for alr
   if(cleanup==='startup sweep') expect(comms.expire()).toBe(2);
   else comms.delete('th:former');
   expect(f.db.select({id:conversationSessions.conversation}).from(conversationSessions).all()).toEqual([{id:f.cv}]);
+});
+
+it('counts a session from the keep time before the first of its words is erased, when that is earlier than the word\'s age gives', async () => {
+  const f = fixture(), day = 86_400_000, at = (ms: number) => new Date(Date.parse(f.now()) + ms).toISOString();
+  // Handed a word said an hour ago whose own limit is a day away (a work notice counts from its thread's opening;
+  // a word written under a shorter keep time keeps that limit): the keep time is three days, so the count starts two days back.
+  expect(await f.save({ since: at(-3_600_000), until: at(day) })).toBe(true);
+  expect(f.db.select().from(conversationSessions).get()?.startedAt).toBe(at(-2 * day));
+  // It is handed on until that word is erased, and goes in the sweep that erases it.
+  f.later(day - 1000); expect(await f.sessions.open(f.cv, 'claude', 'claude-opus-5-5')).not.toBeNull();
+  expect(expireConversationSessions(f.db, ageCutoff(f.now(), 3))).toBe(0);
+  f.later(1000); expect(await f.sessions.open(f.cv, 'claude', 'claude-opus-5-5')).toBeNull();
+  expect(expireConversationSessions(f.db, ageCutoff(f.now(), 3))).toBe(1);
+  // A later job handed an earlier erasure moves the start back; one handed a later erasure leaves it.
+  await f.save(); const first = f.now();
+  await f.save({ until: at(4 * day) }); expect(f.db.select().from(conversationSessions).get()?.startedAt).toBe(first);
+  await f.save({ until: at(2 * day) }); expect(f.db.select().from(conversationSessions).get()?.startedAt).toBe(at(-day));
+  // Handed a word already erased, or a time that is none, nothing of it is counted or kept past its time.
+  await f.save({ until: 'soon' }); expect(f.db.select().from(conversationSessions).get()?.startedAt).toBe(at(-day));
+  expect(await f.save({ until: f.now() })).toBe(false);
+  expect(f.db.select().from(conversationSessions).all()).toEqual([]);
+});
+
+it('erases a thread\'s session when the thread is archived', async () => {
+  const f = fixture();
+  f.db.insert(members).values({ id: 'alice', role: 'member', joinedAt: f.now() }).run();
+  const comms = new CommsMessages(f.db, f.key, f.now), thread = comms.threads.open({ agent: 'art', member: 'alice', title: 'Private' });
+  for (const harness of ['claude', 'codex']) expect(f.sessions.store(await f.sessions.seal({ conversation: thread.conversation, harness, model: 'fixture', session: 'abcd-1234', files: f.files }))).toBe(true);
+  expect(await f.save()).toBe(true);
+  comms.threads.archive(thread.id, false);
+  expect(f.db.select().from(conversationSessions).all()).toHaveLength(3);
+  comms.threads.archive(thread.id, true);
+  expect(f.db.select({ conversation: conversationSessions.conversation }).from(conversationSessions).all()).toEqual([{ conversation: f.cv }]);
 });

@@ -174,6 +174,29 @@ it('starts fresh, and never fails, when loom has none, loom is away, or what it 
   await keep({ command: async () => { throw Error('PRIVATE'); } }, { base, root })!.save(session);
 });
 
+it('tells loom when the first word it was handed will be erased, says whether its session was kept, and knows a door loom refuses', async () => {
+  const until = '2026-11-30T00:00:00.000Z', since = '2026-11-20T00:00:00.000Z';
+  const run = async (answer: (input: { until?: string; session: string | null }) => unknown) => {
+    const at = home(), said: { until?: string; session: string | null; since?: string }[] = [];
+    const keeper = keep({ command: async (_operation: string, input: unknown) => { said.push(input as never); return answer(input as never); } }, at)!;
+    return { kept: await keeper.save(session, since, undefined, until), said };
+  };
+  // Kept: one save, carrying both counts.
+  expect(await run(() => ({ ok: true, value: { saved: true } }))).toEqual({ kept: true, said: [expect.objectContaining({ session, since, until })] });
+  // loom took the save and kept nothing (too large for it, or past its keep time): not kept, and no second word is needed.
+  expect(await run(() => ({ ok: true, value: { saved: false } }))).toMatchObject({ kept: false, said: [{ session }] });
+  // A coordinator older than `until` refuses the shape: the save is sent as it was before, and kept.
+  const older = await run(input => input.until ? { ok: false, code: 'invalid', message: 'no' } : { ok: true, value: { saved: true } });
+  expect(older.kept).toBe(true); expect(older.said.map(input => [input.session, input.since, input.until])).toEqual([[session, since, until], [session, since, undefined]]);
+  // Refused: loom is told nothing is handed on, and the body knows nothing was kept. Loom away: it cannot know.
+  expect(await run(input => input.session ? { ok: false, code: 'conflict', message: 'no' } : { ok: true, value: { saved: false } })).toMatchObject({ kept: false, said: [{ session }, { session: null }] });
+  expect((await run(() => { throw Error('PRIVATE'); })).kept).toBeUndefined();
+  // A door loom denies this body: its job keeps no session, and the body program then keeps none.
+  const at = home(), denied = keep({ command: async () => ({ ok: false, code: 'denied', message: 'no' }) }, at)!, away = keep({ command: async () => ({ ok: false, code: 'unavailable', message: 'no' }) }, at)!;
+  expect(denied.refused).toBe(false); expect(await denied.take()).toBeUndefined(); expect(denied.refused).toBe(true);
+  expect(await away.take()).toBeUndefined(); expect(away.refused).toBe(false);
+});
+
 it('keeps no session unless the worker said the place is the body\'s own, the harness keeps them there, and it is a real directory reached through no link', () => {
   const at = home();
   expect(keep(nothing, at)).toBeDefined();
