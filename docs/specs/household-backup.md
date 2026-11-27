@@ -7,7 +7,7 @@ spec that follows starts from them.*
 ## Why
 
 The household stores where backups go, when, how many to keep and which keys to lock them to
-(`household.backup_target`, `backup_at`, `backup_keep`, `backup_recipients`). No code acts on them.
+(`household.backup_target`, `backup_at`, `backup_keep`, `backup_recipients`). No code in loom acts on them. The owner's household is backed up from outside loom today: `bin/loom-new-backup` in ~/Art (t-2312) runs nightly, takes every SQLite file by online backup into an encrypted restic repository on another disk, and sends an age-encrypted copy offsite, each followed by a restore drill. This outline is about loom doing that itself; that script is the working reference for it.
 `docs/specs/household.md` ("Export and restore") describes `loom export` and `loom restore`; those commands were
 removed with the older program and not replaced. The owner, 2026-11-26: "we need to solve backup here too for sure."
 

@@ -159,7 +159,7 @@ Not exported:
   `hit_count`.
 - **Volatile table:** `knowledge_access`.
 - **Worked out again:** `vec_memories` and every table whose name begins `vec_memories_`.
-- **Deleted content:** `memory_deletions`. It holds the words of memories that were deleted. See open decision 2.
+- **Deleted content:** `memory_deletions`. It holds the words of memories that were deleted. Decided 2026-11-27: not exported.
 - **Bookkeeping:** `mind_operation_receipts`, `mind_source_migrations`, `memory_command_preparations`,
   `memory_command_receipts`, `memory_command_schema`, `memory_card_schema`, `sqlite_sequence`, and after the merge
   `memory_sequences`, `memory_embeddings`, `memory_moves`.
@@ -235,8 +235,9 @@ outcome, and for a failure its reason. Nobody else is shown it.
 - **Git keeps what loom forgets.** A memory that is deleted, a note that expires, a card that is archived and later
   removed: its file leaves the export and stays in the repository's history. Removing something for good means
   rewriting that history by hand.
-- **The export is plain text.** Whoever can read the repository can read every memory, note and card of the agent,
-  including what it holds about other people. See open decision 1.
+- **The export is plain text; what goes to a git host is not.** The directory this spec defines is plain files on
+  the household's own machine. Before any of it leaves that machine it is encrypted with age (decided 2026-11-27,
+  below), so a repository shows which records changed and when, and never their words.
 - **Deleted memories are not in it.** An agent rebuilt from an export has no record of what it deleted.
 - **Volatile values are not in it.** An agent rebuilt from an export starts with every memory cold.
 - **JSON columns are not kept byte for byte.** `metadata` and the cards are written in canonical form, so spacing and
@@ -311,8 +312,8 @@ final newline, and JSON columns with odd spacing.
 Found by the third cold review and not yet settled. Each needs a decision or a measurement before this is built.
 
 1. **Rows whose parent is gone.** A revision, a note file, a citation or a card reference whose record has been
-   deleted: written, dropped, or a stop? If revisions outlive a deleted memory, exporting them conflicts with open
-   decision 2.
+   deleted: written, dropped, or a stop? If revisions outlive a deleted memory, exporting them is settled by decided 2:
+   it is not written.
 2. **A revision's own ref or slug.** The spec leaves out `memory_revisions.ref`, the revisions' `slug` and
    `note_revisions.path` as "said by the file's path". That holds only if they always equal the record's current one.
    Not measured.
@@ -332,17 +333,22 @@ Found by the third cold review and not yet settled. Each needs a decision or a m
 7. **A note's attachment is no record's own file**, so rule 3 and check 4 disagree about it.
 8. **Refused calls leave no record**, so a caller who is not entitled can probe unseen.
 
+## Decided by the owner, 2026-11-27
+
+1. **Encrypted with age before it leaves the machine**, to the household's backup recipients, the same keys the
+   offsite backup already uses (`bin/loom-new-backup offsite` in ~/Art, and `src/backup.ts` in the older program).
+   Not yet designed, and it must be before this is built: age output differs on every run, so encrypting the whole
+   directory each time would make every file change in every commit. The shape to design is one age file per export
+   file, rewritten only when that file's plain bytes changed, with the plain digests kept in a list that is itself
+   encrypted. The digest in this spec stays a digest of the plain bytes.
+2. **Deleted memories are not exported.** "Deleted memories are deleted, they don't need to come along."
+   `memory_deletions` stays out. Known hole 1 is narrowed by this: a revision of a deleted memory is not written.
+
 ## Open, for the owner
 
 The spec is written to the first answer in each case.
 
-1. **Plain text or encrypted.** Written as: plain text, in a private repository, because the point is that it can be
-   read and diffed. The other answer encrypts each file with age to the household's backup keys: safe on the git
-   host, and every diff is noise.
-2. **Deleted memories.** Written as: not exported. Loom keeps the words of deleted memories in `memory_deletions`;
-   putting them in a repository copies them somewhere loom's own deletion cannot reach, on top of what git's
-   history already keeps. The other answer exports them, so that an agent rebuilt from an export is complete.
-3. **Who commits and pushes.** Written as: a routine outside loom, per agent. The other answer is a loom setting per
+1. **Who commits and pushes.** Written as: a routine outside loom, per agent. The other answer is a loom setting per
    agent (a repository and a schedule), with loom holding the credentials.
-4. **Members who have the agent.** Written as: they do not get its export; only the agent and household owners do.
+2. **Members who have the agent.** Written as: they do not get its export; only the agent and household owners do.
    The other answer gives it to any member who can read the agent's memories today.
