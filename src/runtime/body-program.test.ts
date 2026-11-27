@@ -7,6 +7,9 @@ import { expect, it, vi } from 'vitest';
 import { bodyProgram } from './body-program.js';
 import { BODY_EXIT, LOOM_EXIT, WORKER_EXIT, exitStage } from './job-exit.js';
 import type { WorkerAssignment } from './worker.js';
+import { createHash } from 'node:crypto';
+import { HarnessResumeUnavailable } from './body-harness.js';
+import type { BodySessions } from './body-session.js';
 // With the room loom's dispatcher hands a job on its owners' word: an assignment with none is held to loom's tools.
 const job: WorkerAssignment = { id: 'job', box: 'box', agent: 'art', conversation: 'cv', thread: 'thread', model: 'requested', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
   run: { nestedContainers: false, gpu: false, ports: [], policy: { people: [{ kind: 'person', person: 'owner', tier: null }], deniedTools: [], word: 'owners' } } };
@@ -696,4 +699,81 @@ it('tells a body in a loom thread what is on its boards, before its mail, and no
   expect(refused.words).not.toContain('second window');
   const elsewhere = await run(null, { ok: true, value: { text: 'x' } });
   expect(elsewhere.asked).toHaveLength(0);
+});
+
+// A member's own thread with the agent (venue loom) continues its kept harness session as a bridge conversation does.
+const sha = (value: string) => createHash('sha256').update(value).digest('hex');
+function ownThread(more: { history?: unknown[]; policy?: unknown; keepUntil?: string | null } = {}) {
+  const f = fixture(), fetcher = f.options.fetch, value = JSON.parse(f.input.toString());
+  value.job.venue = 'loom'; if (more.policy) value.job.run.policy = more.policy;
+  const seen: { words: string; session: unknown }[] = [];
+  const run = (native: (words: string, session: { resume?: string } | undefined) => Promise<{ text: string; model: string; actions: never[]; session?: string }>, sessions?: BodySessions) => {
+    f.native.mockImplementation((async (_job: WorkerAssignment, words: string, _signal: AbortSignal, session?: { resume?: string }) => { seen.push({ words, session }); return native(words, session); }) as never);
+    return bodyProgram({ ...f.options, stdin: async () => Buffer.from(JSON.stringify(value)), sessions, fetch: async (url, init) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { operation?: string };
+      if (String(url).endsWith('/boards/brief') || body.operation === 'boards.brief') return Response.json({ ok: true, value: { text: 'Board bd-1 "Loom lately", open, revision 3.' } });
+      const response = await fetcher(url, init); if (!String(url).endsWith('/take')) return response;
+      const batch = await response.json(); Object.assign(batch.value.items[0], { keepUntil: more.keepUntil ?? '2099-11-29T00:00:00.000Z', ...(more.history ? { history: more.history } : {}) }); return Response.json(batch);
+    } });
+  };
+  const cards = () => f.calls.filter(row => row.path === 'message' && (row.body.input as { kind?: string }).kind === 'card').map(row => row.body.input as { tool: string; words: string; clientId: string; cardState: string });
+  return { ...f, run, seen, cards };
+}
+const earlier = [
+  { sourceKey: 'mail-0', seq: 1, kind: 'message', sender: 'alice', at: '2026-11-10T00:00:00.000Z', words: 'EARLIER QUESTION', keepUntil: '2099-11-24T00:00:00.000Z' },
+  { sourceKey: 'run:job-0', seq: 2, kind: 'reply', sender: 'art', at: '2026-11-10T00:01:00.000Z', words: 'EARLIER ANSWER', keepUntil: '2099-11-24T00:01:00.000Z' },
+  { sourceKey: 'mail-stopped', seq: 3, kind: 'message', sender: 'alice', at: '2026-11-11T00:00:00.000Z', words: 'A MESSAGE ITS JOB WAS STOPPED ON', keepUntil: '2099-11-25T00:00:00.000Z' },
+];
+it('continues the kept session of a member\'s own thread: told the new mail, the lines the session lacks and the standing blocks, the boards brief each time', async () => {
+  const f = ownThread({ history: earlier }), saved: unknown[][] = [];
+  const sessions: BodySessions = { covered: [sha('mail-0'), sha('run:job-0')], take: async () => 'session-1', save: async (...input) => { saved.push(input); return true; }, discard: () => {} };
+  expect(await f.run(async () => ({ text: 'Answer', model: 'observed', actions: [], session: 'session-1' }), sessions)).toBe(0);
+  expect(f.seen).toHaveLength(1); expect(f.seen[0].session).toEqual({ resume: 'session-1' });
+  const told = f.seen[0].words;
+  // What can change between jobs is said again: the board, who the job works for, how to post and to delegate.
+  expect(told).toContain('second window beside it'); expect(told).toContain('Board bd-1 "Loom lately"'); expect(told).toContain('This job works for the member owner');
+  expect(told).toContain('conversation.activityPost'); expect(told).toContain('conversation.handoff');
+  // What the session holds is not: the lines it covers, the previous answer among them. A line it lacks is told.
+  expect(told).not.toContain('EARLIER QUESTION'); expect(told).not.toContain('EARLIER ANSWER');
+  expect(JSON.parse(told.split('\n\n').at(-1)!)).toEqual({ history: [expect.objectContaining({ words: 'A MESSAGE ITS JOB WAS STOPPED ON' })], input: 'PRIVATE MAIL' });
+  // It hands the session back: counted from the oldest line and from the first erasure, and covering this mail and all this job said.
+  expect(saved).toHaveLength(1);
+  const [session, since, covered, until] = saved[0] as [string, string, string[], string];
+  expect([session, since, until]).toEqual(['session-1', '2026-11-10T00:00:00.000Z', '2099-11-24T00:00:00.000Z']);
+  for (const key of ['mail-0', 'run:job-0', 'mail-stopped', 'mail', 'run:job']) expect(covered, key).toContain(sha(key));
+  expect(f.cards()).toEqual([]); expect(f.error).not.toHaveBeenCalled();
+});
+it('starts a member\'s own thread fresh with its kept history when loom hands no session, keeps one, and says so in the thread when the thread was answered before', async () => {
+  const f = ownThread({ history: earlier }), saved: unknown[][] = [];
+  const sessions: BodySessions = { take: async () => undefined, save: async (...input) => { saved.push(input); return true; }, discard: () => {} };
+  expect(await f.run(async () => ({ text: 'Answer', model: 'observed', actions: [], session: 'session-new' }), sessions)).toBe(0);
+  expect(f.seen[0].session).toEqual({});
+  expect(f.seen[0].words).toContain('second window beside it'); expect(f.seen[0].words).toContain('EARLIER ANSWER');
+  expect(saved[0][0]).toBe('session-new');
+  expect(f.cards()).toEqual([{ kind: 'card', tool: 'Session', cardState: 'done', clientId: 'session-fresh', words: expect.stringMatching(/^Started fresh: loom handed this job no session to continue\./) }]);
+  // A thread's first job continues nothing, and nothing is said.
+  const first = ownThread();
+  expect(await first.run(async () => ({ text: 'Answer', model: 'observed', actions: [], session: 'session-new' }), { take: async () => undefined, save: async () => true, discard: () => {} })).toBe(0);
+  expect(first.seen[0].session).toEqual({}); expect(first.cards()).toEqual([]);
+});
+it('asks for no session and leaves none in a thread on anybody else\'s word, and where loom refuses the door', async () => {
+  const calls: string[] = [], sessions = (): BodySessions => ({ take: async () => { calls.push('take'); return 'session-1'; }, save: async () => { calls.push('save'); }, discard: () => { calls.push('discard'); } });
+  const guest = ownThread({ history: earlier, policy: { people: [{ kind: 'person', person: 'sam', tier: null }], deniedTools: [], word: 'others' } });
+  expect(await guest.run(async () => ({ text: 'Answer', model: 'observed', actions: [] }), sessions())).toBe(0);
+  expect(calls).toEqual([]); expect(guest.seen[0].session).toBeUndefined(); expect(guest.seen[0].words).toContain('EARLIER ANSWER'); expect(guest.cards()).toEqual([]);
+  // loom's door has the last word: a thread no one member owns, or an archived one. The body then keeps nothing.
+  const refused = ownThread({ history: earlier });
+  expect(await refused.run(async () => ({ text: 'Answer', model: 'observed', actions: [] }), { ...sessions(), take: async () => undefined, refused: true })).toBe(0);
+  expect(calls).toEqual([]); expect(refused.seen[0].session).toBeUndefined(); expect(refused.seen[0].words).toContain('EARLIER ANSWER'); expect(refused.cards()).toEqual([]);
+});
+it('never fails a thread\'s job over its session: one the harness cannot continue runs afresh, one too large is not kept, and the thread is told both', async () => {
+  const broken = ownThread({ history: earlier });
+  const sessions: BodySessions = { covered: [sha('mail-0'), sha('run:job-0')], take: async () => 'session-gone', save: async () => false, discard: () => {} };
+  expect(await broken.run(async (_words, session) => { if (session?.resume) throw new HarnessResumeUnavailable(); return { text: 'Answer', model: 'observed', actions: [], session: 'session-new' }; }, sessions)).toBe(0);
+  expect(broken.seen.map(row => row.session)).toEqual([{ resume: 'session-gone' }, {}]);
+  // Afresh it is told everything a fresh body is: the whole kept history, and the board.
+  expect(broken.seen[1].words).toContain('EARLIER ANSWER'); expect(broken.seen[1].words).toContain('second window beside it');
+  expect(broken.cards().map(card => [card.clientId, card.words.split(':')[0]])).toEqual([['session-fresh', 'Started fresh'], ['session-unkept', 'This job\'s session was not kept for the next one']]);
+  expect(broken.cards()[1].words).toContain('700 KB');
+  expect(broken.calls.filter(row => row.path === 'message' && (row.body.input as { kind?: string }).kind === 'reply')).toHaveLength(1); expect(broken.error).not.toHaveBeenCalled();
 });

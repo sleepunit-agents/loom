@@ -1106,13 +1106,35 @@ presence implementation here. See `src/pieces/bridges/presence.ts`.
   class. Or owners being held up behind guests often enough to want two jobs of one conversation at once.
 
 ### A harness session is kept between bodies, sealed, for the next body alone
-- What: a bridge conversation's body continues the session the last body of that conversation left. When
+- What: the body of a bridge conversation, and of one member's own thread with an agent (the venue `loom`:
+  Comms and the boards page; since 2026-11-27, before which a thread's every job started fresh), continues
+  the session the last body of that conversation left. When
   it has answered, the body packs the harness's own files for the session (for Claude Code, the transcript
   `projects/<directory>/<session>.jsonl` and the tool results beside it), gzipped, and hands them to loom;
   loom keeps one for a conversation and harness (`conversation_sessions`), sealed with the household's
   words key. The next body of the same harness is handed it, puts the files back and tells the harness to
   continue (`claude --resume`). It is then told only the new mail: not the kept history, and not the
   agent's identity pages again. Only Claude Code keeps sessions so far; another harness starts fresh.
+- Which conversations: a bridge conversation; a thread that is one member's, not archived. Not a wake and
+  not a handed-off session: each is one job, with nothing before it to continue. Not a thread no member
+  owns. Not a terminal conversation, which has no body of loom's. The doors decide (`bound` in
+  `shared-conversation-sessions.ts`); the body program asks on the same conditions, and a body the door
+  denies keeps nothing.
+- What a continuing body in a thread is told: its new mail; any kept line of the thread its session does
+  not hold (a message whose job was stopped before it answered, say); and, each time, what can change
+  between jobs: the boards brief, who the job works for, how to post activity and to hand off, and that a
+  handed-off session's result is one. Not its own last answer: each line of a thread's history is keyed (a
+  member's message by the mail it was delivered as, everything one job said by that job;
+  `history-context.ts`), a session is saved with the keys it holds, and a line it holds is not told again.
+- A thread's session goes with the thread. Deleting the thread erases it in the same write; a save that
+  arrives after is refused. Archiving the thread erases it too, and an archived thread's body has neither
+  door: its member has put the conversation away, so what a body read and used there does not wait on in
+  case it is opened again. Taken out of the archive, its next body starts fresh with the kept history.
+- The member is told when continuity was lost: a job in a thread that could have continued a session and
+  did not (handed none though the thread was answered before, or a session the harness could not
+  continue), and a job whose own session was not kept for the next, each leave one step among the
+  thread's cards, tool `Session`, in loom's fixed words. A step is never told to a later body as history.
+  Not said: a worker or harness that keeps no sessions at all, where every job starts fresh.
 - Not for a job on anybody else's word. A session holds what the bodies before read and used, tool
   results included, and a guest's job that continued it would be handed all of that with nothing to
   check its answer against. Both doors refuse such a job on loom's own reading of its word (`jobHeld`),
@@ -1141,20 +1163,29 @@ presence implementation here. See `src/pieces/bridges/presence.ts`.
   erasable word it holds (`conversation_sessions.started_at`): when it was first saved, or earlier when
   its first body started fresh and was handed older words of a direct conversation, whose time the body
   tells loom. A save within the keep time leaves that start as it is. Only erasable words count: the words
-  of a direct conversation, each of which has an erase time. A room's words are kept without limit, have
-  no erase time, and do not move the start, however old the history handed in. So no erasable word in a
-  session outlives its keep time, and a room's session is counted from its first save.
+  of a direct conversation and of a member's thread, each of which has an erase time. A room's words are
+  kept without limit, have no erase time, and do not move the start, however old the history handed in. So
+  no erasable word in a session outlives its keep time, and a room's session is counted from its first save.
+  A word's own limit can be earlier than its age gives it (a work notice counts from when its ticket's
+  thread was opened; a word written under a shorter keep time keeps that limit), so the body also tells
+  loom when the first of the erasable words it was handed will be erased (its mail, its kept history, the
+  question an answer quotes), and the start is no later than the keep time before that. A thread's session
+  is therefore erased by the same sweep, at the same time, as the oldest word it was handed.
+  Not covered: an owner raising the keep time afterwards. A session is then kept for the new time from its
+  start, while a word stamped under the old time still goes at its stamp. A session's own erase time would
+  need a column.
 - Starts fresh instead, with the kept history ("what was said", `bridge-history.ts`): no session kept; a
   different harness or family of models; a session past the keep time; one too large to pack (which also
   removes the one kept before); a conversation answered after the session was last saved (its body died
   after replying, or another harness answered since), so that a session behind what was said is never
-  continued; a harness that cannot continue the session it was handed and ends having said nothing, in
+  continued (the result of a session handed off from a thread is not such an answer: it reaches the
+  thread's next body as mail); a harness that cannot continue the session it was handed and ends having said nothing, in
   which case the same body runs the work once more, afresh. A body that is handed nothing it can continue
   tells loom at once, and what was kept is removed; one past its keep time is removed by the words' sweep.
 - Who can read it: nobody but the body holding the conversation's job. The table is not served by the
   query door and no page shows it, to an owner either: a session is the model's own record of the
   conversation, words included. Both doors (`conversation.session`, `conversation.sessionSave`) ask for
-  that body, of a bridge conversation, and the body program keeps both from the model's own tools, so a
+  that body, of a bridge conversation or a member's own thread, and the body program keeps both from the model's own tools, so a
   model cannot store a session of its own making for the next body to continue. A session's files are
   found, read, put back and removed without following a link at any step (`src/runtime/unfollowed.ts`);
   a pack that is refused leaves no file or directory it made. Where a harness keeps a session is said
@@ -1167,7 +1198,10 @@ presence implementation here. See `src/pieces/bridges/presence.ts`.
   and the next body may run on any machine. Sealed and unread because it holds the words of what may be a
   private conversation. The body removes the files from its machine once they are handed over.
 - What this costs: a continued session re-reads all of itself on every message, and grows until it passes
-  the size limit and the conversation starts fresh. A conversation that never pauses still starts fresh
+  the size limit and the conversation starts fresh. In a thread the standing blocks (the boards brief, the
+  activity and hand-off instructions) are said again on every message and so are in the session once per
+  message. What the harness does to its own transcript as it nears its context limit (Claude Code compacts
+  it) is the harness's; loom only measures the pack. A conversation that never pauses still starts fresh
   once in every keep time. A continued session does not see changes to the agent's identity pages until
   it next starts fresh. A worker that runs bodies as processes has no resume at all.
 - Would change it: wanting resume for bodies run as processes. Each would need a directory of its own for

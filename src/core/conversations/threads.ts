@@ -7,6 +7,7 @@ import type { DataDatabase } from '../data/database.js';
 import { unendedJobStates } from '../data/job-states.js';
 import { conversations, deletedThreads, jobs, messages, threads } from '../data/schema.js';
 import { Conversations, lateMailWaits, type LateJoins } from './index.js';
+import { eraseConversationSessions } from './sessions.js';
 
 type Thread = typeof threads.$inferSelect;
 export type ThreadInput = { id?: string; venue?: 'loom' | 'terminal'; member: string; agent: string; project?: string; title: string; titledBy?: Thread['titledBy'] };
@@ -79,9 +80,15 @@ export class Threads {
     });
   }
 
+  /** An archived thread keeps no harness session: its member has put the conversation away, and what a body
+   * read and used there does not wait on in case it is opened again. Taken out, its next body starts fresh
+   * with the thread's kept history (sessions.ts; the session doors refuse an archived thread's body). */
   archive(id: string, archived: boolean): Thread {
-    const thread = this.thread(id);
-    return this.db.update(threads).set({ archivedAt: archived ? thread.archivedAt ?? this.now() : null }).where(eq(threads.id, id)).returning().get()!;
+    return this.db.transaction(() => {
+      const thread = this.thread(id);
+      if (archived) eraseConversationSessions(this.db, thread.conversation);
+      return this.db.update(threads).set({ archivedAt: archived ? thread.archivedAt ?? this.now() : null }).where(eq(threads.id, id)).returning().get()!;
+    });
   }
 
   read(id: string, seq: number): Thread {

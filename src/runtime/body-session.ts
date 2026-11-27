@@ -1,4 +1,5 @@
-/** A body's side of keeping its conversation's harness session (core/conversations/sessions.ts).
+/** A body's side of keeping its conversation's harness session (core/conversations/sessions.ts): a bridge
+ * conversation's, or that of one member's own thread with the agent (body-program.ts says which bodies ask).
  *
  * When the body starts it asks loom for the session the last body of this conversation left, puts its
  * files back where the harness keeps them, and tells the harness to continue it. When it has answered it
@@ -70,8 +71,12 @@ export interface BodySessions {
   historyKeys?: boolean;
   /** Hashes of the bridge records already represented in the restored harness session. */
   covered?: readonly string[];
-  /** Pack and remove the session files. Count retention from the oldest erasable input. */
-  save(session: string | undefined, since?: string, covered?: string[]): Promise<void>;
+  /** loom refused this body the door: its job keeps no session (shared-conversation-sessions.ts), and none is left. */
+  refused?: boolean;
+  /** Pack and remove the session files. Count retention from the oldest erasable input (`since`), and from when
+   * the first of the erasable words handed in will be erased (`until`). Answers whether loom keeps the session
+   * for the next body: false when it was too large to pack, or loom did not take it. */
+  save(session: string | undefined, since?: string, covered?: string[], until?: string): Promise<boolean | void>;
   /** Removes from this machine the session `take` put back, telling loom nothing: for a run that did not answer. */
   discard(): void;
 }
@@ -88,10 +93,11 @@ export function bodySessions(client: Client, harness: string, env: Env, place: s
   try { accessSync(place, constants.W_OK); } catch { return undefined; }
   const root = place;
   const remove = (session: string) => { for (const rel of layout.files(root, session).filter(file => layout.owns(file, session)).reverse()) removeUnfollowed(root, rel); };
-  let restored: string | undefined, covered: string[] | undefined, historyKeys=true;
+  let restored: string | undefined, covered: string[] | undefined, historyKeys=true, refused=false;
   return {
     get historyKeys(){return historyKeys;},
     get covered(){return covered;},
+    get refused(){return refused;},
     async take() {
       let reply;
       try {
@@ -101,7 +107,7 @@ export function bodySessions(client: Client, harness: string, env: Env, place: s
           reply=await client.command('conversation.session', {}, randomUUID());
         }
       } catch { return undefined; } // A lost response tells us nothing about the stored session.
-      if (!reply.ok) return undefined;
+      if (!reply.ok) { refused = reply.code === 'denied'; return undefined; }
       try {
         const kept = z.object({ session: z.object({ session: z.string().regex(SESSION_ID), files: z.string(), covered:z.array(z.hash('sha256')).max(SESSION_HISTORY_KEYS).optional() }).strict().nullable() }).strict().parse(reply.value).session;
         if (kept) { unpackSession(layout, root, kept.files, kept.session); covered=kept.covered;return restored = kept.session; }
@@ -112,16 +118,21 @@ export function bodySessions(client: Client, harness: string, env: Env, place: s
       return undefined;
     },
     discard() { if (restored) remove(restored); },
-    async save(session, since, knownKeys) {
-      let pack: string | undefined;
+    async save(session, since, knownKeys, until) {
+      let pack: string | undefined, kept: boolean | undefined = false;
       try { if (session && SESSION_ID.test(session)) pack = packSession(layout, root, session); } catch { pack = undefined; }
       try {
-        const sent = pack ? await client.command('conversation.sessionSave', { session: session!, files: pack, ...(historyKeys && knownKeys ? {covered:knownKeys} : {}), ...(since ? { since } : {}) }, randomUUID()) : undefined;
+        const input = pack ? { session: session!, files: pack, ...(historyKeys && knownKeys ? {covered:knownKeys} : {}), ...(since ? { since } : {}) } : undefined;
+        let sent = input ? await client.command('conversation.sessionSave', { ...input, ...(until ? { until } : {}) }, randomUUID()) : undefined;
+        // A coordinator older than `until` takes the save as it did before.
+        if (input && until && sent && !sent.ok && sent.code === 'invalid') sent = await client.command('conversation.sessionSave', input, randomUUID());
+        kept = !!sent?.ok && (sent.value as { saved?: unknown } | null)?.saved === true;
         // Nothing to hand on, or loom did not take it: what loom keeps is then behind this run, and it is told so.
         if (!sent?.ok) await client.command('conversation.sessionSave', { session: null }, randomUUID());
-      } catch { /* A save may have committed. Leave the row for the next body's freshness check. */ }
+      } catch { kept = undefined; /* A save may have committed. Leave the row for the next body's freshness check. */ }
       // The one this run left, and the one it was handed if it went on without it.
       finally { for (const id of new Set([session, restored])) if (id && SESSION_ID.test(id)) remove(id); }
+      return kept;
     },
   };
 }
