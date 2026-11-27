@@ -75,11 +75,9 @@ describe.runIf(chrome && existsSync(join(root, 'board.html')) && process.env.LOO
         const text = String(message);
         if (text.includes('LoomNow')) { sent.now++; if (before) return; }
         if (text.includes('"type":"subscribe"') && text.includes('LoomData')) { if (text.includes('"pace":"relaxed"') && !before) sent.relaxed++; else sent.eager++; }
-        if (text.includes('"type":"complete"')) sent.eager += 0;
         server.send(before ? text.replace('"pace":"relaxed"', '"pace":"eager"') : text);
       });
     });
-    if (process.env.LOOM_MEASURE_POSTS) page.on('request', (request) => { if (request.method() === 'POST') lines.push('   page POST ' + new URL(request.url()).pathname); });
     await page.goto(`${program.url}/app/t/${encodeURIComponent(thread.id)}`);
     await page.getByRole('textbox', { name: /^message /i }).waitFor();
     const operate = (name: string, input: object) => page.evaluate(async ([path, body]) => (await (await fetch('/api/' + path, { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ input: body, id: crypto.randomUUID() }) })).json()) as { ok: boolean; value?: { board: string } }, [name.replace('.', '/'), input] as const);
@@ -90,7 +88,6 @@ describe.runIf(chrome && existsSync(join(root, 'board.html')) && process.env.LOO
     for (const [brick, params] of bricks.slice(1)) expect((await operate('boards.change', { board: opened.value!.board, changes: [{ change: 'place', brick, params }] })).ok).toBe(true);
     await expect.poll(() => page.locator('article[data-form]').count()).toBe(10);
     await page.locator('article[data-form="primary"]').getByText('Compare pumps').first().waitFor();
-    if (process.env.LOOM_MEASURE_POSTS) lines.push('   forms: ' + (await page.locator('article[data-form]').evaluateAll((all) => all.map((a) => a.querySelector('h2')?.textContent + ':' + a.getAttribute('data-form')))).join(' '));
     await sleep(7000);
     /** One commit from outside the page to a table no brick reads: a machine's name. */
     const outside = (i: number) => { program.composition.writes.run(() => { program.client.prepare('UPDATE boxes SET name=? WHERE id=?').run('Shed ' + i, 'shed'); }); };
