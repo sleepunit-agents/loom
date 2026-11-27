@@ -1,3 +1,6 @@
+import {getTableColumns} from 'drizzle-orm';
+import {bridgePeople} from '../core/data/schema.js';
+import {sqlVisibility} from '../policy-sql.js';
 import {projectContributionFields} from '../pieces/mind/project-contributions.js';
 /** File-backed Memory joins the generated schema; no copied tables or second door. */
 import type { DataDatabase } from '../core/data/database.js';
@@ -25,6 +28,7 @@ export function memoryQueryFields(db: DataDatabase, options: {
     // The list of agents is read through each time: it follows the household (pieces/mind/sources.ts).
     const sources = options.sources;
     const people = peopleQueryFields({directory: sources?.commons.people, get agents() { return sources?.agents ?? []; },
+      memberAccounts:viewer=>db.select().from(bridgePeople).where(sqlVisibility(viewer,['bridgePeople']).bridgePeople(getTableColumns(bridgePeople))).all(),
       defaultAgent:()=>householdSettings(db).defaultAgent??undefined, sharing: options.sharing, now: options.now, projectHref: options.projectHref,
       conversations: hasConversations ? sharedPeopleConversations(db, options.sharing, options.conversationHref) : undefined});
     try{

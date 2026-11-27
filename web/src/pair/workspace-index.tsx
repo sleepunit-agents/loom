@@ -1,3 +1,5 @@
+import { Input } from './ui/input';
+import { ContactFacts, contactMeta, useKnownPeople, type Contact } from './known-people';
 import { useState } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { ModuleCard } from './module-card';
@@ -39,8 +41,8 @@ const size = 8;
 const repoName = (s: string) => s.replace(/^github:/, '');
 const names = Object.keys(indexNames) as IndexName[];
 const profileIndex = (role: ProfileView['role']) =>
-  role === 'member' ? 'people' : role === 'agent' ? 'agents' : 'repositories';
-function rosterEntries(list: IndexName, r: Roster): Entry[] {
+  role === 'member' || role === 'contact' ? 'people' : role === 'agent' ? 'agents' : 'repositories';
+function rosterEntries(list: IndexName, r: Roster, contacts: Contact[]): Entry[] {
   if (list === 'projects')
     return r.projects.map((p) => ({
       view: { kind: 'project', project: p.id },
@@ -53,9 +55,26 @@ function rosterEntries(list: IndexName, r: Roster): Entry[] {
     for (const p of r.projects)
       for (const { member } of p.projectMembersByProject)
         if (!people.has(member)) people.set(member, 'member');
-    return [...people]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([ref, role]) => ({ view: { kind: 'profile', role: 'member', ref }, title: ref, meta: role }));
+    const entries: Entry[] = [];
+    for (const c of contacts) {
+      if (c.member && people.has(c.member)) continue;
+      entries.push({
+        view: { kind: 'profile', role: 'contact', ref: c.slug },
+        title: c.name,
+        meta: contactMeta(c),
+        detail: c.summary,
+      });
+    }
+    for (const [ref, role] of people) {
+      const c = contacts.find((c) => c.member === ref);
+      entries.push({
+        view: { kind: 'profile', role: 'member', ref },
+        title: c?.name || ref,
+        meta: [role, c && contactMeta(c)].filter(Boolean).join(' · '),
+        detail: c?.summary,
+      });
+    }
+    return entries.sort((a, b) => a.title.localeCompare(b.title));
   }
   if (list === 'agents')
     return r.agents.map((a) => ({
@@ -189,14 +208,18 @@ export function WorkspaceIndex({
   view,
   work,
   pages,
+  peopleSearch,
 }: {
   view: IndexView | ProfileView;
   work: Work;
   pages: Map<string, number>;
+  peopleSearch:{current:string};
 }) {
   const list = view.kind === 'index' ? view.ref : profileIndex(view.role);
   const roster = ['projects', 'people', 'agents', 'repositories'].includes(list);
   const read = useDataQuery<Roster>(rosterQuery, undefined, { pause: !roster });
+  const known = useKnownPeople(list === 'people');
+  const [search, searchFor] = useState(list==='people'?peopleSearch.current:'');
   const key = JSON.stringify(view);
   const [page, setPage] = useState(() => pages.get(key) || 0);
   function move(n: number) {
@@ -218,13 +241,42 @@ export function WorkspaceIndex({
     </NativeSelect>
   );
   if (view.kind === 'index') {
-    const entries = read.data && roster ? rosterEntries(list, read.data) : [];
-    const slice = entries.slice(page * size, (page + 1) * size);
+    const entries = read.data && roster ? rosterEntries(list, read.data, known.contacts) : [];
+    const matching = search
+      ? entries.filter((e) =>
+          [e.title, e.meta, e.detail, e.view.kind === 'profile' && e.view.ref]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+            .includes(search.toLowerCase().trim()),
+        )
+      : entries;
+    const slice = matching.slice(page * size, (page + 1) * size);
     return (
       <ModuleCard title={indexNames[list]} description="Across projects" action={picker}>
+        {list === 'people' && (
+          <Input
+            type="search"
+            aria-label="Find a person"
+            placeholder="Find a person…"
+            value={search}
+            onChange={(e) => {
+              peopleSearch.current=e.target.value;
+              searchFor(e.target.value);
+              move(0);
+            }}
+          />
+        )}
+        {list === 'people' && known.status === 'offline' && (
+          <p role="status">Contact directory unavailable.</p>
+        )}
         {roster ? (
-          read.status !== 'live' ? (
-            <p role="status">{read.status === 'loading' ? 'Loading directory…' : 'Directory unavailable.'}</p>
+          read.status !== 'live' || (list === 'people' && known.status === 'loading') ? (
+            <p role="status">
+              {read.status === 'loading' || known.status === 'loading'
+                ? 'Loading directory…'
+                : 'Directory unavailable.'}
+            </p>
           ) : (
             <>
               {slice.length ? <Rows entries={slice} work={work} /> : <p>No visible records on this page.</p>}
@@ -232,9 +284,9 @@ export function WorkspaceIndex({
                 name={indexNames[list]}
                 page={page}
                 size={size}
-                total={entries.length}
+                total={matching.length}
                 count={slice.length}
-                hasNext={(page + 1) * size < entries.length}
+                hasNext={(page + 1) * size < matching.length}
                 update={(v) => move(v.page)}
               />
             </>
@@ -246,8 +298,37 @@ export function WorkspaceIndex({
     );
   }
   const r = read.data;
+  const contacts = known.contacts.filter((c) =>
+    view.role === 'contact' ? c.slug === view.ref : view.role === 'member' && c.member === view.ref,
+  );
+  if (view.role === 'contact') {
+    const c = contacts[0];
+    return (
+      <ModuleCard
+        title={c?.name || view.ref}
+        description={
+          <ViewLink view={{ kind: 'index', ref: 'people' }} work={work}>
+            People
+          </ViewLink>
+        }
+        action={<Badge variant="secondary">Contact</Badge>}
+      >
+        {c ? (
+          <>
+            {c.summary && <p>{c.summary}</p>}
+            <ContactFacts contact={c} />
+          </>
+        ) : (
+          <p role="status">{known.status === 'loading' ? 'Opening contact…' : 'Contact unavailable.'}</p>
+        )}
+      </ModuleCard>
+    );
+  }
   const entry =
-    r && rosterEntries(list, r).find((row) => row.view.kind === 'profile' && row.view.ref === view.ref);
+    r &&
+    rosterEntries(list, r, known.contacts).find(
+      (row) => row.view.kind === 'profile' && row.view.ref === view.ref,
+    );
   const projects =
     r?.projects.filter((p) => {
       const shared = r.householdSharing?.projects.find((x) => x.id === p.id);
@@ -277,6 +358,9 @@ export function WorkspaceIndex({
       ) : (
         <>
           {entry.detail && <p>{entry.detail}</p>}
+          {contacts.map((c) => (
+            <ContactFacts key={c.slug} contact={c} />
+          ))}
           {projects.length > 0 && (
             <section>
               <h2 className="font-medium">Projects</h2>
@@ -287,7 +371,11 @@ export function WorkspaceIndex({
                     view={
                       view.role === 'agent'
                         ? { kind: 'project', project: p.id }
-                        : { kind: view.role, ref: view.ref, project: p.id }
+                        : {
+                            kind: view.role === 'repository' ? 'repository' : 'member',
+                            ref: view.ref,
+                            project: p.id,
+                          }
                     }
                     work={work}
                   >

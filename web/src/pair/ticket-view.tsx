@@ -30,7 +30,7 @@ export const indexNames = {
 } as const;
 export type IndexName = keyof typeof indexNames;
 export type IndexView = { kind: 'index'; ref: IndexName };
-export type ProfileView = { kind: 'profile'; role: 'member' | 'agent' | 'repository'; ref: string };
+export type ProfileView = { kind: 'profile'; role: 'member' | 'agent' | 'repository' | 'contact'; ref: string };
 export type View =
   IndexView | ProfileView | TicketView | PullView | ScopeView | { kind: 'project'; project: string };
 export const ticketView = (ticket: string): TicketView => ({ ticket, kind: 'ticket' });

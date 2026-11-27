@@ -1,3 +1,4 @@
+import { useKnownPeople, contactMeta } from './known-people';
 import { useId, useState, type ReactElement, type ReactNode } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from './ui/hover-card';
@@ -245,7 +246,11 @@ export function ViewPreview({
         (view.kind === 'index' ? (
           <MiniCard title={indexNames[view.ref]} meta="Across projects" />
         ) : view.kind === 'profile' ? (
-          <ProfileMini view={view} />
+          view.role === 'contact' ? (
+            <ContactMini slug={view.ref} />
+          ) : (
+            <ProfileMini view={view} />
+          )
         ) : view.kind === 'project' ? (
           <ProjectPreview id={view.project} />
         ) : (
@@ -302,6 +307,24 @@ export function ActorReference({
   );
 }
 
+function ContactMini({ slug }: { slug: string }) {
+  const { contacts, status } = useKnownPeople(true);
+  const c = contacts.find((p) => p.slug === slug);
+  return (
+    <MiniCard
+      title={c?.name || slug}
+      meta={c && contactMeta(c)}
+      detail={
+        c?.summary ||
+        (c?.agents.length
+          ? 'Known to ' + c.agents.join(', ')
+          : status === 'loading'
+            ? 'Loading details…'
+            : undefined)
+      }
+    />
+  );
+}
 function ProfileMini({ view }: { view: Extract<View, { kind: 'profile' }> }) {
   const repo = view.role === 'repository';
   const ref = repo ? view.ref.replace(/^github:/, '') : view.ref;

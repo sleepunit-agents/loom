@@ -17,7 +17,7 @@ function restore(key: string, root?: string): Ring {
           (v.kind === 'index'
             ? Object.hasOwn(indexNames, v.ref)
             : v.kind === 'profile'
-              ? ['agent', 'member', 'repository'].includes(v.role) && typeof v.ref === 'string' && !!v.ref
+              ? ['agent', 'member', 'repository', 'contact'].includes(v.role) && typeof v.ref === 'string' && !!v.ref
               : 'project' in v
                 ? typeof v.project === 'string' &&
                   !!v.project &&

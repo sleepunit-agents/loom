@@ -334,6 +334,7 @@ function Workspace({
   const ring = useViewRing(JSON.stringify(['pair-views',member,id]),root);
   const active = ring.active;
   const directory=active?.kind==='index' || active?.kind==='profile' ? active : null;
+  const peopleSearch=useRef('');
   const directoryPages=useRef(new Map<string,number>());
   const projectId = active?.kind === 'project' ? active.project : '';
   const ticketId = active?.kind === 'ticket' || active?.kind === 'comment' ? active.ticket : '';
@@ -578,7 +579,7 @@ function Workspace({
           </nav>
         <div ref={canvasScroll} className="pair-canvas-scroll" onScroll={e=>{if(viewStatus === 'live') positions.current.set(activeKey,e.currentTarget.scrollTop);}}>
           <div className="pair-zones" key={activeKey}>
-            {directory ? <WorkspaceIndex view={directory} work={workOn} pages={directoryPages.current}/> : entity ? other.status === 'live' && other.data ?
+            {directory ? <WorkspaceIndex view={directory} work={workOn} pages={directoryPages.current} peopleSearch={peopleSearch}/> : entity ? other.status === 'live' && other.data ?
               <EntityCanvas view={entity} data={other.data} work={workOn} memory={secondaryState.current}/> :
               <p role="status">{other.status==='loading' ? 'Opening view…' : 'Record unavailable.'}</p> :
               active?.kind === 'project' ? project.data?.project?.id === projectId && project.status === 'live' ?

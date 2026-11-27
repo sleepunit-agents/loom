@@ -69,7 +69,7 @@ export function hashView(hash: string): View | null {
     role = p.get('profile'),
     ref = p.get('ref');
   if (index && Object.hasOwn(indexNames, index)) return { kind: 'index', ref: index as IndexName };
-  if (ref && (role === 'member' || role === 'agent' || role === 'repository'))
+  if (ref && (role === 'member' || role === 'contact' || role === 'agent' || role === 'repository'))
     return { kind: 'profile', role, ref };
   if (project) {
     for (const kind of ['repository', 'agent', 'member'] as const) {

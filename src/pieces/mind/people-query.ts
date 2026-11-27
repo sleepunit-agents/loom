@@ -1,3 +1,5 @@
+import { sightingHolder, accountHolders } from '../../backends/people-accounts.js';
+import type {Viewer} from '../../policy.js';
 import {keepReadUntil} from '../../core/data/read-lease.js';
 /** Person cards stay in their existing files; these fields join the one query schema. */
 import { GraphQLBoolean, GraphQLFloat, GraphQLError, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
@@ -30,7 +32,7 @@ const revision=new GraphQLObjectType({name:'MemoryPersonRevision',fields:{id:{ty
 const conversation=new GraphQLObjectType({name:'MemoryPersonConversation',fields:{id:requiredText,title:requiredText,href:requiredText}});
 const conversations=new GraphQLObjectType({name:'MemoryPersonConversations',fields:{available:{type:new GraphQLNonNull(GraphQLBoolean)},rows:{type:list(conversation)}}});
 const access=new GraphQLObjectType({name:'MemoryPeopleAccess',fields:{allowed:{type:new GraphQLNonNull(GraphQLBoolean)},directory:{type:new GraphQLNonNull(GraphQLBoolean)},canAdd:{type:new GraphQLNonNull(GraphQLBoolean)},agents:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString)))}}});
-export function peopleQueryFields(options:PeopleReaderOptions & {conversations?:PeopleConversations}): {fields:GraphQLFieldConfigMap<unknown,MemoryQueryContext>;nextDeadline():number|undefined;close():void} {
+export function peopleQueryFields(options:PeopleReaderOptions & {conversations?:PeopleConversations;memberAccounts?(v:Viewer):{platform:string;workspace:string;user:string;member:string}[]}): {fields:GraphQLFieldConfigMap<unknown,MemoryQueryContext>;nextDeadline():number|undefined;close():void} {
  let reader:ReturnType<typeof peopleReader>|undefined=peopleReader(options);
  const visible=(context:MemoryQueryContext,agent?:string)=>!!context?.viewer&&mayReadPerson(context.viewer,agent,options.sharing());
  const safe=<T>(read:()=>T,context?:MemoryQueryContext):T=>{try{
@@ -53,6 +55,22 @@ export function peopleQueryFields(options:PeopleReaderOptions & {conversations?:
    if(context?.viewer?.kind!=='agent')return null;
    if(args.since!=null&&!Number.isFinite(Date.parse(args.since)))throw new GraphQLError('Since must be a timestamp');
    return safe(()=>reader?.ownEvidence(context.viewer,args.slug,args.since??null)??null,context);
+  }},
+  memoryPeopleMemberLinks:{type:new GraphQLList(new GraphQLNonNull(new GraphQLObjectType({name:'MemoryPersonMemberLink',fields:{slug:requiredText,member:requiredText}}))),resolve:(_source,_args,context)=>{
+   if(!visible(context))return [];
+   const directory=reader?.sources.get('commons');
+   if(!directory)return [];
+   return safe(()=>directory.transaction(()=>{
+     const aliases=directory.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='person_sighting_aliases'").get();
+     return (options.memberAccounts?.(context.viewer)??[]).flatMap(a=>{
+       const platform=a.platform;
+       if(platform!=='slack' && platform!=='discord')return [];
+       let slug:string|undefined;
+       if(aliases||a.platform!=='slack')slug=sightingHolder(directory,platform,a.workspace,a.user);
+       else {const holders=accountHolders(directory,platform,a.workspace,a.user);if(holders.length===1)slug=holders[0]?.slug;}
+       return slug?[{slug,member:a.member}]:[];
+     });
+   })());
   }},
   memoryPeopleAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?reader?.access(context.viewer)??null:null},
   memoryPeople:{type:new GraphQLList(new GraphQLNonNull(person)),args:{includeRemovedAgents:{type:GraphQLBoolean,defaultValue:true}},resolve:(_source,args,context)=>{
