@@ -224,6 +224,66 @@ function Assigned({ who, kind }: { who: string; kind: 'member' | 'agent' }) {
   ) : <p className="text-muted-foreground">No open tickets.</p>;
 }
 
+type SessionJob = { id: string; title: string; state: string; queuedAt: string; usage: { model: string | null; harness: string | null; tools: { name: string; count: number | null }[] | null } | null };
+type SessionDetail = { brief: string | null; logTail: string | null; endedNote: string | null; claimedAt: string | null; endedAt: string | null };
+const running = (state: string) => state === 'queued' || state === 'starting' || state === 'running';
+const lasted = (from: string, to: number) => { const m = Math.max(0, Math.round((to - Date.parse(from)) / 60000)); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
+/** One session of agent work, by its conversation: the latest job there. Loom keeps no step-by-step trace for
+ * work outside a thread, so this shows what it was asked, where it stands and which tools it has used. */
+function Session({ params, form, act, raise }: { params: Params; form: Form; act: Act; raise: Raise }) {
+  const conversation = words(params.session);
+  const read = useDataQuery<{ jobs: SessionJob[]; cv: { agent: string; label: string | null; venue: string } | null }>(
+    'query BrickSession($c:String!){jobs:conversationJobUsage(conversation:$c){id title state queuedAt usage{model harness tools{name count}}} cv:conversationsSingle(where:{id:{eq:$c}}){agent label venue}}',
+    { c: conversation }, { keep: true });
+  const job = [...(read.data?.jobs ?? [])].sort((a, b) => a.queuedAt.localeCompare(b.queuedAt)).at(-1);
+  const agent = read.data?.cv?.agent ?? '';
+  const more = useDataQuery<{ rows: SessionDetail[] }>(
+    'query BrickSessionJob($agent:String!,$id:String!){rows:jobHistory(agent:$agent,id:$id){brief logTail endedNote claimedAt endedAt}}',
+    { agent, id: job?.id ?? '' }, { keep: true, pause: !agent || !job || form !== 'primary' });
+  const own = useOwnFlag(job?.state, raise, (was, now) => (!running(was) ? null : now === 'done' ? 'Finished' : now === 'stopped' ? 'Stopped' : running(now) ? null : 'Failed'));
+  const [asking, setAsking] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
+  if (read.status === 'loading') return <Loading />;
+  if (read.status !== 'live' || !job) return <Unavailable what="session" />;
+  const detail = more.data?.rows[0];
+  const tools = [...(job.usage?.tools ?? [])].filter((t) => t.count).sort((a, b) => (b.count ?? 0) - (a.count ?? 0));
+  const stop = async () => {
+    setBusy(true); setError('');
+    try { own(); await memberOperation('runtime.jobStop', { job: job.id, reason: 'write-off' }); act('stop', {}); setAsking(false); }
+    catch { setError('That did not stop it.'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <>
+      <p className="board-lead">{job.title || read.data?.cv?.label || 'Session'}</p>
+      <div className="board-line">
+        <span className="board-state" data-running={running(job.state)}>{job.state}</span>
+        {agent && <Chip place={{ brick: 'agent', params: { agent } }}>{agent}</Chip>}
+        <span className="text-muted-foreground">{running(job.state) ? 'for ' + lasted(job.queuedAt, now) : detail?.endedAt ? 'ran ' + lasted(detail.claimedAt ?? job.queuedAt, Date.parse(detail.endedAt)) : ''}</span>
+      </div>
+      {tools.length > 0 && <p className="board-line text-muted-foreground">{tools.slice(0, form === 'primary' ? 12 : 3).map((t) => <span key={t.name}>{t.name} ×{t.count}</span>)}</p>}
+      {form === 'primary' && (
+        <dl style={{ marginTop: '.8rem' }}>
+          {detail?.brief && <div><dt>Asked</dt><dd><Reply words={detail.brief} /></dd></div>}
+          {job.usage?.model && <div><dt>Running on</dt><dd>{[job.usage.harness, job.usage.model].filter(Boolean).join(' · ')}</dd></div>}
+          {detail?.endedNote && <div><dt>How it ended</dt><dd>{detail.endedNote}</dd></div>}
+          {!running(job.state) && job.state !== 'done' && detail?.logTail && <div><dt>Last output</dt><dd><pre className="board-tail">{detail.logTail}</pre></dd></div>}
+          <div><dt>Result</dt><dd className="text-muted-foreground">{job.state === 'done' ? 'Its answer is in the conversation.' : running(job.state) ? 'Its answer will arrive in the conversation.' : 'It gave no answer.'}</dd></div>
+        </dl>
+      )}
+      {running(job.state) && (
+        <div className="board-line">
+          {asking
+            ? <><button type="button" className="board-action" disabled={busy} onClick={() => void stop()}>Stop this session</button><button type="button" className="board-action" onClick={() => setAsking(false)}>Keep it running</button></>
+            : <button type="button" className="board-action" onClick={() => setAsking(true)}>Stop…</button>}
+        </div>
+      )}
+      {error && <p role="alert" className="text-destructive">{error}</p>}
+    </>
+  );
+}
+
 /** A brick the server knows and this page does not draw yet. It says so; it never guesses. */
 const NotDrawn = ({ params }: { params: Params }) => (
   <p className="text-muted-foreground">This page does not draw this brick yet. {Object.entries(params).map(([k, v]) => `${k}: ${words(v)}`).join(', ')}</p>
@@ -240,6 +300,7 @@ export const bricks: Record<string, BrickView> = {
     Body: ({ params }) => { const [kind, id] = words(params.person).split(':'); return kind === 'member' ? <Assigned who={id} kind="member" /> : <NotDrawn params={params} />; } },
   agent: { fits: fit([420, 640, 760, 260], 150), title: (p) => words(p.agent), sub: () => 'agent', Body: ({ params }) => <Assigned who={words(params.agent)} kind="agent" /> },
   comments: { fits: fit([440, 680, 820, 420], 260), title: () => 'Comments', sub: (p) => words(p.ticket), Body: Comments },
+  session: { fits: fit([440, 680, 820, 360], 170), title: () => 'Session', sub: (p) => words(p.session).slice(0, 11), Body: Session },
   pull: later('Pull request', 'change'),
   repository: later('Repository', 'repository'),
   question: later('Question', 'item'),

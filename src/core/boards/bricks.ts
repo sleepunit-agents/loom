@@ -10,7 +10,7 @@ const ticket = z.string().regex(/^t-[1-9]\d*$/);
 const person = z.string().max(200).regex(/^(member|contact):[^\p{C}\s]+$/u);
 
 export const recordKinds = [
-  'project', 'ticket', 'change', 'repository', 'person', 'agent', 'inbox item', 'approval',
+  'project', 'ticket', 'change', 'repository', 'person', 'agent', 'inbox item', 'approval', 'session',
 ] as const;
 export type RecordKind = (typeof recordKinds)[number];
 
@@ -74,6 +74,11 @@ export const bricks: readonly Brick[] = [
       approve: { operation: 'approvals.answer', detail: none },
       refuse: { operation: 'approvals.answer', detail: none },
     } }),
+  // One piece of agent work with its own conversation: what the agent handed off, or other work the member may read.
+  brick({ name: 'session', big: true, flags: ['finished', 'failed', 'stopped'],
+    shows: 'A session of agent work: what it was asked, where it stands, what it has used. Its conversation id is what conversation.handoff returns.',
+    params: z.object({ session: ref }).strict(), references: { session: 'session' }, linkKey: 'session',
+    actions: { stop: { operation: 'runtime.jobStop', detail: none } } }),
 ];
 
 const byName = new Map(bricks.map((b) => [b.name, b]));

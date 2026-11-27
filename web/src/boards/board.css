@@ -52,6 +52,8 @@
 .board-chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted-foreground); }
 .board-line { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: .8rem; }
 .board-state { font-size: .8rem; border-radius: 999px; padding: .05rem .55rem; background: var(--secondary); color: var(--secondary-foreground); }
+.board-state[data-running='true'] { background: color-mix(in srgb, var(--ring) 30%, var(--secondary)); }
+.board-tail { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .78rem; max-height: 12rem; overflow: auto; }
 .board-lead { color: var(--foreground); font-weight: 500; margin-bottom: .6rem; }
 .board-action { font-size: .84rem; border: 1px solid var(--surface-edge); border-radius: 8px; padding: .15rem .6rem; color: var(--foreground); background: var(--popover); }
 .board-action:hover:enabled { border-color: var(--ring); }

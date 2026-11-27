@@ -170,7 +170,7 @@ describe('blueprints (checks 14, 15)', () => {
 describe('the catalogue (check 20)', () => {
   it('lists every brick with a schema, and every non-reference parameter has a default', () => {
     expect(catalogue().map((b) => b.name)).toEqual(
-      ['project', 'lanes', 'trend', 'ticket', 'comments', 'pull', 'repository', 'person', 'agent', 'question', 'approval']);
+      ['project', 'lanes', 'trend', 'ticket', 'comments', 'pull', 'repository', 'person', 'agent', 'question', 'approval', 'session']);
     for (const b of bricks) {
       const required = (catalogue().find((c) => c.name === b.name)!.params as { required?: string[] }).required ?? [];
       for (const name of required) expect(b.references, `${b.name}.${name}`).toHaveProperty(name);
@@ -216,7 +216,7 @@ describe('big and small, and flags (checks 24 to 27)', () => {
   });
   it('gives every brick a small form and says which can be big', () => {
     const big = catalogue().filter((b) => b.canBeBig).map((b) => b.name);
-    expect(big).toEqual(['project', 'lanes', 'trend', 'ticket', 'comments']);
+    expect(big).toEqual(['project', 'lanes', 'trend', 'ticket', 'comments', 'session']);
     expect(catalogue().find((b) => b.name === 'pull')?.flagsItselfFor).toEqual(['check failed', 'merged', 'closed']);
   });
 });

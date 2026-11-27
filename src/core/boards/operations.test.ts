@@ -202,7 +202,7 @@ it('offers boards only in a thread whose member has the second window', async ()
 
 it('lists every brick for a body and for a member', async () => {
   const f = fixture();
-  expect((await f.agent('bricks.catalogue', {})).value.bricks).toHaveLength(11);
+  expect((await f.agent('bricks.catalogue', {})).value.bricks).toHaveLength(12);
   expect((await f.member('bricks.catalogue', {})).value.bricks[2]).toMatchObject({ name: 'trend', linkKey: null });
 });
 

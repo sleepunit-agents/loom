@@ -369,7 +369,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `agent` | `agent`: agent id | none | the agent id |
 | `question` | `item`: inbox item id | `answer {choice}`, by `inbox.answer` | the item id |
 | `approval` | `approval`: approval id | `approve {}`, `refuse {}`, both by `approvals.answer` | the approval id |
-| `session` | `session`: conversation id | `stop {}`, by `runtime.jobStop`; `say {}`, a message to it | the conversation id |
+| `session` | `session`: conversation id | `stop {}`, by `runtime.jobStop` | the conversation id |
 
 | Brick | Can be big | Flags itself when |
 | --- | --- | --- |
@@ -382,27 +382,24 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `repository` | not yet | never |
 | `person`, `agent` | not yet | never |
 | `question`, `approval` | no | never: being on the board is the flag |
-| `session` | yes: its live transcript | it finishes, it fails, it waits on the member |
+| `session` | yes: what it was asked, its state, the tools it has used, how it ended | it finishes, it fails, it is stopped by someone else |
 
 **Sessions.** A job in the thread hands work off with `conversation.handoff` (a work role or a harness), which loom
-has today: it opens a child conversation for the same agent, member and project, and the child's result comes back to
-the thread as a reply that wakes the agent. `session` shows one such conversation, or any conversation with jobs that
-the member may read. Small: its label, the state of its latest job, how long it has run, its latest line of work. Big:
-its work trace, live. A harness's own subagents inside one job are not sessions; they are drawn in that job's work
-trace. Read from the code and not run, 2026-11-27. Not yet known, and to be settled before the brick is built: which
-read gives a member a handoff conversation's work trace (it has no thread of its own); whether a member can send words
-to one, which `say` needs; and whether `runtime.jobStop` lets the thread's member stop it.
+has today: it opens a child conversation for the same agent, member and project and returns that conversation's id,
+and the child's result comes back to the thread as a reply that wakes the agent. `session` takes that id. It shows the
+latest job in that conversation, or in any conversation with jobs that the member may read. Small: its title, its
+state, how long it has run, the tools it has used most. Big: also what it was asked, what it runs on, and how it
+ended. The member can stop it, by `runtime.jobStop`, which loom allows a member for an agent on their list. A harness's
+own subagents inside one job are not sessions and loom keeps no record of them for an ordinary job.
 
-A brick with no link key cannot be written in words. Its chip, used when it is folded, reads as its name and its
-record parameter ("Lanes · loom"). A ticket's assignee is drawn as an `agent` chip or a `person` chip by the ticket's
-`assignee_kind`. `trend` draws tickets opened and tickets closed per day. A ticket's status is not set freely: loom has claim,
-unclaim, close and reopen, and those are the brick's actions. Closing a ticket and commenting take words; the words go
-to `tasks.command` and are not stored on the board, so those details are empty. Pausing an
-agent's claims is per project today (`work.setProjectClaims`) and is left for a later brick.
+Three things loom does not have today, found 2026-11-27, each its own change if wanted:
 
-`lanes`, `trend`, `ticket`, `pull`, `person` and `repository` have working code in the branch to start from
-(`BoardPanel`, `project-trends.tsx`, `TicketCanvas`, `EntityCanvas`, `PersonProfile`, `entity-preview.tsx`). Memory,
-knowledge, activity, usage and the rest of loom come later as their own bricks, each by rule 2.
+- **No step-by-step trace.** A job's tool cards are written only into a thread, and a handed-off conversation has no
+  thread. So the big form shows tool counts, not what the session is doing now.
+- **No way to speak to one.** `comms.send` needs a thread. The member commands a session by stopping it, or by asking
+  the agent in the conversation.
+- **It does not flag itself for "waiting on the member".** A question or an approval from a session arrives in the
+  inbox as it does today; it is its own brick.
 
 ## What goes
 
