@@ -2497,6 +2497,28 @@ export const messageFiles = sqliteTable('message_files', {
 
 export const expireMessageFiles = 'CREATE TRIGGER message_files_expire AFTER UPDATE OF words ON messages WHEN NEW.words IS NULL BEGIN DELETE FROM message_files WHERE thread=NEW.thread AND seq=NEW.seq; END;';
 
+/** The work trace of a handed-off job (docs/specs/boards.md, "Sessions"): one row for each step its body reports.
+ * It hangs off the child conversation, which has no thread. `words` is sealed with the household's words key and
+ * erased at the keep time a message's words are (core/conversations/job-trace.ts). */
+export const jobTrace = sqliteTable('job_trace', {
+  conversation: text('conversation').notNull().references(() => conversations.id),
+  seq: integer('seq').notNull(),
+  job: text('job').notNull().references(() => jobs.id),
+  at: text('at').notNull(),
+  tool: text('tool').notNull(),
+  cardState: text('card_state', { enum: ["running", "done", "failed"] }).notNull(),
+  clientId: text('client_id').notNull(),
+  words: blob('words', { mode: 'buffer' }),
+  keepUntil: text('keep_until').notNull(),
+}, t => [
+  primaryKey({ columns: [t.conversation, t.seq] }),
+  check('job_trace_at_utc', utc(t.at)),
+  check('job_trace_keep_until_utc', utc(t.keepUntil)),
+  check('job_trace_card_state_choice', sql`${t.cardState} in ('running', 'done', 'failed')`),
+  uniqueIndex('job_trace_client_id_unique').on(t.conversation, t.clientId),
+  index('job_trace_keep_until_idx').on(t.keepUntil),
+]);
+
 // A board is the second window of one Comms thread: the bricks an agent placed there (docs/specs/boards.md).
 // It holds which bricks and their parameters, never the records they show or a conversation's words.
 export const blueprints = sqliteTable('blueprints', {
@@ -2591,7 +2613,7 @@ export const boardChanges = sqliteTable('board_changes', {
 
 export const plumbing = {
   blueprints, boardThreads, boards, boardPlacements, boardChanges,
-  messageFiles,
+  messageFiles, jobTrace,
   projectClaimDirections, taskBacklogEvents,
   bridgePersonSightings,
   agentPostSources, agentPostThreads, agentPosts, agentPostNames, agentPostWorkRefs, agentPostWorkPending,
