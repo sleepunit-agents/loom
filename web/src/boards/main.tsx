@@ -58,7 +58,8 @@ function BoardView({ board, onRemove, onMaximize, onClose }: { board: Board; onR
   });
   const folded = placements.filter((p) => slots.get(p.id)?.form === 'folded');
   const lead = placements.find((p) => p.big) ?? placements[0];
-  const heading = board.title || (lead ? `${lead.view.title(lead.values)} · ${lead.view.sub(lead.values)}` : '');
+  // An untitled board is headed by its leading brick's name alone: a reference is never a heading.
+  const heading = board.title || (lead ? lead.view.title(lead.values) : '');
   // A brick's own flag: raised by the page when it sees the change happen, kept only while the page is open.
   const [own, setOwn] = useState<Record<string, string>>({});
   const raise = useCallback((id: string, name: string) => setOwn((now) => (now[id] === name ? now : { ...now, [id]: name })), []);
