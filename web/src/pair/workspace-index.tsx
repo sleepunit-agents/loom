@@ -210,7 +210,7 @@ function LoadMore({ load }: { load: () => void }) {
           next.current();
         }
       },
-      { root: node.closest('.pair-canvas-scroll'), rootMargin: '0px 0px 200px' },
+      { root: null, rootMargin: '0px 0px 200px' },
     );
     observer.observe(node);
     return () => observer.disconnect();
@@ -336,8 +336,7 @@ export function WorkspaceIndex({
             Browse
           </ViewLink>
         }
-      >
-        {list === 'people' && (
+        toolbar={list === 'people' && (
           <Input
             type="search"
             aria-label="Find a person"
@@ -350,6 +349,7 @@ export function WorkspaceIndex({
             }}
           />
         )}
+      >
         {list === 'people' && known.status === 'offline' && (
           <p role="status">Contact directory unavailable.</p>
         )}

@@ -9,7 +9,6 @@ type Project = { name: string; goal: string | null; lifecycle: string };
 export const ViewMenuActions = createContext<{
   active: View | null;
   views: View[];
-  root?: string;
   work: (v: View) => void;
   background: (v: View) => void;
   close: (v: View) => void;
@@ -43,7 +42,6 @@ export function EntityPreview({
   const v = menu?.view;
   const active = v && actions?.active && viewKey(actions.active) === viewKey(v);
   const exists = v && actions?.views.some((i) => viewKey(i) === viewKey(v));
-  const canClose = v && !(v.kind === 'ticket' && v.intent === 'work' && v.ticket === actions?.root);
   return (
     <HoverCard
       open={open}
@@ -51,8 +49,8 @@ export function EntityPreview({
       openDelay={350}
       closeDelay={120}
     >
-      {actions && v ? (
-        <ContextMenu
+      {actions && v && (!active || menu?.ring) ? (
+        <ContextMenu modal={false}
           onOpenChange={(next) => {
             menuOpen.current = next;
             if (next) setOpen(false);
@@ -85,12 +83,7 @@ export function EntityPreview({
             {!exists && (
               <ContextMenuItem onSelect={() => actions.background(v)}>Open in background</ContextMenuItem>
             )}
-            <ContextMenuItem asChild>
-              <a href={viewHash(v)} target="_blank" rel="noreferrer">
-                Open in new tab
-              </a>
-            </ContextMenuItem>
-            {menu?.ring && exists && canClose && (
+            {menu?.ring && exists && (
               <ContextMenuItem onSelect={() => actions.close(v)}>Close view</ContextMenuItem>
             )}
           </ContextMenuContent>

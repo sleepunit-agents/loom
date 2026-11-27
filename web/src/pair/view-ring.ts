@@ -30,7 +30,7 @@ function restore(key: string, root?: string): Ring {
                   : /^t-\d+$/.test(v.ticket) &&
                     (v.kind === 'ticket' || (v.kind === 'comment' && typeof v.ref === 'string'))),
       );
-      if (base && !views.some((v) => viewKey(v) === viewKey(base))) views.unshift(base);
+      if (base && saved.root !== root && !views.some((v) => viewKey(v) === viewKey(base))) views.unshift(base);
       const focus = base && saved.root !== root ? viewKey(base) : saved.active;
       return { views, active: views.find((v) => viewKey(v) === focus) || views[0] || null };
     }
@@ -90,7 +90,6 @@ export function useViewRing(key: string, root?: string) {
   }
   function close(target: View) {
     set((old) => {
-      if (target.kind === 'ticket' && target.intent === 'work' && target.ticket === root) return old;
       const index = old.views.findIndex((v) => viewKey(v) === viewKey(target));
       if (index < 0) return old;
       const views = old.views.filter((_, i) => i !== index);

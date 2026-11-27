@@ -374,21 +374,22 @@ function Workspace({
     if (!canvasScroll.current) return;
     if (viewStatus !== 'live') return;
     const canvas=canvasScroll.current;
+    const scroller=matchMedia('(min-width: 768px)').matches ? canvas.querySelector<HTMLElement>('[data-slot="card-content"]') || canvas : canvas;
     const target=positions.current.get(activeKey) || 0;
-    canvas.scrollTop=target;
+    scroller.scrollTop=target;
     if (focusView.current) {
       canvasScroll.current.querySelector<HTMLElement>('h1')?.focus({preventScroll:true});
       focusView.current = false;
     }
-    if (!directory || canvas.scrollTop>=target-1) return;
+    if (!directory || scroller.scrollTop>=target-1) return;
     // Directory rows arrive after the heading, including restored batches.
     const observer=new ResizeObserver(()=>{
-      canvas.scrollTop=target;
-      if(canvas.scrollTop>=target-1) stop();
+      scroller.scrollTop=target;
+      if(scroller.scrollTop>=target-1) stop();
     });
     const events=['wheel','touchstart','pointerdown','keydown'];
     const stop=()=>{observer.disconnect();for(const event of events)canvas.removeEventListener(event,stop);};
-    observer.observe(canvas.firstElementChild!);
+    observer.observe(scroller.firstElementChild!);
     for(const event of events)canvas.addEventListener(event,stop,{passive:true});
     return stop;
   },[activeKey,viewStatus,directory]);
@@ -573,7 +574,7 @@ function Workspace({
     }
   }
   return (
-    <ViewMenuActions.Provider value={{active,views:ring.views,root,work:workOn,background:v=>ring.work(v,true),close:ring.close}}><main className="pair-workspace flex h-dvh overflow-hidden" onClick={e=>{
+    <ViewMenuActions.Provider value={{active,views:ring.views,work:workOn,background:v=>ring.work(v,true),close:ring.close}}><main className="pair-workspace flex h-dvh overflow-hidden" onClick={e=>{
       const link = e.target instanceof Element && e.target.closest('a');
       const match = link && /^\?ticket=(t-\d+)$/i.exec(link.getAttribute('href') || '');
       if (match && !e.defaultPrevented && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
@@ -585,12 +586,15 @@ function Workspace({
       <section className="pair-canvas relative flex min-w-0 flex-1 flex-col">
           <nav aria-label="Open views" ref={viewNav} className="pair-view-ring flex items-center gap-1">
             <ViewPreview view={{kind:"index",ref:"browse"}} menu="ring"><Button size="sm" variant="ghost" title="Browse across projects" aria-current={active?.kind==='index' && active.ref==='browse'?'page':undefined} onClick={()=>workOn({kind:'index',ref:'browse'})}><LibraryIcon/>Browse</Button></ViewPreview>
-            {(ring.views.length > 1 || (active && !root)) && ring.views.filter(v=>v.kind!=='index' || v.ref!=='browse').map(v=><ViewPreview menu="ring" key={viewKey(v)} view={v} intent="Show this open view."><Button size="sm" variant={viewKey(v)===activeKey ? 'secondary' : 'ghost'}
+            {ring.views.filter(v=>v.kind!=='index' || v.ref!=='browse').map(v=><ViewPreview menu="ring" key={viewKey(v)} view={v} intent="Show this open view."><Button size="sm" variant={viewKey(v)===activeKey ? 'secondary' : 'ghost'}
               aria-current={viewKey(v)===activeKey ? 'page' : undefined} onClick={()=>workOn(v)}>{viewLabel(v)}</Button></ViewPreview>)}
-            {active && !(active.kind === 'ticket' && active.intent === 'work' && active.ticket === root) && <Button size="icon-xs" variant="ghost"
+            {active && <Button size="icon-xs" variant="ghost"
               aria-label="Close current view" onClick={()=>ring.close(active)}><XIcon/></Button>}
           </nav>
-        <div ref={canvasScroll} className="pair-canvas-scroll" onScroll={e=>{if(viewStatus === 'live') positions.current.set(activeKey,e.currentTarget.scrollTop);}}>
+        <div ref={canvasScroll} className="pair-canvas-scroll" onScrollCapture={e=>{
+          const node=e.target;
+          if(viewStatus==='live' && node instanceof HTMLElement && (node===e.currentTarget || node.matches('[data-slot="card-content"]'))) positions.current.set(activeKey,node.scrollTop);
+        }}>
           <div className="pair-zones" key={activeKey}>
             {directory?.kind==='index' && directory.ref==='browse' ? <BrowseHome work={workOn}/> : directory ? <WorkspaceIndex view={directory} work={workOn} pages={directoryPages.current} peopleSearch={peopleSearch}/> : entity ? other.status === 'live' && other.data ?
               <EntityCanvas view={entity} data={other.data} work={workOn} memory={secondaryState.current}/> :
