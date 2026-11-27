@@ -1,0 +1,90 @@
+/** The brick catalogue: every kind of thing a board can show (docs/specs/boards.md, "The first bricks").
+ * A brick is a name, a parameter schema and its actions. The agent sends these and nothing else; the page
+ * draws them. A new brick is added here, with its forms on the page, and nowhere else. */
+import { z } from 'zod';
+
+/** Record references are checked for shape only. Whether the record exists, and whether the member looking
+ * may read it, is decided by the read that draws the brick. */
+const ref = z.string().min(1).max(200).regex(/^[^\p{C}\s]+$/u);
+const ticket = z.string().regex(/^t-[1-9]\d*$/);
+const person = z.string().max(200).regex(/^(member|contact):[^\p{C}\s]+$/u);
+
+export const recordKinds = [
+  'project', 'ticket', 'change', 'repository', 'person', 'agent', 'inbox item', 'approval',
+] as const;
+export type RecordKind = (typeof recordKinds)[number];
+
+export interface Brick {
+  name: string;
+  shows: string;
+  /** Strict: an unknown parameter is refused. Every parameter that is not a record reference has a default. */
+  params: z.ZodObject;
+  /** The parameters that are record references, and the kind of record each names. Only these can be left
+   * open in a blueprint. */
+  references: Record<string, RecordKind>;
+  /** The parameter a chip's link key fills, for a brick that can be written in words. */
+  linkKey?: string;
+  /** Action name → the schema of its detail, which holds only choices and ids. */
+  actions: Record<string, { detail: z.ZodObject; operation: string }>;
+}
+
+const none = z.object({}).strict();
+const brick = (b: Brick) => b;
+
+export const bricks: readonly Brick[] = [
+  brick({ name: 'project', shows: "A project: its goal, where it stands, who is on it.",
+    params: z.object({ project: ref }).strict(), references: { project: 'project' }, linkKey: 'project', actions: {} }),
+  brick({ name: 'lanes', shows: "A project's active tickets in lanes: working, verifying, waiting.",
+    params: z.object({ project: ref }).strict(), references: { project: 'project' }, actions: {} }),
+  brick({ name: 'trend', shows: 'Tickets opened and closed per day in a project.',
+    params: z.object({ project: ref, days: z.union([z.literal(7), z.literal(30), z.literal(90)]).default(30) }).strict(),
+    references: { project: 'project' }, actions: {} }),
+  brick({ name: 'ticket', shows: 'One ticket: goal, why, done when, status, who has it.',
+    params: z.object({ ticket }).strict(), references: { ticket: 'ticket' }, linkKey: 'ticket',
+    actions: {
+      'set status': { operation: 'tasks.command', detail: z.object({ status: z.enum(['open', 'in_progress', 'closed']) }).strict() },
+      assign: { operation: 'tasks.command', detail: z.object({ assignee_kind: z.enum(['member', 'agent']), assignee: ref }).strict() },
+    } }),
+  brick({ name: 'comments', shows: "A ticket's comments, newest first.",
+    params: z.object({ ticket }).strict(), references: { ticket: 'ticket' },
+    actions: { comment: { operation: 'tasks.command', detail: none } } }),
+  brick({ name: 'pull', shows: 'One pull request: state, checks, who it waits on.',
+    params: z.object({ change: ref }).strict(), references: { change: 'change' }, linkKey: 'change', actions: {} }),
+  brick({ name: 'repository', shows: 'A repository and its pull requests, in one project or across all.',
+    params: z.object({ repository: ref, project: ref.optional() }).strict(),
+    references: { repository: 'repository', project: 'project' }, linkKey: 'repository', actions: {} }),
+  brick({ name: 'person', shows: 'A person: who they are, where they are reached, their work.',
+    params: z.object({ person }).strict(), references: { person: 'person' }, linkKey: 'person', actions: {} }),
+  brick({ name: 'agent', shows: 'An agent: what it is and what it is working on.',
+    params: z.object({ agent: ref }).strict(), references: { agent: 'agent' }, linkKey: 'agent', actions: {} }),
+  brick({ name: 'question', shows: 'A question waiting on the member.',
+    params: z.object({ item: ref }).strict(), references: { item: 'inbox item' }, linkKey: 'item',
+    actions: { answer: { operation: 'inbox.answer', detail: z.object({ choice: ref }).strict() } } }),
+  brick({ name: 'approval', shows: 'An approval waiting on the member.',
+    params: z.object({ approval: ref }).strict(), references: { approval: 'approval' }, linkKey: 'approval',
+    actions: {
+      approve: { operation: 'approvals.answer', detail: none },
+      refuse: { operation: 'approvals.answer', detail: none },
+    } }),
+];
+
+const byName = new Map(bricks.map((b) => [b.name, b]));
+export const brickNamed = (name: string) => byName.get(name);
+
+/** Params with every default filled, keys in a fixed order: two placements are the same brick with the same
+ * params exactly when these strings are equal. */
+export function paramsKey(params: Record<string, unknown>): string {
+  return JSON.stringify(Object.keys(params).sort().map((k) => [k, params[k]]));
+}
+
+/** What `bricks.catalogue` returns: enough for an agent to choose and fill a brick. */
+export function catalogue() {
+  return bricks.map((b) => ({
+    name: b.name,
+    shows: b.shows,
+    params: z.toJSONSchema(b.params, { io: 'input' }),
+    references: b.references,
+    linkKey: b.linkKey ?? null,
+    actions: Object.fromEntries(Object.entries(b.actions).map(([name, a]) => [name, z.toJSONSchema(a.detail)])),
+  }));
+}
