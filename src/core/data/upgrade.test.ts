@@ -58,6 +58,23 @@ describe('upgrading a household database', () => {
     ]);
   });
 
+  it('leaves every device enrolled before schema 51 not told of replies, and starts with none queued', () => {
+    const old = household(50);
+    // The clock the installed triggers read is the program's; nothing is open on this database yet.
+    old.function('loom_now', () => at);
+    old.exec(`INSERT INTO members(id,role,joined_at) VALUES ('sam','member','${at}');
+      INSERT INTO tokens(fingerprint,kind,member,label,created_at) VALUES ('t','owner','sam','Sam','${at}');
+      INSERT INTO sessions(id,token,device,via,is_agent,issued_at,seen_at,proved_at) VALUES ('s','t','Browser','link',0,'${at}','${at}','${at}');
+      INSERT INTO notification_devices(endpoint,member,session,keys,device,created_at,seen_at) VALUES ('https://push.invalid/old','sam','s','{}','Phone','${at}','${at}')`);
+    applyUpgrades(old, 50, () => at, 51);
+    expect(old.prepare('SELECT endpoint,replies FROM notification_devices').all()).toEqual([{endpoint:'https://push.invalid/old',replies:0}]);
+    expect(old.prepare('SELECT count(*) AS n FROM notification_replies').get()).toEqual({n:0});
+    expect(() => old.exec("UPDATE notification_devices SET replies=2")).toThrow(/CHECK/);
+    const pinned = open(); pinned.exec(shipped(51));
+    expect(dataSchemaShape(old)).toEqual(dataSchemaShape(pinned));
+    expect(old.pragma('foreign_key_check')).toEqual([]);
+  });
+
   it('leaves the sign-in diagnosis unknown for preexisting unplaced jobs', () => {
     const old = household(38);
     old.exec(`INSERT INTO agents (id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('art','','','','pebble','dot');

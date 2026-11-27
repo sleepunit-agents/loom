@@ -1,5 +1,6 @@
 import {ToolbarFrame} from '../kit/toolbar';
 import type { ReactNode } from 'react';
+import { activityLine, awaitingReview, bridgeLabels, sendNotes } from './bridges/data';
 import {fullTime} from '../kit/time';
 import { Button, Fact, Facts, Meta, Reader, Section, Title, Empty, Error, List, Loading, Row, Split } from '../kit';
 
@@ -34,10 +35,7 @@ export interface BridgesSnapshot {
 export const bridgePlaceKey = (row: { platform: string; workspace: string; channel: string }) =>
   JSON.stringify([row.platform, row.workspace, row.channel]);
 export const bridgePersonKey = (row: BridgePersonRow) => JSON.stringify([row.platform, row.workspace, row.user]);
-const labels: Record<BridgeFolder, string> = {
-  connections: 'Connections', channels: 'Channel rules', people: 'Person links', sends: 'Pending sends',
-};
-const awaitingReview = (send: BridgeSendRow) => ['pending', 'held', 'sending', 'uncertain'].includes(send.state);
+const labels: Record<BridgeFolder, string> = bridgeLabels;
 
 /** Presentation only. Authenticated generated queries supply rows; the root
  * supplies owner controls and send review. No token, API call, or
@@ -77,7 +75,7 @@ export function BridgesView({ snapshot, member, folder, selected, select, change
       <Meta>{connection.state} · {connection.enabled ? 'Enabled' : 'Disabled'}</Meta>
       <Facts><Fact label="Workspace">{connection.workspace}</Fact>
       <Fact label="State changed"><time dateTime={connection.stateAt}>{fullTime(connection.stateAt,zone)}</time></Fact><Fact label="Bot user">{connection.botUser}</Fact></Facts>
-      {activity && <Section label="Last 24 hours"><p>{activity.received} received · {activity.delivered} delivered · {activity.held} held</p></Section>}
+      {activity && <Section label="Last 24 hours"><p>{activityLine(activity)}</p></Section>}
       <Section label="Channel filters">{(['only', 'ignore'] as const).map(rule => {
         const channels = snapshot.filters.filter(filter => filter.connection === connection.id && filter.rule === rule);
         return <p key={rule}>{rule === 'only' ? 'Only channels' : 'Ignored channels'}: {channels.map(filter => filter.channel).join(', ') || 'None'}</p>;
@@ -89,13 +87,13 @@ export function BridgesView({ snapshot, member, folder, selected, select, change
   else if (person) reader = <Reader className="p-5"><Title as="h1">{person.member}</Title><p>{person.platform} · {person.workspace}</p><p>Outside user: {person.user}</p>{cards?.person?.(person)}</Reader>;
   else if (send) reader = <Reader className="p-5"><Title as="h1">Reply to {send.channel}</Title><p>{send.state}</p><p>{send.text}</p>
     {send.thread && <p>Thread: {send.thread}</p>}
-    {send.state === 'uncertain' && <p>Delivery could not be confirmed. Review before sending again.</p>}
-    {send.state === 'held' && <p>This send waits for a person to release or dismiss it.</p>}
+    {send.state === 'uncertain' && <p>{sendNotes.uncertain}</p>}
+    {send.state === 'held' && <p>{sendNotes.held}</p>}
     {cards?.send?.(send.id)}
   </Reader>;
   const rows = folder === 'connections' ? snapshot.connections.map(value => {
       const activity=recent.get(value.id);
-      const detail=activity?value.workspace+' · '+activity.received+' received · '+activity.delivered+' delivered · '+activity.held+' held in 24 hours':value.workspace;
+      const detail=activity?value.workspace+' · '+activityLine(activity)+' in 24 hours':value.workspace;
       return row(value.id, `${value.agent} · ${value.platform}`, detail, value.state);})
     : folder === 'channels' ? snapshot.channels.map(value => row(bridgePlaceKey(value), value.channel, `${value.platform} · ${value.workspace}`, `Answers: ${value.answers}`))
     : folder === 'people' ? snapshot.people.map(value => row(bridgePersonKey(value), value.member, `${value.platform} · ${value.workspace} · ${value.user}`))

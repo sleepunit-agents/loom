@@ -11,6 +11,8 @@
 export const BOARDS_ADDRESS = /^\/app\/(boards|b\/[^/]+|t\/[^/]+)$/;
 export const BOARDS_HOME = '/app/boards';
 export const boardsThreadPath = (thread: string) => '/app/t/' + encodeURIComponent(thread);
+/** The same thread in the desktop's Comms, as the desktop links it (web/src/pieces/comms/shared-query.ts). */
+export const desktopThreadPath = (thread: string) => '/p/comms-preview/thread/' + encodeURIComponent(thread.replace(/^th:/, ''));
 
 /** The device's own choices, kept in the browser's cache storage because a service worker can read nothing
  * else a page can write without a message. The worker never deletes this cache. */

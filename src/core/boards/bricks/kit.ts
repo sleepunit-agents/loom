@@ -15,7 +15,7 @@ export const change = z.string().max(120).regex(/^github:[a-z0-9._-]+\/[a-z0-9._
 
 export const recordKinds = [
   'project', 'ticket', 'change', 'repository', 'person', 'agent', 'inbox item', 'approval', 'session',
-  'knowledge page', 'knowledge topic',
+  'knowledge page', 'knowledge topic', 'trigger',
 ] as const;
 export type RecordKind = (typeof recordKinds)[number];
 

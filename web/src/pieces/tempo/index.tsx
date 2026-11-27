@@ -2,7 +2,7 @@ import {ToolbarFrame} from '../../kit/toolbar';
 import './calendar.css';
 import { RecentRuns, type TriggerRun } from './recent-runs';
 import { TempoCalendar } from './day';
-import { triggerHistoryQuery } from './query';
+import { journalDetailsQuery, programDetailsQuery, triggerHistoryQuery, type JournalDetails, type ProgramDetails } from './query';
 import { tempoFailureMessage } from './actions';
 import { NativeSelect } from '../../kit/native-select';
 import { displayName } from '../../kit/words';
@@ -66,12 +66,8 @@ export function TempoCard({ snapshot, triggerId, actions, go }: { snapshot: Temp
 }
 
 function TriggerDetails({ snapshot, trigger, actions, go }: { snapshot: TempoSnapshot; trigger: Trigger; actions?: TempoActions; go?:(path:string)=>void }) {
-  const detail = useDataQuery<{
-    tempoProgram: { program: { name: string }; programState: unknown; lastResult: string | null } | null;
-  }>('query ProgramDetails($id:String!){tempoProgram(id:$id)}', {id: trigger.id});
-  const journalDetail = useDataQuery<{
-    tempoJournal: { lessons: string; state: string; stateChangedAt: string | null } | null;
-  }>('query JournalDetails($id:String!){tempoJournal(id:$id)}', {id: trigger.id});
+  const detail = useDataQuery<ProgramDetails>(programDetailsQuery, {id: trigger.id});
+  const journalDetail = useDataQuery<JournalDetails>(journalDetailsQuery, {id: trigger.id});
   const program = detail.status === 'live' ? detail.data?.tempoProgram : null;
   const journal = journalDetail.status === 'live' ? journalDetail.data?.tempoJournal : null;
   const log = useDataQuery<{ triggerLog: TriggerEvent[]; tempoRecentRuns: TriggerRun[] }>(triggerHistoryQuery, {id: trigger.id});

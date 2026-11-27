@@ -6,15 +6,8 @@ import {AgentJobs} from '../attention/agent-jobs';
 import {SignInWarning} from '../runtime/sign-in-warning';
 import {OwnerMachines} from '../runtime/machines';
 
-import {MachineHostingDetails, machineHostingFields, type MachineHosting} from '../runtime/machine-hosting';
-
-const query=`{ account { member } agents { id removedAt } boxes { id name ${machineHostingFields} } modelAccounts { ... on RuntimeAccountDetail { logins { box { id } needsSignIn } } } }`;
-type Inventory={
- modelAccounts?:{logins?:{box:{id:string};needsSignIn:boolean}[]}[];
- account:{member:string}|null;
- agents:{id:string;removedAt:string|null}[];
- boxes:(MachineHosting & {id:string;name:string})[];
-};
+import {MachineHostingDetails} from '../runtime/machine-hosting';
+import {machinesInventoryQuery as query, signInWarnings, type MachinesInventory as Inventory} from '../runtime/machines-query';
 
 export default function Machines({go=()=>{},active=true}:{go?:(path:string)=>void;active?:boolean}){
  const feed=useDataQuery<Inventory>(query);
@@ -23,8 +16,7 @@ export default function Machines({go=()=>{},active=true}:{go?:(path:string)=>voi
  const agents=inventory?.agents.filter(a=>!a.removedAt)??[];
  const agent=agents.find(a=>a.id===choice)??agents[0];
  const member=inventory?.account?.member;
- const warnings=new Set(inventory?.modelAccounts?.flatMap(account=>
-  account.logins?.filter(login=>login.needsSignIn).map(login=>login.box.id)??[]));
+ const warnings=signInWarnings(inventory);
  const others=inventory?.boxes.filter(b=>b.owner!==member&&!b.revokedAt)??[];
  return <AppFrame title="Machines and jobs" where="System" go={go} filters={inventory && member && agent && <Field label="Jobs for"><NativeSelect value={agent.id} onChange={e=>select(e.target.value)}>
      {agents.map(a=><option key={a.id} value={a.id}>{a.id}</option>)}

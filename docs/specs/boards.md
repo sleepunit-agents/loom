@@ -420,8 +420,35 @@ ids, making it with `comms.open` if it does not exist.
   device in the boards page", or when the only loom windows open are boards pages; the desktop's otherwise, as
   before. That choice is the device's and is kept in the browser's cache storage (`loom-device`), where the worker
   reads it; it is no record of loom's. An open boards page is focused and is not loaded again when the push names
-  no thread or the thread it is already at. **Not built:** a plain reply by the agent, and so the reply that a
-  finished handed-off session brings to the thread, is no Inbox item and is not pushed, on this page or the desktop.
+  no thread or the thread it is already at.
+  **A reply can bring its member back (2026-11-27).** The panel of a device that is on also offers "Also notify
+  this device when the agent replies". It is loom's record of that device (`notification_devices.replies`, schema
+  51), off until ticked and off for every device enrolled before; it is set by `notifications.subscribe` with an
+  optional `replies`, which changes only the device of the browser that calls it. Enrolling again without saying
+  keeps the choice; a browser another person takes over starts off. The desktop's Account does not draw it.
+  When an agent's reply is stored in a loom thread that is one member's own (`conversation.message`, kind `reply`),
+  each of that member's devices that chose replies is noted for it (`notification_replies`: one row for a device
+  and a thread, holding the reply's number and no words). Nothing is noted for a card, a progress message, the
+  member's own message, a thread of another venue or of no single member, or the result a finished handed-off
+  session brings to its origin thread: the agent is woken by that result and its own reply to it is the one
+  pushed. *Looking at it:* the push is sent `REPLY_PUSH_WAIT_MS` (10 seconds,
+  `src/core/signin/shared-notifications.ts`) after the reply was stored, and only if the thread's read mark is
+  still before the reply then. A page with the conversation on screen in a visible tab marks it read within
+  that time, here or in the desktop's Comms, so it is not pushed; a hidden tab or a closed sheet does not mark it,
+  so it is. Loom keeps no record of open pages, and this is the whole rule: a member who left the conversation on
+  screen and walked away gets no push, and a page too slow to mark the reply read inside the wait gets one while
+  it is being read. *Several replies:* a later reply in the thread takes the device's row over and the wait starts
+  again, so replies stored inside one wait are one push; a reply after a push was sent is a new push with the same
+  tag, which replaces the earlier notification on the device. A reply is never pushed twice to a device, and a
+  body's retry of a reply notes nothing new. *What it says:* the fixed title "loom", an empty body, a tag made
+  from a fingerprint of the thread's id, the thread's desktop address (`/p/comms-preview/thread/<id>`) and its
+  boards address (`/app/t/<thread id>`); the worker opens one or the other as above. No word of the reply, no
+  title of the thread and no name of the agent leaves loom: the push service and a locked screen learn that
+  something happened in loom, and the device, on a press, which thread. The delivery is the Inbox push's own
+  (claimed before it is sent and never sent again, an hour to arrive, a dead endpoint removed) and is rechecked
+  when it is sent: nothing goes to a device whose browser is signed out or whose member was removed, for an
+  archived or deleted thread, or to any device but the thread's own member's. A reply already read when a
+  progress message becomes the reply is not pushed.
   The tab's title is the thread's title, or "Loom", with "●" in front while the tab is hidden and the thread holds
   an unread reply.
 
@@ -474,6 +501,19 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `activity` | `days`: 1, 7 or 30, default 1 | none | none |
 | `threads` | `scope`: `open` or `archived` (Comms' two folders), default `open` | none | none |
 | `agents` | none | none | none |
+| `question`, added 2026-11-27 | as above | also `discuss {}`, after `inbox.discuss`; `taskAnswer {answer}`, after `tasks.command` `answer`, `answer` one of `yes`, `no`, `words`; `join {decision}`, after `runtime.workerJoinDecide`, `decision` one of `allow`, `block` | as above |
+| `ticket`, added later on 2026-11-27 | as above | also `ask {}`, by `tasks.command` `ask`, and `promote {}`, by `tasks.command` `edit` with the type alone, after asking | as above |
+| `tempo` | `agent`: agent id | none: a trigger is acted on in its `trigger` brick | none |
+| `trigger` | `trigger`: a Tempo trigger's id: a letter or digit, then up to 119 of letters, digits and `: . _ / @ -` | `runNow {}`, `stop {}`, `start {}`, `pause {}`, `resume {}`, each after the `tempo.` operation of that name took it; running it now and stopping it ask first; `pause` and `resume` are of the trigger's agent, as on the desktop | the trigger id |
+| `account` | none: it is the signed-in member's own | `removePasskey {}`, by `account.removePasskey`; `revokeSession {}`, by `account.revokeSession`; `removeDevice {}`, by `notifications.removeDevice`; `enableNotifications {}`, by `notifications.subscribe`. Each removal asks first. Adding a passkey, making a sign-in link and signing this device out go to the sign-in door, which is no operation, and the board is not told | none |
+| `appearance` | none: it is the signed-in member's own | `set {}`, by `household.setPreferences` with the one choice pressed; the board is not told which | none |
+| `secrets` | none: it is the household's, for an owner | `allow {}`, `deny {}`, `cancel {}`, `revoke {}`, each by `secrets.command`; `setValue {}`, by `secrets.set`; `remove {}`, by `secrets.remove`, after asking. No detail holds a secret's name, description or value | none |
+| `machines` | none: the machine opened is picked inside the brick | `proposeReader {allow}`, by `machine.proposeReader`; `allow` is `yes` or `no`. `answerReader {answer}`, by `machine.answerReader`; `answer` is `allow` or `deny`. `setAlertLines {}`, by `machine.setAlertLines` (a household owner). Enrolling or revoking a machine is not offered | none |
+| `subscriptions` | none: the account opened and what is searched for are picked inside the brick | `signIn {}`, by `runtime.accountSignIn`; `create {}`, by `runtime.accountCreate`. The label typed goes to the operation and never to the board | none |
+| `usage` | `days`: 1, 7 or 30, default 7. The conversation whose jobs are listed is picked inside the brick | none | none |
+| `bridges` | none | `release {}` and `dismiss {}`, each after `/api/bridges/command` (`bridges.command`) took the review, and each asked first. A reply's words never reach the board. A connection, a channel rule and a person link are changed by asking the agent | none |
+| `household` | none | `revokeToken {}`, by `token.revoke`, and `revokeSession {}`, by `sessions.revoke`, each asked first; `setGrants {}`, by `program.setGrants`. A member, an agent's appearance and accounts and a restore are changed by asking the agent; making a token and changing a portrait stay on the desktop | none |
+| `sharing` | none | none: a project's sharing is changed by asking the agent | none |
 
 | Brick | Can be big | Flags itself when |
 | --- | --- | --- |
@@ -503,6 +543,60 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `activity` | yes: the range by day, and an entry opened in place | never |
 | `threads` | yes: every row of Comms' first page, with when each was last used | never |
 | `agents` | no | never |
+| `tempo` | yes: every trigger of the agent, and the day's recorded firings; small, the first six | a firing of one of the agent's triggers fails (more of them have a failed last firing than before) |
+| `trigger` | yes: also its project, machine needs, requested model, program, lessons and saved state where the member may read them, every recent run and its recent history; small, its source, target, words, three runs and its buttons | it fails, or its newest run fails |
+| `account` | yes: each passkey, signed-in browser and notification device with its state and dates, and every change; small, the three counts and no control | never |
+| `appearance` | yes: every choice of the desktop's Appearance app as a row of buttons, and a press saves it; small, the choices as words and no control | never |
+| `secrets` | yes: every secret with its rule, grants and use, the requests, and every change; small, the counts, who is asking for what and the names, and no control | a new request arrives |
+
+**The member's own settings, 2026-11-27.** Three bricks with no parameter, each the desktop app's reads, words and
+calls through modules both sides import.
+
+- `account` (the desktop's Account): the member's passkeys, signed-in browsers and notification devices from Account's
+  one selection (`pieces/account/query.ts`). Big: each with its state and dates; a passkey, a browser and a
+  notification device are each removed after a question ("Keep" sends nothing); a passkey is added by Account's own
+  ceremony (`pieces/account/passkey.ts`, the sign-in door's `/passkeys/options` and `/passkeys`); this device's
+  notifications are turned on by the hook the page's bell uses (`boards/notify-device.ts`); a one-time sign-in link
+  for another device is asked for once, never retried, shown until hidden and kept nowhere
+  (`signin/device-link.ts`); this device is signed out after a question. Signing a browser out goes through
+  `signin/session-change.ts`: when it was this browser the page reloads to the sign-in screen and the board is told
+  nothing. The server does not forbid removing the last passkey and neither does the desktop; the question says when
+  it is the only active one. **Not marked:** which signed-in browser is this one. The read does not say, and a
+  viewer carries no session. The notification device that is this one is marked.
+- `appearance` (the desktop's Appearance): look, desk background, reduce motion, higher contrast, pixel faces, sound,
+  haptics, one window at a time and zoom, each a row of buttons with the saved one pressed. A press sends that one
+  choice to `household.setPreferences`; what is pressed is the record's, so it changes when the record does.
+  **What the boards page honours.** Reduce motion, and nothing else. The page starts by following the device; once
+  the member's own row is read it wears their choice (on, off, or the device's while they follow it) on
+  `<html data-motion>` through the desktop's `wearMotion`, and again whenever the row changes
+  (`boards/wear.ts`). The page's build now routes every motion media query onto that attribute, as the desktop's
+  does (`accessMedia` in `vite.boards.config.ts`), so its stylesheets and its moving portrait obey the choice and
+  not the device alone. **What it ignores.** The look: this page has one look of its own, light or dark as the
+  device is, and none of the desktop's three is it; a saved look is a default (`neon`) for every member with a row,
+  so following its light or dark would turn the page dark for anyone who had only ever changed a switch. Higher
+  contrast: the page has no higher-contrast styling. Desk background, pixel faces, sound, haptics, one window at a
+  time and zoom: each is a thing of the desktop's shell. The brick says this in one line and lists Reduce motion
+  under "Takes effect on this page" and the rest under "For the desktop".
+- `secrets` (the desktop's Settings): for a household owner, by the server's rule: `secretsReader` answers an owner
+  only and the three secrets operations take an owner only; for anyone else the brick is its unavailable line and
+  no row or control. Big: the household default; each secret by name with its description, when and by whom it
+  changed, its standing rule and the agents it names, who may use it now (each grant, with Revoke), and its last
+  three recorded uses; each waiting request with why, for how long, "Always answer this way for this agent", Allow,
+  Deny and Cancel; the last ten answered requests. Removing a secret asks first. **A value** is typed into one
+  uncontrolled password field (`autocomplete="new-password"`, no spell check, as the desktop's) and leaves the
+  browser once, in the body of `POST /api/secrets/set`, through the desktop's `submitSecret`
+  (`pieces/settings/commands.ts`), which empties the field before the request is made. It is never in React
+  state, never in a parameter or a detail, never sent to `boards.act`, and no reply's words are shown: a change is
+  "Saved." or "Change not confirmed". A value that was not confirmed is not kept and not sent again.
+  **Not on the brick:** changing the household default or a secret's standing rule. No member operation does
+  either, on the desktop too: Settings drafts a message asking an agent to propose the change and the owner
+  answers the proposal. The brick shows both and says to ask the agent in the conversation.
+| `machines` | yes: a machine can be opened: its owner, hosting, listed agents, slots, the jobs on it now (each a `session` chip where the job has a conversation), and on the member's own machine its read grants, pending requests and read history; below, the household's alert lines, which a household owner can change. Small: each machine with whether it is the loom machine, when it was last seen, its open alerts and readings. Folded: the count of machines and of open alerts | never |
+| `subscriptions` | yes: the search box and "Needs attention", an account opened for its usage windows, weekly usage by agent, trigger or conversation, sign-ins with "Sign in on this machine" where loom allows it, and settings; each agent's models in order; "Add a subscription". Small: each service and account in one line with its windows. Folded: the count, how many are almost full and how many sign-ins are needed | another sign-in is needed (the count of sign-ins needing attention goes up) |
+| `usage` | yes: up to 60 conversations with reported tokens, jobs, retries and peak context, and one picked conversation's jobs, each opened for its measurements. Small: the first six. Folded: tokens, jobs and conversations in the period | never |
+| `bridges` | yes: every waiting reply with its words, thread and state, with Release (a held one) and Dismiss; for a household owner each connection with its state, activity, filters and the names of its stored secrets, the channel rules and the person links. Small: the first four waiting replies and the connections. Folded: the counts | another reply is held (the count of held replies goes up) |
+| `household` | yes: members with their roles and agents, agents with their owners, description and accounts, removed agents; every token and signed-in browser by label and state, never a value, with revoke and sign out; each outside program's grants, which can be changed. Small: members and agents. Folded: the counts. Anyone who is not a household owner is told it is unavailable | never |
+| `sharing` | yes: up to 60 projects, each with its goal, its members and agents as chips and its repositories as `repository` chips. Small: the first six with who is on them. Folded: the counts. Anyone who is not a household owner is told it is unavailable | never |
 
 **The conversations and agents bricks, 2026-11-27.** Each reads what the desktop's Comms, Home and Agents apps read.
 
@@ -521,6 +615,31 @@ The first demo is "everything about a project", and the set is what that pulls i
 - `agents`: Home's roster (the member's own agents, in its order), one line each: the name as an `agent` chip, the
   state line, the first thing it is doing and how many more. Compact: how many agents, how many have work in hand
   (`agentsAtWork`, the desktop bar's read) and how many wait on the member.
+
+**The Tempo bricks, 2026-11-27.** Each reads what the desktop's Tempo app reads and says it in that app's words
+(`web/src/pieces/tempo/model.ts`, `query.ts`), through the same visibility: a trigger the member may not see is in
+neither.
+
+- `tempo`: the `Tempo` read (`triggers`, `agentPauses`, the household's timezone), kept to the triggers that wake
+  or belong to the agent, as the desktop's "Whose" filter keeps them, in its list's order (next firing first). Each
+  trigger: its name as a `trigger` chip (its name alone when its id is not one a board can hold), Tempo's word for
+  its state (Standing, Due, Firing, Held, Spent, Stopped, Failed), its kind, its source in words, its next firing,
+  when it last fired, and what that firing came to where the day's read holds it. "Paused since" when the agent is
+  paused. Big: "Today", the household day's recorded events for these triggers, newest first, as Tempo's "Recent
+  history" lists a day (`TempoDayHistory` and `tempoCalendarOutcomes`, read for the household's today by `deskTime`).
+  The last firing's outcome is known only inside that read (yesterday to tomorrow); an older one shows its time alone.
+  It has no search, no day picker, no week and no subscription readings.
+- `trigger`: the desktop reader's reads (`TempoCard`, `TriggerHistory`, `ProgramDetails`, `JournalDetails`). What it
+  fires on, when it is due, who set it, its target, its words or repository file, its recent runs (what each was,
+  how it ended, how long it took, and a `session` chip for a run with a conversation), and in the big form its
+  project, machine needs, requested model, program, lessons and saved state (loom answers the journal to an owner
+  only), and its recent history. Its buttons are the desktop's, by the desktop's calls to `/api/tempo/…`
+  (`web/src/pieces/tempo/commands.ts`): Run now and Stop (Cancel for one that is not standing) ask first; Start for
+  a stopped standing trigger whose schedule was not removed; Pause agent and Resume agent. Whether the member may
+  is loom's answer to the call. **It cannot edit a trigger or create one.** The desktop's Tempo app has no editor
+  (`tempo.edit` is called by agents and the command line only), and its Create form is built on select controls and
+  free-text fields for times, days, a recipient and an operation name with no shared pure logic to reuse; the brick
+  says "To change its times or words, ask its agent".
 
 **What the five bricks drawn on 2026-11-27 show.** Each reads what the desktop reads for the same record, and says
 it in the desktop's words.
@@ -589,6 +708,17 @@ it in the desktop's words.
   rules for which rows a folder holds, their order and their words (`web/src/pieces/inbox-view/model.ts`). Not on
   the brick: the search, a folder for one agent (neither is a choice from a fixed list), the link from an outcome
   to the desktop page it happened on, and answering, which is the `question` brick's.
+- **Added later on 2026-11-27, and in place of what the two entries above leave out.** The `inbox` brick's big form
+  has the desktop's search: a field, "Search asks", whose words are this page's state and go to the Inbox's own read
+  as its `search`, from the first page, as the desktop sends them; no parameter and nothing told to the board holds
+  them, and the small forms and the Errors folder have none. The `question` brick has the three answers the
+  desktop's opened item gives beside the Inbox's own. "Discuss with <agent>", for an item loom names an agent for
+  (`discussionAgent`): `inbox.discuss` with the item and that agent, then the page goes to the thread it answers
+  (`/app/t/<thread>`). A task's question (`source` and `waitsOnKind` both `task`): Yes, No or words through
+  `tasks.command` `answer` with the task, the item and the answer, as the desktop's card sends it, with no Mark
+  done or Dismiss. A machine asking to join (a waiting notice whose key is `worker-join:<request>:<code>`): "Let
+  it in" and "Block" by `runtime.workerJoinDecide`, each after asking, which the desktop does not do; loom refuses
+  anyone but an owner. Still not on either brick: a folder for one agent, and marking an item read when it is opened.
 - `approvals`: the desktop's own selection (`approvalsQuery`) and its rule for the two lists
   (`rows` in `web/src/pieces/approval-view/model.ts`). A household change is listed by its title, reason, state and
   agent; who answered it is not said, as on the desktop for a member with no reading of it. Not on the brick: the
@@ -1048,6 +1178,25 @@ their loading and unavailable lines, the agent's stop (asked first, `runtime.job
 flag. In `agents-queries.test.ts`: their own selections against the fields loom serves. In
 `src/core/conversations/comms-query.test.ts`: `unread` on a thread row.
 
+**The bricks for running the household, 2026-11-27.** `machines`, `subscriptions`, `usage`, `bridges`, `household`
+and `sharing` each read what the desktop's app of that name reads, through modules with no component that the
+desktop now imports too (`pieces/runtime/machines-query.ts`, `machine-hosting-model.ts`, `model-query.ts`,
+`pieces/household/alert-lines-model.ts` and `model.ts`, `pieces/usage/model.ts`, `pieces/bridges/command.ts` and
+`data.ts`, `pieces/sharing/model.ts`). Who may read and act is loom's rule each time: `household` and `sharing`
+answer a household owner and say "unavailable" to anyone else; `bridges` shows a member who does not run the
+bridges only the replies loom sends them; `machines` shows a member their own machines and an owner every one,
+and offers the alert lines' form to a household owner alone; `subscriptions` shows an account the member may not
+read in full as a label and a level. Each has `src/core/boards/bricks/<name>.test.ts` (its pins, what its
+parameters refuse, that no detail takes an id or a word) and `web/src/boards/bricks-<name>.test.tsx` (every form
+from fake data, the compact form one line with no control, the loading and unavailable lines, the heading, and
+every action: the request loom receives, that it is asked first where it cannot be undone, and that `act` is told
+nothing typed and no id). `admin-queries.test.ts` runs the two selections `machines` wrote for itself against the
+fields loom serves. Not on a board: enrolling or revoking a machine, making a token (its value is shown once) and
+changing an agent's portrait (two chosen files), which stay on the desktop; and whatever the desktop itself does by
+a message to the agent, which a brick says in one line. There is no `held-work` brick: the desktop's Held work view
+reads `core.effect` records over a `/live` socket and calls `core.releaseEffect`, and this server serves none of
+the three, so there is nothing to draw or release.
+
 A session's steps have their own suites, outside the numbered checks: `src/shared-session-trace.test.ts` (kept,
 sealed, read by the thread's member alone and not by a full owner, absent from the thread, the relay unchanged; a
 step written now still read with its words at day 89 and at the last millisecond before day 90, withheld on a read
@@ -1172,6 +1321,25 @@ given an area. What they pin:
   with no call); the session brick's stop asking first; the reload onto a new build, only with the input empty and
   nothing being sent.
 
+In `bricks-account.test.tsx`, `bricks-appearance.test.tsx` and `bricks-secrets.test.tsx`, with
+`src/core/boards/bricks/account.test.ts`, `appearance.test.ts` and `secrets.test.ts`: the three bricks of the
+member's own settings. Each definition takes no parameter and no detail. `account`: every form from Account's
+selection, the small forms without a control, loading and unavailable; each removal sends nothing until the
+question is answered and then calls its operation with the reference and reports an empty detail; a browser signed
+out that was this one reloads and reports nothing; the device that is this one is marked and turning it on asks
+the browser only on the press; a passkey is added through the sign-in door with the name typed and nothing is
+reported; a sign-in link is asked for once, hidden on request, never drawn from a refusal or a reply that is not a
+link. `appearance`: the saved choices pressed, another member's row never read, the defaults for a member with no
+row, each press sending one choice, the pressed button following the record, a refused save. In `wear.test.tsx`:
+the page wears the member's own Reduce motion and again on a change, follows the device for a member with no row,
+keeps what it wore when the record cannot be read, sets no other attribute, and the page's build routes motion
+media queries. `secrets`: every form from Settings' selection, the unavailable line and no row for a member who is
+not an owner, each command's input, removal after asking, an unacknowledged change showing nothing of the reply,
+the flag on a new request, and a value: the field's attributes, no value or handler of React's on it, the field
+emptied before the request, one request to `/api/secrets/set`, and the value absent from what is drawn, from what
+the board is told, from the data hook's calls and from the console. Not run: a real authenticator, a real push
+service, and the sign-in door itself, which are the server's suites.
+
 **No suite:** what needs a browser or a server under the page: 2 (the same DOM nodes), 7 (a second member), 15 (both
 entering in one frame), 19, 21, 22, 23, the `t-123` chip in a reply (20), and whether an `inert` container in fact
 stops its controls, which is the browser's. Those were run by hand in a browser on an example household and on the
@@ -1197,7 +1365,61 @@ faked browser objects (a device that did not choose boards opens the desktop's a
 pages open, or the choice made, opens the thread's boards address or `/app/boards`; an outside or non-boards address
 is dropped; the device's cache survives a new worker), both manifests, and the real root's push payload (unchanged,
 key for key, for an item with no thread; the thread's boards address added only for the member's own thread).
+In `src/core/signin/shared-notification-replies.test.ts` (real root, in-process transport),
+`src/core/data/upgrade.test.ts` and `web/src/boards/notify-replies.test.tsx`: a device that chose replies gets
+exactly one push for a reply, after the wait and not before, with the exact payload and no words; a device that
+did not gets none; a thread marked read inside the wait gets none; another member's device gets none; a card, a
+progress message and the member's own message get none, and the reply that adopts the progress gets one; two
+replies inside one wait are one push and a later one is another under the same tag; an archived thread, another
+venue, a removed member and a signed-out browser get none; the choice survives enrolling again, does not follow
+a browser to another person and cannot be set by a bearer token; a deleted thread takes its row with it; a
+household at schema 50 comes to 51 with its devices off; and the checkbox's states (offered only when on, off
+until chosen, loom's record shown, changed by `notifications.subscribe` with this browser's own subscription,
+a refusal said). The Inbox push's suites are unchanged and pass.
 Nothing here receives a real push or runs in a real browser.
+
+**The Tempo bricks, 2026-11-27.** `src/core/boards/bricks/tempo.test.ts` and `trigger.test.ts`: their pins, what
+their parameters refuse (a sentence, blank space, a look-alike letter, anything beside the one id) and that every
+action's detail is empty. `web/src/boards/bricks-tempo.test.tsx`: the list from the desktop's read in its order and
+words for one agent only, the chips, the day's firings in the big form, a failed last firing and its reason, the
+pause line, one folded line that reads no history, the flag (raised when a failure appears, not for one already
+there nor when the day's read arrives), none, unavailable and loading. `web/src/boards/bricks-trigger.test.tsx`:
+every form from fake data, the four reads asked with the trigger's id, the chips (agent, tempo, project, session),
+each button's request to `/api/tempo/…` with the desktop's input and the board told the action with an empty
+detail, Run now and Stop sending nothing until confirmed, which buttons each state offers, a refusal telling the
+board nothing, the flag, unavailable and loading. The desktop's Tempo suites pass unchanged over the modules its
+pure parts moved to (`day-model.ts`, `runs.ts`, two selections in `query.ts`). Not checked: these bricks against a
+running loom.
+
+**The Inbox's search and the question's other answers, 2026-11-27.** `web/src/boards/bricks-inbox-search.test.tsx`:
+what is typed reaches the Inbox's read as `search` at offset 0, the rows redraw, "Nothing matches", nothing is sent
+or told to the board, and the small forms and Errors have no field. `web/src/boards/bricks-question-answers.test.tsx`:
+"Discuss with" sends `inbox.discuss`, tells the board `discuss {}` and goes to the thread, and a refusal does
+neither; a task's question sends `tasks.command` `answer` and tells `taskAnswer` with the choice and never the
+words; a join request sends nothing until confirmed, then `runtime.workerJoinDecide` with the notice's request and
+code; and which items offer none of these. `src/core/boards/bricks/question.test.ts`: what the three details refuse.
+
+**The ticket picker, asking a person and promoting, 2026-11-27.** A ticket to link (a parent or a blocker, in the
+`ticket` and `new-ticket` bricks) is chosen in `web/src/boards/ticket-picker.tsx`: the member types words of its
+title or its id, the tickets found are listed (the first six) and one is chosen; an id typed exactly is taken as
+before. The search is the rule of the desktop's "Search tasks" (every word typed is somewhere in the ticket), over
+the tickets the brick already read by id and title; loom has no ticket search read, and none was added. What is
+typed stays on the page. The `ticket` brick's big form also has the desktop's "Ask a person" (a member, the
+question, what yes and no mean, yes or no or words; an open ticket only) and "Promote to epic" (not offered to an
+epic; it asks first, which the desktop does not). `web/src/boards/bricks-ticket-picker.test.tsx`: what the search
+finds, a link made from a chosen result with the request loom receives, the ask form's request and its refusal,
+the promotion sending nothing until confirmed, and which tickets and forms offer neither.
+`src/core/boards/bricks/ticket.test.ts`: both details are empty.
+
+**Activity's filters, 2026-11-27.** The `activity` brick's big form has the desktop's "Filter activity": its three
+groups (Who: the agents and the owner; Where: its five listed venues and any other an entry holds; What:
+Conversations, System, Work done), each choice a button with how many of the range's entries it holds, kept by
+Activity's own rule (`passes` in `web/src/pieces/activity/model.ts`), and "Show everything". Who and Where are not
+fixed lists, so none of the three is a parameter: which are on is state of the drawn brick, as which entry is open
+is, and an agent cannot set them. The small forms show everything. Not on the brick: the desktop's hour strip, and
+the filters in the address. `web/src/boards/bricks-activity-filters.test.tsx`: the groups and counts, what each
+choice keeps, two of one group, the owner's entries, nothing matching, showing everything again, nothing sent or
+told, and no control in the small forms.
 
 **Rules with no check at all:** writes to one board applied in arrival order; a blueprint description's limit; a
 brick's own flag going when its condition ends (no drawn brick has such a condition); what the page does when the

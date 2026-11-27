@@ -71,6 +71,17 @@ export const bricks: Record<string, BrickView> = {
   activity: { fits: fit([460, 720, 860, 520], 250), title: () => 'Activity', sub: (p) => (Number(p.days) === 1 ? '1 day' : `${words(p.days)} days`), ...later(() => import('./bricks-activity').then((m) => m.Activity)) },
   threads: { fits: fit([440, 680, 820, 420], 260), title: () => 'Conversations', sub: (p) => words(p.scope), ...later(() => import('./bricks-threads').then((m) => m.Threads)) },
   agents: { fits: fit([420, 640, 760, 260], 190), title: () => 'Agents', sub: () => '', ...later(() => import('./bricks-agents').then((m) => m.Agents)) },
+  tempo: { fits: fit([460, 720, 860, 520], 300), title: () => 'Tempo', sub: (p) => words(p.agent), ...later(() => import('./bricks-tempo').then((m) => m.Tempo)) },
+  trigger: { fits: fit([460, 700, 820, 520], 320), title: () => 'Trigger', sub: (p) => words(p.trigger).slice(0, 11), ...later(() => import('./bricks-trigger').then((m) => m.Trigger)) },
+  account: { fits: fit([460, 700, 860, 560], 190), title: () => 'Your account', sub: () => '', ...later(() => import('./bricks-account').then((m) => m.Account)) },
+  appearance: { fits: fit([440, 640, 760, 620], 260), title: () => 'Appearance', sub: () => '', ...later(() => import('./bricks-appearance').then((m) => m.Appearance)) },
+  secrets: { fits: fit([460, 720, 860, 560], 260), title: () => 'Secrets', sub: () => '', ...later(() => import('./bricks-secrets').then((m) => m.Secrets)) },
+  machines: { fits: fit([460, 720, 860, 520], 300), title: () => 'Machines', sub: () => '', ...later(() => import('./bricks-machines').then((m) => m.Machines)) },
+  subscriptions: { fits: fit([460, 720, 860, 520], 300), title: () => 'Subscriptions', sub: () => '', ...later(() => import('./bricks-subscriptions').then((m) => m.Subscriptions)) },
+  usage: { fits: fit([460, 720, 860, 520], 260), title: () => 'Job usage', sub: (p) => (Number(p.days) === 1 ? '1 day' : `${words(p.days)} days`), ...later(() => import('./bricks-usage').then((m) => m.Usage)) },
+  bridges: { fits: fit([460, 720, 860, 520], 260), title: () => 'Bridges', sub: () => '', ...later(() => import('./bricks-bridges').then((m) => m.Bridges)) },
+  household: { fits: fit([460, 720, 860, 520], 260), title: () => 'Household', sub: () => '', ...later(() => import('./bricks-household').then((m) => m.Household)) },
+  sharing: { fits: fit([440, 680, 820, 460], 260), title: () => 'Sharing', sub: () => '', ...later(() => import('./bricks-sharing').then((m) => m.Sharing)) },
 };
 export const brickView = (name: string): BrickView => (Object.hasOwn(bricks, name) ? bricks[name] : unknown(name));
 /** Fetches every brick's body. The suites call it before they draw, so a body draws at once as it does on a page

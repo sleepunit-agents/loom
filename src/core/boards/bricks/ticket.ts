@@ -15,4 +15,7 @@ export default brick({ name: 'ticket', big: true, flags: ['closed', 'reopened'],
     edit: { operation: 'tasks.command', detail: none },
     link: { operation: 'tasks.command', detail: z.object({ type: taskLinkType }).strict() },
     unlink: { operation: 'tasks.command', detail: z.object({ type: taskLinkType }).strict() },
+    // The desktop's Ask a person form and its Promote to epic (an edit of the type alone, after asking).
+    ask: { operation: 'tasks.command', detail: none },
+    promote: { operation: 'tasks.command', detail: none },
   } });

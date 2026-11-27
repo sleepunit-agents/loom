@@ -17,5 +17,5 @@ export function readPersonalAccount(db: DataDatabase, member: string) {
   return { passkeys: keys, sessions: browsers };
 }
 export function readPersonalNotificationDevices(db: DataDatabase, member: string) {
-  return db.query.notificationDevices.findMany({columns:{endpoint:true,device:true,createdAt:true,seenAt:true},where:f=>eq(f.member,member)}).sync();
+  return db.query.notificationDevices.findMany({columns:{endpoint:true,device:true,createdAt:true,seenAt:true,replies:true},where:f=>eq(f.member,member)}).sync();
 }

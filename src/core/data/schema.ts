@@ -259,7 +259,10 @@ export const notificationDevices = sqliteTable('notification_devices', {
   device: text('device').notNull(),
   createdAt: text('created_at').notNull(),
   seenAt: text('seen_at').notNull(),
+  /** This device is also pushed to when an agent replies in one of its member's threads. Off until chosen. */
+  replies: integer('replies', { mode: 'boolean' }).notNull().default(false),
 }, t => [
+  check('notification_devices_replies_boolean', sql`${t.replies} in (0, 1)`),
   check('notification_devices_created_at_utc', utc(t.createdAt)),
   check('notification_devices_seen_at_utc', utc(t.seenAt)),
 ]);
@@ -2169,6 +2172,20 @@ export const notificationQueue = sqliteTable('notification_queue', {
   check('notificationQueue_queuedAt_utc', utc(t.queuedAt)),
   check('notificationQueue_sentAt_utc', utc(t.sentAt)),
 ]);
+/** The newest agent reply each device is to be told of, one row for a device and a thread: a later reply takes
+ * the row over, so a reply is pushed to a device at most once (core/signin/shared-notifications.ts). No words. */
+export const notificationReplies = sqliteTable('notification_replies', {
+  device: text('device').notNull().references(() => notificationDevices.endpoint, { onDelete: 'cascade' }),
+  thread: text('thread').notNull().references((): AnySQLiteColumn => threads.id, { onDelete: 'cascade' }),
+  seq: integer('seq').notNull(),
+  queuedAt: text('queued_at').notNull(),
+  sentAt: text('sent_at'),
+  attempts: integer('attempts').notNull().default(0),
+}, t => [
+  primaryKey({ columns: [t.device, t.thread] }),
+  check('notificationReplies_queuedAt_utc', utc(t.queuedAt)),
+  check('notificationReplies_sentAt_utc', utc(t.sentAt)),
+]);
 /** Each part of a reply the platform confirmed, in order. A long reply is posted in parts; the rows say how
  * far it got and which outside messages are the bot's, so a thread under any part addresses it. */
 export const bridgeSendParts = sqliteTable('bridge_send_parts', {
@@ -2643,7 +2660,7 @@ export const plumbing = {
   terminalCredentials, terminalSessions, terminalRuns,
   jobUsage,
   modelAccountLogins,
-  programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, notificationQueue, bridgeRawEvents, bridgeResume, bridgeSendParts, bridgeSendJobs, bridgeFileMessages, bridgeSendFiles, conversationSessions, secretWriteJournal };
+  programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, notificationQueue, notificationReplies, bridgeRawEvents, bridgeResume, bridgeSendParts, bridgeSendJobs, bridgeFileMessages, bridgeSendFiles, conversationSessions, secretWriteJournal };
 
 export const tables = {
   members,

@@ -23,10 +23,12 @@ import { ThreadHead, ThreadSwitch } from './threads';
 import { Notify } from './notify';
 import { usePageTitle } from './title';
 import { wearMotion } from '../access';
+import { Wear } from './wear';
 import '../pair/screen.css';
 import './board.css';
 
-// This page has no boot script and no settings of its own, so it follows the device: access.ts answers what moves.
+// This page has no boot script, so it starts by following the device (access.ts answers what moves). Once the
+// member is known it wears their own Reduce motion, and of their Appearance nothing else (./wear.ts).
 wearMotion('follow');
 
 type Placement = { id: string; brick: string; params: string; rank: number; placedByKind: string; big: boolean; canBeBig: boolean; flagged: boolean };
@@ -302,7 +304,7 @@ export function Resolve({ member }: { member: string }) {
 
 function App() {
   const { session, login, message } = useSession();
-  return session?.viewer ? <Resolve member={session.viewer.id} /> : (
+  return session?.viewer ? <><Wear /><Resolve member={session.viewer.id} /></> : (
     <main className="p-6">
       {session ? <Button onClick={() => void login()}>Sign in with a passkey</Button> : <p>Connecting to Loom…</p>}
       {message && <p role="status">{message}</p>}

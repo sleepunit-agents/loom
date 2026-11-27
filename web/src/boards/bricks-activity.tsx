@@ -2,12 +2,13 @@
  * (memory/queries.ts): what the member may see and the household's day and time zone (memoryActivityAccess), the
  * three-day windows Activity reads (memoryActivity), and, big, one opened entry (memoryActivityEntry). A row names
  * its agent as a chip and any ticket its words name; an opened entry names its tickets and pull requests as chips.
- * It changes nothing. Which entry is open is state of the drawn brick. */
+ * It changes nothing. Which entry is open is state of the drawn brick, and so are Activity's filters (who, where,
+ * what: its own groups and its own rule, `passes`), which the big form has as buttons and no parameter holds. */
 import { useState } from 'react';
 import { memoryQueries } from '../memory/queries';
 import { useMemoryQuery } from '../memory/query';
 import { Reply } from '../pair/reply';
-import { safeHref, type ActivityEntry, type ActivityLink } from '../pieces/activity/model';
+import { VENUES, passes, safeHref, type ActivityEntry, type ActivityLink, type Filters } from '../pieces/activity/model';
 import { Chip, Loading, Unavailable, ticketChip, type Params } from './brick-kit';
 import type { Form } from './layout';
 
@@ -53,6 +54,12 @@ function Opened({ id, zone }: { id: string; zone: string }) {
   );
 }
 
+const none: Filters = { who: [], where: [], what: [] };
+/** Activity's three kinds of entry, in its menu's order and words. */
+const kinds = [['conversation', 'Conversations'], ['system', 'System'], ['work', 'Work done']] as const;
+/** The venues Activity's menu always lists; any other an entry holds is added under its own name. */
+const listedVenues = ['comms', 'discord', 'slack', 'terminal', 'wakes'];
+
 export function Activity({ params, form }: { params: Params; form: Form }) {
   const days = Number(params.days) || 1, count = windowsFor(days);
   const access = useMemoryQuery(memoryQueries.activityAccess());
@@ -62,6 +69,7 @@ export function Activity({ params, form }: { params: Params; form: Form }) {
   const windows = [useMemoryQuery(to(0)), useMemoryQuery(to(1)), useMemoryQuery(to(2)), useMemoryQuery(to(3)), useMemoryQuery(to(4)),
     useMemoryQuery(to(5)), useMemoryQuery(to(6)), useMemoryQuery(to(7)), useMemoryQuery(to(8)), useMemoryQuery(to(9))].slice(0, count);
   const [open, setOpen] = useState('');
+  const [filtering, setFiltering] = useState(false), [filters, setFilters] = useState<Filters>(none);
   if (access.status === 'loading') return <Loading />;
   if (access.status !== 'live' || !may?.allowed) return <Unavailable what="activity" />;
   if (windows.some((w) => w.status === 'offline' || w.status === 'denied')) return <Unavailable what="activity" />;
@@ -69,10 +77,13 @@ export function Activity({ params, form }: { params: Params; form: Form }) {
   if (!records.length && windows.some((w) => w.status === 'loading')) return <Loading />;
   const zone = may.timezone;
   const kept = new Set([...new Set(records.flatMap((w) => w.days))].sort().reverse().slice(0, days));
-  const entries = [...new Map(records.flatMap((w) => w.entries).map((e) => [e.id, e])).values()].filter((e) => kept.has(e.day))
+  // The filters are the big form's; the small forms show everything.
+  const entries = [...new Map(records.flatMap((w) => w.entries).map((e) => [e.id, e])).values()].filter((e) => kept.has(e.day) && (form !== 'primary' || passes(e, filters)))
     .sort((a, b) => Date.parse(b.at) - Date.parse(a.at) || a.id.localeCompare(b.id));
+  const all = [...new Map(records.flatMap((w) => w.entries).map((e) => [e.id, e])).values()].filter((e) => kept.has(e.day));
   const range = days === 1 ? 'today' : `in ${days} days`;
-  const total = `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'} ${range}`;
+  const on = filters.who.length + filters.where.length + filters.what.length > 0;
+  const total = `${on ? `${entries.length} of ${all.length}` : entries.length} ${(on ? all : entries).length === 1 ? 'entry' : 'entries'} ${range}`;
   if (form === 'compact') return <p className="board-brief">{total}{entries[0] ? ` · latest from ${entries[0].agent}: ${entries[0].title}` : ''}</p>;
   const time = (at: string) => new Date(at).toLocaleTimeString([], { timeZone: zone, hour: 'numeric', minute: '2-digit' });
   const big = form === 'primary', cap = big ? 80 : 5, shown = entries.slice(0, cap);
@@ -89,9 +100,28 @@ export function Activity({ params, form }: { params: Params; form: Form }) {
       {big && open === e.id && <Opened id={e.id} zone={zone} />}
     </li>
   );
+  const tally = (test: (e: ActivityEntry) => boolean) => all.filter(test).length;
+  const venues: Record<string, string> = Object.fromEntries(listedVenues.map((v) => [v, VENUES[v]]));
+  for (const e of all) venues[e.venue] ??= e.venue;
+  const groups: { label: string; key: keyof Filters; items: { id: string; label: string; count: number }[] }[] = [
+    { label: 'Who', key: 'who', items: [...may.agents.map((agent) => ({ id: agent, label: agent, count: tally((e) => e.agent === agent) })), { id: 'owner', label: may.owner ?? 'Owner', count: tally((e) => !!e.owner) }].sort((a, b) => a.label.localeCompare(b.label)) },
+    { label: 'Where', key: 'where', items: Object.entries(venues).map(([id, label]) => ({ id, label, count: tally((e) => e.venue === id) })).sort((a, b) => a.label.localeCompare(b.label)) },
+    { label: 'What', key: 'what', items: kinds.map(([id, label]) => ({ id, label, count: tally((e) => e.what === id) })) },
+  ];
+  const toggle = (key: keyof Filters, id: string) => setFilters((f) => ({ ...f, [key]: f[key].includes(id) ? f[key].filter((x) => x !== id) : [...f[key], id].sort() }));
   return (
     <>
-      <p className="board-line"><span>{total}</span></p>
+      <p className="board-line">
+        <span>{total}</span>
+        {big && all.length > 0 && <button type="button" className="board-action" aria-expanded={filtering} onClick={() => setFiltering(!filtering)}>Filter activity</button>}
+        {big && on && <button type="button" className="board-action" onClick={() => setFilters(none)}>Show everything</button>}
+      </p>
+      {big && filtering && groups.map((g) => (
+        <div key={g.key} className="board-line" role="group" aria-label={g.label}>
+          <span className="text-muted-foreground">{g.label}</span>
+          {g.items.map((i) => <button type="button" key={i.id} className="board-action" aria-pressed={filters[g.key].includes(i.id)} onClick={() => toggle(g.key, i.id)}>{i.label} · {i.count}</button>)}
+        </div>
+      ))}
       {big && records.some((w) => w.conversations !== 'available') && <p role="status" className="text-muted-foreground">Conversations and digests {records.some((w) => w.conversations === 'error') ? 'couldn’t load' : 'are not available yet'}.</p>}
       {big && records.some((w) => w.episodes !== 'available') && <p role="status" className="text-muted-foreground">Some episode stores {records.some((w) => w.episodes === 'error') ? 'couldn’t load' : 'are not available'}.</p>}
       {big && records.some((w) => w.truncated) && <p role="status" className="text-muted-foreground">Showing the newest 600 entries per window.</p>}
@@ -99,7 +129,7 @@ export function Activity({ params, form }: { params: Params; form: Form }) {
         ? [...kept].sort().reverse().map((day) => { const rows = shown.filter((e) => e.day === day); return rows.length ? <section key={day} aria-label={day}><h3>{day}</h3><ol className="board-notes">{rows.map(row)}</ol></section> : null; })
         : <ol className="board-notes">{shown.map(row)}</ol>}
       {entries.length > cap && <p className="text-muted-foreground">and {entries.length - cap} more</p>}
-      {!entries.length && <p className="text-muted-foreground">Quiet</p>}
+      {!entries.length && <p className="text-muted-foreground">{big && on ? 'Nothing matches these filters. Try fewer filters or more days.' : 'Quiet'}</p>}
     </>
   );
 }

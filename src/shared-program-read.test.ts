@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
 // Exercise the shipped page selection without loading its React component.
-const source = readFileSync(new URL('../web/src/pieces/household/programs.tsx', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../web/src/pieces/household/model.ts', import.meta.url), 'utf8');
 const query = source.match(/export const programQuery='([^']+)'/)![1];
 it('keeps the shipped program setup SQL count fixed as tokens grow', async () => {
   const counts: number[] = [];

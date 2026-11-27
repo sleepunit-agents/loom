@@ -40,6 +40,16 @@ export async function enableNotifications(publicKey: string): Promise<string> {
   return sub.endpoint;
 }
 
+/** Whether this browser is also told when an agent replies (docs/specs/boards.md, "Coming back"). It enrols the
+ * subscription this browser already holds again, with the choice: `notifications.subscribe` changes only the
+ * device of the browser that calls it. Asks the person nothing. */
+export async function setReplyNotifications(replies: boolean): Promise<void> {
+  if (!notificationsSupported()) throw Error('This browser does not support notifications.');
+  const registration = await navigator.serviceWorker.getRegistration('/'), sub = await registration?.pushManager.getSubscription();
+  if (!sub) throw Error('Notifications are off on this device.');
+  await memberOperation('notifications.subscribe', { sub: { endpoint: sub.endpoint, keys: sub.toJSON().keys }, device: browserDevice(navigator.userAgent), replies });
+}
+
 export const removeNotificationDevice = (ref: string) => memberOperation('notifications.removeDevice', { ref });
 
 /** What is true of notifications on this browser, in the order a person can do something about it. */

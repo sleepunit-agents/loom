@@ -3,9 +3,7 @@ import {useDataQuery} from '../../data/graphql';
 import {HomeMessageComposer} from '../attention/home-composer';
 import {threadPath} from '../attention/home-comms-data';
 import {AppFrame,List,Row,Empty,Error,Loading,Button,Input} from '../../kit';
-interface Project{id:string;name:string;goal?:string|null;members:string[];agents:string[];repositories:string[]}
-interface Sharing{members:string[];agents:string[];projects:Project[]}
-const query=`{ householdSharing { members agents projects { id name goal members agents repositories } } }`;
+import {householdSharingQuery as query,sharingCount,type HouseholdSharing as Sharing,type SharedProject as Project} from './model';
 interface Recipient {member:string;agent:string}
 function ProjectForm({project,choices,enabled,recipient,go}:{project?:Project;choices:Sharing;enabled:boolean;recipient?:Recipient;go:(path:string)=>void}){
  const [words,setWords]=useState('');
@@ -56,7 +54,7 @@ export default function SharingApp({path=home,go=()=>{},active=true}:{path?:stri
      {feed.status!=='live'&&<Error text="Project sharing is disconnected. Changes are disabled."/>}
      {list?<List label="Projects">
        {choices.projects.map(row=><Row key={row.id} ref={row.id===focusId?origin:undefined} title={row.name} meta={row.id}
-         status={`${row.members.length} members · ${row.agents.length} agents`} onClick={()=>go(home+'/project/'+encodeURIComponent(row.id))}/>)}
+         status={sharingCount(row)} onClick={()=>go(home+'/project/'+encodeURIComponent(row.id))}/>)}
        {!choices.projects.length&&<Empty title="No projects to share"/>}
      </List>:creating||project?<ProjectForm key={JSON.stringify([project??'new',recipient,enabled])} project={project}
        choices={choices} enabled={enabled} recipient={recipient} go={go}/>:<Empty title="Project unavailable"/>}

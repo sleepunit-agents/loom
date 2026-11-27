@@ -167,7 +167,7 @@ before it runs any step, and refuses one it does not recognise without writing t
 | Area | Tables |
 |---|---|
 | Household | `members`, `agents`, `member_agents`, `projects`, `project_members`, `project_agents`, `project_repositories`, `agent_accounts`, `agent_sprites`, `household`, `backup_recipients`, `member_preferences` |
-| Sign-in | `tokens`, `program_tokens`, `program_record_grants`, `program_operation_grants`, `sessions`, `signin_links`, `worker_join_requests`, `passkeys`, `notification_devices`, `notification_queue` |
+| Sign-in | `tokens`, `program_tokens`, `program_record_grants`, `program_operation_grants`, `sessions`, `signin_links`, `worker_join_requests`, `passkeys`, `notification_devices`, `notification_queue`, `notification_replies` |
 | Tasks | `tasks`, `task_links`, `task_comments`, `imported_task_sequence` |
 | Conversations | `conversations`, `conversation_people`, `turns`, `digests`, `digest_items`, `agent_status`, `conversation_days`, `findings`, `conversation_sessions` |
 | Inbox and threads | `inbox`, `inbox_refs`, `inbox_reads`, `action_results`, `threads`, `messages`, `archived_questions`, `thread_refs`, `deleted_threads`, `message_files`, `job_trace`, `conversation_tasks` |

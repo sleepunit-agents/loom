@@ -67,7 +67,8 @@ it('reads the folder with the Inbox\'s own selection and lists its items newest 
   expect(chips().filter(([place]) => place.brick === 'agent').map(([place]) => place.params)).toEqual([{ agent: 'art' }, { agent: 'art' }]);
   // Nothing here answers an item.
   expect(buttons().map(said)).toEqual(['Mark read']);
-  expect(tree!.root.findAllByType('input')).toEqual([]);
+  // Its one field is the search (bricks-inbox-search.test.tsx).
+  expect(tree!.root.findAllByType('input').map((field) => field.props['aria-label'])).toEqual(['Search asks']);
 });
 
 it('takes its folder from the desktop\'s fixed list, and the one that holds what waits when it is given none', async () => {

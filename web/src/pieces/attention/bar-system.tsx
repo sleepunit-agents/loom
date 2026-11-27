@@ -1,7 +1,7 @@
 import { useDataQuery } from '../../data/graphql';
 
-export const deskTimeQuery = 'query DeskTime { deskTime { at timezone } }';
-export interface DeskTimeData { deskTime: { at:number;timezone:string } | null }
+import { deskTimeQuery, type DeskTimeData } from './desk-time';
+export { deskTimeQuery, type DeskTimeData };
 /** Formatting shared with the present desk, without its legacy shell/clock state. */
 export function serverTime(at: number, timezone: string, words = false): string {
   try {

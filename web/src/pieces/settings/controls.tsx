@@ -5,7 +5,7 @@ import { Button, Input } from '../../kit';
 import { newId } from '../../data/id';
 import type { SecretsSnapshot } from '../secrets-view';
 import { settingsCommand, submitSecret } from './commands';
-const resultText = (saved: boolean) => saved ? 'Saved.' : 'Change not confirmed. Check the current item before starting a new change.';
+import { ANSWER_WORDS, resultText } from './words';
 function useCommand() {
   const [busy, setBusy] = useState(false), [message, setMessage] = useState('');
   const current = useRef(false);
@@ -43,7 +43,7 @@ export function RevokeControl({ id }: { id: string }) {
   const command = useCommand();
   return <section><Button variant="danger-quiet" disabled={command.busy} onClick={() => { void command.run(() => settingsCommand('command', { action: 'revoke', id })); }}>Revoke grant</Button><p role="status">{command.message}</p></section>;
 }
-const choices = <><option value="ask">Ask each time</option><option value="auto">Allow automatically</option><option value="never">Never allow</option></>;
+const choices = <>{Object.entries(ANSWER_WORDS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</>;
 export function DefaultControl({ answer,go }: Navigation & { answer: 'ask' | 'auto' | 'never' }) {
   const request=useSettingRequest({go},'household default for secret access','Secret default request');
   return <><form onChange={request.clear} className="grid gap-3" onSubmit={event => { event.preventDefault(); const data = new FormData(event.currentTarget); request.prepare({ answer: data.get('answer') }); }}>

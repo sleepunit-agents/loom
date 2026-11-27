@@ -8,12 +8,12 @@ import {conditionLine, readingAge, readingLine, readingsOf, type Reading} from '
 import {fullTime} from '../../kit/time';
 import {useHouseholdZone} from '../../data/zone';
 
-import {MachineHostingDetails, machineHostingFields, type MachineHosting} from './machine-hosting';
+import {MachineHostingDetails} from './machine-hosting';
+import {ownerMachinesQuery, type Machine, type MachineReadEntry, type OwnerMachinesData, type ReaderCard} from './machines-query';
 
-type Machine = MachineHosting & {id:string; name:string; readers:string[]|null; readingsLeftOut:number};
-type Entry = {id:string; agent:string; job:string; conversation:string|null; word:string; person:string|null; read:string; args:string; askedAt:string; bytes:number; outcome:string};
-type Card = {id:string; ask:string;review?:string};
-const query = `query OwnerMachines { boxes { id name ${machineHostingFields} readers readingsLeftOut } boxReadings { box kind thing usedPercent sizeMib freeMib engineStatus level readAt unknownSince stale } agents { id } }`;
+type Entry = MachineReadEntry;
+type Card = ReaderCard;
+const query = ownerMachinesQuery;
 
 /** What the machine's worker last read on it: any open condition plainly, then the numbers quietly. */
 function MachineReadings({readings}: {readings:Reading[]}) {
@@ -101,7 +101,7 @@ function MachineSettings({box, agents}: {box:Machine; agents:string[]}) {
 }
 
 export function OwnerMachines({member,signInWarnings}:{member:string;signInWarnings?:ReadonlySet<string>}) {
- const feed=useDataQuery<{boxes:Machine[]; boxReadings?:Reading[]; agents:{id:string}[]}>(query);
+ const feed=useDataQuery<OwnerMachinesData>(query);
  const [open, setOpen]=useState('');
  const machines=feed.status==='live'?feed.data?.boxes?.filter(box=>box.owner===member):undefined;
  if(!machines?.length)return null;

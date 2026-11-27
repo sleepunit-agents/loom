@@ -5,8 +5,7 @@ import {Button,Field,Fields,Input} from '../../kit';
 import {memberOperation} from '../../data/operation';
 import {useDataQuery} from '../../data/graphql';
 
-type Setup={member:string;providers:string[];machines:{id:string;name:string}[]};
-const query='{ subscriptionSetup { member providers machines { id name } } }';
+import {subscriptionWords,subscriptionSetupQuery as query,type SubscriptionSetup as Setup} from '../runtime/model-query';
 
 function CreateForm({setup}:{setup:Setup}){
  const [busy,setBusy]=useState(false),[message,setMessage]=useState('');
@@ -16,15 +15,15 @@ function CreateForm({setup}:{setup:Setup}){
   if(busy)return;
   const form=event.currentTarget,values=new FormData(form);
   const input={provider:String(values.get('provider')),label:String(values.get('label')??'').trim(),machines:values.getAll('machines').map(String).sort()};
-  if(!input.label){setMessage('Give the subscription a label.');return;}
+  if(!input.label){setMessage(subscriptionWords.noLabel);return;}
   const key=JSON.stringify(input);
   if(attempt.current?.key!==key)attempt.current={key,id:newId()};
   setBusy(true);setMessage('');
   try{
    await memberOperation('runtime.accountCreate',input,attempt.current.id);
    attempt.current=null;form.reset();
-   setMessage(input.machines.length?'Subscription added. Each selected machine has a sign-in request. Watch Inbox for the provider’s instructions.':'Subscription added.');
-  }catch{setMessage('Could not confirm creation. Check the list or retry with the same settings.');}
+   setMessage(subscriptionWords.added(input.machines.length));
+  }catch{setMessage(subscriptionWords.notConfirmed);}
   finally{setBusy(false);}
  }
  return <details className="rounded-xl border p-4"><summary>Add a subscription</summary>

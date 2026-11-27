@@ -29,6 +29,11 @@ const composedOperations: Record<string, [file: string, written: string]> = {
   'mind.knowledgeVerify': ['src/pieces/mind/actions.ts', "['knowledgeVerify',"],
   'mind.knowledgeRecheck': ['src/pieces/mind/actions.ts', "['knowledgeRecheck',"],
   'mind.knowledgeAnnotate': ['src/pieces/mind/actions.ts', "['mind.knowledgeAnnotate',"],
+  'tempo.runNow': ['src/core/tempo/operations.ts', "for (const action of ['stop', 'start', 'runNow'] as const) operations.register(operation({ ...common,\n    name: `tempo.${action}`"],
+  'tempo.stop': ['src/core/tempo/operations.ts', "for (const action of ['stop', 'start', 'runNow'] as const) operations.register(operation({ ...common,\n    name: `tempo.${action}`"],
+  'tempo.start': ['src/core/tempo/operations.ts', "for (const action of ['stop', 'start', 'runNow'] as const) operations.register(operation({ ...common,\n    name: `tempo.${action}`"],
+  'tempo.pause': ['src/core/tempo/operations.ts', "for (const action of ['pause', 'resume'] as const) operations.register(operation({ ...common,\n    name: `tempo.${action}`"],
+  'tempo.resume': ['src/core/tempo/operations.ts', "for (const action of ['pause', 'resume'] as const) operations.register(operation({ ...common,\n    name: `tempo.${action}`"],
 };
 
 describe('the catalogue and the registry are the same bricks', () => {

@@ -5,13 +5,17 @@
  *
  * It also shows what the desktop's opened item shows around the answer: a household change's approval by its plain
  * title, the linked page, everything the item is about, and how loudly it is shown ("Notify", by `inbox.volume`,
- * for an item the member may set it on). */
+ * for an item the member may set it on), and the three answers the desktop's reader gives beside the Inbox's own:
+ * "Discuss with" for an item loom names an agent for (`inbox.discuss`), a task's question answered through its task
+ * (`tasks.command` answer), and a machine asking to join (`runtime.workerJoinDecide`, after asking). */
 import { useRef, useState, type FormEvent } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { answerInboxItem, inboxItemQuery, retainedInboxItem, useInboxItemWords } from '../pieces/attention/inbox-query';
-import { memberOperation } from '../data/operation';
+import { MemberOperationError, memberOperation } from '../data/operation';
+import { useTaskCommandSubmitter } from '../data/task-command';
 import { useDeadline } from '../pieces/comms/use-deadline';
 import { answerWord, from, managed, safeLink, stateWord, volumeNote, volumeWords, when, type InboxAnswer, type InboxItem } from '../pieces/inbox-view/model';
+import { threadPath, useAgentNames } from './agents-data';
 import { Chip, Loading, Unavailable, ticketChip, words, type Act, type Params } from './brick-kit';
 import type { Form } from './layout';
 
@@ -24,6 +28,34 @@ function about(ref: string) {
 /** How loudly an item is shown, in the order the Inbox lists the choices. */
 export const volumes = Object.keys(volumeWords) as InboxItem['volume'][];
 
+/** A machine asking to join, as the desktop's card reads its notice (pieces/attention/worker-join.tsx). */
+const joinRequest = (item: InboxItem) => (item.source === 'notice' && item.state === 'waiting' ? /^worker-join:([a-f0-9-]{36}):([A-Z2-9]{4}-[A-Z2-9]{4})$/.exec(item.sourceId ?? '') : null);
+
+/** "Discuss with": the conversation about this item with the agent loom names for it, opened by `inbox.discuss`
+ * as the desktop opens it (pieces/attention/inbox-discussion.tsx), then shown on this page. */
+function Discuss({ item, agent, act }: { item: string; agent: string; act: Act }) {
+  const name = useAgentNames();
+  const [state, setState] = useState<'idle' | 'opening' | 'failed'>('idle');
+  const lock = useRef(false);
+  async function open() {
+    if (lock.current) return;
+    lock.current = true; setState('opening');
+    try {
+      const { thread } = await memberOperation<{ thread: string }>('inbox.discuss', { item, expectedAgent: agent });
+      act('discuss', {});
+      setState('idle');
+      window.location.assign(threadPath(thread));
+    } catch { setState('failed'); }
+    finally { lock.current = false; }
+  }
+  return (
+    <>
+      <div className="board-line"><button type="button" className="board-action" disabled={state === 'opening'} onClick={() => void open()}>{state === 'opening' ? 'Opening conversation…' : `Discuss with ${name(agent)}`}</button></div>
+      {state === 'failed' && <p role="alert" className="text-destructive">Could not open the conversation. Try again.</p>}
+    </>
+  );
+}
+
 export function Question({ params, form, act }: { params: Params; form: Form; act: Act }) {
   const id = words(params.item);
   const read = useDataQuery<{ inboxItem: InboxItem | null }>(inboxItemQuery, { id }, { keep: true });
@@ -31,17 +63,40 @@ export function Question({ params, form, act }: { params: Params; form: Form; ac
   const now = useDeadline(stored ? [stored.bodyKeepUntil, stored.answerKeepUntil] : []);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [draft, setDraft] = useState('');
   const lock = useRef(false);
+  const submit = useTaskCommandSubmitter();
+  const [asking, setAsking] = useState<'' | 'allow' | 'block'>(''), [decided, setDecided] = useState('');
   const plain = useInboxItemWords(stored ? [stored] : []);
   if (read.status === 'loading') return <Loading />;
   if (read.status !== 'live' || !stored) return <Unavailable what="question" />;
   const item = retainedInboxItem(stored, now);
   const elsewhere = managed(item);
   const open = item.state === 'waiting' && !!item.answers && !!item.body && !elsewhere && item.canAnswer === true;
+  // A task owns the answer to its question (pieces/tasks/question-answer.tsx): Yes, No or words, through the task.
+  const ofTask = item.state === 'waiting' && !!item.body && !!item.answers && item.source === 'task' && item.waitsOnKind === 'task' && !!item.waitsOnId;
+  const join = joinRequest(item);
   async function answer(verdict: InboxAnswer, text?: string) {
-    if (lock.current || !open || (verdict === 'words' && !text?.trim())) return;
+    if (lock.current || !(open || ofTask) || (verdict === 'words' && !text?.trim())) return;
     lock.current = true; setBusy(true); setError('');
-    try { await answerInboxItem(id, verdict, text?.trim()); act('answer', { answer: verdict }); setDraft(''); }
-    catch { setError('Could not save. Try again.'); }
+    try {
+      if (ofTask) {
+        if (verdict !== 'yes' && verdict !== 'no' && verdict !== 'words') return;
+        await submit({ action: 'answer', id: item.waitsOnId!, question: item.id, answer: verdict, ...(verdict === 'words' ? { text: text!.trim() } : {}) });
+        act('taskAnswer', { answer: verdict });
+      } else { await answerInboxItem(id, verdict, text?.trim()); act('answer', { answer: verdict }); }
+      setDraft('');
+    }
+    catch { setError(ofTask ? 'Could not save your answer. Reconnect and try again.' : 'Could not save. Try again.'); }
+    finally { lock.current = false; setBusy(false); }
+  }
+  async function decide(decision: 'allow' | 'block') {
+    if (lock.current || !join) return;
+    lock.current = true; setBusy(true); setError(''); setDecided('');
+    try {
+      await memberOperation('runtime.workerJoinDecide', { request: join[1], code: join[2], decision });
+      act('join', { decision }); setAsking('');
+      setDecided(decision === 'allow' ? 'Machine admitted.' : 'Join request blocked.');
+    }
+    catch (failure) { setError(failure instanceof MemberOperationError && failure.status === 403 ? 'Sign in again as a household owner to answer.' : 'Could not save this decision. Check the request and try again.'); }
     finally { lock.current = false; setBusy(false); }
   }
   async function notify(volume: InboxItem['volume']) {
@@ -71,15 +126,17 @@ export function Question({ params, form, act }: { params: Params; form: Form; ac
         {item.refs.map(about)}
         <span className="text-muted-foreground">{when(item.at)}</span>
       </div>
-      {open && (
+      {(open || ofTask) && (
         <>
           <div className="board-line" role="group" aria-label="Record your answer">
             {item.answers === 'yes-no' && <>
               <button type="button" className="board-action" disabled={busy} onClick={() => void answer('yes')}>Yes</button>
               <button type="button" className="board-action" disabled={busy} onClick={() => void answer('no')}>No</button>
             </>}
-            <button type="button" className="board-action" disabled={busy} onClick={() => void answer('done')}>Mark done</button>
-            <button type="button" className="board-action" disabled={busy} onClick={() => void answer('dismiss')}>Dismiss</button>
+            {open && <>
+              <button type="button" className="board-action" disabled={busy} onClick={() => void answer('done')}>Mark done</button>
+              <button type="button" className="board-action" disabled={busy} onClick={() => void answer('dismiss')}>Dismiss</button>
+            </>}
           </div>
           <form className="board-line" onSubmit={record}>
             <input className="board-input" aria-label="Answer in your own words" placeholder={item.answers === 'yes-no' ? 'Or answer in your own words' : 'Answer in your own words'}
@@ -88,7 +145,20 @@ export function Question({ params, form, act }: { params: Params; form: Form; ac
           </form>
         </>
       )}
-      {item.state === 'waiting' && !open && (
+      {join && (
+        <div className="board-line" role="group" aria-label="Worker admission">
+          {asking ? <>
+            <button type="button" className="board-action" disabled={busy} onClick={() => void decide(asking)}>{asking === 'allow' ? 'Let this machine in' : 'Block this request'}</button>
+            <button type="button" className="board-action" disabled={busy} onClick={() => setAsking('')}>Cancel</button>
+          </> : <>
+            <button type="button" className="board-action" disabled={busy} onClick={() => setAsking('allow')}>Let it in…</button>
+            <button type="button" className="board-action" disabled={busy} onClick={() => setAsking('block')}>Block…</button>
+          </>}
+        </div>
+      )}
+      {decided && <p role="status" className="text-muted-foreground">{decided}</p>}
+      {ofTask && waitsOn && <p className="board-line text-muted-foreground">Its task{waitsOn}</p>}
+      {item.state === 'waiting' && !open && !ofTask && !join && (
         <p className="board-line text-muted-foreground">{elsewhere ? 'This is answered where it was asked.' : 'This has no answer to give here.'}{waitsOn}</p>
       )}
       {item.answer && (
@@ -98,6 +168,7 @@ export function Question({ params, form, act }: { params: Params; form: Form; ac
       )}
       {item.resolution && <p className="board-line text-muted-foreground">{item.resolution}</p>}
       {link && <p className="board-line"><a href={link} target="_blank" rel="noreferrer">Open linked page</a></p>}
+      {item.discussionAgent && <Discuss key={item.id + ' ' + item.discussionAgent} item={item.id} agent={item.discussionAgent} act={act} />}
       {item.canSetVolume && (
         <div className="board-line" role="group" aria-label="Notify">
           <span className="text-muted-foreground">Notify</span>

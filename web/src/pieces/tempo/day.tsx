@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
 import { localDate, timesOnDate } from '../../../../src/core/tempo/calendar';
-import { DAY_MS } from '../../../../src/core/day';
 import { useDataQuery } from '../../data/graphql';
 import { Button, Row } from '../../kit';
+import { eventsByDay, historyQuery, historyRange, outcomeWords, shift, stoppedDue, type DayFeed, type Event, type Stop } from './day-model';
 import { eventLabels, kindLabels, triggerKind, recordedOutcomes, status, title, triggerAgent, type AgentPause, type Trigger } from './model';
 
 const headerQuery = `query TempoDayHeader {
@@ -18,24 +18,6 @@ const calendarUsageQuery = `query TempoSubscriptionHistory($start:String!,$days:
     calendarUsage(start:$start,days:$days){date peak{at usage} weekly{at usage} highHours}
   }}
 }`;
-const historyQuery = `query TempoDayHistory($from: String!, $until: String!, $dueFrom:String!, $dueUntil:String!, $calendar:Boolean!) {
-  stopped:triggerLog(where:{event:{eq:"stopped"},note:{gte:$dueFrom,lt:$dueUntil}}) @include(if:$calendar) {
-    trigger seq at note triggerRow { state scheduleRemovedAt triggerLogByTrigger(where:{event:{eq:"stopped"}},orderBy:{seq:{direction:desc,priority:0}},limit:1){seq} }
-  }
-  tempoCalendarOutcomes(from:$from,until:$until)
-  triggerLog(where: {at: {gte: $from, lt: $until}, event: {inArray: ["fired","failed","missed","cancelled","skipped","held","stopped","failure"]}},
-    orderBy: {at: {direction: asc, priority: 0}, seq: {direction: asc, priority: 1}}) { trigger seq at event note }
-}`;
-type Outcome = { event:number; kind:"program"|"mail"|"notice"; state:string|null; reason:string|null };
-type Event = { trigger: string; seq: number; at: string; event: string; note: string; outcomes?: Outcome[]; failure?:string };
-const shift = (date: string, days: number) => new Date(Date.parse(date + 'T00:00:00Z') + days * DAY_MS).toISOString().slice(0, 10);
-function stoppedDue(note:string|undefined, format:Intl.DateTimeFormat) {
-  const match=/^Next due (.+)$/.exec(note??'');
-  const epoch=match ? Date.parse(match[1]) : NaN;
-  return Number.isFinite(epoch) ? 'Was due '+format.format(epoch) : undefined;
-}
-
-type Stop = Pick<Event,'trigger'|'seq'|'at'|'note'> & {triggerRow:{state:string;scheduleRemovedAt:string|null;triggerLogByTrigger:{seq:number}[]}|null};
 type Entry = {trigger: Trigger; at: number; key: string; state: string; scheduled: boolean; stoppedAt?:string; note?: string};
 
 type ScheduleProps = {zone: string; now: number; triggers: readonly Trigger[]; pauses: readonly AgentPause[]; open: (id: string) => void};
@@ -43,10 +25,6 @@ const dateLabel = new Intl.DateTimeFormat(undefined,{timeZone:'UTC',weekday:'sho
 const formatDate = (date: string) => dateLabel.format(Date.parse(date+'T12:00:00Z'));
 const noEvents: Event[] = [];
 const frequentRunsPerDay = 4;
-
-function outcomeWords(event:Event) {
-  return event.outcomes?.map(run=>(run.kind==='notice'?'Inbox notice':run.kind==='program'?'Program':'Agent wake')+' '+(run.state??'delivered')).join(' → ') || event.event;
-}
 
 function DayHistory({events,triggers,zone,open}:{events:Event[];triggers:readonly Trigger[];zone:string;open:(id:string)=>void}) {
   const byId=new Map(triggers.map(trigger=>[trigger.id,trigger]));
@@ -176,35 +154,14 @@ function FrequentTriggerRow({entries,format,open}: {entries: Entry[]; format: In
 
 function CalendarHours({start,week,history,selectDay,...schedule}: ScheduleProps & {start:string; week:boolean; history:boolean; selectDay:(date:string)=>void}) {
   const length = week ? 7 : 1;
-  // Read the visible range once. The offsets on either side include local dates across DST changes.
-  const from=shift(start,-1)+'T00:00:00.000Z',until=shift(start,length+1)+'T00:00:00.000Z';
-  const feed = useDataQuery<{triggerLog: Event[];tempoCalendarOutcomes:Outcome[];stopped?:Stop[]}>(historyQuery,
-    {from,until,dueFrom:'Next due '+from,dueUntil:'Next due '+until,calendar:!history});
+  // Read the visible range once.
+  const feed = useDataQuery<DayFeed>(historyQuery, historyRange(start,length,!history));
 
   const usage = useDataQuery<{modelAccounts:SubscriptionUsage[]}>(calendarUsageQuery,{start,days:length},{pause:history});
   const accounts = usage.status==='live' && !usage.settling ? usage.data?.modelAccounts : undefined;
   const log = feed.status === 'live' ? feed.data?.triggerLog : undefined;
   const outcomes=feed.status==='live' ? feed.data?.tempoCalendarOutcomes : undefined;
-  const events = useMemo(()=>{
-    const byEvent=new Map<number,Outcome[]>();
-    for(const outcome of outcomes ?? []){
-      const group=byEvent.get(outcome.event);
-      if(group)group.push(outcome);else byEvent.set(outcome.event,[outcome]);
-    }
-    const days = new Map<string, Event[]>();
-    const bySeq=new Map(log?.map(event=>[event.seq,event]));
-    for (const event of log ?? []) {
-      const adjacent=bySeq.get(event.seq+(event.event==='failure' ? -1 : 1));
-      if(event.event==='failure' && adjacent?.trigger===event.trigger && adjacent.event==='failed')continue;
-      const failure=event.event==='failed' && adjacent?.trigger===event.trigger && adjacent.event==='failure'
-        ? adjacent.note : event.event==='failure' ? event.note : undefined;
-      const date = localDate(Date.parse(event.at),schedule.zone);
-      const group = days.get(date);
-      const row={...event,failure,outcomes:byEvent.get(event.seq)};
-      if (group) group.push(row); else days.set(date,[row]);
-    }
-    return days;
-  },[log,outcomes,schedule.zone]);
+  const events = useMemo(()=>eventsByDay(log,outcomes,schedule.zone),[log,outcomes,schedule.zone]);
   if(history && log) return <DayHistory events={events.get(start)??noEvents} triggers={schedule.triggers} zone={schedule.zone} open={schedule.open}/>;
   return <div aria-label={week ? 'Week schedule' : undefined} role={week ? 'region' : undefined} className={week ? 'tempo-week-days' : 'grid gap-3'}>
     {!log && <p>{feed.status === 'loading' ? 'Loading firing history…' : 'Firing history unavailable.'}</p>}
