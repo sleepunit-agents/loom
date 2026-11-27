@@ -23,6 +23,7 @@ export type Contact = {
   summary?: string;
   channels: string[];
   agents: string[];
+  relationships: { agent: string; id: string; summary: string | null }[];
 };
 export function groupPeople(data: People): Contact[] {
   const groups = new Map<string, Card[]>();
@@ -46,6 +47,9 @@ export function groupPeople(data: People): Contact[] {
       member: members.size === 1 ? [...members][0] : undefined,
       summary: primary.card.summary || cards.find((c) => c.card.summary)?.card.summary || undefined,
       channels: [...channels].sort(),
+      relationships: cards.flatMap((c) =>
+        c.agent ? [{ agent: c.agent, id: c.id, summary: c.card.summary }] : [],
+      ),
       agents: cards.flatMap((c) => (c.agent ? [c.agent] : [])).sort(),
     };
   });
@@ -72,7 +76,6 @@ export function ContactFacts({ contact }: { contact: Contact }) {
   const p = read.data?.person;
   return (
     <div className="space-y-3 text-sm [overflow-wrap:anywhere]">
-      {contact.agents.length > 0 && <p>Known to {contact.agents.join(', ')}</p>}
       {read.status !== 'live' ? (
         <p role="status">
           {read.status === 'loading' ? 'Loading contact details…' : 'Contact details unavailable.'}

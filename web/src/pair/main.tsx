@@ -596,7 +596,7 @@ function Workspace({
           if(viewStatus==='live' && node instanceof HTMLElement && (node===e.currentTarget || node.matches('[data-slot="card-content"]'))) positions.current.set(activeKey,node.scrollTop);
         }}>
           <div className="pair-zones" key={activeKey}>
-            {directory?.kind==='index' && directory.ref==='browse' ? <BrowseHome work={workOn}/> : directory ? <WorkspaceIndex view={directory} work={workOn} pages={directoryPages.current} peopleSearch={peopleSearch}/> : entity ? other.status === 'live' && other.data ?
+            {directory?.kind==='index' && directory.ref==='browse' ? <BrowseHome work={workOn}/> : directory ? <WorkspaceIndex memory={secondaryState.current} view={directory} work={workOn} pages={directoryPages.current} peopleSearch={peopleSearch}/> : entity ? other.status === 'live' && other.data ?
               <EntityCanvas view={entity} data={other.data} work={workOn} memory={secondaryState.current}/> :
               <p role="status">{other.status==='loading' ? 'Opening view…' : 'Record unavailable.'}</p> :
               active?.kind === 'project' ? project.data?.project?.id === projectId && project.status === 'live' ?
