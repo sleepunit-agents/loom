@@ -139,6 +139,8 @@
 .boards-top { position: relative; display: flex; align-items: center; }
 .boards-top .boards-presence { flex: 1; min-width: 0; }
 .boards-threads-open { flex: none; margin-right: 1.25rem; }
+.boards-notify-open { flex: none; margin-right: .4rem; }
+.boards-notify { display: grid; gap: .5rem; padding: .75rem; justify-items: start; }
 .boards-threads { position: absolute; z-index: 20; top: 100%; left: 1.25rem; right: 1.25rem; max-height: 60dvh; overflow: auto; padding: .4rem;
   background: var(--popover); border: 1px solid var(--surface-edge); border-radius: 12px; box-shadow: 0 10px 30px -12px var(--contact); }
 .boards-threads ul { display: grid; gap: .15rem; }

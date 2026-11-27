@@ -1,9 +1,10 @@
-import {browserDevice,deviceLabel} from '../../../../src/core/signin/browser-device';
+import {deviceLabel} from '../../../../src/core/signin/browser-device';
 import {fullTime} from '../../kit/time';
 import {useHouseholdZone} from '../../data/zone';
 import {sessionChange} from '../../signin/session-change';
 import DeviceLink from '../../signin/DeviceLink';
 import { decode as dec } from './encoding';
+import { enableNotifications as enableBrowserNotifications } from './notifications';
 import { useState, type FormEvent } from 'react';
 import { useDataQuery } from '../../data/graphql';
 import { memberOperation } from '../../data/operation';
@@ -37,11 +38,7 @@ export default function AccountApp({go=()=>{},active=true}:{path?:string;go?:(pa
  const enableNotifications=async()=>{
   if(!enabled||!account?.notifications?.publicKey)return;setBusy(true);say('');
   try{
-   if(!('serviceWorker'in navigator)||!('PushManager'in window)||!('Notification'in window))throw Error('This browser does not support notifications.');
-   if(await Notification.requestPermission()!=='granted')throw Error('Notifications were not allowed.');
-   const registration=await navigator.serviceWorker.ready,existing=await registration.pushManager.getSubscription();
-   const sub=existing??await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:dec(account.notifications.publicKey)}),value=sub.toJSON();
-   await memberOperation('notifications.subscribe',{sub:{endpoint:sub.endpoint,keys:value.keys},device:browserDevice(navigator.userAgent)});say('Notifications enabled.');
+   await enableBrowserNotifications(account.notifications.publicKey);say('Notifications enabled.');
   }catch(error){say(error instanceof Error?error.message:'Could not enable notifications.');}finally{setBusy(false);}
  };
  return <AppFrame title="Your account" where="Account" go={go}><div className="grid gap-6 overflow-auto p-5">

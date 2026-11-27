@@ -8,7 +8,7 @@ import { useRef, useState } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { memberOperation } from '../data/operation';
 import { displayName } from '../kit/words';
-import { Chip, Loading, Unavailable, words, type Act, type Params } from './bricks';
+import { Chip, Loading, Unavailable, words, type Act, type Params } from './brick-kit';
 import { priorityWord } from './bricks-work';
 import type { Form } from './layout';
 

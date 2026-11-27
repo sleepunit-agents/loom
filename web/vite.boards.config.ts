@@ -37,6 +37,8 @@ const shared = new Set([
   'pieces/attention/home-comms-data.ts', // Home's summary of the member's threads per agent (imports data/ only)
   'pieces/attention/doing-model.ts', // what an agent is doing now: the read and its sentences (imports kit/time.ts)
   'pieces/attention/waiting-counts.ts', // how many questions wait on the member, per agent (imports data/ only)
+  'pieces/account/notifications.ts', // notifications on this browser: its state, turning a device on and off by Account's own operations (imports data/, encoding.ts and two plain files under src/)
+  'pieces/account/encoding.ts', // base64url to bytes, for the push key (no imports)
 ]);
 const isolation: Plugin = {
   name: 'boards-visual-isolation',

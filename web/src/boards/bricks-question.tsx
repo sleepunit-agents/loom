@@ -12,7 +12,7 @@ import { answerInboxItem, inboxItemQuery, retainedInboxItem, useInboxItemWords }
 import { memberOperation } from '../data/operation';
 import { useDeadline } from '../pieces/comms/use-deadline';
 import { answerWord, from, managed, safeLink, stateWord, volumeNote, volumeWords, when, type InboxAnswer, type InboxItem } from '../pieces/inbox-view/model';
-import { Chip, Loading, Unavailable, ticketChip, words, type Act, type Params } from './bricks';
+import { Chip, Loading, Unavailable, ticketChip, words, type Act, type Params } from './brick-kit';
 import type { Form } from './layout';
 
 /** Something the question is about, as a chip where a brick shows it. */

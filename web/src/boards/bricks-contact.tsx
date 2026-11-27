@@ -7,7 +7,7 @@ import type { ReactNode } from 'react';
 import { memoryQueries, type PersonOpen } from '../memory/queries';
 import { useMemoryQuery, useMemoryRecord } from '../memory/query';
 import { contactLink, contacts, type Person } from '../pieces/people/model';
-import { Chip, Loading, Unavailable } from './bricks';
+import { Chip, Loading, Unavailable } from './brick-kit';
 import type { Form } from './layout';
 
 const id = /^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,119}$/;

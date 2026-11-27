@@ -665,6 +665,25 @@ replacement worker can leave another asleep if the mount is still hung.
 - **What would change the answer.** A screen that counts up from a last-seen time, which would then keep
   its own clock rather than be sent the time each second.
 
+### Changes that come faster than a tenth of a second reach an open window together
+
+- **What.** Every commit has every open live selection read again. A selection is now read again at most once
+  in 100 ms (`LIVE_SETTLE_MS` in `src/next-data.ts`, `settleMs` in `src/core/data/live.ts`). A commit that
+  comes alone, more than 100 ms after the selection was last read, is read at once, as before. Commits that
+  come faster are read together when the 100 ms are up, so a window can show a change up to 100 ms after it
+  was written, and no later.
+- **What is enforced.** Nothing committed is missed: a selection that is waiting its turn stays marked as
+  changed, and the reading that follows is of everything committed before it began, so there is always one
+  reading after the last commit. A reading a commit overtook is still thrown away and never sent. A
+  selection's first answer does not wait, and neither does ending a selection, losing access or closing
+  loom. `src/core/data/live.test.ts` holds each of these on a clock the test moves by hand.
+- **Why accepted.** One commit costs about 1.3 ms and eleven statements for each open selection on the
+  example household, and a board of ten bricks holds eighteen or more (docs/specs/boards.md, "Live reads and
+  their cost"): twenty commits 5 ms apart were twenty readings of each, half a second of the server's one
+  processor, and are now six.
+- **What would change the answer.** A screen that must follow writes faster than ten times a second; or
+  knowing which selections a commit can have changed, which would make most of these readings unnecessary.
+
 ### A queued job has one deadline, whatever keeps it queued
 
 - **What.** A job no machine has taken 24 hours after it could first be claimed is ended as failed

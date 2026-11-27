@@ -3,8 +3,11 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const feed = vi.hoisted(() => vi.fn());
 vi.mock('../data/graphql', () => ({ useDataQuery: feed }));
-import { bricks } from './bricks';
+import { bricks, loadBricks } from './bricks';
 import { bench } from './bricks-work.test.helper';
+
+// A brick's body is fetched when it is first drawn (./bricks.tsx). Here they are all fetched first, so each draws at once.
+await loadBricks();
 
 const b = bench(feed);
 beforeEach(b.before);

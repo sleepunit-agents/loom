@@ -3,7 +3,7 @@
  * is answered through its approval, on the desktop. */
 import { useDataQuery } from '../data/graphql';
 import { checksWord, checkWord, mergeableWord, reviewWord, roleWord, stateWord, summary, waitingWord, type Change, type ChangeSnapshot } from '../pieces/change-view/model';
-import { Chip, Loading, Unavailable, ticketChip, useOwnFlag, words, type Params, type Raise } from './bricks';
+import { Chip, Loading, Unavailable, ticketChip, useOwnFlag, words, type Params, type Raise } from './brick-kit';
 import type { Form } from './layout';
 
 type Row = Pick<Change, 'id' | 'repository' | 'number' | 'title' | 'state' | 'draft' | 'authorLogin' | 'project' | 'agent' | 'branch' | 'baseBranch' | 'checks' | 'review' | 'mergeable' | 'waitingOn'>;

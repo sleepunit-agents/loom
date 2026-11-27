@@ -11,7 +11,8 @@ import { useHomeComms } from '../pieces/attention/home-comms-data';
 import { agentStateLine, latestStatus, shownState } from '../pieces/attention/home-model';
 import { useDeskWaitingCounts } from '../pieces/attention/waiting-counts';
 import { threadPath, useAgentNames } from './agents-data';
-import { Assigned, Chip, Loading, Unavailable, useOwnFlag, words, type Act, type Params, type Raise } from './bricks';
+import { Assigned } from './assigned';
+import { Chip, Loading, Unavailable, useOwnFlag, words, type Act, type Params, type Raise } from './brick-kit';
 import type { Form } from './layout';
 
 type Job = { id: string; title: string; state: string; conversation: string | null; queuedAt: string; endedAt: string | null };

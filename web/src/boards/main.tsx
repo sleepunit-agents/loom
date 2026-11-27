@@ -1,6 +1,6 @@
 /** The boards page (docs/specs/boards.md): a conversation, and a second window the agent fills from bricks.
  * The page draws the thread's boards and nothing else there; what is on screen is a record, never page state. */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { Component, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ArrowUpIcon } from 'lucide-react';
 import { useDataQuery } from '../data/graphql';
@@ -14,11 +14,14 @@ import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } fro
 import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerProvider, MessageScrollerViewport } from '../pair/ui/message-scroller';
 import { emptyTail, threadId, TranscriptPage, type ThreadTail } from '../pair/transcript';
 import { brickView, type Params, type Place } from './bricks';
+import { Loading } from './brick-kit';
 import { layout, type Slot } from './layout';
 import { buildChanged } from './build';
 import { AgentFace } from './agent-face';
 import { useAgentNames } from './agents-data';
 import { ThreadHead, ThreadSwitch } from './threads';
+import { Notify } from './notify';
+import { usePageTitle } from './title';
 import { wearMotion } from '../access';
 import '../pair/screen.css';
 import './board.css';
@@ -42,7 +45,17 @@ const visit = (path: string) => { go(path); for (const tell of [...moved]) tell(
 /** Where the member went, once it is known to be in this page's thread. A new one each time they go. */
 type At = { board?: string };
 
-function BoardView({ board, onRemove, onMaximize, onClose }: { board: Board; onRemove(id: string): void; onMaximize(id: string): void; onClose(): void }) {
+/** A brick's body is fetched when a board first shows it (./bricks.tsx). One whose module does not arrive, as when
+ * loom was deployed while the page stayed open and the old file is gone, says so in its own placement and leaves
+ * the rest of the board drawn, and tells the page, which takes the new build if there is one (see `stale` below). */
+class BodyBoundary extends Component<{ children: ReactNode; onLost(): void }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch() { this.props.onLost(); }
+  render() { return this.state.failed ? <p role="alert" className="text-muted-foreground">This brick did not load. Reload the page to try again.</p> : this.props.children; }
+}
+
+function BoardView({ board, onRemove, onMaximize, onClose, onLost }: { board: Board; onRemove(id: string): void; onMaximize(id: string): void; onClose(): void; /** A brick's body could not be fetched. */ onLost(): void }) {
   const field = useRef<HTMLDivElement>(null);
   const [area, setArea] = useState({ w: 0, h: 0 });
   useLayoutEffect(() => {
@@ -98,7 +111,7 @@ function BoardView({ board, onRemove, onMaximize, onClose }: { board: Board; onR
                 {!board.closed && p.canBeBig && !p.big && <button type="button" className="board-maximize" aria-label={'Make ' + p.view.title(p.values) + ' the big one'} onClick={() => onMaximize(p.id)}>⤢</button>}
                 {!board.closed && <button type="button" className="board-remove" aria-label={'Remove ' + p.view.title(p.values)} onClick={() => onRemove(p.id)}>✕</button>}
               </header>
-              <div inert={board.closed}><Body params={p.values} form={slot.form} raise={(name) => raise(p.id, name)} act={(action, detail) => void memberOperation('boards.act', { board: board.id, placement: p.id, action, detail }).catch(() => {})} /></div>
+              <div inert={board.closed}><BodyBoundary onLost={onLost}><Suspense fallback={<Loading />}><Body params={p.values} form={slot.form} raise={(name) => raise(p.id, name)} act={(action, detail) => void memberOperation('boards.act', { board: board.id, placement: p.id, action, detail }).catch(() => {})} /></Suspense></BodyBoundary></div>
             </article>
           );
         })}
@@ -187,11 +200,13 @@ export function Page({ member, thread, agent, at, exists = false }: { member: st
   // take it once nothing typed would be lost. The board is a record and the address holds its id, so the new
   // page opens on the same board. This is how a brick that did not exist a minute ago gets drawn.
   const [stale, setStale] = useState(false);
-  useEffect(() => { if (read.status === 'live') void buildChanged().then((changed) => changed && setStale(true)); }, [read.status]);
+  const newer = useCallback(() => void buildChanged().then((changed) => changed && setStale(true)), []);
+  useEffect(() => { if (read.status === 'live') newer(); }, [read.status, newer]);
   useEffect(() => { if (stale && !words.trim() && !busy) location.reload(); }, [stale, words, busy]);
   const mood: FaceState = error ? 'error' : !ready || tail.status === 'connecting' ? 'thinking' : tail.working ? 'working' : tail.update ? 'talking' : 'idle';
   const status = error || (!ready ? 'Connecting…' : tail.working ? (tail.tool ? 'Working · ' + tail.tool.split(' → ').at(-1) : 'Working') : tail.update ? 'Has a reply for you' : 'Here when you need me.');
   const name = useAgentNames()(agent);
+  usePageTitle(thread, tail.update);
 
   return (
     <main className="boards-page pair-workspace" data-board={drawn.length > 0}
@@ -209,7 +224,7 @@ export function Page({ member, thread, agent, at, exists = false }: { member: st
             {drawn.map((b) => (
               <BoardView key={b.id} board={b} onRemove={(id) => void change(b.id, [{ change: 'remove', placement: id }])}
                 onMaximize={(id) => void change(b.id, [{ change: 'maximize', placement: id }])}
-                onClose={() => void memberOperation('boards.close', { board: b.id }).catch(() => {})} />
+                onClose={() => void memberOperation('boards.close', { board: b.id }).catch(() => {})} onLost={newer} />
             ))}
           </div>
           {drawn.length > 1 && <div className="boards-dots" aria-hidden="true">{drawn.map((b) => <i key={b.id} data-on={b.id === shown?.id} />)}</div>}
@@ -221,6 +236,7 @@ export function Page({ member, thread, agent, at, exists = false }: { member: st
             {agent === 'art' ? <span className="boards-face" aria-hidden="true"><Portrait className="art-portrait shrink-0" state={mood} /></span> : <AgentFace agent={agent} state={mood} />}
             <span className="min-w-0"><span className="block font-semibold">{name}</span><span role="status" className="block text-sm text-muted-foreground">{status}</span></span>
           </button>
+          <Notify />
           <ThreadSwitch thread={thread} visit={visit} />
         </div>
         <ThreadHead thread={thread} member={member} />

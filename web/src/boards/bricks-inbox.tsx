@@ -10,7 +10,7 @@ import { memberOperation } from '../data/operation';
 import { inboxPageSize, inboxSelection, retainedInboxItem, useInboxItemWords, useInboxSelection } from '../pieces/attention/inbox-query';
 import { useDeadline } from '../pieces/comms/use-deadline';
 import { currentNotices, errorsFolder, folderWords, from, noticeFolder, rows, stateWord, volumeWords, when, type InboxItem } from '../pieces/inbox-view/model';
-import { Chip, Loading, Unavailable, useOwnFlag, words, type Act, type Params, type Raise } from './bricks';
+import { Chip, Loading, Unavailable, useOwnFlag, words, type Act, type Params, type Raise } from './brick-kit';
 import type { Form } from './layout';
 
 const folders: readonly (readonly [string, string])[] = [...folderWords, errorsFolder];

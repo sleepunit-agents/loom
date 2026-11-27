@@ -8,7 +8,7 @@ import { memberOperation } from '../data/operation';
 import { memoryQueries } from '../memory/queries';
 import { useMemoryQuery } from '../memory/query';
 import { contacts, type Person } from '../pieces/people/model';
-import { Chip, Loading, Unavailable, words, type Act, type Params } from './bricks';
+import { Chip, Loading, Unavailable, words, type Act, type Params } from './brick-kit';
 import type { Form } from './layout';
 
 const slug = /^[a-z0-9][a-z0-9._-]{0,99}$/, agentId = /^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,119}$/;

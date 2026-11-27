@@ -118,7 +118,7 @@ a thread's open boards, left to right, in the order they last joined it.
    shown, small and in monospace, beside a brick that says it is unavailable.
 2. **A new brick is a change to loom.** It arrives with side, compact, chip and hover, and with primary if it can be
    big; a fit for each board form it has; the changes it flags itself for; a parameter schema with a default for every parameter that is not a record reference, its actions, its link key if it
-   has one, tests and a catalogue entry.
+   has one, tests and a catalogue entry. What that touches, file by file, is "Adding a brick".
 3. **The board is the record of what is in the second window.** The page draws the board's placements and nothing
    else there. The address holds one id. The page keeps no board state in the query string, the fragment or the
    browser's storage.
@@ -405,6 +405,25 @@ ids, making it with `comms.open` if it does not exist.
   visible tab and holds something after the read mark, as Comms does; "Unread" in the list is Home's rule, a reply
   from the thread's agent after that mark, served as `unread` on a Comms thread row. Nothing about the thread or
   board shown is in a query string, a fragment or storage.
+- **Coming back, and installing (2026-11-27).** The page links its own manifest (`/boards.webmanifest`: id and
+  start `/app/boards`, scope `/`), beside the desktop's, which is unchanged; installed from this page, loom opens
+  at `/app/boards`. The page registers the desktop's service worker (`/sw.js`, scope `/`), which asks the member
+  nothing. Beside the presence is "Notifications": a panel that says what is true of this device (unavailable,
+  unsupported by the browser, blocked by the browser, off, on for this device: on means loom lists this browser's
+  own push subscription and the browser allows it) and turns it on and off by the desktop Account's own helper and
+  operations (`notifications.subscribe`, `notifications.removeDevice`; `web/src/pieces/account/notifications.ts`).
+  The browser is asked for permission only on the member's press. A push is sent for what it was sent for before
+  (an Inbox item that waits on the member at full volume: a question, an approval, a notice) and still carries no
+  words and the desktop's address; when the item belongs to a thread that is the member's own it also carries that
+  thread's boards address (`/app/t/<thread id>`). Which one a click opens is decided on the device: the boards
+  address (or `/app/boards` when the push names no thread) when the member ticked "Open notifications from this
+  device in the boards page", or when the only loom windows open are boards pages; the desktop's otherwise, as
+  before. That choice is the device's and is kept in the browser's cache storage (`loom-device`), where the worker
+  reads it; it is no record of loom's. An open boards page is focused and is not loaded again when the push names
+  no thread or the thread it is already at. **Not built:** a plain reply by the agent, and so the reply that a
+  finished handed-off session brings to the thread, is no Inbox item and is not pushed, on this page or the desktop.
+  The tab's title is the thread's title, or "Loom", with "●" in front while the tab is hidden and the thread holds
+  an unread reply.
 
 ## A restart
 
@@ -822,6 +841,90 @@ Two things loom does not have today, found 2026-11-27, each its own change if wa
 - **It does not flag itself for "waiting on the member".** A question or an approval from a session arrives in the
   inbox as it does today; it is its own brick.
 
+### Adding a brick
+
+A brick has one home on each side and is listed once on each side. Adding one touches:
+
+1. **Its definition**, `src/core/boards/bricks/<name>.ts`: a default export made with `brick` from `bricks/kit.ts`
+   (name, `shows`, strict `params`, `references`, `linkKey`, `big`, `flags`, `actions`), and beside it
+   `src/core/boards/bricks/<name>.test.ts`, which pins what the definition commits loom to (`pins`) and what its
+   parameters and details refuse.
+2. **One line in the catalogue**, `src/core/boards/bricks.ts`: its import and its place in `bricks`, at the end.
+   That array is the catalogue's order and the only place the order is stated.
+3. **Its page module**, `web/src/boards/bricks-<name>.tsx`, exporting its body, and its suite
+   `web/src/boards/bricks-<name>.test.tsx`. The module imports what bricks share from `brick-kit.tsx` (`Chip`,
+   `Loading`, `Unavailable`, `useOwnFlag`, `words`, the types) and never another brick's module.
+4. **One line in the registry**, `web/src/boards/bricks.tsx`: `fits`, `title`, `sub`, and
+   `...later(() => import('./bricks-<name>').then((m) => m.<Body>))`.
+5. **Its rows in the two tables above.**
+
+Nothing else lists the bricks. `src/core/boards/catalogue.test.ts` holds what must be true of every brick and names
+none: the catalogue and the registry hold the same names, each once; every brick has a rectangle for each form it
+has, and one that can be big has a primary one; every parameter that is not a reference has a default; no action's
+detail takes anything but a fixed choice; every action's operation is one loom registers (found by its registration
+in the source; three whose names are put together where they are registered are listed there); every brick has the
+four files above, with a short commented list of older bricks whose page checks are in a shared suite; and both
+tables have its row. A suite that draws every brick makes each one's parameters from its own schema
+(`web/src/boards/samples.test.helper.ts`).
+
+**A body is loaded when a board first shows its brick.** The registry holds, for each brick, what the page needs at
+once to lay a board out and head a placement, and a body whose module is fetched the first time it is drawn. Until
+it arrives the placement, already in its rectangle and under its heading, says "Loading…"; from then on that brick
+draws at once. A module that cannot be fetched, as when loom was deployed while the page stayed open, says "This
+brick did not load. Reload the page to try again." in its own placement, and the rest of the board is drawn; the
+page then looks for a newer build and takes it as "A restart" says, once nothing typed would be lost. The
+page's first script holds no brick and nothing only a brick needs. The bundle guard (`web/vite.boards.config.ts`)
+reads every chunk, the fetched ones too.
+
+## Live reads and their cost
+
+Measured 2026-11-27 on the example household (`src/example-home.ts`: four tickets, one project), through the real
+composition and one socket, counting SQLite statements and the server's processor time.
+
+**What happens.** Loom has one signal for "something was committed" (`DataLive.changed`, `src/core/data/live.ts`),
+raised after every committed write that changed a row (`DataWrites.run`). Nothing records which tables a write
+touched or which a selection reads: `ctx.changed(type, id)` in an operation is collected and never reaches the
+live reads. So every commit has **every open selection of every open window** run its whole query again. The
+result is compared with the last one sent, and only what changed is sent; a selection whose answer is the same
+sends nothing, but has been read. On the page, two hooks with the same selection and variables share one
+selection on the socket, a paused hook holds none, and a folded placement draws no body and so reads nothing.
+
+**What a board holds.** Each brick's small form opens between one and seven selections before its record has
+loaded (`agent` seven, `agents` four, `project` and `person` three), and more once it has (a ticket's links and
+sessions, a session's steps). A board of ten (lanes, ticket, comments, agent, pull, question, inbox, session,
+trend, project) holds 18; all 23 bricks at once hold 36. The page and the conversation hold their own beside these. Every board
+on the trail stays drawn beside the one shown, so each open board adds its own.
+
+**What one commit costs.** For that board of ten: 198 statements and 23 ms of processor for a write to a table
+no brick reads (a machine's name), and no frame sent; 204 statements, 27 ms and one small frame for a comment
+on the ticket shown. That is about eleven statements and 1.3 ms for each open selection, on a household with
+almost nothing in it. Commits in the same turn of the server's loop were already read together (twenty were two
+readings). Commits in separate turns were not: twenty of them 5 ms apart were twenty readings of each selection,
+3,960 statements and 540 ms.
+
+**What was changed.** A selection is read again at most once in 100 ms (`LIVE_SETTLE_MS`): a commit that comes
+alone is read at once, and faster ones are read together, always once after the last
+(docs/accepted-tradeoffs.md). The same twenty commits 5 ms apart are now six readings of each selection, 1,265
+statements and 180 ms. Commits 100 ms or more apart cost what they did.
+
+**What was not built, and why.**
+
+1. *Wake a selection only for writes to what it reads.* This is the real saving: most commits change nothing a
+   given brick shows. It needs the write side to say which tables it wrote (no operation does today, and SQLite
+   is not asked), and every selection to know which tables it reads, including the tables that decide who may
+   see a row: a selection must still be read again when access changes. A wrong answer here is a brick showing
+   old data, or data the member may no longer read, so it is a change to the data layer with its own checks,
+   not a change to boards.
+2. *Stop reading for boards that are off screen.* The boards on the trail other than the one shown keep their
+   selections open. Pausing them (`useDataQuery`'s `pause`) would cut a trail of three boards to a third. It
+   was left alone because a paused hook shows "Loading…": words half typed in a brick's form on a board the
+   page slid away from would be lost, a brick would no longer flag itself for a change that happened while its
+   board was off screen, and coming back would show the loading line first. Keeping the last data on screen
+   while paused would avoid all three, and would break the rule that a window hides what it holds the moment
+   its feed ends. This wants the owner's decision.
+3. *A longer settle time.* 250 ms would hold a board of ten to four readings a second whatever is written, and
+   would make every window, the conversation as it streams included, up to a quarter of a second late.
+
 ## What goes
 
 Gone from the branch, 2026-11-27: the contexts prototype (`web/src/contexts/` but for Art's portrait), the ticket
@@ -1073,6 +1176,28 @@ given an area. What they pin:
 entering in one frame), 19, 21, 22, 23, the `t-123` chip in a reply (20), and whether an `inert` container in fact
 stops its controls, which is the browser's. Those were run by hand in a browser on an example household and on the
 owner's own, and are not pinned.
+
+**One home per brick, 2026-11-27.** `src/core/boards/catalogue.test.ts`: what "Adding a brick" says must hold of
+every brick. `src/core/boards/bricks/<name>.test.ts`, one per brick: its pins, and the checks of one brick's
+parameters and details that were in `model.test.ts` (knowledge-page, knowledge, person, people, activity, threads,
+agent, agents, and the lanes' pause and resume); the checks that span several bricks stay in `model.test.ts`.
+`web/src/boards/bricks-loading.test.tsx`: a body says loading until its module arrives, then draws at once, and is
+fetched once. `web/src/boards/page.test.tsx`: a body on its way keeps its placement's rectangle and heading and
+holds no other placement back, and one that cannot be fetched says so in its own placement and has the page take
+a newer build unless something is typed. No suite holds a list
+of the bricks, of those that can be big, or a count of them.
+
+In `web/src/boards/notify.test.tsx`, `notify-target.test.ts`, `title.test.tsx` and
+`web/src/pieces/account/notifications.test.ts`: the notifications control (beside the presence, closed, nothing asked
+of the browser when the page opens or the panel does; every state it says; turning on asks once and enrols by
+`notifications.subscribe`; a refusal enrols nothing; turning off removes this device's own reference and no other;
+the device's choice of where a notification opens and its failure), and the tab's title and its mark. In
+`src/next-pwa-boards.test.ts` and `src/core/signin/shared-notification-boards.test.ts`: the served worker run with
+faked browser objects (a device that did not choose boards opens the desktop's address as before; only boards
+pages open, or the choice made, opens the thread's boards address or `/app/boards`; an outside or non-boards address
+is dropped; the device's cache survives a new worker), both manifests, and the real root's push payload (unchanged,
+key for key, for an item with no thread; the thread's boards address added only for the member's own thread).
+Nothing here receives a real push or runs in a real browser.
 
 **Rules with no check at all:** writes to one board applied in arrival order; a blueprint description's limit; a
 brick's own flag going when its condition ends (no drawn brick has such a condition); what the page does when the

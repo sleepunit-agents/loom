@@ -45,6 +45,11 @@ export const sharedQueryTables = ['boxes', 'boxAgents', 'boxFacts', 'boxReadings
 /** The longest a last-seen style time waits before open selections are read again for it:
  * docs/accepted-tradeoffs.md, "A last-seen time reaches an open window up to a minute late". */
 export const STAMP_WAKE_MS = 60_000;
+/** How soon after one reading of an open selection began the next may begin (core/data/live.ts, `settleMs`). A
+ * commit that comes alone is read at once. Commits that come faster than this, as when a session reports its steps
+ * or several agents write at once, are read together, so what an open window shows can be this much behind the
+ * last of them and no more: docs/specs/boards.md, "Live reads and their cost". */
+export const LIVE_SETTLE_MS = 100;
 export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>, measure?: MeasureRead, programRecords?: (viewer:Viewer)=>readonly string[]|undefined, canReadUsage: (viewer:Viewer)=>boolean = () => true, canReadProgram: (viewer:Viewer)=>boolean = canReadUsage) {
   const summaries = (viewer:Viewer) => new JobSummaries(db, () => ({ ...talkVisibility(viewer), ...conversationVisibility(viewer), ...boxVisibility(viewer), ...taskVisibility(viewer), ...tempoVisibility(viewer) }), () => clock.now(), () => { if (!currentJobsRead) { currentJobsRead = true; schedule(); } });
   let cancelLoginWake:(()=>void)|undefined, loginWakeAt = Infinity;
@@ -64,7 +69,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     const auth = resolve(request);
     return auth && { ...auth, valid: () => admitted() && auth.valid() && accounts.valid(auth.viewer) };
   };
-  const live = new DataLive(measure);
+  const live = new DataLive(measure, LIVE_SETTLE_MS);
   const bridges = new BridgeQueries(db, () => clock.now());
   let activityRead = false, currentJobsRead = false;
   const ownFields = { ...boardQueryFields(db), ...contextTicketFields(db), ...epicWorkFields(db), ...workspaceDirectoryFields(db), ...workJobFields(db, () => clock.now(), () => { if (!currentJobsRead) { currentJobsRead = true; schedule(); } }), ...backlogWindowFields(db), ...workBoardFields(db), ...changeReviewFields(db), ...bridgeSecretsReaderFields(db), ...bridgeQueryFields(bridges, viewer => {

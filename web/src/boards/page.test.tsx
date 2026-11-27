@@ -65,7 +65,11 @@ vi.mock('../data/graphql', async () => {
   };
 });
 import { Page } from './main';
-import { bricks } from './bricks';
+import { bricks, loadBricks } from './bricks';
+import { samples } from './samples.test.helper';
+
+// A brick's body is fetched when it is first drawn (./bricks.tsx). Here they are all fetched first, so each draws at once.
+await loadBricks();
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -377,13 +381,8 @@ describe('sending', () => {
 
 describe('names', () => {
   it('heads every placement by its brick\'s name, and shows the reference only in the small monospace line', async () => {
-    const params: Record<string, Record<string, string | number>> = {
-      project: { project: 'garden-proj' }, lanes: { project: 'garden-proj' }, trend: { project: 'garden-proj', days: 30 }, ticket: { ticket: 't-7' },
-      comments: { ticket: 't-7' }, person: { person: 'member:sam' }, agent: { agent: 'art-agent' }, session: { session: 'cv-fence-0001' },
-      pull: { change: 'ch-9' }, repository: { repository: 'loom-repo' }, question: { item: 'in-3' }, approval: { approval: 'ap-4' }, inbox: { folder: 'needs' }, approvals: { state: 'pending' }, threads: { scope: 'archived' }, agents: {}, mystery: { thing: 'x-1' },
-      'new-ticket': { project: 'garden-proj' }, backlog: { project: 'garden-proj' }, unfiled: {},
-      'knowledge-page': { page: 'pump-page' }, knowledge: { show: 'due', domain: 'pond-topic' }, people: { folder: 'agent' }, activity: { days: 7 },
-    };
+    // Every brick of the catalogue, with parameters its own schema takes, and one brick this page has never heard of.
+    const params: Record<string, Record<string, string | number>> = { ...samples(), mystery: { thing: 'x-1' } };
     expect(Object.keys(params)).toEqual(expect.arrayContaining(Object.keys(bricks)));
     const placements = Object.entries(params).map(([brick, p], i) => placed(brick, p, { big: i === 0 }));
     await draw([board('b-1', placements)], { area: { w: 1200, h: 9000 } });
@@ -504,5 +503,50 @@ describe('a restart', () => {
     expect(f.reload).not.toHaveBeenCalled();
     await act(async () => delivered());
     expect(f.reload).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('a body that has not arrived', () => {
+  const made = { arrive: (_module: { default: () => unknown }) => {} };
+  afterEach(() => { for (const name of ['slow', 'gone']) delete bricks[name]; });
+  it('keeps its placement\'s rectangle and heading and says loading, then draws in the same rectangle', async () => {
+    const { lazy, createElement } = await import('react');
+    bricks.slow = { ...bricks.ticket, title: () => 'Slow one', Body: lazy(() => new Promise<{ default: () => never }>((arrive) => { made.arrive = arrive as never; })) };
+    await one([lanes({ big: true }), placed('slow', { ticket: 't-7' }), ticket()]);
+    const [, slow, after] = articles();
+    const rectangle = { ...slow.props.style };
+    expect(rectangle.width).toBeGreaterThan(0);
+    expect(text(slow.findByType('h2'))).toBe('Slow one');
+    expect(text(slow.children[1] as Node)).toBe('Loading…');
+    // The bricks beside it are drawn: one body on its way holds nothing else back.
+    expect(text(after)).toContain('Mend the gate');
+    await act(async () => { made.arrive({ default: () => createElement('p', null, 'Here now') }); });
+    expect(text(articles()[1].children[1] as Node)).toBe('Here now');
+    expect(articles()[1].props.style).toEqual(rectangle);
+  });
+  it('says so in its own placement when its module cannot be fetched, and leaves the rest of the board drawn', async () => {
+    const { lazy } = await import('react');
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    bricks.gone = { ...bricks.ticket, Body: lazy(() => Promise.reject(new Error('404'))) };
+    await one([lanes({ big: true }), placed('gone', { ticket: 't-7' }), ticket()]);
+    expect(text(articles()[1].children[1] as Node)).toBe('This brick did not load. Reload the page to try again.');
+    expect(text(articles()[2])).toContain('Mend the gate');
+    expect(f.reload).not.toHaveBeenCalled();
+    quiet.mockRestore();
+  });
+  it('takes the new build when a module is gone because loom was deployed, unless something is typed', async () => {
+    const { lazy } = await import('react');
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    bricks.gone = { ...bricks.ticket, Body: lazy(() => Promise.reject(new Error('404'))) };
+    // The page looked when its read went live, and there was no new build then. There is one by the time the module is asked for.
+    f.build.mockResolvedValueOnce(false).mockResolvedValue(true);
+    await one([lanes({ big: true })]);
+    await type('half a thought');
+    await feed({ boards: [board('b-1', [lanes({ big: true }), placed('gone', { ticket: 't-7' })])] });
+    expect(text(articles()[1].children[1] as Node)).toBe('This brick did not load. Reload the page to try again.');
+    expect(f.reload).not.toHaveBeenCalled();
+    await type('');
+    expect(f.reload).toHaveBeenCalledTimes(1);
+    quiet.mockRestore();
   });
 });

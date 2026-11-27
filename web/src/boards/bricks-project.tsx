@@ -10,8 +10,7 @@ import { displayName } from '../kit/words';
 import { memoryQueries } from '../memory/queries';
 import { useMemoryRecord } from '../memory/query';
 import { Reply } from '../pair/reply';
-import { Chip, Loading, Unavailable, words, type Params } from './bricks';
-import { repositoryKey } from './bricks-repository';
+import { Chip, Loading, Unavailable, repositoryKey, words, type Params } from './brick-kit';
 import type { Form } from './layout';
 
 type Contribution = { id: string; agent: string; name: string; goal: string | null; summary: string | null };
