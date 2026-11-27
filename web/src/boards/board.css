@@ -10,7 +10,8 @@
 .boards-board > header h1 { font-size: 1.05rem; font-weight: 600; }
 .boards-board > header button { margin-left: auto; font-size: .85rem; color: var(--muted-foreground); }
 .boards-field { position: relative; flex: 1; min-height: 0; }
-.boards-folded { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; min-height: 2rem; padding-top: .6rem; font-size: .85rem; color: var(--muted-foreground); }
+.boards-folded { display: flex; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: .4rem; align-items: center; min-height: 2rem; padding-top: .6rem; font-size: .85rem; color: var(--muted-foreground); white-space: nowrap; }
+.boards-folded > * { flex: none; }
 .boards-dots { position: absolute; left: 50%; bottom: .5rem; translate: -50% 0; display: flex; gap: 5px; }
 .boards-dots i { width: 14px; height: 2px; border-radius: 2px; background: var(--muted-foreground); opacity: .5; }
 .boards-dots i[data-on='true'] { width: 26px; background: var(--foreground); opacity: 1; }
@@ -85,7 +86,7 @@
 .board-trend [data-series='closed'] { fill: var(--closed); background: var(--closed); }
 .board-trend-plot { position: relative; flex: 0 0 auto; }
 .board-trend[data-form='primary'] .board-trend-plot { margin-top: 1.7rem; }
-.board-trend svg { display: block; width: 100%; height: 64px; overflow: visible; }
+.board-trend svg { display: block; width: 100%; height: 90px; overflow: visible; }
 .board-trend[data-form='primary'] svg { height: 220px; }
 .board-trend-base, .board-trend-grid { stroke: var(--surface-edge); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .board-trend-hit { fill: transparent; cursor: pointer; }
@@ -114,7 +115,9 @@
 
 @media (max-width: 639px) {
   .boards-page[data-board='true'] { grid-template-columns: 1fr; }
-  .boards-page[data-board='true'] .boards-stage { padding-bottom: 9rem; }
+  .boards-page[data-board='true'] .boards-stage { padding-bottom: 13.5rem; }
+  .board-lanes { grid-template-columns: 1fr; }
+  .boards-board { padding: 1rem .9rem .5rem; }
   .boards-page[data-board='true'] .boards-talk { position: fixed; inset: auto 0 0 0; height: auto; max-height: 86dvh; z-index: 10; border-left: 0;
     border-top: 1px solid var(--surface-edge); background: var(--card); border-radius: 18px 18px 0 0; box-shadow: 0 -10px 30px -12px var(--contact); }
   .boards-page[data-board='true'] .boards-talk[data-sheet='false'] .boards-log { display: none; }

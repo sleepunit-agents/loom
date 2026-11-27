@@ -300,7 +300,7 @@ const later = (name: string, about: string): BrickView => ({ fits: fit([420, 640
 export const bricks: Record<string, BrickView> = {
   project: { fits: fit([440, 680, 820, 300], 190), title: () => 'Project', sub: (p) => words(p.project), Body: Project },
   lanes: { fits: fit([520, 820, 980, 480], 330), title: () => 'Lanes', sub: (p) => words(p.project), Body: Lanes },
-  trend: { fits: fit([460, 720, 860, 360], 300), title: () => 'Opened and closed', sub: (p) => `${words(p.project)} · ${words(p.days)} days`,
+  trend: { fits: fit([460, 720, 860, 360], 200), title: () => 'Opened and closed', sub: (p) => `${words(p.project)} · ${words(p.days)} days`,
     Body: ({ params, form }) => <Trend project={words(params.project)} days={Number(params.days) || 30} form={form} chip={ticketChip} /> },
   ticket: { fits: fit([460, 700, 820, 380], 230), title: () => 'Ticket', sub: (p) => words(p.ticket), Body: Ticket },
   person: { fits: fit([420, 640, 760, 260], 150), title: (p) => words(p.person).split(':')[1] || 'Person', sub: (p) => words(p.person).split(':')[0],

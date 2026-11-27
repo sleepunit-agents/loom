@@ -67,6 +67,7 @@ export function boardsMail(brief: string): string {
     'Make big the brick that answers what was asked: lanes or trend for how a project is going, ticket for one ticket,',
     'session for work in flight. project is a summary card and is rarely the right one to lead with.',
     'A board reads best with three to five bricks. More than that and the rest are one-line strips.',
+    'Board and placement ids are for your calls. Never write them in your reply: the member sees the board itself.',
     'maximize trades a small one with the big one and moves nothing else. The member can do that too, and you are told.',
     'flag marks a placement as worth a look without moving anything. When the member chose the big one, flag before you',
     'change it, and change it only when it cannot wait. Say what you have to say in your reply; show it on the board.',
