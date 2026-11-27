@@ -59,6 +59,7 @@ import { registerSharedSecretCommands } from './shared-secret-commands.js';
  * the connection; this never bootstraps legacy tables or opens another store. */
 import { sharedTempoSettings } from './shared-tempo-settings.js';
 import type { IncomingMessage } from 'node:http';
+import { registerBoardOperations } from './core/boards/operations.js';
 import { createHmac, randomBytes } from 'node:crypto';
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -616,6 +617,8 @@ export function sharedRoot(options: {
     terminal: viewer => credentials.terminalMachine(viewer),
   });
   registerSharedWorkAlways(operations,db,services.approvals,services.approvalRules);
+  // Boards follow Comms: a board is a thread's second window, so without threads there is nothing to open one in.
+  const boardStore=comms?registerBoardOperations(operations,db,bodyScope,words=>comms.service.key.hash(words)):undefined;
   if(options.changes && 'github' in options.changes) registerPullChecks(operations,db,pullCheckReader(sharedForgeSecrets(options.changes.github),options.changes.github.request));
   if (changePolling) registerWorkRefresh(operations,db,changePolling.refresh);
   if(comms)for(const row of recentReviewEnds(comms.service))deliverReview(row.id);

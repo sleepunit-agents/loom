@@ -92,10 +92,12 @@ export class BoardStore {
       described: described(board), meanwhile };
   }
   /** The brief a job is handed at start: the shown board, and every member change in the thread the agent has
-   * not been told. Marks them told. `named` is the board the member's send carried, if any. */
-  takeBrief(thread: string, named?: string): string {
+   * not been told. Marks them told. The shown board is the one the member last sent from, or the newest on the trail. */
+  takeBrief(thread: string): string {
     const all = this.inThread(thread);
-    const shownRow = (named && all.find((b) => b.id === named)) || this.trail(thread).at(-1);
+    // The board the member last sent from, unless one has joined the trail since.
+    const latest = (b: (typeof all)[number]) => (b.shownAt && b.shownAt > b.trailAt ? b.shownAt : b.closedAt ? '' : b.trailAt);
+    const shownRow = all.filter((b) => latest(b)).sort((a, b) => latest(a).localeCompare(latest(b)) || a.id.localeCompare(b.id)).at(-1);
     const loaded = all.map((row) => {
       const board = this.board(row.id)!;
       return { board, unseen: this.changes(row.id, board.agentSeen) };
@@ -105,6 +107,13 @@ export class BoardStore {
       if (unseen.length || board.id === shownRow?.id)
         this.db.update(boards).set({ agentSeen: board.revision }).where(eq(boards.id, board.id)).run();
     return text;
+  }
+
+  /** The member sent a message while looking at this board. */
+  show(thread: string, board: string, at: string): void {
+    const row = this.row(board);
+    if (!row || row.thread !== thread) throw new Refused('That board is not in this thread.');
+    this.db.update(boards).set({ shownAt: at }).where(eq(boards.id, board)).run();
   }
 
   blueprintsOf(agent: string) {

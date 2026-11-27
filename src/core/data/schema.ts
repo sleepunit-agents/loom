@@ -2530,8 +2530,10 @@ export const boards = sqliteTable('boards', {
   trailAt: text('trail_at').notNull(),
   changedAt: text('changed_at').notNull(),
   closedAt: text('closed_at'),
+  shownAt: text('shown_at'),
 }, t => [
   check('boards_opened_at_utc', utc(t.openedAt)),
+  check('boards_shown_at_utc', utc(t.shownAt)),
   check('boards_trail_at_utc', utc(t.trailAt)),
   check('boards_changed_at_utc', utc(t.changedAt)),
   check('boards_closed_at_utc', utc(t.closedAt)),

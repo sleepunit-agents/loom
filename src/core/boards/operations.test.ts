@@ -122,15 +122,18 @@ it('hands a job its brief once, naming boards and placements by id (checks 9, 11
   expect(f.store.takeBrief('th:theirs')).toBe('No board is open in this thread.');
   await f.member('boards.change', { board, changes: [{ change: 'remove', placement: placements[1].placement }] });
   const other = (await f.member('boards.open', { thread: 'th:mine', place: { brick: 'ticket', params: { ticket: 't-7' } } })).value.board as string;
-  const brief = f.store.takeBrief('th:mine', board);
+  f.store.show('th:mine', board, new Date(Date.now() + 86_400_000 * 400).toISOString());
+  const brief = f.store.takeBrief('th:mine');
   expect(brief).toContain(`Board ${board} "Loom lately", open, revision 4.`);
   expect(brief).toContain(`lanes(project=loom) [placement ${placements[0].placement}] (primary)`);
   expect(brief).toContain(`The member removed trend(days=30, project=loom) from board ${board}.`);
   expect(brief).toContain(`The member opened board ${other}.`);
   expect(brief).toContain(`The member placed ticket(ticket=t-7) on board ${other}.`);
-  expect(f.store.takeBrief('th:mine', board)).not.toContain('Since you last looked');
-  // With no board named, the last on the trail is the one shown.
-  expect(f.store.takeBrief('th:mine')).toContain(`Board ${other}, open, revision 1.`);
+  expect(f.store.takeBrief('th:mine')).not.toContain('Since you last looked');
+  // A board that joins the trail after the member last sent is the one shown.
+  const third = (await f.agent('boards.open', { title: 'Third' })).value.board as string;
+  expect(third).not.toBe(other);
+  expect(() => f.store.show('th:theirs', board, new Date().toISOString())).toThrow();
 });
 
 it("logs a brick's action only for an action the brick has (check 12)", async () => {
@@ -140,7 +143,7 @@ it("logs a brick's action only for an action the brick has (check 12)", async ()
   expect((await f.member('boards.act', { board, placement: ticket, action: 'delete', detail: {} })).ok).toBe(false);
   expect((await f.member('boards.act', { board, placement: ticket, action: 'set status', detail: { status: 'closed', words: 'secret' } })).ok).toBe(false);
   expect((await f.agent('boards.act', { board, placement: ticket, action: 'set status', detail: { status: 'open' } })).ok).toBe(false);
-  expect(f.store.takeBrief('th:mine', board)).toContain(`The member used set status on ticket(ticket=t-2441) on board ${board}: status=closed.`);
+  expect(f.store.takeBrief('th:mine')).toContain(`The member used set status on ticket(ticket=t-2441) on board ${board}: status=closed.`);
   await f.member('boards.close', { board });
   expect((await f.member('boards.act', { board, placement: ticket, action: 'set status', detail: { status: 'open' } })).ok).toBe(false);
 });
