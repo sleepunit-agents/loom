@@ -10,8 +10,7 @@ import { memberOperation } from '../data/operation';
 import { memoryQueries } from '../memory/queries';
 import { useMemoryQuery } from '../memory/query';
 import { date, freshWord, shownPages, type PageRow } from '../pieces/knowledge/model';
-import { pageChip } from './bricks-knowledge-page';
-import { Chip, Loading, Unavailable, words, type Act, type Params } from './bricks';
+import { Chip, Loading, Unavailable, pageChip, words, type Act, type Params } from './brick-kit';
 import type { Form } from './layout';
 
 type Match = { slug: string; title: string; domain: string; updated: string; verified_at: string | null };

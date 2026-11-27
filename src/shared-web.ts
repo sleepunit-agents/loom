@@ -4,7 +4,8 @@ import {existsSync,readFileSync,readdirSync,statSync,realpathSync} from 'node:fs
 import {extname,resolve,sep} from 'node:path';
 import {Hono} from 'hono';
 import {getMimeType} from 'hono/utils/mime';
-import {MANIFEST,nextWorker} from './next-pwa.js';
+import {MANIFEST,BOARDS_MANIFEST,nextWorker} from './next-pwa.js';
+import {BOARDS_ADDRESS} from './ui/notification-target.js';
 export function sharedWeb(webRoot:string){
  const root=realpathSync(webRoot),assets=resolve(root,'assets'),publicRoot=realpathSync(resolve(import.meta.dirname,'../assets'));
  if(!statSync(resolve(root,'next.html')).isFile())throw new Error('Shared app entry is not a file');
@@ -13,6 +14,7 @@ export function sharedWeb(webRoot:string){
  const built=existsSync(assets)?readdirSync(assets).filter(file=>/\.(js|css|woff2)$/.test(file)).sort().map(file=>'/app/assets/'+file):[];
  const app=new Hono();
  app.get('/manifest.webmanifest',()=>new Response(MANIFEST,{headers:{'content-type':'application/manifest+json','cache-control':'no-cache'}}));
+ app.get('/boards.webmanifest',()=>new Response(BOARDS_MANIFEST,{headers:{'content-type':'application/manifest+json','cache-control':'no-cache'}}));
  app.get('/sw.js',()=>new Response(nextWorker(built),{headers:{'content-type':'text/javascript','cache-control':'no-cache','service-worker-allowed':'/'}}));
  app.get('*',c=>{
   const path=new URL(c.req.url).pathname;
@@ -20,7 +22,7 @@ export function sharedWeb(webRoot:string){
   const asset=path.startsWith('/app/'),publicAsset=/^\/(icons|fonts)\//.test(path);
   if(!asset&&!publicAsset&&(extname(path)||/^\/(assets|faces|pixel-icons)(\/|$)/.test(path)))return c.notFound();
   // A board's address and a thread's hold one id and nothing else; both are the boards page (docs/specs/boards.md).
-  const board=/^\/app\/(boards|b\/[^/]+|t\/[^/]+)$/.test(path);
+  const board=BOARDS_ADDRESS.test(path);
   const base=publicAsset?publicRoot:root,candidate=publicAsset?resolve(base,'.'+path):board?resolve(root,'board.html'):asset?resolve(root,'.'+path.slice(4)):resolve(root,'next.html');
   if(!candidate.startsWith(base+sep)||!existsSync(candidate))return c.notFound();
   const file=realpathSync(candidate);

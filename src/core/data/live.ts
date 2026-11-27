@@ -43,7 +43,11 @@ export function dataDiff(before: unknown, after: unknown, path: (string | number
  */
 export type MeasureRead = <T>(read: () => T | Promise<T>) => T | Promise<T>;
 export class DataLive {
-  constructor(private readonly measure?: MeasureRead) {}
+  /** `settleMs`: how soon after one reading of an open selection began the next may begin. Off (0), every commit
+   * reads every open selection again, so twenty commits a few milliseconds apart are twenty readings of each. On, a
+   * commit that comes alone is still read at once, and commits that come faster than this are read together: once
+   * when the time is up, and so always once after the last of them. A selection's first answer never waits. */
+  constructor(private readonly measure?: MeasureRead, private readonly settleMs = 0) {}
   private listeners = new Set<() => void>();
   private stopped = false;
   private version = 0;
@@ -118,8 +122,10 @@ export class DataLive {
     let wake: (() => void) | undefined;
     const cancelled = Symbol('cancelled');
     let cancel: (() => void) | undefined;
-    const signal = () => { dirty = true; if (this.stopped) cancel?.(); wake?.(); wake = undefined; };
-    const finish = () => { ended = true; cancel?.(); this.listeners.delete(signal); wake?.(); wake = undefined; };
+    // When the last reading began, and the way out of the wait for the next one's turn.
+    let readAt = -Infinity, hurry: (() => void) | undefined;
+    const signal = () => { dirty = true; if (this.stopped) { cancel?.(); hurry?.(); } wake?.(); wake = undefined; };
+    const finish = () => { ended = true; cancel?.(); hurry?.(); this.listeners.delete(signal); wake?.(); wake = undefined; };
     // Register before the initial read: a commit cannot fall between the first
     // snapshot and subscription. Slow consumers retain one dirty bit, not an
     // unbounded queue of snapshots or patches against an unsent revision.
@@ -131,7 +137,18 @@ export class DataLive {
         while (!ended) {
           if (this.stopped || !options.valid()) throw new Error('Live data access ended');
           if (!dirty) { await new Promise<void>(resolve => { wake = resolve; }); continue; }
-          dirty = false;
+          // The dirty bit stays set while this waits, so nothing committed meanwhile is missed: the reading that
+          // follows the wait is of everything committed up to its own start. Ending or closing does not wait.
+          const wait = revision > 0 && this.settleMs > 0 ? readAt + this.settleMs - performance.now() : 0;
+          if (wait > 0) {
+            await new Promise<void>(resolve => {
+              const timer = setTimeout(resolve, wait);
+              hurry = () => { clearTimeout(timer); resolve(); };
+            });
+            hurry = undefined;
+            continue;
+          }
+          dirty = false; readAt = performance.now();
           // Cancellation must release next() even if an async projection never
           // settles. The losing execution stays observed, including rejection.
           const cancellation = new Promise<typeof cancelled>(resolve => { cancel = () => resolve(cancelled); });

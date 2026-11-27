@@ -8,7 +8,7 @@ import { memoryQueries } from '../memory/queries';
 import { useMemoryQuery } from '../memory/query';
 import { Reply } from '../pair/reply';
 import { safeHref, type ActivityEntry, type ActivityLink } from '../pieces/activity/model';
-import { Chip, Loading, Unavailable, ticketChip, type Params } from './bricks';
+import { Chip, Loading, Unavailable, ticketChip, type Params } from './brick-kit';
 import type { Form } from './layout';
 
 /** How many of Activity's three-day windows hold a range of days. */

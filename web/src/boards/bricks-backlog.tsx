@@ -5,7 +5,7 @@
  * tasks.command `edit` with the priority alone. The board is told `priority` and which one. */
 import { useState } from 'react';
 import { useDataQuery } from '../data/graphql';
-import { Loading, Unavailable, ticketChip, words, type Act, type Params } from './bricks';
+import { Loading, Unavailable, ticketChip, words, type Act, type Params } from './brick-kit';
 import { Pick, priorityChoices, priorityWord, useTaskCommand } from './bricks-work';
 import type { Form } from './layout';
 

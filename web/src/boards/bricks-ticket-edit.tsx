@@ -6,8 +6,8 @@ import { useState, type FormEvent } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { displayName } from '../kit/words';
 import { Reply } from '../pair/reply';
-import { ticketChip, type Act } from './bricks';
-import { TicketField, priorityWord, useSummary, useTaskChoices, useTaskCommand, type Summary } from './bricks-work';
+import { ticketChip, type Act } from './brick-kit';
+import { TicketField, priorityWord, ticketChoicesQuery, useSummary, useTaskChoices, useTaskCommand, type Summary } from './bricks-work';
 import type { Form } from './layout';
 
 type Relation = 'blocks' | 'parent-child';
@@ -18,8 +18,7 @@ export const ticketMoreQuery = `query BrickTicketMore($id:String!){
   ticket:tasksSingle(where:{id:{eq:$id}}){id status title goal why doneWhen description priority project createdAt createdBy closedAt closeReason
     taskLinksByTask{dependsOn type dependsOnRow{id title}} taskLinksByDependsOn{task type taskRow{id title}}}
 }`;
-/** Every ticket the member may read, in the backlog's order: what the desktop's Parent and Blocked by forms offer. */
-export const ticketChoicesQuery = 'query BrickTicketChoices{tasks(orderBy:{priority:{direction:asc,priority:2},position:{direction:asc,priority:1},id:{direction:asc,priority:0}}){id title}}';
+export { ticketChoicesQuery };
 const day = (at: string) => new Date(at).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
 
 /** A linked ticket: a chip, with its title in the primary form. One the member may not read is its id alone. */

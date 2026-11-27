@@ -3,13 +3,11 @@
  * query layer), so a repository is known here only by the pull requests loom has read for it. */
 import { useDataQuery } from '../data/graphql';
 import { rowWord, type Change } from '../pieces/change-view/model';
-import { Chip, Loading, Unavailable, words, type Params } from './bricks';
+import { Chip, Loading, Unavailable, repositoryKey, words, type Params } from './brick-kit';
 import type { Form } from './layout';
 
 type Row = Pick<Change, 'id' | 'number' | 'title' | 'state' | 'draft' | 'checks' | 'review' | 'waitingOn' | 'agent' | 'project'>;
-/** How `changes.repository` is written (src/pieces/changes/model.ts, repositoryKey): owner/repo in lower case,
- * with no leading `github:` and no trailing `.git`. */
-export const repositoryKey = (raw: string) => (raw.startsWith('github:') ? raw.slice(7) : raw).toLowerCase().replace(/\.git$/, '');
+export { repositoryKey };
 export const repositoryQuery = (inProject: boolean) => {
   const where = `repository:{eq:$repository}${inProject ? ',project:{eq:$project}' : ''}`;
   return `query BrickRepository($repository:String!${inProject ? ',$project:String!' : ''}){

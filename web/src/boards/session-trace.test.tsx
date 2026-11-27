@@ -14,8 +14,11 @@ vi.mock('../data/graphql', () => ({ useDataQuery: (document: string, variables: 
   return { status: 'live', data: { jobs: [{ id: 'child-job', title: 'Compare pumps', state: 'running', queuedAt: '2026-11-27T10:00:00.000Z', usage: { model: 'fictional-model', harness: 'claude', tools: [{ name: 'Bash', count: 2 }] } }], cv: { agent: 'art', label: 'Compare pumps', venue: f.venue } } };
 } }));
 vi.mock('../data/operation', () => ({ memberOperation: vi.fn() }));
-import { brickView } from './bricks';
+import { brickView, loadBricks } from './bricks';
 import { traceEvents } from './session-trace';
+
+// A brick's body is fetched when it is first drawn (./bricks.tsx). Here they are all fetched first, so each draws at once.
+await loadBricks();
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 // The work-trace cards' collapsible asks for a frame when it mounts; there is no browser here.

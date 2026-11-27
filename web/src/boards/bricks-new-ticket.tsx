@@ -5,9 +5,8 @@
 import { useState, type FormEvent } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { taskTypes } from '../pieces/tasks/words';
-import { Loading, Unavailable, ticketChip, words, type Act, type Params } from './bricks';
-import { ticketChoicesQuery } from './bricks-ticket-edit';
-import { Pick, TicketField, useSummary, useTaskChoices, useTaskCommand } from './bricks-work';
+import { Loading, Unavailable, ticketChip, words, type Act, type Params } from './brick-kit';
+import { Pick, TicketField, ticketChoicesQuery, useSummary, useTaskChoices, useTaskCommand } from './bricks-work';
 import type { Form } from './layout';
 
 type Type = keyof typeof taskTypes;

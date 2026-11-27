@@ -7,7 +7,7 @@ import { agentStateLine, latestStatus, orderedAgents, shownState, type AgentStat
 import { useDeskRoster } from '../pieces/attention/roster';
 import { useDeskWaitingCounts } from '../pieces/attention/waiting-counts';
 import { useAgentNames } from './agents-data';
-import { Chip, Loading, Unavailable } from './bricks';
+import { Chip, Loading, Unavailable } from './brick-kit';
 import type { Form } from './layout';
 
 /** The desktop bar's read of which of these agents have work in hand (pieces/attention/bar.tsx). */

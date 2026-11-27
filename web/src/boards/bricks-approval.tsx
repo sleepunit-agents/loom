@@ -23,7 +23,7 @@ import { tempoChangeWords } from '../pieces/tempo/change';
 import { measuringChangeWords } from '../pieces/measuring/change';
 import { displayName } from '../kit/words';
 import { fullTime } from '../kit/time';
-import { Chip, Loading, Unavailable, words, type Act, type Params } from './bricks';
+import { Chip, Loading, Unavailable, words, type Act, type Params } from './brick-kit';
 import type { Form } from './layout';
 
 const name = (id: string) => displayName(id);

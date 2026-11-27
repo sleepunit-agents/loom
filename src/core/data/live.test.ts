@@ -261,3 +261,95 @@ it('keeps distinct source schemas for a transport and preserves standalone metho
     await standalone.return?.();
   } finally { build.mockRestore(); live.close(); await live.drain(); }
 });
+
+function settling(settleMs: number) {
+  const client = new Database(':memory:'); clean.push(() => client.close());
+  createDataSchema(client);
+  client.exec(`INSERT INTO members (id, role, joined_at) VALUES ('sam','member','2026-11-14T00:00:00.000Z');
+    INSERT INTO tasks (id,title,owner_kind,owner,created_by_kind,created_by,created_at,changed_at)
+    VALUES ('t-1','Pump','member','sam','member','sam','2026-11-14T00:00:00.000Z','2026-11-14T00:00:00.000Z');`);
+  let reads = 0;
+  const schema = dataQueries(client, { tables: ['tasks'], visibility: taskVisibility({ kind: 'member', id: 'sam' }), fields: { probe: { type: GraphQLString, resolve: () => { reads++; return null; } } } });
+  const live = new DataLive(undefined, settleMs); clean.push(() => live.close());
+  const stream = live.watch({ schema, query: '{ probe tasks { title } }', valid: () => true }); clean.push(() => { void stream.return?.(); });
+  const title = (words: string) => { client.prepare('UPDATE tasks SET title=?').run(words); live.changed(); };
+  const turn = () => new Promise(resolve => setImmediate(resolve));
+  return { live, stream, title, turn, reads: () => reads };
+}
+
+/** The settle time is counted on a clock these tests move by hand, so none of them depends on how fast it runs. */
+const clockInHand = () => { vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] }); clean.push(() => vi.useRealTimers()); };
+
+it('reads a lone commit at once, and commits that come faster than the settle time together, ending on the last', async () => {
+  clockInHand();
+  const { stream, title, turn, reads } = settling(1000);
+  await stream.next();
+  expect(reads()).toBe(1);
+  // A commit that comes alone, longer after the last reading than the settle time, does not wait: no time passes here.
+  vi.advanceTimersByTime(1001);
+  title('One');
+  expect((await stream.next()).value).toEqual({ revision: 2, patches: [{ path: ['tasks', 0, 'title'], value: 'One' }] });
+  expect(reads()).toBe(2);
+  // Ten more, each in its own turn of the loop, inside the settle time: none is read until the time is up, then
+  // all are read together, once, and the answer is the last of them.
+  const pending = stream.next();
+  for (let i = 0; i < 10; i++) { title('Burst ' + i); await turn(); }
+  await vi.advanceTimersByTimeAsync(999);
+  expect(reads()).toBe(2);
+  await vi.advanceTimersByTimeAsync(1);
+  expect((await pending).value).toEqual({ revision: 3, patches: [{ path: ['tasks', 0, 'title'], value: 'Burst 9' }] });
+  expect(reads()).toBe(3);
+});
+
+it('reads again for a commit that lands while a selection is being read or waits its turn, so the last commit is always answered', async () => {
+  clockInHand();
+  const { stream, title, turn, reads } = settling(1000);
+  await stream.next();
+  vi.advanceTimersByTime(1001);
+  title('First');
+  const pending = stream.next();
+  // The reading has begun and has not answered: this commit makes it stale. It is not sent, and the selection
+  // is read again when its turn comes.
+  title('During the reading');
+  await turn();
+  expect(reads()).toBe(2);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect((await pending).value).toEqual({ revision: 2, patches: [{ path: ['tasks', 0, 'title'], value: 'During the reading' }] });
+  // One that lands while the next reading waits its turn is in that reading, and so is the one after it.
+  title('Waiting its turn');
+  const next = stream.next();
+  await turn();
+  title('Last');
+  await vi.advanceTimersByTimeAsync(1000);
+  expect((await next).value).toEqual({ revision: 3, patches: [{ path: ['tasks', 0, 'title'], value: 'Last' }] });
+  expect(reads()).toBe(4);
+});
+
+it('does not hold an ending selection or a closing source for the settle time', async () => {
+  clockInHand();
+  // A commit just after a reading waits its turn, and here the clock never moves. Ending the selection, or closing
+  // the source, does not wait for it.
+  const { stream, title, turn } = settling(1000);
+  await stream.next();
+  title('One');
+  const waiting = stream.next();
+  await turn();
+  await stream.return?.();
+  expect(await waiting).toEqual({ done: true, value: undefined });
+  const second = settling(1000);
+  await second.stream.next();
+  second.title('One');
+  const held = second.stream.next();
+  await second.turn();
+  second.live.close();
+  await expect(held).rejects.toThrow('access ended');
+});
+
+it('reads every commit on its own when no settle time is set, as before', async () => {
+  const { stream, title, turn, reads } = settling(0);
+  await stream.next();
+  const got: unknown[] = [];
+  for (let i = 0; i < 5; i++) { title('Each ' + i); got.push((await stream.next()).value?.patches[0]?.value); await turn(); }
+  expect(got).toEqual(['Each 0', 'Each 1', 'Each 2', 'Each 3', 'Each 4']);
+  expect(reads()).toBe(6);
+});

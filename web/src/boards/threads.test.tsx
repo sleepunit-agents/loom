@@ -68,6 +68,10 @@ vi.mock('../data/graphql', async () => {
 });
 import { Page, Resolve } from './main';
 import { ThreadHead, ThreadSwitch } from './threads';
+import { loadBricks } from './bricks';
+
+// A brick's body is fetched when it is first drawn (./bricks.tsx). Here they are all fetched first, so each draws at once.
+await loadBricks();
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

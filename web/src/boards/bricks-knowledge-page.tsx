@@ -4,13 +4,13 @@
  * the slug, mind.knowledgeAnnotate the slug, a kind and the member's words. The board is told the kind and never the
  * words. Loom reruns the read after every committed operation, so a check shows without a reload. */
 import { useRef, useState, type FormEvent } from 'react';
-import { knowledgeAnnotations, knowledgePageRef, knowledgeTopicRef } from '../../../src/core/boards/refs';
+import { knowledgeAnnotations, knowledgeTopicRef } from '../../../src/core/boards/refs';
 import { memberOperation } from '../data/operation';
 import { memoryQueries, type KnowledgePage as Page } from '../memory/queries';
 import { useMemoryQuery } from '../memory/query';
 import { Reply } from '../pair/reply';
 import { date, freshWord } from '../pieces/knowledge/model';
-import { Chip, Loading, Unavailable, words, type Act, type Params } from './bricks';
+import { Chip, Loading, Unavailable, pageChip, words, type Act, type Params } from './brick-kit';
 import type { Form } from './layout';
 
 type Kind = (typeof knowledgeAnnotations)[number];
@@ -19,9 +19,6 @@ export const annotationWord: Record<Kind, string> = {
   note: 'Note', outdated: 'Out of date', intent: 'Intent', 'no-longer-owned': 'Household no longer owns this', 'in-use': 'Household uses this again',
 };
 const link = /\[\[([a-z0-9][\w/-]*)(?:\|([^\]]+))?\]\]/gi;
-/** A chip for another page, or its words alone when its slug is not one a board can hold. */
-export const pageChip = (slug: string, label: string) => knowledgePageRef.test(slug)
-  ? <Chip key={slug} place={{ brick: 'knowledge-page', params: { page: slug } }}>{label}</Chip> : <span key={slug}>{label}</span>;
 const checked = (p: Page) => (p.verified_at ? `verified ${date(p.verified_at)}` : `written ${date(p.updated)}, not verified yet`);
 
 export function KnowledgePage({ params, form, act }: { params: Params; form: Form; act: Act }) {

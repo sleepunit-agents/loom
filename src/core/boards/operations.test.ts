@@ -8,6 +8,7 @@ import { DataWrites } from '../data/writes.js';
 import { agents, blueprints, boardChanges, boardPlacements, boards, boardThreads, members } from '../data/schema.js';
 import { CommsMessages } from '../conversations/messages.js';
 import type { Viewer } from '../../policy.js';
+import { bricks } from './bricks.js';
 import { registerBoardOperations } from './operations.js';
 
 const clients: Database.Database[] = [], dispatchers: Operations[] = [];
@@ -223,8 +224,8 @@ it('offers boards only in a thread whose member has the second window', async ()
 
 it('lists every brick for a body and for a member', async () => {
   const f = fixture();
-  expect((await f.agent('bricks.catalogue', {})).value.bricks).toHaveLength(23);
-  expect((await f.member('bricks.catalogue', {})).value.bricks[2]).toMatchObject({ name: 'trend', linkKey: null });
+  expect((await f.agent('bricks.catalogue', {})).value.bricks.map((b: { name: string }) => b.name)).toEqual(bricks.map((b) => b.name));
+  expect((await f.member('bricks.catalogue', {})).value.bricks.find((b: { name: string }) => b.name === 'trend')).toMatchObject({ name: 'trend', linkKey: null });
 });
 
 it('lets either party maximize, tells the agent, and keeps flags to the agent (checks 24, 27, 28)', async () => {

@@ -2,7 +2,7 @@
  * Comms' rows and order), each an ordinary link to that thread's address on this page. */
 import { briefTime } from '../kit/time';
 import { threadPath, useAgentNames, useThreads } from './agents-data';
-import { Loading, Unavailable, words, type Params } from './bricks';
+import { Loading, Unavailable, words, type Params } from './brick-kit';
 import type { Form } from './layout';
 import { ThreadLine } from './threads';
 

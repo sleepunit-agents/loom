@@ -13,6 +13,7 @@ import { createDataSchema } from './core/data/database.js';
 import { agents, members, boxes, jobs, sessions, tokens, tasks, projects } from './core/data/schema.js';
 import { sharedCredentials } from './shared-credentials.js';
 import { sharedRoot } from './shared-root.js';
+import { LIVE_SETTLE_MS } from './next-data.js';
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { try { for (const close of cleanup.splice(0).reverse()) await close(); } finally { vi.restoreAllMocks(); } });
 const raw = { member: 'a'.repeat(64), runner: 'b'.repeat(64), body: 'c'.repeat(64), agent: 'd'.repeat(64), cookie: 'e'.repeat(64), bodyCookie: 'f'.repeat(64), runnerCookie: '1'.repeat(64) };
@@ -291,7 +292,8 @@ it('wakes safe live credential metadata after incoming use without publishing be
  // its being written, not at each use. The desk's clock also has every selection read at each whole minute
  // (desk-time.ts), so the times below are placed to tell the two apart: twenty seconds past a minute, with nothing waiting.
  const iso=()=>new Date(f.clock.now()).toISOString(),has=(at:string)=>frames.some(frame=>frame.includes(at));
- const still=async()=>{await new Promise(resolve=>setTimeout(resolve,50));return frames.length;};
+ // Stillness is judged after the longest an open selection waits its turn to be read again (next-data.ts).
+ const still=async()=>{await new Promise(resolve=>setTimeout(resolve,LIVE_SETTLE_MS+50));return frames.length;};
  f.clock.advance(120_000-f.clock.now()%60_000+20_000);await still();
  f.root.credentials.authenticate(request({cookie:'loom_ui='+raw.cookie}));const first=iso(),before=frames.length;
  expect(await still()).toBe(before);

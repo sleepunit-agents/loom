@@ -12,7 +12,7 @@ import { approvalReading } from '../pieces/approval-view/answering';
 import { rows, type Approval as Row } from '../pieces/approval-view/model';
 import { displayName } from '../kit/words';
 import { fullTime } from '../kit/time';
-import { Chip, Loading, Unavailable, useOwnFlag, type Params, type Raise } from './bricks';
+import { Chip, Loading, Unavailable, useOwnFlag, type Params, type Raise } from './brick-kit';
 import type { Form } from './layout';
 
 const name = (id: string) => displayName(id);

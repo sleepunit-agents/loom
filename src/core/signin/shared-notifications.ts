@@ -16,11 +16,12 @@ import {currentMember} from '../../shared-sharing.js';
 import type {Clock} from '../clock.js';
 import type {DataDatabase} from '../data/database.js';
 import type {DataWrites} from '../data/writes.js';
-import {sessions,notificationDevices,notificationQueue,inbox} from '../data/schema.js';
+import {sessions,notificationDevices,notificationQueue,inbox,threads,conversations} from '../data/schema.js';
 import {OperationError,type Operations} from '../operations/index.js';
 import {pushTransport,type PushTransport} from './push-transport.js';
+import {NOTIFICATION_DEVICE_REF,boardsThreadPath} from '../../ui/notification-target.js';
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
-const ref=(endpoint:string)=>hash('notification-device:'+endpoint);
+const ref=(endpoint:string)=>hash(NOTIFICATION_DEVICE_REF+endpoint);
 const hosts=[/^fcm\.googleapis\.com$/,/^updates\.push\.services\.mozilla\.com$/,/(^|\.)push\.apple\.com$/,/(^|\.)notify\.windows\.com$/];
 const subscription=z.object({endpoint:z.string().max(1000).refine(value=>{try{const url=new URL(value);return url.protocol==='https:'&&!url.port&&!url.username&&!url.password&&!url.hash&&hosts.some(host=>host.test(url.hostname));}catch{return false;}}),keys:z.object({p256dh:z.string().regex(/^[A-Za-z0-9_-]{20,200}$/),auth:z.string().regex(/^[A-Za-z0-9_-]{8,64}$/)}).strict()}).strict();
 export interface SharedNotificationOptions{vapid:{publicKey:string;privateKey:string};send?:PushTransport}
@@ -36,6 +37,9 @@ export function sharedNotifications(options:{db:DataDatabase;clock:Clock;writes:
   return row;
  };
  const visible=(member:string,id:string)=>db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.id,id),eq(inbox.toKind,'person'),eq(inbox.to,member),eq(inbox.state,'waiting'),eq(inbox.volume,'full'),sql`not ${neverPushed(inbox)}`,sql`(${inbox.quietUntil} is null or ${inbox.quietUntil} <= ${new Date(clock.now()).toISOString()})`,options.visible({kind:'member',id:member},getTableColumns(inbox)))).get();
+ // The item's thread on the boards page, when it has one and that thread is this member's own. An id, never words.
+ // The desktop's address is always sent and is what opens unless the device chose boards (ui/notification-target.ts).
+ const boardOf=(member:string,id:string)=>{const found=db.select({thread:threads.id}).from(inbox).innerJoin(threads,eq(threads.id,inbox.thread)).innerJoin(conversations,eq(conversations.id,threads.conversation)).where(and(eq(inbox.id,id),eq(conversations.member,member))).get();return found?{board:boardsThreadPath(found.thread)}:{};};
  const remove=(endpoint:string)=>{db.delete(notificationQueue).where(eq(notificationQueue.device,endpoint)).run();db.delete(notificationDevices).where(eq(notificationDevices.endpoint,endpoint)).run();};
  async function drain(){
   if(closed||!options.config)return;
@@ -47,7 +51,7 @@ export function sharedNotifications(options:{db:DataDatabase;clock:Clock;writes:
    const claim=write(()=>{const current=device(row.device);if(!current||current.session!==target.session||current.keys!==target.keys||!visible(current.member,row.item))return 0;return db.update(notificationQueue).set({attempts:1}).where(and(eq(notificationQueue.id,row.id),eq(notificationQueue.attempts,0))).run().changes;});if(!claim)continue;
    const current=device(row.device);if(closed||!current||current.session!==target.session||current.keys!==target.keys||!visible(current.member,row.item))continue;
    const abort=new AbortController();aborts.add(abort);const stop=clock.at(clock.now()+15000,()=>abort.abort());
-   try{await (options.config.send??pushTransport)(keys.data,JSON.stringify({title:'loom',body:'',tag:'loom-inbox',url:'/p/inbox-preview'}),{vapidDetails:{subject:'mailto:loom@localhost',...options.config.vapid},TTL:3600,urgency:'high',timeout:15000},abort.signal);if(!closed)write(()=>db.update(notificationQueue).set({sentAt:new Date(clock.now()).toISOString()}).where(eq(notificationQueue.id,row.id)).run());}
+   try{await (options.config.send??pushTransport)(keys.data,JSON.stringify({title:'loom',body:'',tag:'loom-inbox',url:'/p/inbox-preview',...boardOf(current.member,row.item)}),{vapidDetails:{subject:'mailto:loom@localhost',...options.config.vapid},TTL:3600,urgency:'high',timeout:15000},abort.signal);if(!closed)write(()=>db.update(notificationQueue).set({sentAt:new Date(clock.now()).toISOString()}).where(eq(notificationQueue.id,row.id)).run());}
    catch(error){if(!closed&&[404,410].includes((error as {statusCode?:number})?.statusCode??0)){const current=device(target.endpoint);if(current?.session===target.session&&current.keys===target.keys&&current.createdAt===target.createdAt)write(()=>remove(target.endpoint));}}
    finally{stop();aborts.delete(abort);}
   }

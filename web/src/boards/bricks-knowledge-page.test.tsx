@@ -7,10 +7,13 @@ import { act, create } from 'react-test-renderer';
 
 const feed = vi.hoisted(() => vi.fn());
 vi.mock('../data/graphql', () => ({ useDataQuery: feed }));
-import { bricks, brickView, type Params } from './bricks';
+import { bricks, brickView, loadBricks, type Params } from './bricks';
 import { annotationWord } from './bricks-knowledge-page';
 import { knowledgeAnnotations } from '../../../src/core/boards/bricks';
 import type { Form } from './layout';
+
+// A brick's body is fetched when it is first drawn (./bricks.tsx). Here they are all fetched first, so each draws at once.
+await loadBricks();
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 type Node = { type: string; props: Record<string, any>; children: (Node | string)[]; findAll(match: (node: Node) => boolean): Node[]; findAllByType(type: string): Node[] };

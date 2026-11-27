@@ -10,8 +10,11 @@ import { act, create } from 'react-test-renderer';
 
 const feed = vi.hoisted(() => vi.fn());
 vi.mock('../data/graphql', () => ({ useDataQuery: feed }));
-import { bricks, brickView, type Params } from './bricks';
+import { bricks, brickView, loadBricks, type Params } from './bricks';
 import type { Form } from './layout';
+
+// A brick's body is fetched when it is first drawn (./bricks.tsx). Here they are all fetched first, so each draws at once.
+await loadBricks();
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 type Node = { type: string; props: Record<string, any>; children: (Node | string)[]; findAll(match: (node: Node) => boolean): Node[]; findAllByType(type: string): Node[] };
@@ -113,7 +116,6 @@ it('heads every brick by its name and shows a reference only in the small line',
     }
   }
   expect(bricks.repository.sub({ repository: 'acme/app', project: 'pond' })).toBe('acme/app · pond');
-  expect(Object.keys(bricks).sort()).toEqual(['activity', 'agent', 'agents', 'approval', 'approvals', 'backlog', 'comments', 'inbox', 'knowledge', 'knowledge-page', 'lanes', 'new-ticket', 'people', 'person', 'project', 'pull', 'question', 'repository', 'session', 'threads', 'ticket', 'trend', 'unfiled']);
 });
 
 it('shows a pull request with its state, checks, review, who it waits on, and the tickets the member may read as chips', async () => {

@@ -4,7 +4,7 @@
 import { useState } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { unfiledPageSize, workUnfiledQuery } from '../pieces/work/query';
-import { Loading, ticketChip, type Act } from './bricks';
+import { Loading, ticketChip, type Act } from './brick-kit';
 import { Pick, useTaskChoices, useTaskCommand } from './bricks-work';
 import type { Form } from './layout';
 

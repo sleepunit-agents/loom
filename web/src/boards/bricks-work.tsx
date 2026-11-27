@@ -10,7 +10,10 @@ import { displayName } from '../kit/words';
 import { taskChoicesQuery } from '../pieces/tasks/query';
 import type { TaskCommand } from '../pieces/tasks/shared-form';
 import { taskDefaultPriority, taskPriorities } from '../pieces/tasks/words';
-import type { Act } from './bricks';
+import type { Act } from './brick-kit';
+
+/** Every ticket the member may read, in the backlog's order: what the desktop's Parent and Blocked by forms offer. */
+export const ticketChoicesQuery = 'query BrickTicketChoices{tasks(orderBy:{priority:{direction:asc,priority:2},position:{direction:asc,priority:1},id:{direction:asc,priority:0}}){id title}}';
 
 /** One ticket command through the desktop's door, then the report to the board that the member used it. A command
  * that is refused shows what loom said and reports nothing. */

@@ -1,61 +1,29 @@
-/** How each brick draws itself (docs/specs/boards.md, "The first bricks"). A brick reads its own data, live, as
- * the member looking, and takes only the parameters the server already checked. Three forms are drawn by Body;
- * the chip and the hover are the same words in one line. */
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { memberOperation } from '../data/operation';
-import { useDataQuery } from '../data/graphql';
-import { Trend } from './trend';
-import { Reply } from '../pair/reply';
-import { SessionLatestStep, SessionTrace } from './session-trace';
-import type { Fits, Form } from './layout';
-import { Pull } from './bricks-pull';
-import { Repository } from './bricks-repository';
-import { Question } from './bricks-question';
-import { Approval } from './bricks-approval';
-import { Contact } from './bricks-contact';
-import { Inbox } from './bricks-inbox';
-import { Approvals } from './bricks-approvals';
-import { TicketMore } from './bricks-ticket-edit';
-import { NewTicket } from './bricks-new-ticket';
-import { Backlog } from './bricks-backlog';
-import { Unfiled } from './bricks-unfiled';
-import { Lanes } from './bricks-lanes';
-import { Project } from './bricks-project';
-import { KnowledgePage } from './bricks-knowledge-page';
-import { Knowledge } from './bricks-knowledge';
-import { People } from './bricks-people';
-import { Activity } from './bricks-activity';
-import { Threads } from './bricks-threads';
-import { Agent } from './bricks-agent';
-import { Agents } from './bricks-agents';
+/** The page's registry of bricks (docs/specs/boards.md, "The first bricks"): for each brick, what the page must
+ * know at once to lay a board out and head a placement (`fits`, `title`, `sub`), and a body that is loaded the
+ * first time a board shows that brick. A brick reads its own data, live, as the member looking, and takes only the
+ * parameters the server already checked. Three forms are drawn by Body; the chip and the hover are the same words
+ * in one line.
+ *
+ * Adding a brick (docs/specs/boards.md, "Adding a brick") is ONE line in `bricks` below, beside its module
+ * ./bricks-<name>.tsx and its suite ./bricks-<name>.test.tsx. This file imports no brick's module: each is named
+ * only inside its own `import()`, so its code and what it alone depends on stay out of the page's first script.
+ * What bricks share is ./brick-kit.tsx. The suites read this registry and the server's catalogue
+ * (src/core/boards/bricks.ts) and hold no list of their own (src/core/boards/catalogue.test.ts). */
+import { lazy, type ComponentType } from 'react';
+import type { Fits } from './layout';
+import { words, type BodyProps, type Params } from './brick-kit';
 
-export type Params = Record<string, string | number | undefined>;
-export type Place = { brick: string; params: Params };
+export type { Act, BodyProps, Params, Place, Raise } from './brick-kit';
+type Body = ComponentType<BodyProps>;
 export interface BrickView {
   fits: Fits;
   /** Its name and what it is about, as words: the heading, the chip, the folded row. */
   title(params: Params): string;
   sub(params: Params): string;
-  Body(props: { params: Params; form: Form; act: Act; raise: Raise }): ReactNode;
-}
-/** Report a brick's action after its own operation succeeded. */
-export type Act = (action: string, detail: Record<string, string>) => void;
-/** Mark this placement: its record changed in a way the brick flags itself for, and the member did not do it. */
-export type Raise = (name: string) => void;
-
-/** Watches one value of a brick's record. When it changes while the page is open, and the change was not the
- * member's own doing here a moment ago, the brick flags itself with the name the change is given. */
-export function useOwnFlag<T>(value: T | undefined, raise: Raise, name: (before: T, now: T) => string | null) {
-  const before = useRef<T | undefined>(undefined), mine = useRef(0);
-  useEffect(() => {
-    const was = before.current;
-    before.current = value;
-    if (was === undefined || value === undefined || was === value) return;
-    if (Date.now() - mine.current < 5000) { mine.current = 0; return; }
-    const called = name(was, value);
-    if (called) raise(called);
-  });
-  return () => { mine.current = Date.now(); };
+  /** Drawn inside a Suspense boundary: until its module has arrived it is the boundary's one loading line. */
+  Body: Body;
+  /** Fetches the body's module, once. A body whose module is here already draws at once, with no loading line. */
+  load(): Promise<unknown>;
 }
 
 const fit = (primary: [number, number, number, number], side: number): Fits => ({
@@ -63,266 +31,48 @@ const fit = (primary: [number, number, number, number], side: number): Fits => (
   side: { min: 260, ideal: 360, max: 420, height: side },
   compact: { min: 220, ideal: 320, max: 420, height: 84 },
 });
-export const words = (v: unknown) => (v === undefined || v === null ? '' : String(v));
-export const Unavailable = ({ what }: { what: string }) => <p className="text-muted-foreground">This {what} is unavailable.</p>;
-export const Loading = () => <p role="status" className="text-muted-foreground">Loading…</p>;
 
-/** A reference to another brick's record. Clicking it places that brick, at once, with no job. */
-export function Chip({ place, children }: { place: Place; children: ReactNode }) {
-  return (
-    <button type="button" className="board-chip" data-place={JSON.stringify(place)}>
-      <i aria-hidden="true" />
-      {children}
-    </button>
-  );
-}
-export const ticketChip = (id: string) => <Chip place={{ brick: 'ticket', params: { ticket: id } }}><span className="font-mono">{id}</span></Chip>;
-function actorChip(kind: string | null | undefined, id: string) {
-  return kind === 'agent'
-    ? <Chip place={{ brick: 'agent', params: { agent: id } }}>{id}</Chip>
-    : <Chip place={{ brick: 'person', params: { person: 'member:' + id } }}>{id}</Chip>;
-}
-
-type Task = { id: string; title: string; status: string; assignee: string | null; assigneeKind: string | null; goal: string | null; why: string | null; doneWhen: string | null; project: string | null };
-/** One of loom's own ticket commands, then the report to the board that the member used it. */
-function useTicketAction(act: Act, own: () => void = () => {}) {
-  const [busy, setBusy] = useState(false), [error, setError] = useState('');
-  async function run(action: string, input: Record<string, unknown>) {
-    if (busy) return false;
-    setBusy(true); setError('');
-    try { own(); await memberOperation('tasks.command', { action, ...input }); act(action, {}); return true; }
-    catch { setError('That did not save.'); return false; }
-    finally { setBusy(false); }
-  }
-  return { busy, error, run };
-}
-type WorkedBy = { conversation: string; title: string; state: string | null; at: string };
-const sessionRunning = (state: string | null) => state === 'queued' || state === 'starting' || state === 'running';
-/** The sessions that worked a ticket: the handed-off work whose agent said it was for this ticket, newest first,
- * as loom lists them for the member looking (their own, and no one else's). A closed ticket keeps them. */
-function TicketSessions({ ticket, form }: { ticket: string; form: Form }) {
-  const read = useDataQuery<{ rows: WorkedBy[] }>(
-    'query BrickTicketSessions($t:String!){rows:ticketSessions(ticket:$t){conversation title state at}}', { t: ticket }, { keep: true });
-  const rows = read.data?.rows ?? [];
-  if (form !== 'primary') return rows.length ? <p className="board-line text-muted-foreground" data-ticket-sessions="">{rows.length === 1 ? '1 session' : `${rows.length} sessions`} worked this</p> : null;
-  return (
-    <dl style={{ marginTop: '.8rem' }} data-ticket-sessions="">
-      <div>
-        <dt>Sessions</dt>
-        <dd>
-          {read.status === 'loading' ? <Loading />
-            : read.status !== 'live' ? <p className="text-muted-foreground">Its sessions are unavailable.</p>
-            : !rows.length ? <p className="text-muted-foreground">No session is recorded for this ticket.</p>
-            : rows.map((r) => (
-                <div className="board-line" key={r.conversation}>
-                  <Chip place={{ brick: 'session', params: { session: r.conversation } }}>{r.title || 'Session'}</Chip>
-                  <span className="board-state" data-running={sessionRunning(r.state)}>{r.state ?? 'not started'}</span>
-                  <span className="text-muted-foreground">{new Date(r.at).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
-                </div>
-              ))}
-        </dd>
-      </div>
-    </dl>
-  );
-}
-function Ticket({ params, form, act, raise }: { params: Params; form: Form; act: Act; raise: Raise }) {
-  const id = words(params.ticket);
-  const read = useDataQuery<{ ticket: Task | null }>(
-    'query BrickTicket($id:String!){ticket:tasksSingle(where:{id:{eq:$id}}){id title status assignee assigneeKind goal why doneWhen project}}',
-    { id }, { keep: true });
-  const own = useOwnFlag(read.data?.ticket?.status, raise, (was, now) => (now === 'closed' ? 'Closed' : was === 'closed' ? 'Reopened' : null));
-  const { busy, error, run } = useTicketAction(act, own);
-  const [closing, setClosing] = useState(false), [reason, setReason] = useState('');
-  const t = read.data?.ticket;
-  if (read.status === 'loading') return <Loading />;
-  if (read.status !== 'live' || !t) return <Unavailable what="ticket" />;
-  if (form === 'compact') return <p className="board-brief"><span className="board-state">{t.status.replaceAll('_', ' ')}</span> {t.title}</p>;
-  const close = async (e: FormEvent) => { e.preventDefault(); if (reason.trim() && await run('close', { id, reason: reason.trim() })) { setClosing(false); setReason(''); } };
-  return (
-    <>
-      <p className="board-lead">{t.title}</p>
-      <dl>
-        {t.goal && <div><dt>Goal</dt><dd><Reply words={t.goal} /></dd></div>}
-        {form === 'primary' && t.why && <div><dt>Why</dt><dd><Reply words={t.why} /></dd></div>}
-        {form === 'primary' && t.doneWhen && <div><dt>Done when</dt><dd><Reply words={t.doneWhen} /></dd></div>}
-      </dl>
-      <div className="board-line">
-        <span className="board-state">{t.status.replaceAll('_', ' ')}</span>
-        {t.project && <Chip place={{ brick: 'project', params: { project: t.project } }}>{t.project}</Chip>}
-        {t.assignee ? actorChip(t.assigneeKind, t.assignee) : <span className="text-muted-foreground">Unassigned</span>}
-        <Chip place={{ brick: 'comments', params: { ticket: id } }}>Comments</Chip>
-      </div>
-      <TicketMore id={id} form={form} act={act} />
-      <div className="board-line">
-        {t.status === 'closed'
-          ? <button type="button" className="board-action" disabled={busy} onClick={() => void run('reopen', { id })}>Reopen</button>
-          : <>
-              {!t.assignee && <button type="button" className="board-action" disabled={busy} onClick={() => void run('claim', { id })}>Claim</button>}
-              {t.assignee && <button type="button" className="board-action" disabled={busy} onClick={() => void run('unclaim', { id })}>Release</button>}
-              {!closing && <button type="button" className="board-action" disabled={busy} onClick={() => setClosing(true)}>Close…</button>}
-            </>}
-      </div>
-      {closing && (
-        <form className="board-line" onSubmit={(e) => void close(e)}>
-          <input className="board-input" aria-label="Why it is closed" placeholder="Why is it closed?" value={reason} autoFocus onChange={(e) => setReason(e.target.value)} />
-          <button type="submit" className="board-action" disabled={busy || !reason.trim()}>Close ticket</button>
-          <button type="button" className="board-action" onClick={() => setClosing(false)}>Cancel</button>
-        </form>
-      )}
-      {error && <p role="alert" className="text-destructive">{error}</p>}
-      <TicketSessions ticket={id} form={form} />
-    </>
-  );
-}
-
-type Note = { seq: number; text: string; actor: string; at: string };
-function Comments({ params, form, act, raise }: { params: Params; form: Form; act: Act; raise: Raise }) {
-  const id = words(params.ticket);
-  const read = useDataQuery<{ ticket: { title: string; taskCommentsByTask: Note[] } | null }>(
-    'query BrickComments($id:String!){ticket:tasksSingle(where:{id:{eq:$id}}){title taskCommentsByTask(orderBy:{seq:{direction:desc,priority:0}}){seq text actor at}}}',
-    { id }, { keep: true });
-  const own = useOwnFlag(read.data?.ticket?.taskCommentsByTask.length, raise, (was, now) => (now > was ? 'New comment' : null));
-  const { busy, error, run } = useTicketAction(act, own);
-  const [text, setText] = useState('');
-  const t = read.data?.ticket;
-  if (read.status === 'loading') return <Loading />;
-  if (read.status !== 'live' || !t) return <Unavailable what="ticket" />;
-  const add = async (e: FormEvent) => { e.preventDefault(); if (text.trim() && await run('comment', { id, text: text.trim() })) setText(''); };
-  if (form === 'compact') return <p className="board-brief">{t.taskCommentsByTask.length ? `${t.taskCommentsByTask.length} · latest from ${t.taskCommentsByTask[0].actor}: ${t.taskCommentsByTask[0].text}` : 'No comments yet'}</p>;
-  const notes = t.taskCommentsByTask.slice(0, form === 'primary' ? 30 : 4);
-  return (
-    <>
-      <p className="board-lead">{t.title}</p>
-      <form className="board-line" onSubmit={(e) => void add(e)}>
-        <input className="board-input" aria-label="Add a comment" placeholder="Add a comment…" value={text} onChange={(e) => setText(e.target.value)} />
-        <button type="submit" className="board-action" disabled={busy || !text.trim()}>Add</button>
-      </form>
-      {error && <p role="alert" className="text-destructive">{error}</p>}
-      {notes.length ? (
-        <ol className="board-notes">
-          {notes.map((n) => (
-            <li key={n.seq}>
-              <small>{n.actor} · {new Date(n.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</small>
-              <Reply words={n.text} />
-            </li>
-          ))}
-        </ol>
-      ) : <p className="text-muted-foreground">No comments yet.</p>}
-    </>
-  );
-}
-
-export function Assigned({ who, kind, form }: { who: string; kind: 'member' | 'agent'; form?: Form }) {
-  const read = useDataQuery<{ rows: { id: string; title: string; status: string }[] }>(
-    `query BrickAssigned($ref:String!){rows:tasks(where:{assignee:{eq:$ref},assigneeKind:{eq:${kind}},status:{ne:closed}},orderBy:{changedAt:{direction:desc,priority:0}},limit:6){id title status}}`,
-    { ref: who }, { keep: true });
-  if (read.status === 'loading') return <Loading />;
-  if (read.status !== 'live' || !read.data) return <Unavailable what={kind === 'agent' ? 'agent' : 'person'} />;
-  const rows = read.data.rows;
-  if (form === 'compact') return <p className="board-brief">{rows.length ? `${rows.length === 6 ? 'At least six' : rows.length} open ticket${rows.length === 1 ? '' : 's'}` : 'No open tickets'}</p>;
-  return rows.length ? (
-    <>
-      <p>{rows.length === 6 ? 'At least six' : rows.length} open ticket{rows.length === 1 ? '' : 's'}.</p>
-      <div className="board-line">{rows.map((t) => <span key={t.id} title={t.title}>{ticketChip(t.id)}</span>)}</div>
-    </>
-  ) : <p className="text-muted-foreground">No open tickets.</p>;
-}
-
-type SessionJob = { id: string; title: string; state: string; queuedAt: string; usage: { model: string | null; harness: string | null; tools: { name: string; count: number | null }[] | null } | null };
-type SessionDetail = { brief: string | null; logTail: string | null; endedNote: string | null; claimedAt: string | null; endedAt: string | null };
-const running = (state: string) => state === 'queued' || state === 'starting' || state === 'running';
-const lasted = (from: string, to: number) => { const m = Math.max(0, Math.round((to - Date.parse(from)) / 60000)); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
-/** One session of agent work, by its conversation: the latest job there. It shows what it was asked, where it
- * stands and which tools it has used; and, for work handed off from the member's own thread, the steps its body
- * reported, live (session-trace.tsx). */
-function Session({ params, form, act, raise }: { params: Params; form: Form; act: Act; raise: Raise }) {
-  const conversation = words(params.session);
-  const read = useDataQuery<{ jobs: SessionJob[]; cv: { agent: string; label: string | null; venue: string } | null }>(
-    'query BrickSession($c:String!){jobs:conversationJobUsage(conversation:$c){id title state queuedAt usage{model harness tools{name count}}} cv:conversationsSingle(where:{id:{eq:$c}}){agent label venue}}',
-    { c: conversation }, { keep: true });
-  const job = [...(read.data?.jobs ?? [])].sort((a, b) => a.queuedAt.localeCompare(b.queuedAt)).at(-1);
-  const agent = read.data?.cv?.agent ?? '';
-  const more = useDataQuery<{ rows: SessionDetail[] }>(
-    'query BrickSessionJob($agent:String!,$id:String!){rows:jobHistory(agent:$agent,id:$id){brief logTail endedNote claimedAt endedAt}}',
-    { agent, id: job?.id ?? '' }, { keep: true, pause: !agent || !job || form !== 'primary' });
-  const own = useOwnFlag(job?.state, raise, (was, now) => (!running(was) ? null : now === 'done' ? 'Finished' : now === 'stopped' ? 'Stopped' : running(now) ? null : 'Failed'));
-  const [asking, setAsking] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
-  if (read.status === 'loading') return <Loading />;
-  if (read.status !== 'live' || !job) return <Unavailable what="session" />;
-  const detail = more.data?.rows[0];
-  const tools = [...(job.usage?.tools ?? [])].filter((t) => t.count).sort((a, b) => (b.count ?? 0) - (a.count ?? 0));
-  const stop = async () => {
-    setBusy(true); setError('');
-    try { own(); await memberOperation('runtime.jobStop', { job: job.id, reason: 'write-off' }); act('stop', {}); setAsking(false); }
-    catch { setError('That did not stop it.'); }
-    finally { setBusy(false); }
-  };
-  if (form === 'compact') return <p className="board-brief"><span className="board-state" data-running={running(job.state)}>{job.state}</span> {job.title}</p>;
-  return (
-    <>
-      <p className="board-lead">{job.title || read.data?.cv?.label || 'Session'}</p>
-      <div className="board-line">
-        <span className="board-state" data-running={running(job.state)}>{job.state}</span>
-        {agent && <Chip place={{ brick: 'agent', params: { agent } }}>{agent}</Chip>}
-        <span className="text-muted-foreground">{running(job.state) ? 'for ' + lasted(job.queuedAt, now) : detail?.endedAt ? 'ran ' + lasted(detail.claimedAt ?? job.queuedAt, Date.parse(detail.endedAt)) : ''}</span>
-      </div>
-      {tools.length > 0 && <p className="board-line text-muted-foreground">{tools.slice(0, form === 'primary' ? 12 : 3).map((t) => <span key={t.name}>{t.name} ×{t.count}</span>)}</p>}
-      {form === 'primary' && (
-        <dl style={{ marginTop: '.8rem' }}>
-          {detail?.brief && <div><dt>Asked</dt><dd><Reply words={detail.brief} /></dd></div>}
-          {job.usage?.model && <div><dt>Running on</dt><dd>{[job.usage.harness, job.usage.model].filter(Boolean).join(' · ')}</dd></div>}
-          {detail?.endedNote && <div><dt>How it ended</dt><dd>{detail.endedNote}</dd></div>}
-          {!running(job.state) && job.state !== 'done' && detail?.logTail && <div><dt>Last output</dt><dd><pre className="board-tail">{detail.logTail}</pre></dd></div>}
-          <div><dt>Result</dt><dd className="text-muted-foreground">{job.state === 'done' ? 'Its answer is in the conversation.' : running(job.state) ? 'Its answer will arrive in the conversation.' : 'It gave no answer.'}</dd></div>
-          {read.data?.cv?.venue === 'handoff' && <div><dt>Steps</dt><dd><SessionTrace conversation={conversation} job={job.id} running={running(job.state)} /></dd></div>}
-        </dl>
-      )}
-      {form === 'side' && read.data?.cv?.venue === 'handoff' && <SessionLatestStep conversation={conversation} job={job.id} />}
-      {running(job.state) && (
-        <div className="board-line">
-          {asking
-            ? <><button type="button" className="board-action" disabled={busy} onClick={() => void stop()}>Stop this session</button><button type="button" className="board-action" onClick={() => setAsking(false)}>Keep it running</button></>
-            : <button type="button" className="board-action" onClick={() => setAsking(true)}>Stop…</button>}
-        </div>
-      )}
-      {error && <p role="alert" className="text-destructive">{error}</p>}
-    </>
-  );
+/** A body that is fetched when it is first drawn. React's `lazy` takes a module that is already here without
+ * suspending, so a brick shown a second time, or one the suites loaded first, never shows the loading line. */
+function later(fetch: () => Promise<Body>): Pick<BrickView, 'Body' | 'load'> {
+  let got: Body | undefined, asked: Promise<Body> | undefined;
+  const load = () => (asked ??= fetch().then((body) => (got = body)));
+  const here = (): PromiseLike<{ default: Body }> => ({ then: (done: (module: { default: Body }) => unknown) => done({ default: got! }) }) as PromiseLike<{ default: Body }>;
+  return { load, Body: lazy(() => (got ? here() : load().then((body) => ({ default: body }))) as Promise<{ default: Body }>) };
 }
 
 /** A brick the server knows and this page does not draw yet. It says so; it never guesses. */
 const NotDrawn = ({ params }: { params: Params }) => (
   <p className="text-muted-foreground">This page does not draw this brick yet. {Object.entries(params).map(([k, v]) => `${k}: ${words(v)}`).join(', ')}</p>
 );
-const later = (name: string, about: string): BrickView => ({ fits: fit([420, 640, 760, 260], 130), title: () => name, sub: (p) => words(p[about]), Body: NotDrawn });
+const unknown = (name: string): BrickView => ({ fits: fit([420, 640, 760, 260], 130), title: () => name, sub: () => '', Body: NotDrawn, load: async () => {} });
 
 export const bricks: Record<string, BrickView> = {
-  project: { fits: fit([440, 680, 820, 300], 190), title: () => 'Project', sub: (p) => words(p.project), Body: Project },
-  lanes: { fits: fit([520, 820, 980, 480], 330), title: () => 'Lanes', sub: (p) => words(p.project), Body: Lanes },
-  trend: { fits: fit([460, 720, 860, 360], 232), title: () => 'Opened and closed', sub: (p) => `${words(p.project)} · ${words(p.days)} days`,
-    Body: ({ params, form }) => <Trend project={words(params.project)} days={Number(params.days) || 30} form={form} chip={ticketChip} /> },
-  ticket: { fits: fit([460, 700, 820, 380], 230), title: () => 'Ticket', sub: (p) => words(p.ticket), Body: Ticket },
-  person: { fits: fit([440, 680, 820, 460], 210), title: () => 'Person', sub: (p) => words(p.person),
-    Body: ({ params, form }) => { const [kind, id] = words(params.person).split(':'); return <Contact slug={id} form={form} tickets={kind === 'member' ? <Assigned who={id} kind="member" form={form} /> : undefined} />; } },
-  agent: { fits: fit([440, 680, 820, 460], 320), title: () => 'Agent', sub: (p) => words(p.agent), Body: Agent },
-  comments: { fits: fit([440, 680, 820, 420], 260), title: () => 'Comments', sub: (p) => words(p.ticket), Body: Comments },
-  session: { fits: fit([440, 680, 820, 360], 170), title: () => 'Session', sub: (p) => words(p.session).slice(0, 11), Body: Session },
-  pull: { fits: fit([440, 680, 820, 380], 210), title: () => 'Pull request', sub: (p) => words(p.change), Body: Pull },
-  repository: { fits: fit([440, 680, 820, 360], 170), title: () => 'Repository', sub: (p) => [words(p.repository), words(p.project)].filter(Boolean).join(' · '), Body: Repository },
-  question: { fits: fit([420, 640, 760, 300], 250), title: () => 'Question', sub: (p) => words(p.item), Body: Question },
-  approval: { fits: fit([420, 640, 760, 300], 250), title: () => 'Approval', sub: (p) => words(p.approval), Body: Approval },
-  inbox: { fits: fit([460, 700, 860, 480], 260), title: () => 'Inbox', sub: (p) => words(p.folder), Body: Inbox },
-  approvals: { fits: fit([460, 700, 860, 480], 260), title: () => 'Approvals', sub: (p) => words(p.state), Body: Approvals },
-  'new-ticket': { fits: fit([440, 680, 820, 520], 300), title: () => 'New ticket', sub: (p) => words(p.project), Body: NewTicket },
-  backlog: { fits: fit([440, 680, 820, 420], 260), title: () => 'Backlog', sub: (p) => words(p.project), Body: Backlog },
-  unfiled: { fits: fit([440, 680, 820, 420], 260), title: () => 'Unfiled tickets', sub: () => '', Body: Unfiled },
-  'knowledge-page': { fits: fit([460, 720, 860, 520], 250), title: () => 'Knowledge page', sub: (p) => words(p.page), Body: KnowledgePage },
-  knowledge: { fits: fit([460, 720, 860, 520], 250), title: () => 'Knowledge', sub: (p) => [words(p.show), words(p.domain)].filter(Boolean).join(' · '), Body: Knowledge },
-  people: { fits: fit([440, 680, 820, 480], 250), title: () => 'People', sub: (p) => words(p.folder), Body: People },
-  activity: { fits: fit([460, 720, 860, 520], 250), title: () => 'Activity', sub: (p) => (Number(p.days) === 1 ? '1 day' : `${words(p.days)} days`), Body: Activity },
-  threads: { fits: fit([440, 680, 820, 420], 260), title: () => 'Conversations', sub: (p) => words(p.scope), Body: Threads },
-  agents: { fits: fit([420, 640, 760, 260], 190), title: () => 'Agents', sub: () => '', Body: Agents },
+  project: { fits: fit([440, 680, 820, 300], 190), title: () => 'Project', sub: (p) => words(p.project), ...later(() => import('./bricks-project').then((m) => m.Project)) },
+  lanes: { fits: fit([520, 820, 980, 480], 330), title: () => 'Lanes', sub: (p) => words(p.project), ...later(() => import('./bricks-lanes').then((m) => m.Lanes)) },
+  trend: { fits: fit([460, 720, 860, 360], 232), title: () => 'Opened and closed', sub: (p) => `${words(p.project)} · ${words(p.days)} days`, ...later(() => import('./bricks-trend').then((m) => m.Trend)) },
+  ticket: { fits: fit([460, 700, 820, 380], 230), title: () => 'Ticket', sub: (p) => words(p.ticket), ...later(() => import('./bricks-ticket').then((m) => m.Ticket)) },
+  person: { fits: fit([440, 680, 820, 460], 210), title: () => 'Person', sub: (p) => words(p.person), ...later(() => import('./bricks-person').then((m) => m.Person)) },
+  agent: { fits: fit([440, 680, 820, 460], 320), title: () => 'Agent', sub: (p) => words(p.agent), ...later(() => import('./bricks-agent').then((m) => m.Agent)) },
+  comments: { fits: fit([440, 680, 820, 420], 260), title: () => 'Comments', sub: (p) => words(p.ticket), ...later(() => import('./bricks-comments').then((m) => m.Comments)) },
+  session: { fits: fit([440, 680, 820, 360], 170), title: () => 'Session', sub: (p) => words(p.session).slice(0, 11), ...later(() => import('./bricks-session').then((m) => m.Session)) },
+  pull: { fits: fit([440, 680, 820, 380], 210), title: () => 'Pull request', sub: (p) => words(p.change), ...later(() => import('./bricks-pull').then((m) => m.Pull)) },
+  repository: { fits: fit([440, 680, 820, 360], 170), title: () => 'Repository', sub: (p) => [words(p.repository), words(p.project)].filter(Boolean).join(' · '), ...later(() => import('./bricks-repository').then((m) => m.Repository)) },
+  question: { fits: fit([420, 640, 760, 300], 250), title: () => 'Question', sub: (p) => words(p.item), ...later(() => import('./bricks-question').then((m) => m.Question)) },
+  approval: { fits: fit([420, 640, 760, 300], 250), title: () => 'Approval', sub: (p) => words(p.approval), ...later(() => import('./bricks-approval').then((m) => m.Approval)) },
+  inbox: { fits: fit([460, 700, 860, 480], 260), title: () => 'Inbox', sub: (p) => words(p.folder), ...later(() => import('./bricks-inbox').then((m) => m.Inbox)) },
+  approvals: { fits: fit([460, 700, 860, 480], 260), title: () => 'Approvals', sub: (p) => words(p.state), ...later(() => import('./bricks-approvals').then((m) => m.Approvals)) },
+  'new-ticket': { fits: fit([440, 680, 820, 520], 300), title: () => 'New ticket', sub: (p) => words(p.project), ...later(() => import('./bricks-new-ticket').then((m) => m.NewTicket)) },
+  backlog: { fits: fit([440, 680, 820, 420], 260), title: () => 'Backlog', sub: (p) => words(p.project), ...later(() => import('./bricks-backlog').then((m) => m.Backlog)) },
+  unfiled: { fits: fit([440, 680, 820, 420], 260), title: () => 'Unfiled tickets', sub: () => '', ...later(() => import('./bricks-unfiled').then((m) => m.Unfiled)) },
+  'knowledge-page': { fits: fit([460, 720, 860, 520], 250), title: () => 'Knowledge page', sub: (p) => words(p.page), ...later(() => import('./bricks-knowledge-page').then((m) => m.KnowledgePage)) },
+  knowledge: { fits: fit([460, 720, 860, 520], 250), title: () => 'Knowledge', sub: (p) => [words(p.show), words(p.domain)].filter(Boolean).join(' · '), ...later(() => import('./bricks-knowledge').then((m) => m.Knowledge)) },
+  people: { fits: fit([440, 680, 820, 480], 250), title: () => 'People', sub: (p) => words(p.folder), ...later(() => import('./bricks-people').then((m) => m.People)) },
+  activity: { fits: fit([460, 720, 860, 520], 250), title: () => 'Activity', sub: (p) => (Number(p.days) === 1 ? '1 day' : `${words(p.days)} days`), ...later(() => import('./bricks-activity').then((m) => m.Activity)) },
+  threads: { fits: fit([440, 680, 820, 420], 260), title: () => 'Conversations', sub: (p) => words(p.scope), ...later(() => import('./bricks-threads').then((m) => m.Threads)) },
+  agents: { fits: fit([420, 640, 760, 260], 190), title: () => 'Agents', sub: () => '', ...later(() => import('./bricks-agents').then((m) => m.Agents)) },
 };
-export const brickView = (name: string): BrickView => bricks[name] ?? later(name, '');
+export const brickView = (name: string): BrickView => (Object.hasOwn(bricks, name) ? bricks[name] : unknown(name));
+/** Fetches every brick's body. The suites call it before they draw, so a body draws at once as it does on a page
+ * that has shown the brick before. */
+export const loadBricks = () => Promise.all(Object.values(bricks).map((b) => b.load()));
