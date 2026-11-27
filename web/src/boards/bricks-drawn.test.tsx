@@ -186,7 +186,10 @@ it('shows a repository by its open pull requests, each a pull chip, in one proje
 
 it('answers a question through inbox.answer and then tells the board which answer, never the words', async () => {
   answer({ InboxItem: { inboxItem: item } });
+  // Every way of answering is in the primary form; the side form is the question and its main answer.
   await draw('question', { item: 'in-pump' }, 'side');
+  expect(buttons().filter((b) => !b.props['data-place']).map(said)).toEqual(['Yes', 'No']);
+  await draw('question', { item: 'in-pump' }, 'primary');
   for (const shown of ['It is clogged.', 'I order one.', 'I clean the old one.', 'art']) expect(text(), shown).toContain(shown);
   expect(placed()).toEqual([{ brick: 'agent', params: { agent: 'art' } }, { brick: 'project', params: { project: 'pond' } }, { brick: 'ticket', params: { ticket: 't-12' } }]);
   expect(buttons().filter((b) => !b.props['data-place']).map(said)).toEqual(['Yes', 'No', 'Mark done', 'Dismiss', 'Record answer']);
@@ -233,6 +236,8 @@ it('shows an answered question with its answer and no controls, and offers none 
   // A question that takes words has no Yes or No.
   answer({ InboxItem: { inboxItem: { ...item, answers: 'words' } } });
   await draw('question', { item: 'in-pump' }, 'side');
+  expect(buttons().filter((b) => !b.props['data-place']).map(said)).toEqual(['Record answer']);
+  await draw('question', { item: 'in-pump' }, 'primary');
   expect(buttons().filter((b) => !b.props['data-place']).map(said)).toEqual(['Mark done', 'Dismiss', 'Record answer']);
   const closed: [string, object][] = [
     ['the member may not answer it', { canAnswer: false }],
@@ -265,7 +270,7 @@ it('shows a contact by the card People opens, and still shows a member by their 
   answer({ MemoryPerson: { memoryPerson: contact } });
   await draw('person', { person: 'contact:anton' }, 'side');
   expect(feed.mock.calls[0][1]).toEqual({ id: 'commons:anton' });
-  for (const shown of ['Anton Avguchenko', 'Fits the pond liners.', 'email', 'work', 'anton@example.test', 'fresh', 'Pond']) expect(text(), shown).toContain(shown);
+  for (const shown of ['Anton Avguchenko', 'Fits the pond liners.', 'email', 'work', 'anton@example.test', 'fresh']) expect(text(), shown).toContain(shown);
   expect(controls()).toEqual([]);
   await draw('person', { person: 'contact:anton' }, 'compact');
   expect(said(tree!.root as Node)).toBe('Anton Avguchenko · Fits the pond liners.');

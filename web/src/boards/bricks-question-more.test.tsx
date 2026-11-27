@@ -39,7 +39,7 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => tree?.unmount()); tree = undefined; vi.unstubAllGlobals(); });
 
-async function draw(form: Form = 'side') { await act(async () => { tree?.unmount(); tree = create(h(brickView('question').Body, { params: { item: 'in-pump' }, form, act: reported, raise: () => {} })); }); }
+async function draw(form: Form = 'primary') { await act(async () => { tree?.unmount(); tree = create(h(brickView('question').Body, { params: { item: 'in-pump' }, form, act: reported, raise: () => {} })); }); }
 const said = (node: Node): string => node.children.map((child) => (typeof child === 'string' ? child : said(child))).join('');
 const text = () => said(tree!.root as Node);
 const group = () => tree!.root.findAll((node) => node.props.role === 'group' && node.props['aria-label'] === 'Notify');

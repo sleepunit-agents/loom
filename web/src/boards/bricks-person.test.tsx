@@ -90,12 +90,12 @@ it('says so where a contact has no relationship card the member may read, no pro
   expect(shown()).toContain('Conversation service is not available yet.');
 });
 
-it('draws a contact small with who they are, where they are reached, who knows them and their projects, and no control', async () => {
+it('draws a contact small with who they are and where they are reached, and no control; who knows them and their projects are in the big form', async () => {
   answer(world());
   await draw('side');
-  for (const words of ['Anton Avguchenko', 'Fits the pond liners.', 'email', 'anton@example.test', 'work', 'fresh', 'Known to', 'Pond', 'active', 'art']) expect(shown(), words).toContain(words);
-  for (const words of ['He quoted 400', 'Last seen', 'verified', 'do not grant access']) expect(shown(), words).not.toContain(words);
-  expect(placed()).toEqual([{ brick: 'agent', params: { agent: 'art' } }, { brick: 'project', params: { project: 'pond' } }]);
+  for (const words of ['Anton Avguchenko', 'Fits the pond liners.', 'email', 'anton@example.test', 'work', 'fresh']) expect(shown(), words).toContain(words);
+  for (const words of ['He quoted 400', 'Last seen', 'verified', 'do not grant access', 'Known to', 'Projects']) expect(shown(), words).not.toContain(words);
+  expect(placed()).toEqual([]);
   expect(controls()).toEqual([]);
   await draw('compact');
   const json = tree!.toJSON() as { type: string; props: { className: string } };
@@ -125,7 +125,7 @@ it('draws a member by their card, which is the shared card under their member id
   expect(placed()).toContainEqual({ brick: 'ticket', params: { ticket: 't-7' } });
   expect(feed.mock.calls.find(([query]) => String(query).includes('BrickAssigned'))![1]).toEqual({ ref: 'sam' });
   await draw('side', { person: 'member:sam' });
-  expect(shown()).toContain('Sam Reed'); expect(shown()).toContain('1 open ticket.');
+  expect(shown()).toContain('Sam Reed'); expect(shown()).toContain('1 open ticket');
   // An owner's card says what an owner owns.
   answer(world({ ...sam, ownership: { owner: true, agents: [] } }));
   await draw('primary', { person: 'member:sam' });

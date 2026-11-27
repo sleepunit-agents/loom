@@ -8,7 +8,7 @@ import { memberOperation } from '../data/operation';
 import { memoryQueries } from '../memory/queries';
 import { useMemoryQuery } from '../memory/query';
 import { contacts, type Person } from '../pieces/people/model';
-import { Action, Actions, Chip, Lead, Loading, Note, Problem, Row, Rows, Segmented, State, Unavailable, count, words, type Act, type Params, type Place } from './brick-kit';
+import { Action, Actions, Chip, Few, Lead, Loading, More, Note, Problem, Row, Rows, Segmented, State, Unavailable, count, words, type Act, type Params, type Place } from './brick-kit';
 import type { Form } from './layout';
 
 const slug = /^[a-z0-9][a-z0-9._-]{0,99}$/, agentId = /^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,119}$/;
@@ -87,16 +87,15 @@ export function People({ params, form, act }: { params: Params; form: Form; act:
         </div>
       )}
       {shown.length > 0 && (
-        <Rows>{shown.slice(0, cap).map((g) => {
+        <Few of={shown} first={cap} fit={!big}>{(some, hidden) => <><Rows beside>{some.map((g) => {
           const stale = g.person.fields.some((f) => f.state === 'stale');
           return (
             <Row key={g.person.id} place={personPlace(g.person)} title={g.person.name}
               meta={big && g.relationships.length ? `Known to ${g.relationships.map((p) => p.agent).join(', ')}` : undefined}
               end={<State tone={stale ? 'waiting' : 'muted'}>{stale ? 'Stale contact details' : g.person.kind}</State>} />
           );
-        })}</Rows>
+        })}</Rows><More n={hidden} /></>}</Few>
       )}
-      {shown.length > cap && <Note>and {shown.length - cap} more</Note>}
       {!shown.length && <Note>{big && query.trim() ? 'Nothing matches.' : all.length ? 'No contacts here' : 'No people yet'}</Note>}
       {big && may.directory && !may.canAdd && (
         <Note>{may.agents.length ? 'Ask an agent in Comms to set your household’s default agent before adding a person.' : 'Add a household agent and choose it as the default before adding a person.'}</Note>

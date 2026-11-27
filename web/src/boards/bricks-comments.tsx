@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { Reply } from '../pair/reply';
-import { Action, Lead, Loading, Note, Problem, Time, Unavailable, useOwnFlag, words, type BodyProps } from './brick-kit';
+import { Action, Excerpt, Few, Lead, More, Loading, Note, Problem, Time, Unavailable, useOwnFlag, words, type BodyProps } from './brick-kit';
 import { useTicketAction } from './ticket-action';
 
 type Comment = { seq: number; text: string; actor: string; at: string };
@@ -19,27 +19,29 @@ export function Comments({ params, form, act, raise }: BodyProps) {
   if (read.status === 'loading') return <Loading />;
   if (read.status !== 'live' || !t) return <Unavailable what="ticket" />;
   const add = async (e: FormEvent) => { e.preventDefault(); if (text.trim() && await run('comment', { id, text: text.trim() })) setText(''); };
-  if (form === 'compact') return <p className="board-brief">{t.taskCommentsByTask.length ? `${t.taskCommentsByTask.length} · latest from ${t.taskCommentsByTask[0].actor}: ${t.taskCommentsByTask[0].text}` : 'No comments yet'}</p>;
-  const notes = t.taskCommentsByTask.slice(0, form === 'primary' ? 30 : 4);
+  if (form === 'compact') return <p className="board-brief">{t.taskCommentsByTask.length ? <><b>{t.taskCommentsByTask.length}</b> · latest from {t.taskCommentsByTask[0].actor}: {t.taskCommentsByTask[0].text}</> : 'No comments yet'}</p>;
+  const big = form === 'primary', all = t.taskCommentsByTask;
   return (
     <>
-      <Lead>{t.title}</Lead>
+      {big ? <Lead>{t.title}</Lead> : <Excerpt lines={1}><Note>{t.title}</Note></Excerpt>}
       <form className="board-pick" onSubmit={(e) => void add(e)}>
         <input className="board-input" aria-label="Add a comment" placeholder="Add a comment…" value={text} onChange={(e) => setText(e.target.value)} />
         <Action submit disabled={busy || !text.trim()}>Add</Action>
       </form>
       <Problem>{error}</Problem>
-      {notes.length ? (
-        <ol className="board-comments">
-          {notes.map((n) => (
-            <li key={n.seq}>
-              <p className="board-meta"><b>{n.actor}</b><Time at={n.at} /></p>
-              <Reply words={n.text} />
-            </li>
-          ))}
-        </ol>
+      {all.length ? (
+        <Few of={all} first={big ? 30 : 2} fit={!big}>{(notes, hidden) => <>
+          <ol className="board-comments">
+            {notes.map((n) => (
+              <li key={n.seq}>
+                <p className="board-meta"><b>{n.actor}</b><Time at={n.at} /></p>
+                {big ? <Reply words={n.text} /> : <Excerpt lines={2}><Reply words={n.text} /></Excerpt>}
+              </li>
+            ))}
+          </ol>
+          <More n={hidden} words="earlier" />
+        </>}</Few>
       ) : <Note>No comments yet.</Note>}
-      {t.taskCommentsByTask.length > notes.length && <Note>and {t.taskCommentsByTask.length - notes.length} earlier</Note>}
     </>
   );
 }

@@ -10,6 +10,7 @@ const feed = vi.hoisted(() => vi.fn());
 vi.mock('../data/graphql', () => ({ useDataQuery: feed }));
 import { settingsQuery } from '../pieces/settings/data';
 import { bricks, loadBricks } from './bricks';
+import { Frame } from './brick-kit';
 import type { Form } from './layout';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -84,10 +85,12 @@ it('lists the secrets by name with their rule, who may use them and their use, a
   expect(requests).toEqual([]);
 });
 
-it('the small forms count and name, and hold no control', async () => {
+it('the small forms count and say what waits, and hold no control', async () => {
   live();
   await draw('side');
-  for (const shown of ['2 secrets · 1 request waiting · 1 grant', 'asks for', 'MAIL_KEY', 'PUMP_TOKEN']) expect(all(), shown).toContain(shown);
+  for (const shown of ['2 secrets · 1 request waiting · 1 grant', 'asks for', 'MAIL_KEY']) expect(all(), shown).toContain(shown);
+  // A secret nobody is asking for is named in the big form only.
+  expect(all()).not.toContain('PUMP_TOKEN');
   expect(all()).not.toContain('To read the pump mail');
   expect(controls()).toEqual([]);
   await draw('compact');
@@ -116,6 +119,18 @@ it('draws the unavailable line and nothing else for a member who is not an owner
   }
   expect(requests).toEqual([]);
   expect(raised).not.toHaveBeenCalled();
+});
+
+it('changes nothing from a remembered reading: while its placement is getting new data every control waits', async () => {
+  live();
+  const drawn = (settling: boolean) => h(Frame.Provider, { value: { settling } }, element('primary'));
+  await act(async () => { tree?.unmount(); world.fields.clear(); tree = create(drawn(true), { createNodeMock }); });
+  expect(buttons().length).toBeGreaterThan(4);
+  expect(buttons().every((b) => b.props.disabled === true)).toBe(true);
+  expect(tree!.root.findAll((node) => node.type === 'input' && node.props.type === 'checkbox').every((box) => box.props.disabled === true)).toBe(true);
+  await act(async () => { tree!.update(drawn(false)); });
+  expect(buttons().some((b) => b.props.disabled === true)).toBe(false);
+  expect(reported).not.toHaveBeenCalled();
 });
 
 it('allows, denies and cancels a waiting request and revokes a grant by Settings\' command, telling the board only which action', async () => {

@@ -15,7 +15,8 @@ afterEach(b.after);
 const item = { id: 'in-pump', canAnswer: true, source: 'thread', agent: 'art', project: 'pond', at: '2026-11-14T20:00:00Z', state: 'waiting', volume: 'full', answers: 'yes-no',
   read: false, refs: [], body: { words: 'Replace the pump filter?' } };
 const show = (over: object) => b.answer({ InboxItem: { inboxItem: { ...item, ...over } }, InboxApprovals: { approvals: [] }, InboxProposalTitles: { inboxProposalTitles: [] } });
-const draw = (form: 'side' | 'compact' = 'side') => b.draw('question', { item: 'in-pump' }, form);
+// The primary form: the side form holds the question and its main answer, and nothing else that is tested here.
+const draw = (form: 'primary' | 'side' | 'compact' = 'primary') => b.draw('question', { item: 'in-pump' }, form);
 
 it('opens the conversation about an item with the agent loom names, by inbox.discuss, and goes to it on this page', async () => {
   show({ answers: null, source: 'notice', discussionAgent: 'fern' });

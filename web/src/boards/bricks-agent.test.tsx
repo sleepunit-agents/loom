@@ -8,6 +8,8 @@ import { act, create } from 'react-test-renderer';
 
 const feed = vi.hoisted(() => vi.fn());
 vi.mock('../data/graphql', () => ({ useDataQuery: feed }));
+// Art's built-in sprite draws on a real element; here it is a mark that it was drawn (as in ./threads.test.tsx).
+vi.mock('../contexts/portrait', async () => { const { createElement } = await import('react'); return { Portrait: () => createElement('art-sprite') }; });
 import { brickView, loadBricks, type Params } from './bricks';
 import type { Form } from './layout';
 
@@ -78,17 +80,21 @@ describe('agent', () => {
     expect(said(tree!.root.findAll((n) => n.props.className === 'board-lead')[0])).toBe('Art');
     expect(all()).toContain('Working · 1 needs you');
     expect(all()).toContain('Waiting for the feed order');
-    expect(all()).toContain('Keeps the garden and the hens.');
+    // Small, who it is gives way to what it has in hand; the big form says both.
+    expect(all()).not.toContain('Keeps the garden and the hens.');
     expect(all()).toContain('Taking a hand-off from Mira · Fence survey');
     expect(all()).toContain('Working on Mend the gate · t-7');
-    expect(all()).toContain('+2 more');
+    expect(all()).toContain('and 2 more');
     // The desktop's addresses for what it is doing are not drawn: nothing here leads off the page.
     expect(JSON.stringify(tree!.toJSON())).not.toContain('/p/');
   });
   it('draws each running or recent job, a session chip where it has a conversation, and its open tickets as ticket chips', async () => {
     answer(world());
+    // The side form is who it is and what it has in hand: it counts the jobs running and draws none, and no tickets.
     await draw('agent', { agent: 'art' }, 'side');
-    expect(asked.find((q) => q.name === 'BrickAgentJobs')!.variables).toEqual({ agent: 'art', first: 12 });
+    expect(asked.find((q) => q.name === 'BrickAgentJobs')!.options).toMatchObject({ pause: true });
+    expect(placed()).toEqual([]);
+    await draw('agent', { agent: 'art' }, 'primary');
     expect(asked.find((q) => q.name === 'BrickAssigned')!.variables).toEqual({ ref: 'art' });
     expect(placed()).toEqual([
       { brick: 'session', params: { session: 'cv-fence' } }, { brick: 'session', params: { session: 'cv-hens' } }, { brick: 'session', params: { session: 'cv-feed' } },
@@ -108,7 +114,7 @@ describe('agent', () => {
     expect(tree!.root.findAllByType('a')).toEqual([]);
     expect(all()).not.toContain('Conversation');
     answer(world());
-    await draw('agent', { agent: 'mira' }, 'side');
+    await draw('agent', { agent: 'mira' }, 'primary');
     expect(all()).toContain('None yet. Start one from the list of conversations.');
   });
   it('the primary form reads everything it is doing and its last thirty jobs, and draws them all', async () => {
@@ -121,7 +127,7 @@ describe('agent', () => {
     expect(all()).toContain('Talking with Sam in loom');
     expect(all()).toContain('In a private conversation');
     await draw('agent', { agent: 'art' }, 'side');
-    expect(placed().filter((p) => p.brick === 'session')).toHaveLength(2);
+    expect(placed().filter((p) => p.brick === 'session')).toHaveLength(0);
   });
   it('the compact form is one line: its state and the first thing it is doing, with no controls and no jobs read', async () => {
     answer(world());
@@ -137,7 +143,7 @@ describe('agent', () => {
   });
   it('stops a running job only after asking, by runtime.jobStop as the session brick does, and reports it with nothing in the detail', async () => {
     answer(world());
-    await draw('agent', { agent: 'art' }, 'side');
+    await draw('agent', { agent: 'art' }, 'primary');
     expect(buttons().map(said)).toEqual(['Stop…', 'Stop…']);
     await act(async () => { await buttons()[0].props.onClick(); });
     expect(sent).not.toHaveBeenCalled();
@@ -180,8 +186,9 @@ describe('agent', () => {
     answer(world({ DeskDoing: null, BrickAgentJobs: null, DeskAgentStatus: null, DeskWaitingCounts: null, DeskHomeComms: null }));
     await draw('agent', { agent: 'art' }, 'side');
     expect(all()).toContain('Can’t tell what it is doing right now.');
-    expect(all()).toContain('Can’t read jobs right now.');
     expect(all()).toContain('Quiet');
+    await draw('agent', { agent: 'art' }, 'primary');
+    expect(all()).toContain('Can’t read jobs right now.');
   });
   it('is headed by its name and shows the reference only in the small line', () => {
     expect(brickView('agent').title({ agent: 'art' })).toBe('Agent');
@@ -190,6 +197,27 @@ describe('agent', () => {
 });
 
 describe('agents', () => {
+  it('gives each agent the one face the page draws: its stored sprite, Art\'s built-in sprite for Art, or the face made from its colours', async () => {
+    const look = (id: string, over: object = {}) => ({ id, markBg: '#3366ff', markFg: '#ffffff', faceShape: 'clover', faceEyes: 'dot', spriteVersion: null, ...over });
+    const faces = () => tree!.root.findAll((n) => n.props.className === 'boards-face' && !tree!.root.findAll((m) => m.props.className === 'boards-face' && m !== n && m.findAll((x) => x === n).length > 0).length);
+    // Art with nothing stored: the built-in sprite, in the roster as in the header. Mira: her generated face.
+    answer(world({ DeskAgentDisplays: { agents: [look('art'), look('mira')] } }));
+    await draw('agents', {}, 'side');
+    expect(faces().map((face) => [face.props['data-sprite'] ?? 'drawn', face.props.style.width])).toEqual([['art', 32], ['drawn', 32]]);
+    expect(tree!.root.findAllByType('art-sprite')).toHaveLength(1);
+    expect(tree!.root.findAllByType('svg').map((svg) => svg.props['data-shape'])).toEqual(['clover']);
+    // An agent the household keeps a sprite for is drawn from it (by the desktop's renderer, fetched when first drawn), and Art too.
+    answer(world({ DeskAgentDisplays: { agents: [look('art', { spriteVersion: 'v3' }), look('mira', { spriteVersion: 'v1' })] } }));
+    await draw('agents', {}, 'side');
+    expect(faces().map((face) => face.props['data-sprite'])).toEqual(['stored', 'stored']);
+    // A mark that would vanish into the card is drawn in the agent's other colour, in the scheme where it would.
+    answer(world({ DeskAgentDisplays: { agents: [look('art'), look('mira', { markBg: '#07070c', markFg: '#e8e8f0' })] } }));
+    await draw('agents', {}, 'side');
+    expect(tree!.root.findAllByType('svg')[0].findAllByType('path')[0].props.style.stroke).toBe('light-dark(#07070c, #e8e8f0)');
+    // In the `agent` brick the face heads the brick, larger and framed.
+    await draw('agent', { agent: 'art' }, 'side');
+    expect(faces().map((face) => [face.props['data-sprite'], face.props['data-framed'], face.props.style.width])).toEqual([['art', true, 48]]);
+  });
   it('lists the member\'s own agents in Home\'s order, each a chip that places its agent brick, with its state and current work', async () => {
     answer(world());
     await draw('agents', {}, 'side');

@@ -5,7 +5,7 @@
 import { useDataQuery } from '../data/graphql';
 import { householdSharingQuery, sharingCount, type HouseholdSharing } from '../pieces/sharing/model';
 import { isMember, isRef } from './admin-data';
-import { Chip, Fact, Facts, Lead, Loading, Note, Row, Rows, Unavailable, count, repositoryKey, type BodyProps } from './brick-kit';
+import { Chip, Fact, Facts, Few, Lead, Loading, More, Note, Row, Rows, Unavailable, count, repositoryKey, type BodyProps } from './brick-kit';
 
 export function Sharing({ form }: BodyProps) {
   const primary = form === 'primary';
@@ -20,8 +20,9 @@ export function Sharing({ form }: BodyProps) {
     <>
       <Lead>{summary}</Lead>
       {!sharing.projects.length && <Note>No projects to share</Note>}
-      <Rows>
-        {sharing.projects.slice(0, cap).map((project) => {
+      <Few of={sharing.projects} first={cap} fit={!primary}>{(shown, hidden) => <>
+      <Rows beside>
+        {shown.map((project) => {
           const who = (
             <>
               {project.members.map((id) => (isMember(id) ? <Chip key={id} place={{ brick: 'person', params: { person: 'member:' + id } }}>{id}</Chip> : <span key={id}>{id}</span>))}
@@ -48,7 +49,8 @@ export function Sharing({ form }: BodyProps) {
           );
         })}
       </Rows>
-      {sharing.projects.length > cap && <Note>and {sharing.projects.length - cap} more</Note>}
+      <More n={hidden} />
+      </>}</Few>
       {primary && <Note>To create a project or change who is on one, ask the agent in the conversation: it proposes the change and you answer it in the Inbox.</Note>}
     </>
   );

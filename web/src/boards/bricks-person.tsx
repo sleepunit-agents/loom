@@ -5,5 +5,6 @@ import { Contact } from './bricks-contact';
 
 export function Person({ params, form }: BodyProps) {
   const [kind, id] = words(params.person).split(':');
-  return <Contact slug={id} form={form} tickets={kind === 'member' ? <Assigned who={id} kind="member" form={form} /> : undefined} />;
+  return <Contact slug={id} form={form} tickets={kind === 'member' ? <Assigned who={id} kind="member" form={form} /> : undefined}
+    count={kind === 'member' && form === 'side' ? <Assigned who={id} kind="member" form="compact" /> : undefined} />;
 }

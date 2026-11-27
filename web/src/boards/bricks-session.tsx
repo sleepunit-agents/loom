@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { memberOperation } from '../data/operation';
 import { Reply } from '../pair/reply';
-import { Chip, Confirm, Fact, Facts, Lead, Loading, Note, Problem, Section, State, Unavailable, useOwnFlag, words, type BodyProps, type Tone } from './brick-kit';
+import { Chip, Confirm, Excerpt, Fact, Facts, Lead, Loading, Problem, Section, State, Unavailable, useOwnFlag, words, type BodyProps, type Tone } from './brick-kit';
 import { SessionLatestStep, SessionTrace } from './session-trace';
 
 type SessionJob = { id: string; title: string; state: string; queuedAt: string; usage: { model: string | null; harness: string | null; tools: { name: string; count: number | null }[] | null } | null };
@@ -43,7 +43,7 @@ export function Session({ params, form, act, raise }: BodyProps) {
   const span = running(job.state) ? 'for ' + lasted(job.queuedAt, now) : detail?.endedAt ? 'ran ' + lasted(detail.claimedAt ?? job.queuedAt, Date.parse(detail.endedAt)) : '';
   return (
     <>
-      <Lead>{job.title || read.data?.cv?.label || 'Session'}</Lead>
+      {big ? <Lead>{job.title || read.data?.cv?.label || 'Session'}</Lead> : <Excerpt lines={2}><Lead>{job.title || read.data?.cv?.label || 'Session'}</Lead></Excerpt>}
       <div className="board-meta">
         <State tone={tone(job.state)}>{job.state}</State>
         {agent && <Chip place={{ brick: 'agent', params: { agent } }}>{agent}</Chip>}
@@ -59,7 +59,6 @@ export function Session({ params, form, act, raise }: BodyProps) {
           {tools.length > 0 && <Fact label="Tools"><span className="board-tools">{tools.slice(0, 12).map((t) => <span key={t.name}>{t.name} ×{t.count}</span>)}</span></Fact>}
         </Facts>
       )}
-      {!big && tools.length > 0 && <Note><span className="board-tools">{tools.slice(0, 3).map((t) => <span key={t.name}>{t.name} ×{t.count}</span>)}</span></Note>}
       {big && handoff && <Section title="Steps"><SessionTrace conversation={conversation} job={job.id} running={running(job.state)} /></Section>}
       {!big && handoff && <SessionLatestStep conversation={conversation} job={job.id} />}
       {running(job.state) && <div className="board-actions"><Confirm ask="Stop…" yes="Stop this session" no="Keep it running" busy={busy} act={stop} /></div>}

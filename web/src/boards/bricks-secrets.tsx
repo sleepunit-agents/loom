@@ -19,7 +19,7 @@ import { newId } from '../data/id';
 import { settingsCommand, submitSecret } from '../pieces/settings/commands';
 import { settingsQuery, settingsSnapshot, type SettingsData } from '../pieces/settings/data';
 import { ANSWER_WORDS, USE_WORDS, WRITE_ONLY_WORDS, resultText } from '../pieces/settings/words';
-import { Action, Actions, Chip, Fact, Facts, Lead, Loading, Note, Row, Rows, Section, State, Time, Unavailable, useOwnFlag, type BodyProps, type Tone } from './brick-kit';
+import { Action, Actions, Asking, Chip, Fact, Facts, Few, Lead, Loading, More, Note, Row, Rows, Section, State, Time, Unavailable, useOwnFlag, useSettling, type BodyProps, type Tone } from './brick-kit';
 
 const agentRef = /^[A-Za-z0-9][A-Za-z0-9:._\/@-]{0,119}$/;
 /** An agent as a chip that places its brick, or its id alone when the id is not one a board can hold. */
@@ -34,7 +34,9 @@ export function Secrets({ form, act, raise }: BodyProps) {
   const live = snapshot.status === 'live';
   const waiting = snapshot.requests.filter((request) => request.state === 'pending');
   useOwnFlag(live ? waiting.length : undefined, raise, (was, now) => (now > was ? 'New request' : null));
-  const [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [open, setOpen] = useState<string>(), [always, setAlways] = useState<string[]>([]);
+  // Nothing is answered, changed or removed from what the page only remembers: every control waits for the fresh reading.
+  const stale = useSettling();
+  const [saving, setBusy] = useState(false), busy = saving || stale, [message, setMessage] = useState(''), [open, setOpen] = useState<string>(), [always, setAlways] = useState<string[]>([]);
   const lock = useRef(false);
   if (snapshot.status === 'loading') return <Loading />;
   if (!live) return <Unavailable what="list of secrets" />;
@@ -43,15 +45,17 @@ export function Secrets({ form, act, raise }: BodyProps) {
   if (form === 'side') return (
     <>
       <Lead>{counts} · {count(snapshot.grants.length, 'grant')}</Lead>
-      {waiting.length > 0 && <Rows>{waiting.slice(0, 3).map((request) => <Row key={request.id} flagged title={<>{agentChip(request.agent)} asks for <span className="font-mono">{request.secret}</span></>} />)}</Rows>}
-      {waiting.length > 3 && <Note>and {waiting.length - 3} more waiting</Note>}
-      <Note><span className="font-mono">{snapshot.secrets.slice(0, 8).map((secret) => secret.name).join(', ')}</span>{snapshot.secrets.length > 8 ? ' and more' : ''}</Note>
+      {/* The side form says what waits on the member; the secrets themselves are named in the big form. */}
+      {waiting.length > 0 ? <Few of={waiting} first={3}>{(shown, hidden) => <>
+        <Rows>{shown.map((request) => <Row key={request.id} flagged title={<>{agentChip(request.agent)} asks for <span className="font-mono">{request.secret}</span></>} />)}</Rows>
+        <More n={hidden} words="more waiting" />
+      </>}</Few> : <Note>No request is waiting.</Note>}
     </>
   );
   /** One change at a time. `work` starts in the same turn as the press, so a value's field is emptied at once. The
    * board is told only when the change was acknowledged. */
   const run: Run = (action, work) => {
-    if (lock.current) return;
+    if (lock.current || stale) return;
     lock.current = true; setBusy(true); setMessage('');
     void work().catch(() => false).then((saved) => {
       lock.current = false; setBusy(false); setMessage(resultText(saved));
@@ -63,7 +67,7 @@ export function Secrets({ form, act, raise }: BodyProps) {
   return (
     <>
       <Lead>{counts} · {count(snapshot.grants.length, 'grant')}</Lead>
-      <p role="status" className="board-note">{busy ? 'Saving…' : message}</p>
+      <p role="status" className="board-note">{saving ? 'Saving…' : message}</p>
 
       <Section title="Requests waiting" count={waiting.length || undefined}>
         {!waiting.length ? <Note>No request is waiting.</Note> : (
@@ -110,11 +114,8 @@ export function Secrets({ form, act, raise }: BodyProps) {
                 {uses.length > 0 && <Note>{uses.slice(0, 3).map((use, index) => <span key={use.id}>{index > 0 && <br />}Used <Time at={use.at} /> · {use.agent} · {USE_WORDS[use.state] ?? use.state}</span>)}</Note>}
                 {open === 'value:' + secret.name && <ValueForm name={secret.name} description={secret.description} busy={busy} run={run} cancel={() => setOpen(undefined)} />}
                 {open === 'remove:' + secret.name && (
-                  <div className="board-confirm" role="group" aria-label="Remove this secret?">
-                    <p>Remove this secret's value and revoke every access to it? It cannot be brought back.</p>
-                    <Action kind="danger" disabled={busy} onClick={() => run('remove', () => settingsCommand('remove', { id: newId(), name: secret.name }))}>Remove value and revoke access</Action>
-                    <Action kind="quiet" disabled={busy} onClick={() => setOpen(undefined)}>Keep</Action>
-                  </div>
+                  <Asking label="Remove this secret?" yes="Remove value and revoke access" no="Keep" disabled={busy}
+                    onYes={() => run('remove', () => settingsCommand('remove', { id: newId(), name: secret.name }))} onNo={() => setOpen(undefined)}>Remove this secret's value and revoke every access to it? It cannot be brought back.</Asking>
                 )}
               </Row>
             );

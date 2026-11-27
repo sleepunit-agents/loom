@@ -7,7 +7,7 @@ import type { ReactNode } from 'react';
 import { memoryQueries, type PersonOpen } from '../memory/queries';
 import { useMemoryQuery, useMemoryRecord } from '../memory/query';
 import { contactLink, contacts, type Person } from '../pieces/people/model';
-import { Chip, Fact, Facts, Lead, Loading, Note, Row, Rows, Section, State, Time, Unavailable, count, type Tone } from './brick-kit';
+import { Chip, Excerpt, Fact, Facts, Few, Lead, Loading, More, Note, Row, Rows, Section, State, Time, Unavailable, count, type Tone } from './brick-kit';
 import type { Form } from './layout';
 
 const id = /^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,119}$/;
@@ -65,9 +65,10 @@ function Card({ person, relationships, form }: { person: PersonOpen; relationshi
   return (
     <>
       <Lead>{person.name}</Lead>
-      {person.card.summary && <p className="board-person-summary">{person.card.summary}</p>}
+      {person.card.summary && (big ? <p className="board-person-summary">{person.card.summary}</p> : <Excerpt lines={2}><p className="board-person-summary">{person.card.summary}</p></Excerpt>)}
       {big && person.mergedFrom && <Note>{person.mergedFrom} was merged into {person.slug}.</Note>}
-      <Section title="How to reach them">{person.fields.length ? <Reach person={person} big={big} /> : <Note>No contact details recorded.</Note>}</Section>
+      <Section title="How to reach them">{!person.fields.length ? <Note>No contact details recorded.</Note> : big ? <Reach person={person} big />
+        : <Few of={person.fields} first={person.fields.length}>{(fields, hidden) => <><Reach person={{ ...person, fields: [...fields] }} big={false} /><More n={hidden} /></>}</Few>}</Section>
       {big && !!person.sightings?.length && (
         <Section title="Last seen">
           <Rows>{person.sightings.map((s) => (
@@ -78,9 +79,8 @@ function Card({ person, relationships, form }: { person: PersonOpen; relationshi
       )}
       {big && Object.keys(person.card.how ?? {}).length > 0 && <Section title="Facts"><How person={person} /></Section>}
       {big && person.ownership && <Section title="Owns"><div className="board-meta">{person.ownership.owner ? 'The household and every agent' : person.ownership.agents.map(agentChip)}</div></Section>}
-      {!big && relationships.length > 0 && <Section title="Known to"><div className="board-meta">{relationships.map((r) => agentChip(r.agent ?? ''))}</div></Section>}
       {big && <Section title="Relationships">{relationships.length ? relationships.map((r) => <Relationship key={r.id} card={r} />) : <Note>No relationship cards available to you.</Note>}</Section>}
-      {(big || projects.length > 0) && (
+      {big && (
         <Section title="Projects">
           {projects.length
             ? <Rows>{projects.map((p) => <Row key={p.agent + ':' + p.slug} place={p.place} title={p.name} end={<><State tone={projectTone(p.status)}>{p.status}</State><span>{p.agent}</span></>} />)}</Rows>
@@ -101,7 +101,7 @@ function Card({ person, relationships, form }: { person: PersonOpen; relationshi
 }
 
 /** A contact, or a member when `tickets` is given: the member's open tickets, drawn by the brick as before. */
-export function Contact({ slug, form, tickets }: { slug: string; form?: Form; tickets?: ReactNode }) {
+export function Contact({ slug, form, tickets, count: ticketCount }: { slug: string; form?: Form; tickets?: ReactNode; /** The tickets as one line, for the side form of a member who has a card. */ count?: ReactNode }) {
   const compact = form === 'compact';
   const read = useMemoryRecord(tickets && compact ? undefined : memoryQueries.person('commons:' + slug));
   const directory = useMemoryQuery(compact ? undefined : memoryQueries.people());
@@ -114,7 +114,7 @@ export function Contact({ slug, form, tickets }: { slug: string; form?: Form; ti
   return (
     <>
       <Card person={person} relationships={relationships} form={form} />
-      {tickets && <Section title="Open tickets">{tickets}</Section>}
+      {tickets && <Section title="Open tickets">{ticketCount ?? tickets}</Section>}
     </>
   );
 }

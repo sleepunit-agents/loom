@@ -148,7 +148,9 @@ it('offers no way to add a subscription to someone loom gives no choices', async
 it('draws the side form as a list and the compact form as one line, neither with a control', async () => {
   answer();
   await draw('side');
-  for (const words of ['acme', '1 · plenty', 'Main subscription', 'sam · 1 signed in', 'Week', '58%', 'Session', 'Not read yet', 'Shared account', 'almost full']) expect(shown(), words).toContain(words);
+  for (const words of ['Main subscription', 'plenty', 'Shared account', 'almost full']) expect(shown(), words).toContain(words);
+  // Each subscription and how full it is; its windows and sign-ins are in the big form.
+  for (const words of ['Week', '58%', 'sam · 1 signed in']) expect(shown(), words).not.toContain(words);
   expect(controls()).toEqual([]);
   await draw('compact');
   const json = tree!.toJSON() as { type: string; props: { className: string } };

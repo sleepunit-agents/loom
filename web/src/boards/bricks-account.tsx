@@ -17,9 +17,8 @@ import { accountQuery, type Account as AccountRead } from '../pieces/account/que
 import { memberOperation } from '../data/operation';
 import { DEVICE_LINK_WORDS, requestSigninLink } from '../signin/device-link';
 import { sessionChange } from '../signin/session-change';
-import { Action, Actions, Fact, Facts, Lead, Loading, Note, Problem, Rows, Section, State, Time, Unavailable, type Act, type BodyProps } from './brick-kit';
+import { Action, Actions, AskRow, Asks, Fact, Facts, Lead, Loading, Note, Problem, Rows, Section, State, Time, Unavailable, type Act, type BodyProps } from './brick-kit';
 import { useDeviceNotifications } from './notify-device';
-import { AskRow, Asks } from './settings-kit';
 
 const some = (n: number, one: string, many = one + 's') => `${n || 'No'} ${n === 1 ? one : many}`;
 

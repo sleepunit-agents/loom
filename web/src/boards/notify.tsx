@@ -1,4 +1,5 @@
-/** Notifications on this device, from the boards page: the control beside the presence and the panel it opens.
+/** Notifications on this device, from the boards page: a quiet line in the panel beside the presence (./threads.tsx)
+ * and what it opens under itself.
  * It says what is true (unavailable, unsupported, blocked by the browser, off, on for this device) and turns this
  * device on and off through the desktop Account's own helper and operations (pieces/account/notifications.ts).
  * The browser is asked for permission only when the member presses "Turn on"; opening the page asks nothing.
@@ -15,16 +16,19 @@ import { opensInBoards, setOpensInBoards } from './notify-target';
 export const notifyQuery = '{ account { notifications { publicKey devices { ref replies } } } }';
 type Read = { account: { notifications?: { publicKey: string | null; devices: { ref: string; replies?: boolean | null }[] } | null } | null };
 
+/** The worker shows a push and answers its click. Registering it asks the member nothing. The page does it when it
+ * opens, whether or not the panel is ever opened. */
+export function useNotifyWorker() { useEffect(() => { registerWorker(); }, []); }
+
 export function Notify() {
   const [open, setOpen] = useState(false);
-  // The worker shows a push and answers its click. Registering it asks the member nothing.
-  useEffect(() => { registerWorker(); }, []);
   return (
-    <>
-      <button type="button" className="boards-notify-open board-action" aria-haspopup="dialog" aria-expanded={open} aria-label="Notifications"
-        title="Notifications" onClick={() => setOpen((now) => !now)}><BellIcon aria-hidden="true" size={16} /></button>
+    <div className="boards-notify-part">
+      <button type="button" className="boards-notify-open" aria-expanded={open} aria-label="Notifications" onClick={() => setOpen((now) => !now)}>
+        <BellIcon aria-hidden="true" size={14} /><span>Notifications on this device</span>
+      </button>
       {open && <NotifyPanel close={() => setOpen(false)} />}
-    </>
+    </div>
   );
 }
 
@@ -40,17 +44,17 @@ function NotifyPanel({ close }: { close(): void }) {
   }, []);
   const target = (wanted: boolean) => run(async () => { try { await setOpensInBoards(wanted); } catch { throw Error('This browser did not keep the choice.'); } setBoards(wanted); }, '');
   return (
-    <div className="boards-threads boards-notify" role="dialog" aria-label="Notifications" onKeyDown={(e) => { if (e.key === 'Escape') close(); }}>
+    <div className="boards-notify" role="group" aria-label="Notifications" onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation?.(); close(); } }}>
       <p role="status">{NOTIFICATION_WORDS[state]}</p>
-      {state === 'off' && <button type="button" className="board-action" disabled={busy} onClick={() => void on()}>Turn on notifications on this device</button>}
+      {state === 'off' && <button type="button" className="board-action" data-kind="plain" disabled={busy} onClick={() => void on()}>Turn on notifications on this device</button>}
       {state === 'on' && (
         <>
           <button type="button" className="board-action" disabled={busy} onClick={() => void off()}>Turn off notifications on this device</button>
-          <label className="board-line">
+          <label className="board-check">
             <input type="checkbox" checked={boards} disabled={busy} onChange={(e) => void target(e.target.checked)} />
             <span>Open notifications from this device in the boards page</span>
           </label>
-          <label className="board-line">
+          <label className="board-check">
             <input type="checkbox" checked={replies} disabled={busy} onChange={(e) => void reply(e.target.checked)} />
             <span>Also notify this device when the agent replies</span>
           </label>

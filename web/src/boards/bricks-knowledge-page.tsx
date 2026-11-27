@@ -10,7 +10,7 @@ import { memoryQueries, type KnowledgePage as Page } from '../memory/queries';
 import { useMemoryQuery } from '../memory/query';
 import { Reply } from '../pair/reply';
 import { freshWord } from '../pieces/knowledge/model';
-import { Action, Actions, Chip, Fact, Facts, Lead, Loading, Note, Problem, Row, Rows, Section, Segmented, State, Time, Unavailable, freshTone, pageChip, words, type Act, type Params } from './brick-kit';
+import { Action, Actions, Chip, Excerpt, Fact, Facts, Lead, Loading, Note, Problem, Row, Rows, Section, Segmented, State, Time, Unavailable, freshTone, pageChip, words, type Act, type Params } from './brick-kit';
 import type { Form } from './layout';
 
 type Kind = (typeof knowledgeAnnotations)[number];
@@ -66,7 +66,8 @@ export function KnowledgePage({ params, form, act }: { params: Params; form: For
           {page.checked?.by ? ` · Last check by ${page.checked.by}` : ''}
         </Note>
       )}
-      <div className="board-knowledge-body" data-form={form}><Reply words={big ? body : first} /></div>
+      {big ? <div className="board-knowledge-body" data-form={form}><Reply words={body} /></div>
+        : <Excerpt lines={5}><div className="board-knowledge-body" data-form={form}><Reply words={first} /></div></Excerpt>}
       {may && (
         <Actions>
           <Action disabled={busy || !may.canVerify} onClick={() => void run('verify', 'mind.knowledgeVerify', { slug }, {}, 'Check saved')}>Still true</Action>

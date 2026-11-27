@@ -5,7 +5,7 @@
  * tasks.command `edit` with the priority alone. The board is told `priority` and which one. */
 import { useState } from 'react';
 import { useDataQuery } from '../data/graphql';
-import { Action, Loading, Note, Problem, Row, Rows, Unavailable, count, words, type Act, type Params } from './brick-kit';
+import { Action, Few, Loading, More, Note, Problem, Row, Rows, Unavailable, count, words, type Act, type Params } from './brick-kit';
 import { Pick, priorityChoices, priorityWord, useTaskCommand } from './bricks-work';
 import type { Form } from './layout';
 
@@ -33,11 +33,12 @@ export function Backlog({ params, form, act }: { params: Params; form: Form; act
   const total = `${rows.length ? count(rows.length, 'ticket') : 'No tickets'} in the backlog`;
   if (form === 'compact') return <p className="board-brief">{total}</p>;
   if (!rows.length) return <Note>No tickets in the backlog.</Note>;
-  const big = form === 'primary', shown = rows.slice(0, big ? 30 : 6);
+  const big = form === 'primary';
   const set = async (id: string, priority: number) => { if (await run('priority', { action: 'edit', id, input: { priority } }, { priority: String(priority) })) setSetting(undefined); };
   return (
     <>
       <Note>{total}.</Note>
+      <Few of={rows} first={big ? 30 : 6} fit={!big}>{(shown, hidden) => <>
       <Rows>
         {shown.map((t) => (
           <Row key={t.id} place={{ brick: 'ticket', params: { ticket: t.id } }} title={<>{!big && <span className="board-priority board-backlog-priority">{priorityWord(t.priority)}</span>}{t.title} <span className="font-mono board-row-ref">{t.id}</span></>}
@@ -49,7 +50,8 @@ export function Backlog({ params, form, act }: { params: Params; form: Form; act
           </Row>
         ))}
       </Rows>
-      {rows.length > shown.length && <Note>and {rows.length - shown.length} more</Note>}
+      <More n={hidden} />
+      </>}</Few>
       <Problem>{error}</Problem>
     </>
   );

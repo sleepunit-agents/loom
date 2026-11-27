@@ -1,13 +1,12 @@
 /** The boards page (docs/specs/boards.md): a conversation, and a second window the agent fills from bricks.
  * The page draws the thread's boards and nothing else there; what is on screen is a record, never page state. */
-import { Component, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { Component, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ArrowUpIcon } from 'lucide-react';
 import { useDataQuery } from '../data/graphql';
 import { memberOperation } from '../data/operation';
 import { newId } from '../data/id';
 import { useSession } from '../signin/use-session';
-import { Portrait } from '../contexts/portrait';
 import type { FaceState } from '../face';
 import { Button } from '../pair/ui/button';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '../pair/ui/input-group';
@@ -18,12 +17,14 @@ import { Loading } from './brick-kit';
 import { layout, type Slot } from './layout';
 import { PlacementFrame } from './placement';
 import { buildChanged } from './build';
-import { AgentFace } from './agent-face';
+import { AgentFace, FACE } from './agent-face';
 import { useAgentNames } from './agents-data';
-import { ThreadHead, ThreadSwitch } from './threads';
-import { Notify } from './notify';
+import { ThreadHead, ThreadSwitch, threadHeadQuery } from './threads';
+import { Notify, useNotifyWorker } from './notify';
 import { usePageTitle } from './title';
-import { wearMotion } from '../access';
+import { reducedMotion, wearMotion } from '../access';
+import { Remembered } from '../data/graphql/remembered';
+import { forgetAnswers, rememberedFor } from './remember';
 import { Wear } from './wear';
 import '../pair/screen.css';
 import './board.css';
@@ -33,6 +34,8 @@ import './board-kit.css';
 // member is known it wears their own Reduce motion, and of their Appearance nothing else (./wear.ts).
 wearMotion('follow');
 
+/** How long the trail takes to slide to another board (./board.css, `.boards-trail`). */
+const SLIDE_MS = 600;
 type Placement = { id: string; brick: string; params: string; rank: number; placedByKind: string; big: boolean; canBeBig: boolean; flagged: boolean };
 type Board = { id: string; thread: string; title: string; revision: number; closed: boolean; trailAt: string; placements: Placement[] };
 const boardFields = 'id thread title revision closed trailAt placements{id brick params rank placedByKind big canBeBig flagged}';
@@ -59,7 +62,7 @@ class BodyBoundary extends Component<{ children: ReactNode; onLost(): void }, { 
   render() { return this.state.failed ? <p role="alert" className="text-muted-foreground">This brick did not load. Reload the page to try again.</p> : this.props.children; }
 }
 
-function BoardView({ board, onRemove, onMaximize, onClose, onLost }: { board: Board; onRemove(id: string): void; onMaximize(id: string): void; onClose(): void; /** A brick's body could not be fetched. */ onLost(): void }) {
+function BoardView({ board, live, onRemove, onMaximize, onClose, onLost }: { board: Board; /** It is the board on screen (or sliding off it): its bricks are drawn. Any other board on the trail is its frames alone: no body, no read, no brick fetched. */ live: boolean; onRemove(id: string): void; onMaximize(id: string): void; onClose(): void; /** A brick's body could not be fetched. */ onLost(): void }) {
   const field = useRef<HTMLDivElement>(null);
   const [area, setArea] = useState({ w: 0, h: 0 });
   useLayoutEffect(() => {
@@ -93,7 +96,7 @@ function BoardView({ board, onRemove, onMaximize, onClose, onLost }: { board: Bo
     if (p.flagged) void memberOperation('boards.seen', { board: board.id, placement: p.id }).catch(() => {});
   };
   return (
-    <section className="boards-board" aria-label={heading || 'Board'}>
+    <section className="boards-board" aria-label={heading || 'Board'} data-live={live} inert={!live}>
       <header>
         <h1>{heading}</h1>
         {board.closed
@@ -110,17 +113,18 @@ function BoardView({ board, onRemove, onMaximize, onClose, onLost }: { board: Bo
               flag={p.flagged || own[p.id] ? own[p.id] || 'Look here' : undefined} closed={board.closed} canMaximize={p.canBeBig && !p.big}
               onMaximize={() => onMaximize(p.id)} onRemove={() => onRemove(p.id)} onLook={() => looked(p)}
               style={{ transform: `translate(${slot.x}px, ${slot.y}px)`, width: slot.w, height: slot.h }}>
-              <BodyBoundary onLost={onLost}><Suspense fallback={<Loading />}><Body params={p.values} form={slot.form} raise={(name) => raise(p.id, name)} act={(action, detail) => void memberOperation('boards.act', { board: board.id, placement: p.id, action, detail }).catch(() => {})} /></Suspense></BodyBoundary>
+              {live && <BodyBoundary onLost={onLost}><Suspense fallback={<Loading />}><Body params={p.values} form={slot.form} raise={(name) => raise(p.id, name)} act={(action, detail) => void memberOperation('boards.act', { board: board.id, placement: p.id, action, detail }).catch(() => {})} /></Suspense></BodyBoundary>}
             </PlacementFrame>
           );
         })}
       </div>
       <div className="boards-folded" data-flagged={folded.some((p) => p.flagged || own[p.id])}>
-        {folded.length > 0 && 'Also here'}
-        {folded.map((p) => p.canBeBig && !board.closed
+        {/* How many did not fit, said once, then each by its name and reference. */}
+        {folded.length > 0 && <span className="boards-folded-count">{folded.length} more</span>}
+        {folded.map((p) => { const sub = p.view.sub(p.values), words = <><i aria-hidden="true" />{p.view.title(p.values)}{sub && <> <small>{sub}</small></>}</>; return p.canBeBig && !board.closed
           ? <button key={p.id} type="button" className="board-chip" data-flagged={p.flagged || !!own[p.id]} title="Make this the big one"
-              onPointerEnter={() => looked(p)} onClick={() => onMaximize(p.id)}><i aria-hidden="true" />{p.view.title(p.values)} · {p.view.sub(p.values)}</button>
-          : <span key={p.id} className="board-chip" data-flagged={p.flagged || !!own[p.id]} onPointerEnter={() => looked(p)}><i aria-hidden="true" />{p.view.title(p.values)} · {p.view.sub(p.values)}</span>)}
+              onPointerEnter={() => looked(p)} onClick={() => onMaximize(p.id)}>{words}</button>
+          : <span key={p.id} className="board-chip" data-flagged={p.flagged || !!own[p.id]} onPointerEnter={() => looked(p)}>{words}</span>; })}
       </div>
     </section>
   );
@@ -153,6 +157,18 @@ export function Page({ member, thread, agent, at, exists = false }: { member: st
   }, [at]);
   const column = shown && !shown.closed ? trail.findIndex((b) => b.id === shown.id) : 0;
   const drawn = shown?.closed ? [shown] : trail;
+  // Everything not on screen is paused (the owner, 2026-11-27): only the board shown draws its bricks, so only it
+  // holds live reads. The board the page is sliding away from keeps its bricks until the slide ends, so it does not
+  // empty while it is still in view; where nothing moves it lets go at once.
+  const [onScreen, setOnScreen] = useState<{ shown?: string; leaving?: string }>({ shown: shown?.id });
+  if (onScreen.shown !== shown?.id) setOnScreen({ shown: shown?.id, leaving: reducedMotion() ? undefined : onScreen.shown });
+  const arrived = useCallback(() => setOnScreen((now) => (now.leaving ? { shown: now.shown } : now)), []);
+  useEffect(() => {
+    if (!onScreen.leaving) return;
+    const late = setTimeout(arrived, SLIDE_MS + 100);
+    return () => clearTimeout(late);
+  }, [onScreen.leaving, onScreen.shown, arrived]);
+  const answers = useMemo(() => rememberedFor(member), [member]);
 
   const change = useCallback((board: string, changes: object[]) => memberOperation('boards.change', { board, changes }).catch(() => {}), []);
   const place = useCallback((p: Place) => {
@@ -206,6 +222,10 @@ export function Page({ member, thread, agent, at, exists = false }: { member: st
   const status = error || (!ready ? 'Connecting…' : tail.working ? (tail.tool ? 'Working · ' + tail.tool.split(' → ').at(-1) : 'Working') : tail.update ? 'Has a reply for you' : 'Here when you need me.');
   const name = useAgentNames()(agent);
   usePageTitle(thread, tail.update);
+  useNotifyWorker();
+  // The open thread's title, said beside the presence: the same selection the panel's rename and archive read.
+  const head = useDataQuery<{ thread: { id: string; title: string } | null }>(threadHeadQuery, { id: thread }, { keep: true });
+  const title = head.status === 'live' && head.data?.thread?.id === thread ? head.data.thread.title : '';
 
   return (
     <main className="boards-page pair-workspace" data-board={drawn.length > 0}
@@ -219,12 +239,14 @@ export function Page({ member, thread, agent, at, exists = false }: { member: st
       }}>
       {drawn.length > 0 && (
         <section className="boards-stage" aria-label="Board">
-          <div className="boards-trail" style={{ transform: `translateX(${-100 * Math.max(0, column)}%)` }}>
+          <div className="boards-trail" style={{ transform: `translateX(${-100 * Math.max(0, column)}%)` }} onTransitionEnd={(e) => { if (e.target === e.currentTarget) arrived(); }}>
+            <Remembered.Provider value={answers}>
             {drawn.map((b) => (
-              <BoardView key={b.id} board={b} onRemove={(id) => void change(b.id, [{ change: 'remove', placement: id }])}
+              <BoardView key={b.id} board={b} live={b.id === shown?.id || b.id === onScreen.leaving} onRemove={(id) => void change(b.id, [{ change: 'remove', placement: id }])}
                 onMaximize={(id) => void change(b.id, [{ change: 'maximize', placement: id }])}
                 onClose={() => void memberOperation('boards.close', { board: b.id }).catch(() => {})} onLost={newer} />
             ))}
+            </Remembered.Provider>
           </div>
           {drawn.length > 1 && <div className="boards-dots" aria-hidden="true">{drawn.map((b) => <i key={b.id} data-on={b.id === shown?.id} />)}</div>}
         </section>
@@ -232,13 +254,19 @@ export function Page({ member, thread, agent, at, exists = false }: { member: st
       <section className="boards-talk" aria-label="Conversation" data-sheet={sheet} data-empty={!tail.last}>
         <div className="boards-top">
           <button type="button" className="boards-presence" aria-expanded={sheet} onClick={() => setSheet((open) => !open)}>
-            {agent === 'art' ? <span className="boards-face" aria-hidden="true"><Portrait className="art-portrait shrink-0" state={mood} /></span> : <AgentFace agent={agent} state={mood} />}
-            <span className="min-w-0"><span className="block font-semibold">{name}</span><span role="status" className="block text-sm text-muted-foreground">{status}</span></span>
+            <AgentFace agent={agent} state={mood} size={FACE.presence} />
+            <span className="boards-who">
+              <span className="boards-name">{name}</span>
+              {/* One quiet line: which conversation this is, as plain words, then how the agent stands. */}
+              <span className="boards-where">{title && <span className="boards-thread-title">{title}</span>}<span role="status">{status}</span></span>
+            </span>
           </button>
-          <Notify />
-          <ThreadSwitch thread={thread} visit={visit} />
+          {/* The one control: the panel it opens holds the conversations, this one's rename and archive, and notifications. */}
+          <ThreadSwitch thread={thread} visit={visit}>
+            <ThreadHead thread={thread} member={member} />
+            <Notify />
+          </ThreadSwitch>
         </div>
-        <ThreadHead thread={thread} member={member} />
         <div className="boards-log" ref={log}>
           <MessageScrollerProvider defaultScrollPosition="end" autoScroll>
             <MessageScroller>
@@ -301,6 +329,9 @@ export function Resolve({ member }: { member: string }) {
 
 function App() {
   const { session, login, message } = useSession();
+  // What the page remembered of a member's bricks ends with their session.
+  const viewer = session?.viewer?.id;
+  useEffect(() => { if (!viewer) forgetAnswers(); }, [viewer]);
   return session?.viewer ? <><Wear /><Resolve member={session.viewer.id} /></> : (
     <main className="p-6">
       {session ? <Button onClick={() => void login()}>Sign in with a passkey</Button> : <p>Connecting to Loom…</p>}

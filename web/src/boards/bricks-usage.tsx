@@ -7,8 +7,7 @@ import { useState } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { byTokens, conversationsQuery, dayRange, format, groupTitle, jobsQuery, localDay, metrics, runKindWord, toolsLine, type UsageGroup, type UsageJob, type UsageRange } from '../pieces/usage/model';
 import { isRef } from './admin-data';
-import { Fact, Facts, Lead, Loading, Note, Row, Rows, State, Unavailable, count, type BodyProps, type Tone } from './brick-kit';
-import { Opened, Opens } from './settings-kit';
+import { Fact, Facts, Few, Lead, Loading, More, Note, Opened, Opens, Row, Rows, State, Unavailable, count, type BodyProps, type Tone } from './brick-kit';
 
 const jobTone = (state: string | null): Tone => (state === 'queued' || state === 'starting' || state === 'running' ? 'working' : state === 'done' ? 'good' : state === 'failed' ? 'bad' : 'muted');
 
@@ -65,8 +64,9 @@ export function Usage({ params, form }: BodyProps) {
     <>
       <Lead>{format(tokens)} tokens reported</Lead>
       <div className="board-meta"><span>{rest}</span></div>
+      <Few of={groups} first={cap} fit={!primary}>{(shown, hidden) => <>
       <Rows>
-        {groups.slice(0, cap).map((g) => (
+        {shown.map((g) => (
           <Row key={JSON.stringify(g.key)} title={groupTitle(g)} place={isRef(g.key) ? { brick: 'session', params: { session: g.key } } : undefined}
             end={<span className="board-number">{format(g.totalTokens)} tokens</span>}>
             {primary && <div className="board-meta">
@@ -77,7 +77,8 @@ export function Usage({ params, form }: BodyProps) {
           </Row>
         ))}
       </Rows>
-      {groups.length > cap && <Note>and {groups.length - cap} more</Note>}
+      <More n={hidden} />
+      </>}</Few>
     </>
   );
 }

@@ -274,6 +274,28 @@ describe('the presence', () => {
     expect(svg.findAllByType('path')[0].props.style.stroke).toBe('#3366ff');
     expect(tree!.root.findAllByType('art-sprite')).toEqual([]);
   });
+  it('is one quiet line: the name, the thread\'s title as plain words and how the agent stands; one control opens the panel that holds everything else', async () => {
+    f.answers = { ...listed(), BoardsThreadHead: { status: 'live', data: { thread: row('th:old', { title: 'The gate' }) } } };
+    await mount(h(Page, { member: 'sam', thread: 'th:old', agent: 'art' }));
+    const top = tree!.root.findAll((n) => n.props.className === 'boards-top')[0];
+    expect(text(top.findAll((n) => n.props.className === 'boards-name')[0])).toBe('Art');
+    expect(top.findAll((n) => n.props.className === 'boards-where')[0].children.map(text)).toEqual(['The gate', expect.any(String)]);
+    // Nothing else is in the header: no rename, no archive, no bell.
+    expect(top.findAllByType('button').map((b) => b.props['aria-label'] ?? b.props.className)).toEqual(['boards-presence', 'Conversations']);
+    expect(tree!.root.findAllByType('strong')).toEqual([]);
+    await press('Conversations');
+    // The panel: the conversations and a new one with each agent, this conversation's rename and archive, and notifications.
+    expect(dialog().findAllByType('a').map((a) => a.props.href)).toEqual(['/app/t/th%3Apin', '/app/t/th%3Anew', '/app/t/th%3Aold']);
+    expect(dialog().findAllByType('button').map((b) => b.props['aria-label'] ?? text(b))).toEqual(['New conversation with Art', 'New conversation with Mira', 'Rename', 'Archive…', 'Notifications']);
+    expect(text(dialog().findAllByType('strong')[0])).toBe('The gate');
+    // Its keys are the list's; a key pressed while typing a new title is the field's own.
+    await press('Rename');
+    const field = { closest: (selector: string) => (selector.includes('input') ? {} : null) }, went = f.went.length;
+    await act(async () => dialog().props.onKeyDown({ key: 'Enter', target: field, currentTarget: {}, preventDefault() {} }));
+    expect(f.went).toHaveLength(went); expect(dialog()).toBeDefined();
+    await act(async () => dialog().props.onKeyDown({ key: 'Escape', target: field, currentTarget: {}, preventDefault() {} }));
+    expect(dialog()).toBeUndefined();
+  });
   it('keeps Art\'s sprite for Art, and draws no face for an agent whose look cannot be read', async () => {
     await mount(h(Page, { member: 'sam', thread: 'th:old', agent: 'art' }));
     expect(tree!.root.findAllByType('art-sprite')).toHaveLength(1);

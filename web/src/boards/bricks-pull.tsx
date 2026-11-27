@@ -39,7 +39,7 @@ export function Pull({ params, form, raise }: { params: Params; form: Form; rais
   useOwnFlag(c && `${c.state}|${c.checks}`, raise, pullFlag);
   if (read.status === 'loading') return <Loading />;
   if (read.status !== 'live' || !c) return <Unavailable what="pull request" />;
-  if (form === 'compact') return <p className="board-brief"><State tone={tone(c)}>{pullState(c)}</State> #{c.number} {c.title}{c.state === 'open' ? ' · ' + waitingWord(c) : ''}</p>;
+  if (form === 'compact') return <p className="board-brief"><State tone={tone(c)}>{pullState(c)}</State> {c.state === 'open' ? <><b>{waitingWord(c)}</b> · </> : null}#{c.number} {c.title}</p>;
   // A linked ticket is shown only when the member may read the ticket itself, as the desktop does.
   const tickets = (read.data?.changeTasks ?? []).flatMap((link) => (link.taskRow && link.taskRow.id === link.task ? [link.taskRow] : []));
   const checks = [...(read.data?.changeChecks ?? [])].sort((a, b) => a.state.localeCompare(b.state));
@@ -49,13 +49,13 @@ export function Pull({ params, form, raise }: { params: Params; form: Form; rais
       <Lead>{c.title}</Lead>
       <div className="board-meta">
         <State tone={tone(c)}>{pullState(c)}</State>
-        <span className="font-mono">#{c.number}</span>
+        {form === 'primary' && <span className="font-mono">#{c.number}</span>}
         <Chip place={{ brick: 'repository', params: { repository: c.repository } }}>{c.repository}</Chip>
         {c.project && <Chip place={{ brick: 'project', params: { project: c.project } }}>{c.project}</Chip>}
         {c.agent && <Chip place={{ brick: 'agent', params: { agent: c.agent } }}>{c.agent}</Chip>}
+        {form === 'side' && tickets.map((t) => <span key={t.id} title={t.title}>{ticketChip(t.id)}</span>)}
       </div>
       <Note>{summary(c)}</Note>
-      {form === 'side' && tickets.length > 0 && <div className="board-meta">{tickets.map((t) => <span key={t.id} title={t.title}>{ticketChip(t.id)}</span>)}</div>}
       {form === 'primary' && (
         <>
           <Facts>

@@ -13,6 +13,8 @@ const f = vi.hoisted(() => {
     status: 'live', boards: [] as unknown[], answers: {} as Record<string, { status: string; data?: unknown }>,
     op: vi.fn(), build: vi.fn(), reload: vi.fn(), stored: vi.fn(), went: [] as string[],
     area: { w: 1200, h: 800 },
+    /** The page's motion is reduced: nothing slides. */ reduced: true,
+    /** How many mounted hooks hold each query open, by its name. */ open: new Map<string, number>(),
     /** Stands in for a DOM element a click lands on. */
     Element: class { constructor(readonly found: Record<string, unknown>) {} closest(selector: string) { return this.found[selector] ?? null; } },
   };
@@ -31,7 +33,7 @@ const f = vi.hoisted(() => {
   return f;
 });
 vi.mock('react-dom/client', () => ({ createRoot: () => ({ render() {} }) }));
-vi.mock('../access', () => ({ wearMotion() {}, motionQuery: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }), reducedMotion: () => true }));
+vi.mock('../access', () => ({ wearMotion() {}, motionQuery: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }), reducedMotion: () => f.reduced }));
 vi.mock('../signin/use-session', () => ({ useSession: () => ({ session: null, login() {}, message: '' }) }));
 vi.mock('../contexts/portrait', () => ({ Portrait: () => null }));
 vi.mock('../pair/ui/button', async () => { const { createElement } = await import('react'); return { Button: (p: object) => createElement('button', p) }; });
@@ -53,12 +55,14 @@ vi.mock('../pair/transcript', async () => {
 vi.mock('./build', () => ({ buildChanged: f.build }));
 vi.mock('../data/operation', () => ({ memberOperation: f.op }));
 vi.mock('../data/graphql', async () => {
-  const { useSyncExternalStore } = await import('react');
+  const { useSyncExternalStore, useEffect } = await import('react');
   return {
     useDataQuery(query: string, _variables: unknown, options?: { pause?: boolean }) {
       useSyncExternalStore((fn) => { f.listeners.add(fn); return () => { f.listeners.delete(fn); }; }, () => f.version);
+      const name = /query (\w+)/.exec(query)![1], paused = !!options?.pause;
+      // A hook that is mounted and not paused holds its selection open.
+      useEffect(() => { if (paused) return; f.open.set(name, (f.open.get(name) ?? 0) + 1); return () => { f.open.set(name, f.open.get(name)! - 1); }; }, [name, paused]);
       if (options?.pause) return { status: 'loading' };
-      const name = /query (\w+)/.exec(query)![1];
       if (name === 'ThreadBoards') return f.status === 'live' ? { status: 'live', data: { threadBoards: f.boards } } : { status: f.status };
       return f.answers[name] ?? { status: 'live', data: null };
     },
@@ -113,7 +117,7 @@ beforeEach(() => {
   seq = 0;
   f.status = 'live'; f.answers = { BrickTicket: { status: 'live', data: { ticket: task } } } as Record<string, Answer>;
   f.op.mockReset().mockResolvedValue(undefined); f.build.mockReset().mockResolvedValue(false);
-  f.reload.mockReset(); f.stored.mockReset(); f.went.length = 0;
+  f.reload.mockReset(); f.stored.mockReset(); f.went.length = 0; f.reduced = true;
   location.pathname = '/app/boards';
 });
 afterEach(async () => { await act(async () => tree?.unmount()); tree = undefined; });
@@ -145,8 +149,9 @@ describe('the board', () => {
   it('shows a placement with no room as its chip in the folded row', async () => {
     const root = await one([lanes({ big: true }), ticket(), question()], {}, { area: { w: 500, h: 700 } });
     expect(forms()).toEqual(['primary']);
-    expect(chips().map(text)).toEqual(['Ticket · t-7', 'Question · in-3']);
-    expect(text(root.findAll((n) => n.props.className === 'boards-folded')[0])).toContain('Also here');
+    expect(chips().map(text)).toEqual(['Ticket t-7', 'Question in-3']);
+    // The row says how many placements are folded, once, before their chips.
+    expect(text(root.findAll((n) => n.props.className === 'boards-folded-count')[0])).toBe('2 more');
   });
   it('says nothing in the folded row when nothing is folded', async () => {
     const root = await one([lanes({ big: true })]);
@@ -430,6 +435,58 @@ describe('the trail', () => {
     expect(location.pathname).toBe('/app/b/b-2');
     expect(text(root.findByType('h1'))).toBe('Ticket');
     expect(root.findAll((n) => n.type === 'header' && n.findAllByType('h1').length > 0)[0].findAllByType('button').map(text)).toEqual(['Reopen']);
+  });
+  /** The bricks' own selections that are held open, by query name. The page's and the conversation's are left out. */
+  const held = () => [...f.open].filter(([name, n]) => n > 0 && name.startsWith('Brick')).map(([name]) => name).sort();
+  const boardsDrawn = () => tree!.root.findAll((n) => n.props.className === 'boards-board');
+  const bodies = (boardNode: Node) => boardNode.findAllByType('article').map((a) => a.findAll((n) => n.type === 'div' && n.parent === a)[0].children.length > 0);
+  it('only the board on screen draws its bricks and holds their reads; the others keep their frames for the slide', async () => {
+    const first = board('b-1', [lanes({ big: true }), question({ flagged: true })]), second = board('b-2', [ticket({ big: true })]);
+    await draw([first, second]);
+    expect(location.pathname).toBe('/app/b/b-2');
+    const [off, on] = boardsDrawn();
+    // The board on screen: its ticket is drawn and read.
+    expect(bodies(on)).toEqual([true]);
+    expect(held()).toEqual(['BrickTicket', 'BrickTicketMore', 'BrickTicketSessions']);
+    expect([on.props['data-live'], off.props['data-live'], off.props.inert]).toEqual([true, false, true]);
+    // The board off screen: its heading and each placement's frame, name and reference, where the layout puts them, and no body.
+    expect(text(off.findByType('h1'))).toBe('Lanes');
+    expect(off.findAllByType('article').map((a) => [text(a.findByType('h2')), text(a.findByType('small')), a.props['data-form'], typeof a.props.style.width])).toEqual([['Lanes', 'garden', 'primary', 'number'], ['Question', 'in-3', 'side', 'number']]);
+    expect(bodies(off)).toEqual([false, false]);
+    // A flag stored on a placement of a board that is off screen is still on its frame.
+    expect(off.findAllByType('article').map((a) => a.props['data-flagged'])).toEqual([false, true]);
+    expect(off.findAll((n) => n.props.className === 'board-flag').map(text)).toEqual(['Look here']);
+  });
+  it('going along the trail draws the arriving board\'s bricks and lets the leaving board\'s go: at once where nothing moves', async () => {
+    const first = board('b-1', [lanes({ big: true })]), second = board('b-2', [ticket({ big: true })]);
+    await draw([first, second]);
+    expect(held()).toEqual(['BrickTicket', 'BrickTicketMore', 'BrickTicketSessions']);
+    location.pathname = '/app/b/b-1';
+    await act(async () => { tree!.update(h(Page, { member: 'sam', thread, agent: 'art', at: { board: 'b-1' } })); });
+    expect(boardsDrawn().map((b) => bodies(b))).toEqual([[true], [false]]);
+    expect(held()).toEqual(['BrickLanes']);
+  });
+  it('while the trail slides, both boards are drawn; the leaving one lets go when the slide ends', async () => {
+    f.reduced = false;
+    const first = board('b-1', [lanes({ big: true })]), second = board('b-2', [ticket({ big: true })]);
+    await draw([first, second]);
+    location.pathname = '/app/b/b-1';
+    await act(async () => { tree!.update(h(Page, { member: 'sam', thread, agent: 'art', at: { board: 'b-1' } })); });
+    // The arriving board's bricks mount as the slide starts; the leaving board's are still there.
+    expect(boardsDrawn().map((b) => bodies(b))).toEqual([[true], [true]]);
+    expect(held()).toEqual(['BrickLanes', 'BrickTicket', 'BrickTicketMore', 'BrickTicketSessions']);
+    const trail = tree!.root.findAll((n) => n.props.className === 'boards-trail')[0], here = {};
+    // A transition inside the trail (a placement settling) is not the slide.
+    await act(async () => trail.props.onTransitionEnd({ target: {}, currentTarget: here }));
+    expect(held()).toEqual(['BrickLanes', 'BrickTicket', 'BrickTicketMore', 'BrickTicketSessions']);
+    await act(async () => trail.props.onTransitionEnd({ target: here, currentTarget: here }));
+    expect(boardsDrawn().map((b) => bodies(b))).toEqual([[true], [false]]);
+    expect(held()).toEqual(['BrickLanes']);
+  });
+  it('a closed board drawn by its own address is the board on screen, and reads as ever', async () => {
+    await draw([board('b-1', [lanes({ big: true })]), board('b-2', [ticket({ big: true })], { closed: true })], { path: '/app/b/b-2' });
+    expect(boardsDrawn().map((b) => bodies(b))).toEqual([[true]]);
+    expect(held()).toEqual(['BrickTicket', 'BrickTicketMore', 'BrickTicketSessions']);
   });
   it('a closed board that is not the one in the address gives way to the last open one', async () => {
     const root = await draw([board('b-1', [lanes({ big: true })]), board('b-2', [ticket({ big: true })], { closed: true })]);

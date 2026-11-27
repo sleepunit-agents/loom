@@ -13,8 +13,7 @@ import { memberOperation } from '../data/operation';
 import { agentOwnership, householdSetupQuery, programLine, programNote, programQuery, sessionLine, setupWords, tokenState, type HouseholdSetup, type ProgramSetupData } from '../pieces/household/model';
 import { sessionChange } from '../signin/session-change';
 import { isMember, isRef } from './admin-data';
-import { Action, Actions, Chip, Fact, Facts, Lead, Loading, Note, Row, Rows, Section, State, Time, Unavailable, count, type BodyProps, type Tone } from './brick-kit';
-import { AskRow, Opened, Opens } from './settings-kit';
+import { Action, Actions, AskRow, Chip, Fact, Facts, Lead, Loading, Note, Opened, Opens, Row, Rows, Section, State, Time, Unavailable, count, type BodyProps, type Tone } from './brick-kit';
 
 const agentChip = (id: string) => (isRef(id) ? <Chip key={id} place={{ brick: 'agent', params: { agent: id } }}>{id}</Chip> : <span key={id}>{id}</span>);
 const memberChip = (id: string) => (isMember(id) ? <Chip key={id} place={{ brick: 'person', params: { person: 'member:' + id } }}>{id}</Chip> : <span key={id}>{id}</span>);

@@ -1,6 +1,6 @@
 /** The open tickets someone has, as the `person` and `agent` bricks draw them. */
 import { useDataQuery } from '../data/graphql';
-import { Loading, Note, Row, Rows, Unavailable, count } from './brick-kit';
+import { Few, Loading, More, Note, Row, Rows, Unavailable, count } from './brick-kit';
 import type { Form } from './layout';
 
 export function Assigned({ who, kind, form }: { who: string; kind: 'member' | 'agent'; form?: Form }) {
@@ -15,7 +15,10 @@ export function Assigned({ who, kind, form }: { who: string; kind: 'member' | 'a
   return rows.length ? (
     <>
       <Note>{said}.</Note>
-      <Rows>{rows.map((t) => <Row key={t.id} place={{ brick: 'ticket', params: { ticket: t.id } }} title={t.title} meta={<span className="font-mono">{t.id}</span>} />)}</Rows>
+      <Few of={rows} first={rows.length} fit={form === 'side'}>{(shown, hidden) => <>
+        <Rows>{shown.map((t) => <Row key={t.id} place={{ brick: 'ticket', params: { ticket: t.id } }} title={t.title} meta={<span className="font-mono">{t.id}</span>} />)}</Rows>
+        <More n={hidden} />
+      </>}</Few>
     </>
   ) : <Note>No open tickets.</Note>;
 }

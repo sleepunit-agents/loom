@@ -8,7 +8,7 @@ import { useDataQuery } from '../data/graphql';
 import { eventsByDay, historyQuery, historyRange, outcomeWords, stoppedDue, type DayFeed, type Event } from '../pieces/tempo/day-model';
 import { kindLabels, nextScheduledAt, recordedOutcomes, rows, source, terminal, title, triggerKind, type Trigger } from '../pieces/tempo/model';
 import { tempoQuery, type TempoData } from '../pieces/tempo/query';
-import { Chip, Loading, Note, Row, Rows, Section, State, Unavailable, count, useOwnFlag, words, type BodyProps, type Place } from './brick-kit';
+import { Chip, Few, Loading, More, Note, Row, Rows, Section, State, Time, Unavailable, count, useOwnFlag, words, type BodyProps, type Place } from './brick-kit';
 import { clock, jobFailed, stateTone, stateWord } from './tempo-data';
 
 export const tempoClockQuery = 'query BrickTempoClock{deskTime{at}}';
@@ -51,51 +51,54 @@ export function Tempo({ params, form, raise }: BodyProps) {
   if (read.status === 'loading' || (read.status === 'live' && !read.data)) return <Loading />;
   if (!live) return <Unavailable what="agent's tempo" />;
   const pause = read.data!.agentPauses?.find((p) => p.agent === agent), pauses = read.data!.agentPauses ?? [];
-  const format = clock(zone), time = (at: string | number) => format.format(new Date(at));
+  const format = clock(zone);
   const next = mine.map(nextScheduledAt).find((at): at is string => !!at);
   if (form === 'compact') return (
     <p className="board-brief">
-      {count(mine.length, 'trigger')}{mine.some(failed) ? ` · ${mine.filter(failed).length} failed` : ''}{pause ? ' · agent paused' : ''}{next ? ` · next ${time(next)}` : ''}
+      {count(mine.length, 'trigger')}{mine.some(failed) ? ` · ${mine.filter(failed).length} failed` : ''}{pause ? ' · agent paused' : ''}{next ? <> · next <Time at={next} /></> : null}
     </p>
   );
-  const shown = primary ? mine : mine.slice(0, 5);
   const todays = (today ? days.get(today) ?? [] : []).filter((event) => mine.some((t) => t.id === event.trigger))
     .sort((a, b) => Date.parse(b.at) - Date.parse(a.at) || b.seq - a.seq);
   return (
     <>
       <div className="board-meta">
         <Chip place={{ brick: 'agent', params: { agent } }}>{agent}</Chip>
-        <span>{count(mine.length, 'trigger')} · {zone}</span>
-        {pause && <State tone="waiting">Paused since {time(pause.since)}</State>}
+        <span>{count(mine.length, 'trigger')}</span>
+        {pause && <State tone="waiting">Paused <Time at={pause.since} /></State>}
+        <small className="board-zone">{zone}</small>
       </div>
       {!mine.length ? <Note>No triggers here. Ask an agent in chat to set a trigger.</Note> : (
+        <Few of={mine} first={primary ? mine.length : 5} fit={!primary}>{(shown, hidden) => <>
         <div className="board-tempo">
-          <Rows>
+          <Rows beside>
             {shown.map((trigger) => {
               const due = nextScheduledAt(trigger), event = last.get(trigger.id);
               return (
                 <Row key={trigger.id} place={triggerPlace(trigger)} title={title(trigger)} end={<State tone={stateTone(trigger, pauses)}>{stateWord(trigger, pauses)}</State>}
                   meta={<>
                     <span>{kindLabels[triggerKind(trigger)]} · {source(trigger)}</span>
-                    <span className="board-tempo-times">{[due ? `Next ${time(due)}` : terminal(trigger) ? 'No next firing' : '',
-                      trigger.lastFiredAt ? `Last fired ${time(trigger.lastFiredAt)}` : 'Never fired',
-                      event ? [outcomeWords(event), ...eventDetails(event, format)].join(', ') : ''].filter(Boolean).join(' · ')}</span>
+                    {primary && <span className="board-tempo-times">
+                      {due ? <>Next <Time at={due} /></> : terminal(trigger) ? 'No next firing' : null}{(due || terminal(trigger)) && ' · '}
+                      {trigger.lastFiredAt ? <>Last fired <Time at={trigger.lastFiredAt} /></> : 'Never fired'}
+                      {event ? ' · ' + [outcomeWords(event), ...eventDetails(event, format)].join(', ') : ''}</span>}
                     {failed(trigger) && <span className="board-tempo-failed">Its last firing failed.</span>}
                   </>} />
               );
             })}
           </Rows>
         </div>
+        <More n={hidden} />
+        </>}</Few>
       )}
-      {!primary && mine.length > shown.length && <Note>And {mine.length - shown.length} more.</Note>}
       {primary && (
         <Section title="Today">
           {!today || !log ? (desk.status === 'loading' || feed.status === 'loading' ? <Loading /> : <Note>Firing history unavailable.</Note>)
             : todays.length ? (
               <div className="board-tempo">
-                <Rows>{todays.map((event) => { const trigger = mine.find((t) => t.id === event.trigger)!; return (
+                <Rows beside>{todays.map((event) => { const trigger = mine.find((t) => t.id === event.trigger)!; return (
                   <Row key={event.seq} place={triggerPlace(trigger)} title={title(trigger)} meta={[outcomeWords(event), ...eventDetails(event, format)].join(' · ')}
-                    end={<span className="board-tempo-at">{time(event.at)}</span>} />
+                    end={<Time at={event.at} />} />
                 ); })}</Rows>
               </div>
             ) : <Note>No recorded activity for this day.</Note>}

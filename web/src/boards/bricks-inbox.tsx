@@ -11,7 +11,7 @@ import { memberOperation } from '../data/operation';
 import { inboxPageSize, inboxSelection, retainedInboxItem, useInboxItemWords, useInboxSelection } from '../pieces/attention/inbox-query';
 import { useDeadline } from '../pieces/comms/use-deadline';
 import { currentNotices, errorsFolder, folderWords, from, noticeFolder, rows, stateWord, volumeWords, type InboxItem } from '../pieces/inbox-view/model';
-import { Action, Actions, Chip, Lead, Loading, Note, Problem, Row, Rows, State, Time, Unavailable, useOwnFlag, words, type Act, type Params, type Raise, type Tone } from './brick-kit';
+import { Action, Actions, Chip, Excerpt, Few, Lead, More, Loading, Note, Problem, Row, Rows, State, Time, Unavailable, useOwnFlag, words, type Act, type Params, type Raise, type Tone } from './brick-kit';
 import type { Form } from './layout';
 
 const folders: readonly (readonly [string, string])[] = [...folderWords, errorsFolder];
@@ -65,13 +65,15 @@ export function Inbox({ params, form, act, raise }: { params: Params; form: Form
     <>
       <Lead>{label}: {count(folder)}</Lead>
       {entries.length > 0 && (
-        <Rows>
-          {entries.slice(0, few).map(({ id, row, notice }) => row
-            ? <Row key={id} place={place(row)} title={title(row)} flagged={!row.read} meta={<>{from(row)} · {stateWord(row)}</>} />
-            : <Row key={id} title={notice.text} />)}
-        </Rows>
+        <Few of={entries} first={few}>{(shown, hidden) => <>
+          <Rows>
+            {shown.map(({ id, row, notice }) => row
+              ? <Row key={id} place={place(row)} title={<Excerpt lines={2}>{title(row)}</Excerpt>} flagged={!row.read} meta={<>{from(row)} · {stateWord(row)}</>} />
+              : <Row key={id} title={notice.text} />)}
+          </Rows>
+          <More n={hidden && Math.max(count(folder), entries.length) - shown.length} />
+        </>}</Few>
       )}
-      {entries.length > few && <Note>and {Math.max(count(folder), entries.length) - few} more</Note>}
       {!entries.length && none}
     </>
   );

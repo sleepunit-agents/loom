@@ -160,7 +160,9 @@ it('shows anyone else the alert lines without a way to change them', async () =>
 it('draws the side form as a list and the compact form as one line, neither with a control', async () => {
   answer();
   await draw('side');
-  for (const words of ['2 machines · 1 open alert', 'Den', 'The loom machine', '3 slots', '/ is running out of room']) expect(shown(), words).toContain(words);
+  for (const words of ['2 machines · 1 open alert', 'Den', 'The loom machine', '1 open alert']) expect(shown(), words).toContain(words);
+  // An alert's own reading and a machine's slots are in the big form.
+  for (const words of ['3 slots', '/ is running out of room']) expect(shown(), words).not.toContain(words);
   expect(controls()).toEqual([]);
   await draw('compact');
   const json = tree!.toJSON() as { type: string; props: { className: string } };

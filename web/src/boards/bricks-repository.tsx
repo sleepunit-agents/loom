@@ -3,7 +3,7 @@
  * query layer), so a repository is known here only by the pull requests loom has read for it. */
 import { useDataQuery } from '../data/graphql';
 import { rowWord, type Change } from '../pieces/change-view/model';
-import { Chip, Loading, Note, Row, Rows, Unavailable, repositoryKey, words, type Params } from './brick-kit';
+import { Chip, Few, Loading, More, Note, Row, Rows, Unavailable, repositoryKey, words, type Params } from './brick-kit';
 import type { Form } from './layout';
 
 type Row = Pick<Change, 'id' | 'number' | 'title' | 'state' | 'draft' | 'checks' | 'review' | 'waitingOn' | 'agent' | 'project'>;
@@ -27,17 +27,19 @@ export function Repository({ params, form }: { params: Params; form: Form }) {
   const total = `${rows.length === 30 ? 'At least thirty' : rows.length || 'No'} open pull request${rows.length === 1 ? '' : 's'}`;
   if (form === 'compact') return <p className="board-brief">{total}{yours ? ` · ${yours} waiting on you` : ''}</p>;
   if (!rows.length) return <Note>No open pull requests.</Note>;
-  const big = form === 'primary', shown = rows.slice(0, big ? rows.length : 3);
+  const big = form === 'primary';
   return (
     <>
       <Note>{total}{yours ? `, ${yours} waiting on you` : ''}.</Note>
+      <Few of={rows} first={big ? rows.length : 3} fit={!big}>{(shown, hidden) => <>
       <Rows>
         {shown.map((c) => (
           <Row key={c.id} place={{ brick: 'pull', params: { change: c.id } }}
             title={<><span className="font-mono board-repository-number">#{c.number}</span> {c.title}</>} meta={rowWord(c)} />
         ))}
       </Rows>
-      {rows.length > shown.length && <Note>and {rows.length - shown.length} more</Note>}
+      <More n={hidden} />
+      </>}</Few>
     </>
   );
 }

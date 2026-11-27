@@ -412,7 +412,8 @@ ids, making it with `comms.open` if it does not exist.
   form and a rectangle, or folded`. The big placement gets the primary form and never folds; below its minimum width it
   takes the full width. The rest get side, then compact, in rank order, as room allows. With no big placement, all of
   them do. A placement there is no room
-  for is **folded**: shown as its chip in one expandable row at the end of the board. The exact rule is the design
+  for is **folded**: shown as its chip in one row at the end of the board, under a hairline, after the count of
+  how many are folded ("3 more"). The exact rule is the design
   pass's to write. Fixed here: it is pure, it reads only rank, fit and area, and the same input always gives the same
   output. A board with an empty title is headed by the name of its big brick, or of its first placement if none is big, without the reference; it has no heading if it has no placements.
 - **Motion.** Placements are keyed by id. One that appears enters, one that goes leaves, the rest move to their new
@@ -440,10 +441,39 @@ ids, making it with `comms.open` if it does not exist.
   go elsewhere; a closed board that is not the one in the address gives way to the last board on the trail, and with
   none to `/app/t/<thread id>`. `/app/t/<thread id>` for a thread with a trail goes to the last board on it. A change
   to a board that is not on screen is stored and drawn when the member goes there.
+- **Off screen (built 2026-11-27, the owner's ruling: "we absolutely treat everything not on the current screen as
+  paused").** Only the board on screen draws its bricks. Every other board on the trail keeps its frame, so the trail
+  still slides between laid-out boards: its heading, and each placement's rectangle, name, reference and stored flag,
+  from what the page knows without asking (the registry and the board's own read). It mounts no brick body, so it
+  holds no live read and fetches no brick's module, and nothing in it takes the keyboard. When the page goes to
+  another board, the arriving board's bricks are drawn as the slide starts and the leaving board's are let go when
+  it ends (at once where motion is reduced). A closed board drawn by its own address is the board on screen. The
+  page's own reads (the thread's boards, the conversation, the list of conversations) are never paused.
+  What this costs, accepted by the owner: words half typed in a brick's form on a board the page slid away from are
+  lost.
+- **What the page remembers (built 2026-11-27).** A brick drawn again (its board came back on screen) shows what it
+  last showed at once, and its placement's header carries one small mark, named "Getting new data" for assistive
+  technology, until the fresh answer arrives; the mark takes no room and does not pulse where motion is reduced.
+  What is remembered is the last live answer to each selection a brick made (the same document and variables), in
+  the page's memory only: never in localStorage, sessionStorage, IndexedDB or the address, so it ends with the page.
+  It is the most recent 300 answers, the oldest dropped first; it is emptied when another member signs in and when
+  the session ends; and one answer is dropped the moment its selection is refused or its feed closes, when the brick
+  shows what it shows for that state and nothing of the old answer. Every selection is still asked of the server
+  each time: nothing is read from a cache in place of asking. Only brick bodies are under this; the page's own
+  reads and the whole desktop are as they were. While a placement is getting new data its brick's controls work,
+  except where acting on old data would be dangerous: the `approval` brick's Allow, Deny and reason, and every
+  control of the `secrets` brick, wait for the fresh answer. A brick's own flag compares the remembered value with
+  the fresh one, so a record that changed while its board was off screen flags its brick when the board returns:
+  that is "this changed while you were not looking", and it is raised on purpose.
 - **A closed board.** Its address draws it as it was, with no remove or maximize controls and one control to reopen
   it. Its bricks are drawn and do nothing: no action, no chip, no input in them responds.
 - **Not yours.** A board or thread id that does not exist, or that the member may not read, draws one line saying
   there is nothing here, and no presence and no input.
+- **The conversation's header (design pass, 2026-11-27).** One quiet line: the agent's face and name, and under the
+  name the thread's title as plain words before how the agent stands. One unobtrusive control beside it (three
+  dots; the desktop launcher's keys open it too) opens one panel that holds everything else: the list of
+  conversations and a new one with each agent, this conversation's rename and archive, and notifications on this
+  device (a line that opens its state, its on and off, and its two choices). Nothing else is in the header.
 - **Threads (built 2026-11-27).** A control beside the presence, and the desktop launcher's keys (Ctrl+Space, a
   double tap of Shift), open a list of the member's open threads: Comms' own rows in Comms' order (pinned, then most
   recent; its first fifty), each with its title, its agent, "Working" and "Unread". Arrow keys move, Enter chooses,
@@ -1081,7 +1111,20 @@ Every brick's body is made from one small vocabulary, `web/src/boards/brick-kit.
 `web/src/boards/board-kit.css`. A brick writes no markup of its own where the kit has a word for it. The look is
 quiet and typographic: one accent, hairlines in place of boxes, air in place of rules, nothing heavier than a
 medium weight. The page's tokens stay at the top of `board.css`; the kit adds a type scale of five sizes
-(`--bk-xs` to `--bk-xl`), a spacing scale (`--bk-1` to `--bk-5`) and the tones.
+(`--bk-xs` to `--bk-xl`), one spacing scale (`--bk-0` to `--bk-5`: every padding, margin and gap in the kit is on it) and
+the tones.
+
+**A side form is a glance (design pass 2, 2026-11-27).** It holds the few facts that say where the record stands and
+at most its main action, and it fits its height without scrolling for ordinary content; everything else is in the
+primary form. A list in a side form draws as many rows as the placement has room for (`Few` measures and never draws
+fewer than one) and ends in `More`, "and N more", which makes the brick the big one where it can be (the frame's own
+maximize). Prose in a small form is an `Excerpt`: its first lines, fading at the end of the last, with no ellipsis
+and no word cut in half; the compact brief and a compact header's long reference fade the same way. The one
+exception is the `approval` brick: its side form keeps everything the answer is weighed by above the answer, as the
+primary form does, and so may scroll. Times are written by `Time` on every brick; a brick whose times are statements
+about the household's clock (a trigger's schedule, Activity's days) keeps them and says the zone once, quietly.
+An agent's face is one component (`agent-face.tsx`): the household's stored sprite, Art's built-in sprite, or the
+face made from the agent's colours.
 
 | Word | What it is |
 |---|---|
@@ -1093,6 +1136,9 @@ medium weight. The page's tokens stay at the top of `board.css`; the kit adds a 
 | `Section` | A part of a brick under a small heading, with a count where it lists things. |
 | `Facts`, `Fact` | Label and value pairs. A short value sits beside its label; prose (`wide`) sits under it. |
 | `Rows`, `Row` | A list of records parted by hairlines: title, a quiet line under it, a state or time at its end, controls below. A row that places a brick is one hit area. |
+| `Few`, `More`, `Excerpt` | What makes a small form fit: as many rows as there is room for, the quiet "and N more" that maximizes, and prose cut to its first lines with a fade. |
+| `Confirm`, `Asking`, `Asks`, `AskRow` | Asking before acting, drawn one way: `Confirm` opens a question; `Asking` is the question alone, for a brick that keeps its own asking (the trigger's, the secrets' remove, the approval's second yes and standing answer, whose steps stay the shared ones). |
+| `Opens`, `Opened` | A row's name as the control that opens the rest of it under the row. |
 | `Actions`, `Action` | A brick's controls, last in the form. One `primary` at most; `quiet` steps back; `danger` cannot be undone. |
 | `Confirm` | Asking before acting, the same everywhere: the control ("Stop…") opens the act in full ("Stop this session") beside the way back. |
 | `Field` | A field of words under its label; `board-form` stacks them. |
@@ -1135,8 +1181,9 @@ selection on the socket, a paused hook holds none, and a folded placement draws 
 **What a board holds.** Each brick's small form opens between one and seven selections before its record has
 loaded (`agent` seven, `agents` four, `project` and `person` three), and more once it has (a ticket's links and
 sessions, a session's steps). A board of ten (lanes, ticket, comments, agent, pull, question, inbox, session,
-trend, project) holds 18; all 23 bricks at once hold 36. The page and the conversation hold their own beside these. Every board
-on the trail stays drawn beside the one shown, so each open board adds its own.
+trend, project) holds 18; all 23 bricks at once hold 36. The page and the conversation hold their own beside these. Only
+the board on screen holds its bricks' reads (since 2026-11-27: see item 2 below); before that every board on the trail
+added its own.
 
 **What one commit costs.** For that board of ten: 198 statements and 23 ms of processor for a write to a table
 no brick reads (a machine's name), and no frame sent; 204 statements, 27 ms and one small frame for a comment
@@ -1158,13 +1205,17 @@ statements and 180 ms. Commits 100 ms or more apart cost what they did.
    see a row: a selection must still be read again when access changes. A wrong answer here is a brick showing
    old data, or data the member may no longer read, so it is a change to the data layer with its own checks,
    not a change to boards.
-2. *Stop reading for boards that are off screen.* The boards on the trail other than the one shown keep their
-   selections open. Pausing them (`useDataQuery`'s `pause`) would cut a trail of three boards to a third. It
-   was left alone because a paused hook shows "Loading…": words half typed in a brick's form on a board the
-   page slid away from would be lost, a brick would no longer flag itself for a change that happened while its
-   board was off screen, and coming back would show the loading line first. Keeping the last data on screen
-   while paused would avoid all three, and would break the rule that a window hides what it holds the moment
-   its feed ends. This wants the owner's decision.
+2. *Stop reading for boards that are off screen.* **Built 2026-11-27, as the owner decided** ("we absolutely treat
+   everything not on the current screen as paused"). Only the board on screen mounts its bricks' bodies, so a
+   trail of three boards holds the reads of one ("The page", "Off screen"). The board the page slides away from
+   keeps its bricks until the slide ends. The three costs named here before were weighed: words half typed in a
+   brick's form on a board the page slid away from are lost (accepted); coming back does not show the loading
+   line, because the page remembers each brick's last answer in memory and shows it, marked as getting new data,
+   until the fresh one arrives ("The page", "What the page remembers"); and a brick flags itself when that fresh
+   answer differs from the remembered one, so a change made while its board was off screen is still flagged. The
+   rule that a window hides what it holds the moment its feed ends is kept: a remembered answer is dropped at
+   once when its selection is refused or its feed closes, it is never written to disk, it is emptied when the
+   signed-in member changes or the session ends, and the server is still asked every time.
 3. *A longer settle time.* 250 ms would hold a board of ten to four readings a second whatever is written, and
    would make every window, the conversation as it streams included, up to a quarter of a second late.
 
@@ -1536,6 +1587,30 @@ is, and an agent cannot set them. The small forms show everything. Not on the br
 the filters in the address. `web/src/boards/bricks-activity-filters.test.tsx`: the groups and counts, what each
 choice keeps, two of one group, the owner's entries, nothing matching, showing everything again, nothing sent or
 told, and no control in the small forms.
+
+**In a real browser, 2026-11-27.** `src/ui/boards.integration.test.ts` drives the built page in Chrome against
+loom's normal startup over a fictitious household with no model, with the other browser suites
+(`LOOM_BROWSER_TESTS=on`, after `npm run build`). It pins what no suite above can see: `/app/boards` opens the
+thread's address; a message sent with Enter is stored as typed, once, and the input clears; a board opened by the
+member's operation is drawn with no reload and the address becomes its own; bricks placed one a call are each drawn
+as they land and the placements already there are the same DOM nodes (checks 1 and 2, as the member); a brick's
+chunk is fetched only when a board first shows it; through all of it the address holds one id and no storage holds
+a board, a placement or a thread (18); a reload is the same board; the conversation's rows stand clear of its
+column's edges, no placement's name is squeezed to a letter a line, nothing on the board is drawn past the side of
+the window, the big placement is the widest and both halves are on screen at 1280 px; at 390 px the board is one
+column with the big placement alone, the presence and the input are inside the window, and the bar opens and
+closes the conversation (22, without the folded row's contents); maximize from the page, offered only on a small
+placement whose brick can be big, with the old big one first among the small and no node redrawn (24); a ticket
+claimed, released, closed with a reason and reopened from its brick, the lanes beside it following, each reported
+to the board's log in order with nothing typed in it (12, 19 through the page); a chip in a lane placing its
+brick last, by the member, once, with no job (8); a second board taking the page, a board closed by the member
+staying on screen with Reopen and no placement control, nothing in it answering a click or the keyboard and no
+operation leaving the page, the same after a reload, its action working again once reopened, and the thread's
+address going to the board before it (16, as the member); and with reduced motion asked for by the device, a
+placement arriving with no transition or timed animation on any placement (21). Not there: anything done as the
+agent (the household has no job, so every board is opened and changed by the member's own operations), another
+member's view (7), the 640 px width, and a restart with a new build, which this harness, serving one build for its
+life, cannot do.
 
 **Rules with no check at all:** writes to one board applied in arrival order; a blueprint description's limit; a
 brick's own flag going when its condition ends (no drawn brick has such a condition); what the page does when the
