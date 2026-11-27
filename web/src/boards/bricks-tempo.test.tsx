@@ -42,9 +42,10 @@ it('lists the agent\'s triggers from the desktop\'s read, in its order, with its
     const all = b.all();
     expect(all).toContain('4 triggers · UTC');
     expect(all).not.toContain('Fern only');
-    expect(all).toContain(`Morning waterStandingWakes an agent07:17 · weekdays · Next ${at('2026-11-28T07:17:00.000Z')} · Last fired ${at('2026-11-27T07:17:00.000Z')} · Agent wake done`);
-    expect(all).toContain('Watch the fence PRStandingOnceA pull request changes · change:9 · Never fired');
-    expect(all).toContain('Old roundStoppedWakes an agent07:17 · weekdays · No next firing');
+    // A trigger is a row of the kit: its name, its kind and source, its times and last outcome, and its state at the row's end.
+    expect(all).toContain(`Morning waterWakes an agent · 07:17 · weekdaysNext ${at('2026-11-28T07:17:00.000Z')} · Last fired ${at('2026-11-27T07:17:00.000Z')} · Agent wake doneStanding`);
+    expect(all).toContain('Watch the fence PROnce · A pull request changes · change:9Never firedStanding');
+    expect(all).toContain('Old roundWakes an agent · 07:17 · weekdaysNo next firing');
     // Sooner first; one with no next firing last.
     expect(all.indexOf('Morning water')).toBeLessThan(all.indexOf('Oddly named'));
     expect(all.indexOf('Oddly named')).toBeLessThan(all.indexOf('Old round'));
@@ -62,8 +63,8 @@ it('shows the day\'s recorded firings of this agent\'s triggers in the big form,
   b.answer(data());
   await b.draw('tempo', { agent: 'art' }, 'primary');
   const all = b.all(), today = all.slice(all.indexOf('Today'));
-  expect(today).toContain(`${at('2026-11-27T09:00:00.000Z')}Old roundstopped`);
-  expect(today).toContain(`${at('2026-11-27T07:17:00.000Z')}Morning waterAgent wake done`);
+  expect(today).toContain(`Old roundstopped${at('2026-11-27T09:00:00.000Z')}`);
+  expect(today).toContain(`Morning waterAgent wake done${at('2026-11-27T07:17:00.000Z')}`);
   expect(today.indexOf('Old round')).toBeLessThan(today.indexOf('Morning water'));
   expect(today).not.toContain('Fern only');
   b.answer(data({ TempoDayHistory: { triggerLog: [], tempoCalendarOutcomes: [] } }));
@@ -78,7 +79,8 @@ it('says a failed last firing and why, and that the agent is paused', async () =
   }));
   await b.draw('tempo', { agent: 'art' }, 'side');
   expect(b.all()).toContain(`Paused since ${at('2026-11-27T10:00:00.000Z')}`);
-  expect(b.all()).toContain('Morning waterHeldWakes an agent');
+  expect(b.all()).toContain('Morning waterWakes an agent');
+  expect(b.all()).toContain('Its last firing failed.Held');
   expect(b.all()).toContain('Agent wake failed, Exit code 2');
   expect(b.all()).toContain('Its last firing failed.');
   await b.draw('tempo', { agent: 'art' }, 'compact');

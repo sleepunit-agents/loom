@@ -50,8 +50,9 @@ it('lists every project with who and which agents and repositories are on it, ea
 it('draws the side form as a short list without goals or repositories and the compact form as one line, neither with a control', async () => {
   world.sharing = { ...sharing, projects: [...sharing.projects, ...Array.from({ length: 6 }, (_, i) => project('extra-' + i))] };
   await draw('side');
-  expect(placed().filter((p) => p.brick === 'project')).toHaveLength(6);
-  expect(shown()).toContain('and 2 more');
+  // Four projects fit the side form without scrolling; the rest are counted.
+  expect(placed().filter((p) => p.brick === 'project')).toHaveLength(4);
+  expect(shown()).toContain('and 4 more');
   expect(shown()).not.toContain('Keep the pond clear'); expect(shown()).not.toContain('Repositories');
   expect(controls()).toEqual([]);
   await draw('compact');

@@ -74,7 +74,7 @@ it('lists the secrets by name with their rule, who may use them and their use, a
   live();
   await draw('primary');
   expect(feed.mock.calls.some(([query, , options]) => query === settingsQuery && options?.keep === true)).toBe(true);
-  for (const shown of ['2 secrets · 1 request waiting · 1 grant', 'For a secret with no rule: Ask each time.', 'ask your agent in this conversation to propose it', 'PUMP_TOKEN', 'The pond pump', 'by sam', 'Standing answer: Allow automatically · Automatic grant: 45 minutes', 'At startup',
+  for (const shown of ['2 secrets · 1 request waiting · 1 grant', 'For a secret with no rule', 'Ask each time.', 'ask your agent in this conversation to propose it', 'PUMP_TOKEN', 'The pond pump', 'by sam', 'Standing answer: Allow automatically · Automatic grant: 45 minutes', 'At startup',
     'may use it · Agent-wide', 'Granted by sam', 'Delivered', 'MAIL_KEY', 'by robin', 'No rule of its own: the household default applies.', 'asks for', 'To read the pump mail', '30 minutes', 'Job: j-9', 'Earlier requests', 'allowed', 'A standing rule was made with this answer.']) expect(all(), shown).toContain(shown);
   expect(placed().every((place) => JSON.stringify(place) === '{"brick":"agent","params":{"agent":"art"}}')).toBe(true);
   expect(placed().length).toBeGreaterThan(0);

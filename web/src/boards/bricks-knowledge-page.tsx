@@ -9,8 +9,8 @@ import { memberOperation } from '../data/operation';
 import { memoryQueries, type KnowledgePage as Page } from '../memory/queries';
 import { useMemoryQuery } from '../memory/query';
 import { Reply } from '../pair/reply';
-import { date, freshWord } from '../pieces/knowledge/model';
-import { Chip, Loading, Unavailable, pageChip, words, type Act, type Params } from './brick-kit';
+import { freshWord } from '../pieces/knowledge/model';
+import { Action, Actions, Chip, Fact, Facts, Lead, Loading, Note, Problem, Row, Rows, Section, Segmented, State, Time, Unavailable, freshTone, pageChip, words, type Act, type Params } from './brick-kit';
 import type { Form } from './layout';
 
 type Kind = (typeof knowledgeAnnotations)[number];
@@ -19,7 +19,10 @@ export const annotationWord: Record<Kind, string> = {
   note: 'Note', outdated: 'Out of date', intent: 'Intent', 'no-longer-owned': 'Household no longer owns this', 'in-use': 'Household uses this again',
 };
 const link = /\[\[([a-z0-9][\w/-]*)(?:\|([^\]]+))?\]\]/gi;
-const checked = (p: Page) => (p.verified_at ? `verified ${date(p.verified_at)}` : `written ${date(p.updated)}, not verified yet`);
+const checked = (p: Page) => (p.verified_at ? <span>verified <Time at={p.verified_at} /></span> : <span>written <Time at={p.updated} />, not verified yet</span>);
+/** A page's freshness, as a tone: due is the one that waits on someone. */
+const checkWord = (outcome: string) => (outcome === 'confirmed' ? 'Still true' : outcome === 'stale' ? 'Asked to check again' : outcome);
+const kinds = knowledgeAnnotations.map((value) => ({ value, label: annotationWord[value] }));
 
 export function KnowledgePage({ params, form, act }: { params: Params; form: Form; act: Act }) {
   const slug = words(params.page);
@@ -31,7 +34,7 @@ export function KnowledgePage({ params, form, act }: { params: Params; form: For
   if (read.status === 'loading') return <Loading />;
   const page = read.value;
   if (read.status !== 'live' || !page) return <Unavailable what="knowledge page" />;
-  if (form === 'compact') return <p className="board-brief"><span className="board-state">{freshWord[page.fresh]}</span> {page.title}</p>;
+  if (form === 'compact') return <p className="board-brief"><State tone={freshTone[page.fresh]}>{freshWord[page.fresh]}</State> {page.title}</p>;
   const may = access.status === 'live' && access.value ? access.value : undefined;
   async function run(action: 'verify' | 'recheck' | 'annotate', operation: string, input: object, detail: Record<string, string>, done: string) {
     if (lock.current) return false;
@@ -47,54 +50,70 @@ export function KnowledgePage({ params, form, act }: { params: Params; form: For
   const linked = [...new Map([...page.body.matchAll(link)].map((m) => [m[1], m[2] ?? m[1]])).entries()];
   const body = page.body.replace(link, (_, to: string, label?: string) => label ?? to);
   const first = body.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 3).join('\n');
+  const big = form === 'primary';
   return (
     <>
-      <p className="board-lead">{page.title}</p>
-      <div className="board-line">
-        <span className="board-state" data-due={page.fresh === 'due'}>{freshWord[page.fresh]}</span>
+      <Lead>{page.title}</Lead>
+      <div className="board-meta">
+        <State tone={freshTone[page.fresh]}>{freshWord[page.fresh]}</State>
         {knowledgeTopicRef.test(page.domain)
           ? <Chip place={{ brick: 'knowledge', params: { domain: page.domain } }}>{page.domain}</Chip> : <span>{page.domain}</span>}
-        <span className="text-muted-foreground">{checked(page)}</span>
+        {checked(page)}
       </div>
-      {form === 'primary' && (
-        <p className="board-line text-muted-foreground">
-          {page.checked?.outcome === 'stale' ? `Asked to be checked again ${date(page.checked.at)}` : `${page.archiveCandidate ? 'Archive candidate · ' : ''}Routine check every ${page.routineCheckDays} days`}
+      {big && (
+        <Note>
+          {page.checked?.outcome === 'stale' ? <>Asked to be checked again <Time at={page.checked.at} /></> : `${page.archiveCandidate ? 'Archive candidate · ' : ''}Routine check every ${page.routineCheckDays} days`}
           {page.checked?.by ? ` · Last check by ${page.checked.by}` : ''}
-        </p>
+        </Note>
       )}
+      <div className="board-knowledge-body" data-form={form}><Reply words={big ? body : first} /></div>
       {may && (
-        <div className="board-line">
-          <button type="button" className="board-action" disabled={busy || !may.canVerify} onClick={() => void run('verify', 'mind.knowledgeVerify', { slug }, {}, 'Check saved')}>Still true</button>
-          <button type="button" className="board-action" disabled={busy || !may.canRecheck} onClick={() => void run('recheck', 'mind.knowledgeRecheck', { slug }, {}, 'Check saved')}>Check again</button>
-        </div>
+        <Actions>
+          <Action disabled={busy || !may.canVerify} onClick={() => void run('verify', 'mind.knowledgeVerify', { slug }, {}, 'Check saved')}>Still true</Action>
+          <Action disabled={busy || !may.canRecheck} onClick={() => void run('recheck', 'mind.knowledgeRecheck', { slug }, {}, 'Check saved')}>Check again</Action>
+          {saved && <span role="status" className="board-note">{saved}</span>}
+        </Actions>
       )}
-      {saved && <p role="status" className="text-muted-foreground">{saved}</p>}
-      {error && <p role="alert" className="text-destructive">{error}</p>}
-      {form === 'side' ? <Reply words={first} /> : (
+      <Problem>{error}</Problem>
+      {big && (
         <>
-          <Reply words={body} />
-          <dl style={{ marginTop: '.8rem' }}>
-            {linked.length > 0 && <div><dt>Links to</dt><dd className="board-line">{linked.map(([to, label]) => pageChip(to, label))}</dd></div>}
-            {page.checks.length > 0 && <div><dt>Recent checks</dt><dd>{page.checks.map((c, i) => (
-              <span key={i} className="block">{c.outcome === 'confirmed' ? 'Still true' : c.outcome === 'stale' ? 'Asked to check again' : c.outcome} · {date(c.at)}{c.by ? ` · ${c.by}` : ''}</span>))}</dd></div>}
-            {page.annotations.length > 0 && <div><dt>Recent annotations</dt><dd>{page.annotations.map((a) => (
-              <span key={a.id} className="block"><small>{a.kind} · {a.actor} · {date(a.created)}</small><span className="block whitespace-pre-wrap">{a.words}</span>
-                {a.evidence && <span className="block whitespace-pre-wrap">Evidence: {a.evidence}</span>}</span>))}</dd></div>}
-            <div><dt>Sources</dt><dd>{page.sources.length ? page.sources.map((s, i) => (
-              <span key={i} className="block">{s.kind}: {s.claim}{s.locator && <> · {s.href && /^https?:\/\//.test(s.href) ? <a className="underline" href={s.href} target="_blank" rel="noreferrer">{s.locator}</a> : s.locator}</>}</span>))
-              : <span className="text-muted-foreground">No sources recorded</span>}</dd></div>
-            <div><dt>Cited by</dt><dd className="board-line">{page.citedBy.length ? page.citedBy.map((p) => pageChip(p.slug, p.title)) : <span className="text-muted-foreground">No referring pages</span>}</dd></div>
-            {page.sourcing && <div><dt>Sourcing</dt><dd>{page.sourcing}</dd></div>}
-            {page.by && <div><dt>Written by</dt><dd>{page.by}</dd></div>}
-          </dl>
+          {linked.length > 0 && <Section title="Links to"><div className="board-meta">{linked.map(([to, label]) => pageChip(to, label))}</div></Section>}
+          {page.checks.length > 0 && (
+            <Section title="Recent checks">
+              <Rows>{page.checks.map((c, i) => <Row key={i} title={checkWord(c.outcome)} meta={c.by || undefined} end={<Time at={c.at} />} />)}</Rows>
+            </Section>
+          )}
+          {page.annotations.length > 0 && (
+            <Section title="Recent annotations">
+              <Rows>{page.annotations.map((a) => (
+                <Row key={a.id} title={<span className="whitespace-pre-wrap">{a.words}</span>} end={<Time at={a.created} />}
+                  meta={<>{a.kind} · {a.actor}{a.evidence && <span className="block whitespace-pre-wrap">Evidence: {a.evidence}</span>}</>} />
+              ))}</Rows>
+            </Section>
+          )}
+          <Section title="Sources">
+            {page.sources.length ? (
+              <Rows>{page.sources.map((s, i) => (
+                <Row key={i} title={s.claim} end={s.kind}
+                  meta={s.locator ? (s.href && /^https?:\/\//.test(s.href) ? <a href={s.href} target="_blank" rel="noreferrer">{s.locator}</a> : s.locator) : undefined} />
+              ))}</Rows>
+            ) : <Note>No sources recorded</Note>}
+          </Section>
+          <Section title="Cited by">
+            {page.citedBy.length ? <div className="board-meta">{page.citedBy.map((p) => pageChip(p.slug, p.title))}</div> : <Note>No referring pages</Note>}
+          </Section>
+          {(page.sourcing || page.by) && (
+            <Facts>
+              {page.sourcing && <Fact label="Sourcing">{page.sourcing}</Fact>}
+              {page.by && <Fact label="Written by">{page.by}</Fact>}
+            </Facts>
+          )}
           {may?.canAdd && (
-            <form aria-label="Annotate page" onSubmit={(e) => void annotate(e)}>
-              <div className="board-line" role="group" aria-label="Annotation type">
-                {knowledgeAnnotations.map((k) => <button key={k} type="button" className="board-action" aria-pressed={kind === k} disabled={busy} onClick={() => setKind(k)}>{annotationWord[k]}</button>)}
-              </div>
-              <div className="board-line">
+            <form className="board-form" aria-label="Annotate page" onSubmit={(e) => void annotate(e)}>
+              <Segmented<Kind> bare label="Annotation type" value={kind} options={kinds} onChange={setKind} disabled={busy} />
+              <div className="board-knowledge-add">
                 <input className="board-input" aria-label="Annotation" placeholder="Add an annotation…" maxLength={4000} value={draft} disabled={busy} onChange={(e) => setDraft(e.target.value)} />
-                <button type="submit" className="board-action" disabled={busy || !draft.trim()}>Save annotation</button>
+                <Action submit disabled={busy || !draft.trim()}>Save annotation</Action>
               </div>
             </form>
           )}

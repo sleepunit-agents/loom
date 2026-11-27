@@ -57,7 +57,8 @@ const press = (label: string) => act(async () => { await buttons().find((b) => s
 
 it('lists members and agents as Household setup does, each member a person chip and each agent an agent chip', async () => {
   await draw('primary');
-  for (const words of ['2 members · 2 agents · 1 active token · 1 signed-in browser', 'Household owner', 'Owns every agent, present and future', 'Member', 'Default agent: art', 'No assigned owner', 'Owned by lee',
+  // Who is in the household leads; how they get in is the quiet line under it.
+  for (const words of ['2 members · 2 agents', '1 active token · 1 signed-in browser', 'Household owner', 'Owns every agent, present and future', 'Member', 'Default agent: art', 'No assigned owner', 'Owned by lee',
     'About art · GitHub accounts: art-bot · Animated portrait', 'About bea · GitHub accounts: none · Generated face', 'Removed: gone', 'ask the agent in the conversation', 'A new token is made on the desktop']) expect(shown(), words).toContain(words);
   expect(placed()).toEqual([{ brick: 'person', params: { person: 'member:sam' } }, { brick: 'person', params: { person: 'member:lee' } }, { brick: 'agent', params: { agent: 'bea' } },
     { brick: 'agent', params: { agent: 'art' } }, { brick: 'agent', params: { agent: 'bea' } }]);

@@ -73,7 +73,7 @@ it('draws today\'s timeline big, newest first, each row with its agent as a chip
   expect(shown()).toContain('2 entries today');
   expect(shown()).not.toContain('Yesterday talk');
   expect(shown().indexOf('Fixed the pump')).toBeLessThan(shown().indexOf('Morning check'));
-  for (const words of ['12:00 PM', 'Terminal · with you · Closed t-12 and opened t-13', 'Work done', 'System', 'Wakes', '2026-11-13']) expect(shown(), words).toContain(words);
+  for (const words of ['12:00 PM', 'Terminal · with you · Closed t-12 and opened t-13', 'Work done', 'System', 'Wakes', 'Fri, Nov 13']) expect(shown(), words).toContain(words);
   expect(placed()).toEqual([
     { brick: 'agent', params: { agent: 'art' } }, { brick: 'ticket', params: { ticket: 't-12' } }, { brick: 'ticket', params: { ticket: 't-13' } },
     { brick: 'agent', params: { agent: 'bo' } },
@@ -136,8 +136,9 @@ it('draws the side form as the newest few rows and the compact form as one line,
   world(may, { '2026-11-13': windowOf('2026-11-13', [...today, ...Array.from({ length: 6 }, (_, i) => entry('c~art~x' + i, `2026-11-13T0${i}:00:00Z`, { title: 'Early ' + i }))]) });
   await draw('side');
   expect(shown()).toContain('8 entries today');
-  expect(tree!.root.findAllByType('li')).toHaveLength(5);
-  expect(shown()).toContain('and 3 more');
+  // Three rows fit the side form with air between them.
+  expect(tree!.root.findAllByType('li')).toHaveLength(3);
+  expect(shown()).toContain('and 5 more');
   expect(controls()).toEqual([]);
   await draw('compact');
   const json = tree!.toJSON() as { type: string; props: { className: string } };

@@ -6,22 +6,22 @@ import { doingPhrase, useDoing } from '../pieces/attention/doing-model';
 import { agentStateLine, latestStatus, orderedAgents, shownState, type AgentStatus } from '../pieces/attention/home-model';
 import { useDeskRoster } from '../pieces/attention/roster';
 import { useDeskWaitingCounts } from '../pieces/attention/waiting-counts';
-import { useAgentNames } from './agents-data';
-import { Chip, Loading, Unavailable } from './brick-kit';
+import { AgentFace } from './agent-face';
+import { agentMood, agentTone, useAgentNames } from './agents-data';
+import { Loading, Note, Row, Rows, State, Unavailable, count as said } from './brick-kit';
 import type { Form } from './layout';
 
 /** The desktop bar's read of which of these agents have work in hand (pieces/attention/bar.tsx). */
 export const agentsAtWorkQuery = 'query BrickAgentsAtWork($agents:[String!]!){agentsAtWork(agents:$agents)}';
 
-function Row({ agent, state, needs, name }: { agent: string; state?: AgentStatus['state']; needs?: number; name(id: string): string }) {
-  const doing = useDoing(agent), count = doing.items.length;
+function AgentRow({ agent, state, needs, name }: { agent: string; state?: AgentStatus['state']; needs?: number; name(id: string): string }) {
+  const doing = useDoing(agent), count = doing.items.length, shown = shownState(state, count);
   return (
-    <div className="board-line">
-      <Chip place={{ brick: 'agent', params: { agent } }}>{name(agent)}</Chip>
-      <span className="board-state" data-running={shownState(state, count) === 'working'}>{agentStateLine(state, count, needs)}</span>
-      {doing.items[0] && <span>{doingPhrase(doing.items[0], name)}</span>}
-      {count + doing.more > 1 && <span className="text-muted-foreground">+{count + doing.more - 1} more</span>}
-    </div>
+    <Row place={{ brick: 'agent', params: { agent } }}
+      title={<span className="board-agent-name"><AgentFace agent={agent} state={agentMood(shown, needs)} />{name(agent)}</span>}
+      end={<State tone={agentTone(shown, needs)}>{agentStateLine(state, count, needs)}</State>}>
+      {doing.items[0] && <p className="board-note">{doingPhrase(doing.items[0], name)}{count + doing.more > 1 && <span className="board-agents-more"> +{count + doing.more - 1} more</span>}</p>}
+    </Row>
   );
 }
 
@@ -35,8 +35,8 @@ export function Agents({ form }: { form: Form }) {
   if (form === 'compact') {
     const working = work.status === 'live' && Array.isArray(work.data?.agentsAtWork) ? work.data.agentsAtWork.filter((a) => agents.includes(a)).length : undefined;
     const asking = agents.filter((a) => (needs(a) ?? 0) > 0).length;
-    return <p className="board-brief">{agents.length} {agents.length === 1 ? 'agent' : 'agents'}{working === undefined ? '' : ` · ${working} working`}{waiting.status === 'live' ? ` · ${asking} waiting on you` : ''}</p>;
+    return <p className="board-brief">{said(agents.length, 'agent')}{working === undefined ? '' : ` · ${working} working`}{waiting.status === 'live' ? ` · ${asking} waiting on you` : ''}</p>;
   }
-  if (!agents.length) return <p className="text-muted-foreground">No agents of your own.</p>;
-  return <>{agents.map((agent) => <Row key={agent} agent={agent} name={name} needs={needs(agent)} state={statuses.status === 'live' ? latestStatus(statuses.records, agent)?.state : undefined} />)}</>;
+  if (!agents.length) return <Note>No agents of your own.</Note>;
+  return <div className="board-agents"><Rows>{agents.map((agent) => <AgentRow key={agent} agent={agent} name={name} needs={needs(agent)} state={statuses.status === 'live' ? latestStatus(statuses.records, agent)?.state : undefined} />)}</Rows></div>;
 }

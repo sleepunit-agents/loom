@@ -5,7 +5,7 @@
  * tasks.command `edit` with the priority alone. The board is told `priority` and which one. */
 import { useState } from 'react';
 import { useDataQuery } from '../data/graphql';
-import { Loading, Unavailable, ticketChip, words, type Act, type Params } from './brick-kit';
+import { Action, Loading, Note, Problem, Row, Rows, Unavailable, count, words, type Act, type Params } from './brick-kit';
 import { Pick, priorityChoices, priorityWord, useTaskCommand } from './bricks-work';
 import type { Form } from './layout';
 
@@ -30,30 +30,27 @@ export function Backlog({ params, form, act }: { params: Params; form: Form; act
   if (read.status === 'loading' || lanes.status === 'loading') return <Loading />;
   if (read.status !== 'live' || lanes.status !== 'live' || !read.data?.project) return <Unavailable what="project" />;
   const rows = inBacklog(read.data.open ?? [], lanes.data?.projectBoardTickets ?? []);
-  const count = `${rows.length || 'No'} ticket${rows.length === 1 ? '' : 's'} in the backlog`;
-  if (form === 'compact') return <p className="board-brief">{count}</p>;
-  if (!rows.length) return <p className="text-muted-foreground">No tickets in the backlog.</p>;
+  const total = `${rows.length ? count(rows.length, 'ticket') : 'No tickets'} in the backlog`;
+  if (form === 'compact') return <p className="board-brief">{total}</p>;
+  if (!rows.length) return <Note>No tickets in the backlog.</Note>;
   const big = form === 'primary', shown = rows.slice(0, big ? 30 : 6);
   const set = async (id: string, priority: number) => { if (await run('priority', { action: 'edit', id, input: { priority } }, { priority: String(priority) })) setSetting(undefined); };
   return (
     <>
-      <p>{count}.</p>
-      <ul className="board-notes">
+      <Note>{total}.</Note>
+      <Rows>
         {shown.map((t) => (
-          <li key={t.id}>
-            <span className="board-line" style={{ marginTop: 0 }}>
-              {ticketChip(t.id)}<span>{t.title}</span><span className="board-state">{priorityWord(t.priority)}</span>
-              {big && setting !== t.id && <button type="button" className="board-action" aria-label={`Set priority of ${t.id}`} onClick={() => setSetting(t.id)}>Priority…</button>}
-            </span>
-            {big && setting === t.id && <>
-              <Pick<number> label="Priority" value={t.priority} options={priorityChoices} disabled={busy} onChange={(priority) => void set(t.id, priority)} />
-              <button type="button" className="board-action" onClick={() => setSetting(undefined)}>Cancel</button>
-            </>}
-          </li>
+          <Row key={t.id} place={{ brick: 'ticket', params: { ticket: t.id } }} title={<>{!big && <span className="board-priority board-backlog-priority">{priorityWord(t.priority)}</span>}{t.title} <span className="font-mono board-row-ref">{t.id}</span></>}
+            end={big ? <><span className="board-priority">{priorityWord(t.priority)}</span>{setting !== t.id && <Action kind="quiet" label={`Set priority of ${t.id}`} onClick={() => setSetting(t.id)}>Priority…</Action>}</> : undefined}>
+            {big && setting === t.id && <div className="board-pick">
+              <Pick<number> bare label="Priority" value={t.priority} options={priorityChoices} disabled={busy} onChange={(priority) => void set(t.id, priority)} />
+              <Action kind="quiet" onClick={() => setSetting(undefined)}>Cancel</Action>
+            </div>}
+          </Row>
         ))}
-      </ul>
-      {rows.length > shown.length && <p className="text-muted-foreground">and {rows.length - shown.length} more</p>}
-      {error && <p role="alert" className="text-destructive">{error}</p>}
+      </Rows>
+      {rows.length > shown.length && <Note>and {rows.length - shown.length} more</Note>}
+      <Problem>{error}</Problem>
     </>
   );
 }

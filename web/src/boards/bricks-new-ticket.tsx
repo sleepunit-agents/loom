@@ -5,7 +5,7 @@
 import { useState, type FormEvent } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { taskTypes } from '../pieces/tasks/words';
-import { Loading, Unavailable, ticketChip, words, type Act, type Params } from './brick-kit';
+import { Action, Actions, Lead, Loading, Problem, Unavailable, ticketChip, words, type Act, type Params } from './brick-kit';
 import { Pick, ticketChoicesQuery, useSummary, useTaskChoices, useTaskCommand } from './bricks-work';
 import type { Form } from './layout';
 import { TicketPicker } from './ticket-picker';
@@ -37,19 +37,19 @@ export function NewTicket({ params, form, act }: { params: Params; form: Form; a
     setFiled(made.id ?? ''); draft.clear(); setType('task'); setOwner('household'); setParent('');
   };
   return (
-    <form aria-label="File a ticket" onSubmit={(e) => void file(e)}>
-      <p className="board-lead">A new ticket in {p.name}</p>
+    <form className="board-form" aria-label="File a ticket" onSubmit={(e) => void file(e)}>
+      <Lead>A new ticket in {p.name}</Lead>
       {draft.fields({ more: big, disabled: busy })}
       {big && <>
         <Pick<Type> label="Type" value={type} options={typeChoices} onChange={setType} disabled={busy} />
         <Pick<string> label="Owner" value={owner} options={[{ value: 'household', label: 'Household' }, ...choices.people.map((who) => ({ value: `${who.kind}:${who.id}`, label: who.label }))]} onChange={setOwner} disabled={busy} />
-        <div className="board-line"><span className="text-muted-foreground">Parent</span><TicketPicker label="Parent ticket" value={parent} onChange={setParent} tickets={offered} disabled={busy} /></div>
+        <div className="board-field"><span>Parent</span><TicketPicker label="Parent ticket" value={parent} onChange={setParent} tickets={offered} disabled={busy} /></div>
       </>}
-      <div className="board-line">
-        <button type="submit" className="board-action" disabled={busy || !ready}>File ticket</button>
-        {filed !== undefined && <span data-filed="">Filed{filed ? <> {ticketChip(filed)}</> : '.'}</span>}
-      </div>
-      {error && <p role="alert" className="text-destructive">{error}</p>}
+      <Actions>
+        <Action submit kind="primary" disabled={busy || !ready}>File ticket</Action>
+        {filed !== undefined && <span className="board-note" data-filed="">Filed{filed ? <> {ticketChip(filed)}</> : '.'}</span>}
+      </Actions>
+      <Problem>{error}</Problem>
     </form>
   );
 }

@@ -1,0 +1,16 @@
+/* The gallery's own page (development only): the board's ground, and placements laid out in rows instead of by
+   the layout. Nothing here styles a brick. */
+html, body { margin: 0; }
+.boards-page.gallery { display: block; height: auto; min-height: 100dvh; overflow: visible; padding: 2rem; }
+.gallery .board-placement { position: relative; }
+.gallery-group > h1 { font-size: 1.4rem; font-weight: 600; margin: 2.5rem 0 1rem; }
+.gallery-brick { margin-bottom: 2.5rem; }
+.gallery-scene { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 1.5rem; margin-bottom: 1.5rem; }
+.gallery figure { margin: 0; padding: 0; display: inline-block; vertical-align: top; }
+.gallery figcaption { font-size: .78rem; color: var(--faint); margin-bottom: .35rem; }
+.gallery figcaption b { color: var(--muted-foreground); font-weight: 600; }
+.gallery-missing { color: #c2410c; }
+.gallery-sheet { column-width: 320px; column-gap: 1.5rem; }
+.gallery-sheet figure { display: block; break-inside: avoid; margin-bottom: 1.5rem; }
+.gallery-sheet[data-sheet='primary'] { column-width: 700px; }
+.gallery-sheet[data-sheet='phone'] { column-width: 362px; }

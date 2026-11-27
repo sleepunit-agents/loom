@@ -45,7 +45,8 @@ const rollupCall = () => feed.mock.calls.filter(([query]) => String(query).start
 
 it('lists conversations by reported tokens as Job usage does, each with a conversation a session chip', async () => {
   await draw('primary');
-  expect(shown()).toContain(`${(10005).toLocaleString()} tokens reported · 7 jobs · 4 conversations · the last 7 days`);
+  // The total leads; the rest of the count is the quiet line under it.
+  for (const words of [`${(10005).toLocaleString()} tokens reported`, '7 jobs · 4 conversations · the last 7 days']) expect(shown(), words).toContain(words);
   expect(placed()).toEqual([[{ brick: 'session', params: { session: 'cv-large' } }, 'Large talk'], [{ brick: 'session', params: { session: 'cv-small' } }, 'Small talk']]);
   const text = shown();
   expect(text.indexOf('Large talk')).toBeLessThan(text.indexOf('Small talk'));
@@ -83,8 +84,8 @@ it('lists one picked conversation\'s jobs in the same range, and a picked job\'s
 it('draws the side form as a short list and the compact form as one line, neither with a control', async () => {
   world.rows = Array.from({ length: 9 }, (_, i) => group('cv-' + i, 'Talk ' + i, 100 - i));
   await draw('side');
-  expect(placed()).toHaveLength(6);
-  expect(shown()).toContain('and 3 more');
+  expect(placed()).toHaveLength(4);
+  expect(shown()).toContain('and 5 more');
   expect(controls()).toEqual([]);
   await draw('compact', { days: 1 });
   const json = tree!.toJSON() as { type: string; props: { className: string } };

@@ -3,7 +3,7 @@
  * query layer), so a repository is known here only by the pull requests loom has read for it. */
 import { useDataQuery } from '../data/graphql';
 import { rowWord, type Change } from '../pieces/change-view/model';
-import { Chip, Loading, Unavailable, repositoryKey, words, type Params } from './brick-kit';
+import { Chip, Loading, Note, Row, Rows, Unavailable, repositoryKey, words, type Params } from './brick-kit';
 import type { Form } from './layout';
 
 type Row = Pick<Change, 'id' | 'number' | 'title' | 'state' | 'draft' | 'checks' | 'review' | 'waitingOn' | 'agent' | 'project'>;
@@ -24,15 +24,20 @@ export function Repository({ params, form }: { params: Params; form: Form }) {
   if (read.status === 'loading') return <Loading />;
   if (read.status !== 'live' || !read.data?.known.length) return <Unavailable what="repository" />;
   const rows = read.data.open, yours = rows.filter((c) => c.waitingOn === 'you').length;
-  const count = `${rows.length === 30 ? 'At least thirty' : rows.length || 'No'} open pull request${rows.length === 1 ? '' : 's'}`;
-  if (form === 'compact') return <p className="board-brief">{count}{yours ? ` · ${yours} waiting on you` : ''}</p>;
-  if (!rows.length) return <p className="text-muted-foreground">No open pull requests.</p>;
+  const total = `${rows.length === 30 ? 'At least thirty' : rows.length || 'No'} open pull request${rows.length === 1 ? '' : 's'}`;
+  if (form === 'compact') return <p className="board-brief">{total}{yours ? ` · ${yours} waiting on you` : ''}</p>;
+  if (!rows.length) return <Note>No open pull requests.</Note>;
+  const big = form === 'primary', shown = rows.slice(0, big ? rows.length : 3);
   return (
     <>
-      <p>{count}{yours ? `, ${yours} waiting on you` : ''}.</p>
-      {form === 'primary'
-        ? <ul className="board-notes">{rows.map((c) => <li key={c.id}><span className="board-line" style={{ marginTop: 0 }}>{pullChip(c)}<span>{c.title}</span></span><small>{rowWord(c)}</small></li>)}</ul>
-        : <div className="board-line">{rows.map((c) => <span key={c.id} title={c.title}>{pullChip(c)}</span>)}</div>}
+      <Note>{total}{yours ? `, ${yours} waiting on you` : ''}.</Note>
+      <Rows>
+        {shown.map((c) => (
+          <Row key={c.id} place={{ brick: 'pull', params: { change: c.id } }}
+            title={<><span className="font-mono board-repository-number">#{c.number}</span> {c.title}</>} meta={rowWord(c)} />
+        ))}
+      </Rows>
+      {rows.length > shown.length && <Note>and {rows.length - shown.length} more</Note>}
     </>
   );
 }

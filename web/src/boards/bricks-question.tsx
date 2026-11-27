@@ -14,9 +14,9 @@ import { answerInboxItem, inboxItemQuery, retainedInboxItem, useInboxItemWords }
 import { MemberOperationError, memberOperation } from '../data/operation';
 import { useTaskCommandSubmitter } from '../data/task-command';
 import { useDeadline } from '../pieces/comms/use-deadline';
-import { answerWord, from, managed, safeLink, stateWord, volumeNote, volumeWords, when, type InboxAnswer, type InboxItem } from '../pieces/inbox-view/model';
+import { answerWord, from, managed, safeLink, stateWord, volumeNote, volumeWords, type InboxAnswer, type InboxItem } from '../pieces/inbox-view/model';
 import { threadPath, useAgentNames } from './agents-data';
-import { Chip, Loading, Unavailable, ticketChip, words, type Act, type Params } from './brick-kit';
+import { Action, Actions, Chip, Confirm, Fact, Facts, Lead, Loading, Note, Problem, Segmented, State, Time, Unavailable, ticketChip, words, type Act, type Params, type Tone } from './brick-kit';
 import type { Form } from './layout';
 
 /** Something the question is about, as a chip where a brick shows it. */
@@ -25,6 +25,8 @@ function about(ref: string) {
   if (/^a-[A-Za-z0-9-]+$/.test(ref)) return <Chip key={ref} place={{ brick: 'approval', params: { approval: ref } }}>Approval</Chip>;
   return <span key={ref} className="font-mono">{ref}</span>;
 }
+/** Where an item stands, as a tone: it waits on someone, or it is a record. */
+const tone = (item: InboxItem): Tone => (item.state === 'waiting' ? 'waiting' : item.answer === 'yes' || item.answer === 'done' ? 'good' : 'muted');
 /** How loudly an item is shown, in the order the Inbox lists the choices. */
 export const volumes = Object.keys(volumeWords) as InboxItem['volume'][];
 
@@ -50,8 +52,8 @@ function Discuss({ item, agent, act }: { item: string; agent: string; act: Act }
   }
   return (
     <>
-      <div className="board-line"><button type="button" className="board-action" disabled={state === 'opening'} onClick={() => void open()}>{state === 'opening' ? 'Opening conversation…' : `Discuss with ${name(agent)}`}</button></div>
-      {state === 'failed' && <p role="alert" className="text-destructive">Could not open the conversation. Try again.</p>}
+      <Actions><Action disabled={state === 'opening'} onClick={() => void open()}>{state === 'opening' ? 'Opening conversation…' : `Discuss with ${name(agent)}`}</Action></Actions>
+      <Problem>{state === 'failed' && 'Could not open the conversation. Try again.'}</Problem>
     </>
   );
 }
@@ -64,7 +66,7 @@ export function Question({ params, form, act }: { params: Params; form: Form; ac
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [draft, setDraft] = useState('');
   const lock = useRef(false);
   const submit = useTaskCommandSubmitter();
-  const [asking, setAsking] = useState<'' | 'allow' | 'block'>(''), [decided, setDecided] = useState('');
+  const [decided, setDecided] = useState('');
   const plain = useInboxItemWords(stored ? [stored] : []);
   if (read.status === 'loading') return <Loading />;
   if (read.status !== 'live' || !stored) return <Unavailable what="question" />;
@@ -89,14 +91,15 @@ export function Question({ params, form, act }: { params: Params; form: Form; ac
     finally { lock.current = false; setBusy(false); }
   }
   async function decide(decision: 'allow' | 'block') {
-    if (lock.current || !join) return;
+    if (lock.current || !join) return false;
     lock.current = true; setBusy(true); setError(''); setDecided('');
     try {
       await memberOperation('runtime.workerJoinDecide', { request: join[1], code: join[2], decision });
-      act('join', { decision }); setAsking('');
+      act('join', { decision });
       setDecided(decision === 'allow' ? 'Machine admitted.' : 'Join request blocked.');
+      return true;
     }
-    catch (failure) { setError(failure instanceof MemberOperationError && failure.status === 403 ? 'Sign in again as a household owner to answer.' : 'Could not save this decision. Check the request and try again.'); }
+    catch (failure) { setError(failure instanceof MemberOperationError && failure.status === 403 ? 'Sign in again as a household owner to answer.' : 'Could not save this decision. Check the request and try again.'); return false; }
     finally { lock.current = false; setBusy(false); }
   }
   async function notify(volume: InboxItem['volume']) {
@@ -108,75 +111,83 @@ export function Question({ params, form, act }: { params: Params; form: Form; ac
   }
   const said = plain(item) ?? item.body?.words ?? 'Message words are unavailable';
   const link = safeLink(item.body?.link);
-  if (form === 'compact') return <p className="board-brief"><span className="board-state">{item.answer ? answerWord(item.answer) : stateWord(item)}</span> {said}</p>;
+  if (form === 'compact') return <p className="board-brief"><State tone={tone(item)}>{item.answer ? answerWord(item.answer) : stateWord(item)}</State> {said}</p>;
+  const big = form === 'primary';
   const record = (e: FormEvent) => { e.preventDefault(); void answer('words', draft); };
   const waitsOn = item.waitsOnKind === 'approval' && item.waitsOnId ? about(item.waitsOnId) : item.waitsOnKind === 'task' && item.waitsOnId ? about(item.waitsOnId) : null;
+  const yesNo = item.answers === 'yes-no';
+  // What it is weighed by, and the answer: the big form reads down to the answer; the small one answers first.
+  const facts = (
+    <>
+      {(item.body?.why || item.body?.ifYes || item.body?.ifNo) && (
+        <Facts>
+          {item.body?.why && <Fact label="Why">{item.body.why}</Fact>}
+          {item.body?.ifYes && <Fact label="If yes">{item.body.ifYes}</Fact>}
+          {item.body?.ifNo && <Fact label="If no">{item.body.ifNo}</Fact>}
+        </Facts>
+      )}
+    </>
+  );
+  const answers = (
+    <>
+      {(open || ofTask) && (
+        <div className="board-form">
+          <Actions label="Record your answer">
+            {yesNo && <>
+              <Action kind="primary" disabled={busy} onClick={() => void answer('yes')}>Yes</Action>
+              <Action disabled={busy} onClick={() => void answer('no')}>No</Action>
+            </>}
+            {open && <>
+              <Action kind="quiet" disabled={busy} onClick={() => void answer('done')}>Mark done</Action>
+              <Action kind="quiet" disabled={busy} onClick={() => void answer('dismiss')}>Dismiss</Action>
+            </>}
+          </Actions>
+          <form className="board-pick" onSubmit={record}>
+            <input className="board-input" aria-label="Answer in your own words" placeholder={yesNo ? 'Or answer in your own words' : 'Answer in your own words'}
+              value={draft} disabled={busy} onChange={(e) => setDraft(e.target.value)} />
+            <Action submit kind={yesNo ? 'plain' : 'primary'} disabled={busy || !draft.trim()}>Record answer</Action>
+          </form>
+        </div>
+      )}
+      {join && (
+        <Actions label="Worker admission">
+          <Confirm kind="primary" ask="Let it in…" yes="Let this machine in" busy={busy} act={() => decide('allow')} />
+          <Confirm ask="Block…" yes="Block this request" busy={busy} act={() => decide('block')} />
+        </Actions>
+      )}
+    </>
+  );
   return (
     <>
-      <p className="board-lead">{said}</p>
-      <dl>
-        {item.body?.why && <div><dt>Why</dt><dd>{item.body.why}</dd></div>}
-        {item.body?.ifYes && <div><dt>If yes</dt><dd>{item.body.ifYes}</dd></div>}
-        {item.body?.ifNo && <div><dt>If no</dt><dd>{item.body.ifNo}</dd></div>}
-      </dl>
-      <div className="board-line">
-        <span className="board-state">{stateWord(item)}</span>
+      <Lead>{said}</Lead>
+      <div className="board-meta">
+        <State tone={tone(item)}>{stateWord(item)}</State>
         {item.agent ? <Chip place={{ brick: 'agent', params: { agent: item.agent } }}>{item.agent}</Chip> : <span>{from(item)}</span>}
         {item.project && <Chip place={{ brick: 'project', params: { project: item.project } }}>{item.project}</Chip>}
         {item.refs.map(about)}
-        <span className="text-muted-foreground">{when(item.at)}</span>
+        <Time at={item.at} />
       </div>
-      {(open || ofTask) && (
-        <>
-          <div className="board-line" role="group" aria-label="Record your answer">
-            {item.answers === 'yes-no' && <>
-              <button type="button" className="board-action" disabled={busy} onClick={() => void answer('yes')}>Yes</button>
-              <button type="button" className="board-action" disabled={busy} onClick={() => void answer('no')}>No</button>
-            </>}
-            {open && <>
-              <button type="button" className="board-action" disabled={busy} onClick={() => void answer('done')}>Mark done</button>
-              <button type="button" className="board-action" disabled={busy} onClick={() => void answer('dismiss')}>Dismiss</button>
-            </>}
-          </div>
-          <form className="board-line" onSubmit={record}>
-            <input className="board-input" aria-label="Answer in your own words" placeholder={item.answers === 'yes-no' ? 'Or answer in your own words' : 'Answer in your own words'}
-              value={draft} disabled={busy} onChange={(e) => setDraft(e.target.value)} />
-            <button type="submit" className="board-action" disabled={busy || !draft.trim()}>Record answer</button>
-          </form>
-        </>
-      )}
-      {join && (
-        <div className="board-line" role="group" aria-label="Worker admission">
-          {asking ? <>
-            <button type="button" className="board-action" disabled={busy} onClick={() => void decide(asking)}>{asking === 'allow' ? 'Let this machine in' : 'Block this request'}</button>
-            <button type="button" className="board-action" disabled={busy} onClick={() => setAsking('')}>Cancel</button>
-          </> : <>
-            <button type="button" className="board-action" disabled={busy} onClick={() => setAsking('allow')}>Let it in…</button>
-            <button type="button" className="board-action" disabled={busy} onClick={() => setAsking('block')}>Block…</button>
-          </>}
-        </div>
-      )}
-      {decided && <p role="status" className="text-muted-foreground">{decided}</p>}
-      {ofTask && waitsOn && <p className="board-line text-muted-foreground">Its task{waitsOn}</p>}
+      {big ? <>{facts}{answers}</> : <>{answers}{facts}</>}
+      {decided && <p role="status" className="board-note">{decided}</p>}
+      {ofTask && waitsOn && <div className="board-meta"><span>Its task</span>{waitsOn}</div>}
       {item.state === 'waiting' && !open && !ofTask && !join && (
-        <p className="board-line text-muted-foreground">{elsewhere ? 'This is answered where it was asked.' : 'This has no answer to give here.'}{waitsOn}</p>
+        <div className="board-meta"><span>{elsewhere ? 'This is answered where it was asked.' : 'This has no answer to give here.'}</span>{waitsOn}</div>
       )}
       {item.answer && (
-        <dl style={{ marginTop: '.8rem' }}>
-          <div><dt>Answer</dt><dd>{[answerWord(item.answer), item.answeredBy, item.answeredAt && when(item.answeredAt)].filter(Boolean).join(' · ')}{item.answerText && <span className="block">{item.answerText}</span>}</dd></div>
-        </dl>
+        <Facts>
+          <Fact label="Answer"><span>{[answerWord(item.answer), item.answeredBy].filter(Boolean).join(' · ')}</span><Time at={item.answeredAt} />{item.answerText && <span className="block w-full">{item.answerText}</span>}</Fact>
+        </Facts>
       )}
-      {item.resolution && <p className="board-line text-muted-foreground">{item.resolution}</p>}
-      {link && <p className="board-line"><a href={link} target="_blank" rel="noreferrer">Open linked page</a></p>}
+      {item.resolution && <Note>{item.resolution}</Note>}
+      {link && <Note><a href={link} target="_blank" rel="noreferrer">Open linked page</a></Note>}
       {item.discussionAgent && <Discuss key={item.id + ' ' + item.discussionAgent} item={item.id} agent={item.discussionAgent} act={act} />}
-      {item.canSetVolume && (
-        <div className="board-line" role="group" aria-label="Notify">
-          <span className="text-muted-foreground">Notify</span>
-          {volumes.map((volume) => <button key={volume} type="button" className="board-action" aria-pressed={volume === item.volume} disabled={busy || volume === item.volume} onClick={() => void notify(volume)}>{volumeWords[volume]}</button>)}
-          {item.volume !== 'full' && <span className="text-muted-foreground">{volumeNote[item.volume]}{item.quietUntil ? ` · back to normal ${when(item.quietUntil)}` : ''}</span>}
-        </div>
+      {item.canSetVolume && big && (
+        <>
+          <Segmented<InboxItem['volume']> label="Notify" value={item.volume} options={volumes.map((value) => ({ value, label: volumeWords[value] }))} disabled={busy} onChange={(volume) => void notify(volume)} />
+          {item.volume !== 'full' && <Note>{volumeNote[item.volume]}{item.quietUntil && <> · back to normal <Time at={item.quietUntil} /></>}</Note>}
+        </>
       )}
-      {error && <p role="alert" className="text-destructive">{error}</p>}
+      <Problem>{error}</Problem>
     </>
   );
 }

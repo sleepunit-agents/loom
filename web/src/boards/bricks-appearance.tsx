@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 import { memberOperation } from '../data/operation';
 import { LOOKS, lookOf, type Prefs } from '../look';
 import { FOLLOW, GROUNDS, SAVE_UNCONFIRMED, SWITCHES, type SwitchKey } from '../pieces/appearance/choices';
-import { Loading, type BodyProps } from './brick-kit';
+import { Fact, Facts, Lead, Loading, Note, Section, type BodyProps } from './brick-kit';
 import { WORN_WORDS, useOwnPreferences } from './wear';
 
 type Option = { value: string; label: string };
@@ -24,7 +24,7 @@ export function Appearance({ form, act }: BodyProps) {
   const locked = useRef(false), shown = useRef(true);
   useEffect(() => { shown.current = true; return () => { shown.current = false; }; }, []);
   if (snapshot.status === 'loading') return <Loading />;
-  if (snapshot.status !== 'live') return <p className="text-muted-foreground">Your appearance settings are unavailable.</p>;
+  if (snapshot.status !== 'live') return <Note>Your appearance settings are unavailable.</Note>;
   const prefs: Prefs = snapshot.records[0]?.prefs ?? {};
   const look = lookOf(prefs.look, prefs.mode), motion = prefs.motion ?? 'follow';
   if (form === 'compact') return <p className="board-brief">{labelOf(looks, look)} · Reduce motion: {labelOf(FOLLOW, motion)}</p>;
@@ -38,8 +38,9 @@ export function Appearance({ form, act }: BodyProps) {
   ];
   if (form === 'side') return (
     <>
-      <dl>{rows.map((row) => <div key={row.label}><dt>{row.label}</dt><dd>{labelOf(row.options, row.value)}</dd></div>)}</dl>
-      <p className="text-muted-foreground">{WORN_WORDS}</p>
+      {/* The four that change how things look; the switches are in the big form. */}
+      <Facts>{rows.slice(0, 4).map((row) => <Fact key={row.label} label={row.label}>{labelOf(row.options, row.value)}</Fact>)}</Facts>
+      <Note>{WORN_WORDS}</Note>
     </>
   );
   const save = async (patch: Prefs) => {
@@ -52,26 +53,31 @@ export function Appearance({ form, act }: BodyProps) {
     } catch { if (shown.current) setState({ pending: false, message: SAVE_UNCONFIRMED }); }
     finally { locked.current = false; }
   };
+  // One choice: its name, its options as a segmented row (./brick-kit.tsx, Segmented: each option here is also named
+  // for its row, so nine rows of "On" and "Off" can be told apart), and a quiet line saying what it does.
   const group = (title: string, here: boolean) => (
-    <>
-      <h4>{title}</h4>
-      {rows.filter((row) => !!row.here === here).map((row) => (
-        <div key={row.label} className="board-line" role="group" aria-label={row.label}>
-          <span>{row.label}</span>
-          {row.options.map((option) => (
-            <button key={option.value} type="button" className="board-action" aria-pressed={option.value === row.value} disabled={state.pending}
-              aria-label={`${row.label}: ${option.label}`} onClick={() => { if (option.value !== row.value) void save(row.patch(option.value)); }}>{option.label}</button>
-          ))}
-          {row.hint && <small className="text-muted-foreground">{row.hint}</small>}
-        </div>
-      ))}
-    </>
+    <Section title={title}>
+      <div className="board-appearance">
+        {rows.filter((row) => !!row.here === here).map((row) => (
+          <div key={row.label} className="board-choice" role="group" aria-label={row.label}>
+            <span className="board-appearance-name">{row.label}</span>
+            <span className="board-seg">
+              {row.options.map((option) => (
+                <button key={option.value} type="button" aria-pressed={option.value === row.value} disabled={state.pending}
+                  aria-label={`${row.label}: ${option.label}`} onClick={() => { if (option.value !== row.value) void save(row.patch(option.value)); }}>{option.label}</button>
+              ))}
+            </span>
+            {row.hint && <small>{row.hint}</small>}
+          </div>
+        ))}
+      </div>
+    </Section>
   );
   return (
     <>
-      <p className="board-lead">Yours alone, on every device you sign in on.</p>
-      <p>{WORN_WORDS}</p>
-      <p role="status">{state.pending ? 'Saving…' : state.message ?? ''}</p>
+      <Lead>Yours alone, on every device you sign in on.</Lead>
+      <Note>{WORN_WORDS}</Note>
+      <p role="status" className="board-note">{state.pending ? 'Saving…' : state.message ?? ''}</p>
       {group('Takes effect on this page', true)}
       {group('For the desktop', false)}
     </>

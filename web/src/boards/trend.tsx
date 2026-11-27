@@ -2,6 +2,7 @@
  * bricks"). Small, it is two totals and a strip. Big, it is the chart, and a day shows the tickets behind it. */
 import { useMemo, useState } from 'react';
 import { useDataQuery } from '../data/graphql';
+import { Loading, Note, Section, Unavailable } from './brick-kit';
 import type { Form } from './layout';
 
 type Row = { id: string; title: string; at: string };
@@ -36,8 +37,8 @@ export function Trend({ project, days, form, chip }: { project: string; days: nu
   const read = useDataQuery<{ opened: Row[]; closed: Row[] }>(query, { project, since: new Date(since(now, days)).toISOString() }, { keep: true });
   const series = useMemo(() => perDay(read.data?.opened ?? [], read.data?.closed ?? [], days, now), [read.data, days, now]);
   const [picked, pick] = useState<string | null>(null), [hover, setHover] = useState<number | null>(null);
-  if (read.status === 'loading') return <p role="status" className="text-muted-foreground">Loading…</p>;
-  if (read.status !== 'live') return <p className="text-muted-foreground">This project is unavailable.</p>;
+  if (read.status === 'loading') return <Loading />;
+  if (read.status !== 'live') return <Unavailable what="project" />;
   const opened = series.reduce((n, d) => n + d.opened.length, 0), closed = series.reduce((n, d) => n + d.closed.length, 0);
   const top = Math.max(1, ...series.map((d) => Math.max(d.opened.length, d.closed.length)));
   if (form === 'compact') return <p className="board-brief">{opened} opened · {closed} closed in {days} days</p>;
@@ -52,8 +53,8 @@ export function Trend({ project, days, form, chip }: { project: string; days: nu
       <p className="board-trend-key">
         <span><i data-series="opened" aria-hidden="true" /><b>{opened}</b> opened</span>
         <span><i data-series="closed" aria-hidden="true" /><b>{closed}</b> closed</span>
-        <span className="text-muted-foreground">{net === 0 ? 'level' : net > 0 ? `${net} more open than ${days} days ago` : `${-net} fewer open than ${days} days ago`}</span>
       </p>
+      <Note>{net === 0 ? `As many open as ${days} days ago` : net > 0 ? `${net} more open than ${days} days ago` : `${-net} fewer open than ${days} days ago`}</Note>
       <div className="board-trend-plot">
         <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label={`Tickets opened and closed per day over ${days} days: ${opened} opened, ${closed} closed.`}
           onPointerLeave={() => setHover(null)}>
@@ -80,14 +81,17 @@ export function Trend({ project, days, form, chip }: { project: string; days: nu
       {big && <p className="board-trend-axis"><span>{short(series[0].date)}</span><span>most in a day: {top}</span><span>{short(series.at(-1)!.date)}</span></p>}
       {big && shown && (
         <div className="board-trend-day">
-          <h3>{short(shown.date)}</h3>
-          {(['opened', 'closed'] as const).map((k) => shown[k].length > 0 && (
-            <p key={k}><span className="text-muted-foreground">{k}</span> {shown[k].map((t) => <span key={t.id}>{chip(t.id)} {t.title}</span>)}</p>
-          ))}
-          {!shown.opened.length && !shown.closed.length && <p className="text-muted-foreground">Nothing opened or closed.</p>}
+          <Section title={short(shown.date)}>
+            {(['opened', 'closed'] as const).map((k) => shown[k].length > 0 && (
+              <ul key={k} className="board-trend-list" aria-label={k}>
+                {shown[k].map((t) => <li key={t.id}><i data-series={k} aria-hidden="true" /><span>{k}</span>{chip(t.id)}<span>{t.title}</span></li>)}
+              </ul>
+            ))}
+            {!shown.opened.length && !shown.closed.length && <Note>Nothing opened or closed.</Note>}
+          </Section>
         </div>
       )}
-      {big && !shown && <p className="text-muted-foreground board-trend-hint">Pick a day to see its tickets.</p>}
+      {big && !shown && <p className="board-note board-trend-hint">Pick a day to see its tickets.</p>}
     </div>
   );
 }

@@ -34,15 +34,16 @@ it('shows one trigger in full from the desktop\'s reads: when it fires, its word
   const all = b.all();
   expect(all).toContain('Morning water');
   expect(all).toContain('StandingWakes an agent · time · until-stopped · standing');
-  expect(all).toContain('07:17 · weekdays');
-  expect(all).toContain(`Due: ${at('2026-11-28T07:17:00.000Z')} · UTC`);
+  expect(all).toContain('When07:17 · weekdays');
+  expect(all).toContain(`Due${at('2026-11-28T07:17:00.000Z')} · UTC`);
   expect(all).toContain('Set byAgent · Art');
   expect(all).toContain('TargetAn item in art\'s inbox');
   expect(all).toContain('Requested modelAgent default');
   expect(all).toContain('LessonsThe hose leaks.');
   expect(all).toContain('WordsWater the beds');
-  expect(all).toContain(`${at('2026-11-27T07:17:00.000Z')}Agent wake · done · 1 min 5 sSession`);
-  expect(all).toContain(`${at('2026-11-14T00:00:00.000Z')} · set`);
+  // A run is a row whose words place its session, with when it ran at the row's end.
+  expect(all).toContain(`Agent wake · done · 1 min 5 s${at('2026-11-27T07:17:00.000Z')}`);
+  expect(all).toContain(`set${at('2026-11-14T00:00:00.000Z')}`);
   expect(all).toContain('To change its times or words, ask its agent');
   expect(b.placed()).toEqual(expect.arrayContaining([{ brick: 'agent', params: { agent: 'art' } }, { brick: 'tempo', params: { agent: 'art' } },
     { brick: 'project', params: { project: 'garden' } }, { brick: 'session', params: { session: 'cv-water-1' } }]));

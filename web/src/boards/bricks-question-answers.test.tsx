@@ -75,7 +75,8 @@ it('lets a machine in or blocks it only after asking, by runtime.workerJoinDecid
   expect(b.labels()).toEqual(['Let it in…', 'Block…']);
   await b.press('Let it in…');
   expect(b.sent).not.toHaveBeenCalled();
-  expect(b.labels()).toEqual(['Let this machine in', 'Cancel']);
+  // The question opens in place (brick-kit.tsx, Confirm); the other answer stays beside it.
+  expect(b.labels()).toEqual(['Let this machine in', 'Cancel', 'Block…']);
   await b.press('Cancel');
   expect(b.labels()).toEqual(['Let it in…', 'Block…']);
   await b.press('Let it in…');

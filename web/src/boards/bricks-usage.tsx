@@ -7,38 +7,42 @@ import { useState } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { byTokens, conversationsQuery, dayRange, format, groupTitle, jobsQuery, localDay, metrics, runKindWord, toolsLine, type UsageGroup, type UsageJob, type UsageRange } from '../pieces/usage/model';
 import { isRef } from './admin-data';
-import { Chip, Loading, Unavailable, type BodyProps } from './brick-kit';
+import { Fact, Facts, Lead, Loading, Note, Row, Rows, State, Unavailable, count, type BodyProps, type Tone } from './brick-kit';
+import { Opened, Opens } from './settings-kit';
+
+const jobTone = (state: string | null): Tone => (state === 'queued' || state === 'starting' || state === 'running' ? 'working' : state === 'done' ? 'good' : state === 'failed' ? 'bad' : 'muted');
 
 function Jobs({ range, conversation }: { range: UsageRange; conversation: string | null }) {
   const [selected, setSelected] = useState<string>();
   const { status, data } = useDataQuery<{ conversationJobUsage: UsageJob[] }>(jobsQuery, { ...range, conversation }, { keep: true });
   if (status === 'loading') return <Loading />;
-  if (status !== 'live' || !data || !Array.isArray(data.conversationJobUsage)) return <p className="text-muted-foreground">Job usage unavailable.</p>;
-  if (!data.conversationJobUsage.length) return <p className="text-muted-foreground">No jobs in this conversation for this period.</p>;
+  if (status !== 'live' || !data || !Array.isArray(data.conversationJobUsage)) return <Note>Job usage unavailable.</Note>;
+  if (!data.conversationJobUsage.length) return <Note>No jobs in this conversation for this period.</Note>;
   return (
-    <>
-      {data.conversationJobUsage.map(({ id, title, runKind, linkedWakeJob, state, usage, observations }) => (
-        <div key={id}>
-          <div className="board-line">
-            <button type="button" className="board-action" aria-expanded={selected === id} onClick={() => setSelected(selected === id ? undefined : id)}>{title || id}</button>
-            <span className="board-state">{[runKindWord(runKind), state].filter(Boolean).join(' · ')}</span>
-            <span className="text-muted-foreground">{format(usage?.tokensIn)} in · {format(usage?.tokensOut)} out</span>
-          </div>
-          {selected === id && (
-            <dl style={{ margin: '.3rem 0 .7rem' }}>
-              {title && title !== id && <div><dt>Job ID</dt><dd className="font-mono">{id}</dd></div>}
-              {linkedWakeJob && <div><dt>Woke job</dt><dd className="font-mono">{linkedWakeJob}</dd></div>}
-              <div><dt>Harness</dt><dd>{usage?.harness ?? 'Unknown'}</dd></div>
-              <div><dt>Model</dt><dd>{usage?.model ?? 'Unknown'}</dd></div>
-              {Object.entries(metrics).map(([key, label]) => <div key={key}><dt>{label}</dt><dd>{format(usage?.[key as keyof typeof metrics])}</dd></div>)}
-              <div><dt>Calls by tool</dt><dd>{toolsLine(usage)}</dd></div>
-              <div><dt>Source</dt><dd>{usage?.source ?? 'Pending'}</dd></div>
-              {observations.map((words, index) => <p key={index}>{words}</p>)}
-            </dl>
-          )}
-        </div>
-      ))}
-    </>
+    <Opened>
+      <Rows>
+        {data.conversationJobUsage.map(({ id, title, runKind, linkedWakeJob, state, usage, observations }) => (
+          <Row key={id} title={<Opens open={selected === id} onToggle={() => setSelected(selected === id ? undefined : id)}>{title || id}</Opens>}
+            meta={<span className="board-number">{format(usage?.tokensIn)} in · {format(usage?.tokensOut)} out</span>}
+            end={<State tone={jobTone(state)}>{[runKindWord(runKind), state].filter(Boolean).join(' · ')}</State>}>
+            {selected === id && (
+              <Opened>
+                <Facts>
+                  {title && title !== id && <Fact label="Job ID"><span className="font-mono">{id}</span></Fact>}
+                  {linkedWakeJob && <Fact label="Woke job"><span className="font-mono">{linkedWakeJob}</span></Fact>}
+                  <Fact label="Harness">{usage?.harness ?? 'Unknown'}</Fact>
+                  <Fact label="Model">{usage?.model ?? 'Unknown'}</Fact>
+                  {Object.entries(metrics).map(([key, label]) => <Fact key={key} label={label}><span className="board-number">{format(usage?.[key as keyof typeof metrics])}</span></Fact>)}
+                  <Fact label="Calls by tool">{toolsLine(usage)}</Fact>
+                  <Fact label="Source">{usage?.source ?? 'Pending'}</Fact>
+                </Facts>
+                {observations.map((words, index) => <Note key={index}>{words}</Note>)}
+              </Opened>
+            )}
+          </Row>
+        ))}
+      </Rows>
+    </Opened>
   );
 }
 
@@ -53,25 +57,27 @@ export function Usage({ params, form }: BodyProps) {
   const groups = byTokens(data.jobUsageRollup);
   const tokens = groups.reduce((n, g) => n + (g.totalTokens ?? 0), 0), jobs = groups.reduce((n, g) => n + g.jobCount, 0);
   const period = days === 1 ? 'today' : `the last ${days} days`;
-  const count = groups.length ? `${format(tokens)} tokens reported · ${format(jobs)} job${jobs === 1 ? '' : 's'} · ${groups.length} conversation${groups.length === 1 ? '' : 's'} · ${period}` : `No jobs ${days === 1 ? 'today' : 'in ' + period}`;
-  if (form === 'compact') return <p className="board-brief">{count}</p>;
-  const cap = primary ? 60 : 6;
-  const name = (g: UsageGroup) => (isRef(g.key) ? <Chip place={{ brick: 'session', params: { session: g.key } }}>{groupTitle(g)}</Chip> : <span>{groupTitle(g)}</span>);
+  const rest = `${format(jobs)} job${jobs === 1 ? '' : 's'} · ${count(groups.length, 'conversation')} · ${period}`;
+  if (form === 'compact') return <p className="board-brief">{groups.length ? `${format(tokens)} tokens reported · ${rest}` : `No jobs ${days === 1 ? 'today' : 'in ' + period}`}</p>;
+  if (!groups.length) return <Note>No jobs {days === 1 ? 'today' : 'in ' + period}</Note>;
+  const cap = primary ? 60 : 4;
   return (
     <>
-      <p className="board-line"><span>{count}</span></p>
-      {groups.slice(0, cap).map((g) => (
-        <div key={JSON.stringify(g.key)}>
-          <div className="board-line">
-            {name(g)}
-            <span>{format(g.totalTokens)} tokens</span>
-            <span className="text-muted-foreground">{format(g.jobCount)} job{g.jobCount === 1 ? '' : 's'}{primary ? ` · ${format(g.retryCount)} retries · peak context ${format(g.largestContext)} (${format(g.jobsWithLargestContext)} of ${format(g.jobCount)} measured)` : ''}</span>
-            {primary && <button type="button" className="board-action" aria-expanded={open === g.key} onClick={() => setOpen(open === g.key ? undefined : g.key)}>Jobs</button>}
-          </div>
-          {primary && open === g.key && <Jobs key={JSON.stringify(g.key)} conversation={g.key} range={range} />}
-        </div>
-      ))}
-      {groups.length > cap && <p className="text-muted-foreground">and {groups.length - cap} more</p>}
+      <Lead>{format(tokens)} tokens reported</Lead>
+      <div className="board-meta"><span>{rest}</span></div>
+      <Rows>
+        {groups.slice(0, cap).map((g) => (
+          <Row key={JSON.stringify(g.key)} title={groupTitle(g)} place={isRef(g.key) ? { brick: 'session', params: { session: g.key } } : undefined}
+            end={<span className="board-number">{format(g.totalTokens)} tokens</span>}>
+            {primary && <div className="board-meta">
+              <span>{format(g.jobCount)} job{g.jobCount === 1 ? '' : 's'} · {format(g.retryCount)} retries · peak context {format(g.largestContext)} ({format(g.jobsWithLargestContext)} of {format(g.jobCount)} measured)</span>
+              <Opens open={open === g.key} onToggle={() => setOpen(open === g.key ? undefined : g.key)}>Jobs</Opens>
+            </div>}
+            {primary && open === g.key && <Jobs key={JSON.stringify(g.key)} conversation={g.key} range={range} />}
+          </Row>
+        ))}
+      </Rows>
+      {groups.length > cap && <Note>and {groups.length - cap} more</Note>}
     </>
   );
 }

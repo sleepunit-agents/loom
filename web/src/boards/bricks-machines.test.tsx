@@ -150,7 +150,8 @@ it('lets a household owner save the alert lines with machine.setAlertLines, chec
 it('shows anyone else the alert lines without a way to change them', async () => {
   answer({ owner: false });
   await draw('primary');
-  expect(shown()).toContain('Disk usage alert (%): 85');
+  // A label and its value, as every fact is drawn (brick-kit.tsx, Fact).
+  expect(shown()).toContain('Disk usage alert (%)85');
   expect(shown()).toContain('A household owner changes these.');
   expect(tree!.root.findAllByType('form')).toEqual([]);
   expect(tree!.root.findAllByType('input')).toEqual([]);

@@ -1,4 +1,6 @@
 // Legacy app classes are grandfathered by file and selector. New app structure belongs in the kit.
+// The boards page may not import the desktop kit (web/vite.boards.config.ts) and has its own, for bricks:
+// web/src/boards/brick-kit.tsx, styled by boards/board-kit.css. That one sheet is a kit too, and is not scanned.
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +14,7 @@ export function scan(root) {
   function walk(dir) { for (const e of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, e.name);
     if (e.isDirectory()) { if (path !== join(root, 'kit')) walk(path); }
-    else if (e.name.endsWith('.css')) { const names = structuralClasses(readFileSync(path, 'utf8')); if (names.length) out[relative(root, path)] = names; }
+    else if (e.name.endsWith('.css') && path !== join(root, 'boards', 'board-kit.css')) { const names = structuralClasses(readFileSync(path, 'utf8')); if (names.length) out[relative(root, path)] = names; }
   } }
   walk(root); return out;
 }

@@ -3,13 +3,13 @@
 import { useState, type FormEvent } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { Reply } from '../pair/reply';
-import { Loading, Unavailable, useOwnFlag, words, type BodyProps } from './brick-kit';
+import { Action, Lead, Loading, Note, Problem, Time, Unavailable, useOwnFlag, words, type BodyProps } from './brick-kit';
 import { useTicketAction } from './ticket-action';
 
-type Note = { seq: number; text: string; actor: string; at: string };
+type Comment = { seq: number; text: string; actor: string; at: string };
 export function Comments({ params, form, act, raise }: BodyProps) {
   const id = words(params.ticket);
-  const read = useDataQuery<{ ticket: { title: string; taskCommentsByTask: Note[] } | null }>(
+  const read = useDataQuery<{ ticket: { title: string; taskCommentsByTask: Comment[] } | null }>(
     'query BrickComments($id:String!){ticket:tasksSingle(where:{id:{eq:$id}}){title taskCommentsByTask(orderBy:{seq:{direction:desc,priority:0}}){seq text actor at}}}',
     { id }, { keep: true });
   const own = useOwnFlag(read.data?.ticket?.taskCommentsByTask.length, raise, (was, now) => (now > was ? 'New comment' : null));
@@ -23,22 +23,23 @@ export function Comments({ params, form, act, raise }: BodyProps) {
   const notes = t.taskCommentsByTask.slice(0, form === 'primary' ? 30 : 4);
   return (
     <>
-      <p className="board-lead">{t.title}</p>
-      <form className="board-line" onSubmit={(e) => void add(e)}>
+      <Lead>{t.title}</Lead>
+      <form className="board-pick" onSubmit={(e) => void add(e)}>
         <input className="board-input" aria-label="Add a comment" placeholder="Add a comment…" value={text} onChange={(e) => setText(e.target.value)} />
-        <button type="submit" className="board-action" disabled={busy || !text.trim()}>Add</button>
+        <Action submit disabled={busy || !text.trim()}>Add</Action>
       </form>
-      {error && <p role="alert" className="text-destructive">{error}</p>}
+      <Problem>{error}</Problem>
       {notes.length ? (
-        <ol className="board-notes">
+        <ol className="board-comments">
           {notes.map((n) => (
             <li key={n.seq}>
-              <small>{n.actor} · {new Date(n.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</small>
+              <p className="board-meta"><b>{n.actor}</b><Time at={n.at} /></p>
               <Reply words={n.text} />
             </li>
           ))}
         </ol>
-      ) : <p className="text-muted-foreground">No comments yet.</p>}
+      ) : <Note>No comments yet.</Note>}
+      {t.taskCommentsByTask.length > notes.length && <Note>and {t.taskCommentsByTask.length - notes.length} earlier</Note>}
     </>
   );
 }

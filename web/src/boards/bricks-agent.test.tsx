@@ -195,8 +195,9 @@ describe('agents', () => {
     await draw('agents', {}, 'side');
     // Not a removed agent, and not one that is someone else's.
     expect(placed()).toEqual([{ brick: 'agent', params: { agent: 'art' } }, { brick: 'agent', params: { agent: 'mira' } }]);
-    const lines = tree!.root.findAll((n) => n.props.className === 'board-line').map(said);
-    expect(lines[0]).toBe('ArtWorking · 1 needs youTaking a hand-off from Mira · Fence survey+3 more');
+    // Each agent is a row of the kit: its name, where it stands at the row's end, and what it is doing under them.
+    const lines = tree!.root.findAll((n) => n.props.className === 'board-row').map(said);
+    expect(lines[0]).toBe('ArtWorking · 1 needs youTaking a hand-off from Mira · Fence survey +3 more');
     expect(asked.filter((q) => q.name === 'DeskDoing').map((q) => q.variables)).toEqual(expect.arrayContaining([{ agent: 'art' }, { agent: 'mira' }]));
     expect(buttons()).toEqual([]);
     expect(tree!.root.findAllByType('a')).toEqual([]);
@@ -204,7 +205,7 @@ describe('agents', () => {
   it('says an idle agent is quiet, and when the member has no agents', async () => {
     answer(world({ DeskDoing: { agentDoing: { items: [], more: 0, claimed: 0 } } }));
     await draw('agents', {}, 'side');
-    expect(tree!.root.findAll((n) => n.props.className === 'board-line').map(said)).toEqual(['ArtWaiting · 1 needs you', 'MiraQuiet']);
+    expect(tree!.root.findAll((n) => n.props.className === 'board-row').map(said)).toEqual(['ArtWaiting · 1 needs you', 'MiraQuiet']);
     answer(world({ DeskRoster: { homeComms: { member: 'sam', agents: [] }, agents: [{ id: 'theirs', position: 0, removedAt: null }] } }));
     await draw('agents', {}, 'side');
     expect(all()).toBe('No agents of your own.');
