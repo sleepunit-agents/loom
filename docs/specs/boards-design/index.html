@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Boards · design pass</title>
+<style>
+  :root {
+    color-scheme: dark light;
+    --bg: light-dark(#ebece8, #121314);
+    --cool: light-dark(#e1e6e8, #151a20);
+    --warm: light-dark(#ece6e2, #1d1819);
+    --fg: light-dark(#17181a, #e3e4e0);
+    --dim: light-dark(#5d6266, #9a9ea3);
+    --faint: light-dark(#8b9094, #6c7176);
+    --card: light-dark(#f4f3ef, #1c1d1f);
+    --card-2: light-dark(#fbfaf7, #232427);
+    --edge: light-dark(rgb(48 57 70 / 13%), rgb(230 235 244 / 10%));
+    --rim: light-dark(rgb(255 255 255 / 76%), rgb(255 255 255 / 5%));
+    --shade: light-dark(rgb(30 40 54 / 9%), rgb(0 0 0 / 32%));
+    --accent: light-dark(#1f6f63, #6fd3bf);
+    --warn: light-dark(#9a5b12, #e0b072);
+    --r: 14px;
+    --settle: cubic-bezier(.22, .72, .18, 1);
+    font: 16px/1.5 "Instrument Sans", "Inter", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    color: var(--fg); background: var(--bg); overflow: hidden;
+    background-image: linear-gradient(172deg, var(--cool) 6%, var(--bg) 53%, var(--warm) 95%);
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; background: none; border: 0; padding: 0; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .86em; }
+
+  /* ── The page: two halves. With no board the conversation has it. ─────────── */
+  #page { display: grid; height: 100dvh; grid-template-columns: 1fr; transition: grid-template-columns .55s var(--settle); }
+  #page.has-board { grid-template-columns: minmax(0, 1.55fr) minmax(22rem, 1fr); }
+  #stage { position: relative; min-width: 0; overflow: hidden; display: none; }
+  #page.has-board #stage { display: block; }
+
+  /* ── The conversation ─────────────────────────────────────────────────────── */
+  #talk { display: flex; flex-direction: column; min-width: 0; height: 100dvh; position: relative; }
+  #page.has-board #talk { border-left: 1px solid var(--edge); background: color-mix(in srgb, var(--card) 55%, transparent); }
+  #presence { display: flex; align-items: center; gap: .75rem; padding: 1rem 1.25rem .75rem; }
+  #presence .face { width: 44px; height: 44px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--edge);
+    display: grid; place-items: center; position: relative; overflow: hidden; }
+  #presence img { width: 36px; height: 36px; image-rendering: pixelated; }
+  #presence .face::after { content: ''; position: absolute; inset: -1px; border-radius: 12px; border: 1.5px solid transparent;
+    border-top-color: var(--accent); opacity: 0; }
+  #presence[data-mood=working] .face::after { opacity: .9; animation: spin 1.4s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #presence b { display: block; font-weight: 600; line-height: 1.2; }
+  #presence small { color: var(--dim); }
+  #log { flex: 1; overflow: auto; padding: .5rem 1.25rem 1rem; display: flex; flex-direction: column; gap: .9rem; scrollbar-width: thin; }
+  .msg { max-width: 38rem; animation: arrive .3s var(--settle) both; }
+  .msg.you { align-self: flex-end; background: var(--card-2); border: 1px solid var(--edge); padding: .5rem .8rem; border-radius: 14px 14px 4px 14px; }
+  .msg.art p { margin: 0 0 .5rem; }
+  .trace { color: var(--faint); font-size: .86rem; display: flex; gap: .5rem; align-items: baseline; animation: arrive .25s var(--settle) both; }
+  .trace::before { content: '›'; }
+  .trace.done::before { content: '✓'; color: var(--accent); }
+  @keyframes arrive { from { opacity: 0; transform: translateY(5px); } }
+  #ask { padding: .75rem 1.25rem 1.25rem; }
+  #ask form { display: flex; gap: .5rem; background: var(--card-2); border: 1px solid var(--edge); border-radius: 16px; padding: .35rem .35rem .35rem 1rem;
+    box-shadow: inset 0 1px var(--rim), 0 2px 6px -2px var(--shade); }
+  #ask input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; padding: .6rem 0; }
+  #ask form button { width: 2.4rem; height: 2.4rem; border-radius: 12px; background: var(--fg); color: var(--bg); font-weight: 700; flex: none; }
+  #ask form button:disabled { opacity: .25; }
+  .hints { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .6rem; }
+  .hints button { font-size: .82rem; color: var(--dim); border: 1px solid var(--edge); border-radius: 999px; padding: .15rem .6rem; }
+  .hints button:hover { color: var(--fg); }
+
+  /* With no board: one centred column, the input large. */
+  #page:not(.has-board) #talk { max-width: 44rem; margin: 0 auto; width: 100%; justify-content: center; }
+  #page:not(.has-board) #log:empty { display: none; }
+  #page:not(.has-board) #log { flex: 0 1 auto; max-height: 50dvh; }
+  #page:not(.has-board) #presence { padding-top: 0; }
+  #page:not(.has-board) #ask form { padding: .6rem .6rem .6rem 1.25rem; border-radius: 20px; }
+  #page:not(.has-board) #ask input { font-size: 1.2rem; }
+
+  /* ── The trail: boards side by side, one on screen. ──────────────────────── */
+  #trail { display: flex; height: 100%; transition: transform .6s var(--settle); }
+  .board { flex: 0 0 100%; height: 100%; display: flex; flex-direction: column; padding: 1.25rem clamp(1rem, 3vw, 2.5rem) 1rem; min-width: 0; }
+  .board > header { display: flex; align-items: baseline; gap: .75rem; margin-bottom: 1rem; min-height: 2rem; }
+  .board > header h1 { font-size: 1.05rem; font-weight: 600; margin: 0; }
+  .board > header small { color: var(--faint); }
+  .board > header .close { margin-left: auto; color: var(--faint); font-size: .85rem; }
+  .board > header .close:hover { color: var(--fg); }
+  .field { position: relative; flex: 1; min-height: 0; }
+  .folded { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; min-height: 2rem; padding-top: .6rem; color: var(--faint); font-size: .85rem; }
+  #dots { position: absolute; left: 50%; bottom: .5rem; transform: translateX(-50%); display: flex; gap: 5px; }
+  #dots i { width: 14px; height: 2px; border-radius: 2px; background: var(--faint); opacity: .5; transition: all .3s; }
+  #dots i.on { width: 26px; background: var(--fg); opacity: 1; }
+
+  /* ── A placement: positioned by the layout, moved by transform. ──────────── */
+  .placement { position: absolute; left: 0; top: 0; background: color-mix(in srgb, var(--card) 92%, transparent);
+    border: 1px solid var(--edge); border-radius: var(--r); overflow: hidden; display: flex; flex-direction: column;
+    box-shadow: inset 0 1px var(--rim), 0 1px 2px var(--shade), 0 6px 18px -10px var(--shade);
+    transition: transform .55s var(--settle), width .55s var(--settle), height .55s var(--settle), opacity .3s; }
+  .placement.entering { opacity: 0; scale: .97; translate: 0 10px; }
+  .placement.leaving { opacity: 0; scale: .97; pointer-events: none; }
+  .placement { transition-property: transform, width, height, opacity, scale, translate; }
+  .placement > header { display: flex; align-items: baseline; gap: .5rem; padding: .7rem .9rem .5rem; }
+  .placement > header h2 { margin: 0; font-size: .95rem; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+  .placement > header small { color: var(--faint); white-space: nowrap; }
+  .placement > header .x { margin-left: auto; color: var(--faint); opacity: 0; transition: opacity .15s; padding: 0 .2rem; }
+  .placement:hover > header .x, .placement:focus-within > header .x { opacity: 1; }
+  .placement > .body { padding: 0 .9rem .9rem; overflow: auto; min-height: 0; flex: 1; scrollbar-width: thin; color: var(--dim); font-size: .92rem; }
+  .placement[data-form=primary] > header h2 { font-size: 1.15rem; }
+  .placement[data-form=primary] > header { padding: 1rem 1.2rem .6rem; }
+  .placement[data-form=primary] > .body { padding: 0 1.2rem 1.2rem; }
+  .placement[data-form=compact] > .body { display: none; }
+  .placement[data-form=compact] > header { padding: .6rem .9rem; }
+  .placement[data-form=compact] > header h2 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .chip { display: inline-flex; align-items: center; gap: .35rem; border: 1px solid var(--edge); border-radius: 999px; padding: .05rem .55rem;
+    font-size: .84rem; color: var(--fg); background: var(--card-2); white-space: nowrap; }
+  .chip:hover, .chip:focus-visible { border-color: var(--accent); outline: 0; }
+  .chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+  /* lanes */
+  .lanes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; height: 100%; }
+  .lane h3 { font-size: .78rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); margin: 0 0 .5rem;
+    display: flex; justify-content: space-between; border-bottom: 1px solid var(--edge); padding-bottom: .3rem; }
+  .lane ul { list-style: none; margin: 0; padding: 0; display: grid; gap: .45rem; }
+  .tk { display: block; width: 100%; text-align: left; border: 1px solid var(--edge); border-radius: 10px; padding: .45rem .6rem; background: var(--card-2);
+    color: var(--fg); font-size: .88rem; line-height: 1.3; transition: border-color .15s; }
+  .tk:hover { border-color: var(--accent); }
+  .tk small { display: block; color: var(--faint); margin-top: .15rem; }
+  .tk.moved { animation: moved 1.6s ease-out; }
+  @keyframes moved { 0% { box-shadow: 0 0 0 2px var(--accent); } 100% { box-shadow: 0 0 0 2px transparent; } }
+  .placement[data-form=side] .lanes { grid-template-columns: 1fr; }
+  /* trend */
+  .trend svg { width: 100%; height: auto; display: block; }
+  .legend { display: flex; gap: 1rem; font-size: .8rem; color: var(--faint); margin-top: .4rem; }
+  .legend i { display: inline-block; width: 10px; height: 2px; margin-right: .35rem; vertical-align: middle; }
+  /* ticket, person */
+  dl { margin: 0; display: grid; gap: .6rem; }
+  dt { font-size: .76rem; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
+  dd { margin: .1rem 0 0; color: var(--fg); }
+  .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: .8rem; }
+  select { background: var(--card-2); border: 1px solid var(--edge); border-radius: 8px; padding: .2rem .4rem; }
+
+  #note { position: fixed; left: .75rem; bottom: .6rem; font-size: .74rem; color: var(--faint); max-width: 30rem; pointer-events: none; }
+  #page.has-board ~ #note { display: none; }
+
+  /* ── Narrow: the board has the screen; the agent is a bar; the conversation is a sheet. ── */
+  @media (max-width: 640px) {
+    #page.has-board { grid-template-columns: 1fr; }
+    #page.has-board #talk { position: fixed; inset: auto 0 0 0; height: auto; max-height: 86dvh; border-left: 0; border-top: 1px solid var(--edge);
+      background: var(--card); border-radius: 18px 18px 0 0; box-shadow: 0 -10px 30px -12px var(--shade); }
+    #page.has-board #talk:not(.open) #log { display: none; }
+    #page.has-board #talk.open #log { max-height: 55dvh; }
+    #page.has-board #stage { padding-bottom: 8.5rem; height: 100dvh; }
+    #presence { cursor: pointer; }
+    .hints { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition-duration: 0s !important; animation-duration: 0s !important; } }
+</style>
+</head>
+<body>
+<div id="page">
+  <section id="stage" aria-label="Board"><div id="trail"></div><div id="dots"></div></section>
+  <section id="talk" aria-label="Conversation">
+    <div id="presence" data-mood="idle"><span class="face"><img src="art.png" alt=""></span><span><b>Art</b><small id="status">Here when you need me.</small></span></div>
+    <div id="log" aria-live="polite"></div>
+    <div id="ask">
+      <form><input id="q" autocomplete="off" placeholder="What are we doing now?" aria-label="Message Art"><button aria-label="Send" disabled>↑</button></form>
+      <div class="hints"></div>
+    </div>
+  </section>
+</div>
+<p id="note">Design pass for docs/specs/boards.md. Everything here is canned: a scripted Art, fake tickets. What is real is the layout rule, the motion and the shape of the page.</p>
+
+<script>
+// ───────────────────────────── fake household ─────────────────────────────
+const people = { 'member:jonathan': { name: 'Jonathan', about: 'Owner. Central time.', work: ['t-2428', 't-2430'] } };
+const tickets = {
+  't-2428': { title: 'Boards: the agent fills a second window from bricks', lane: 'Working', who: 'agent:art', goal: 'Build the page in docs/specs/boards.md.', why: 'The ticket page had no agent in it.' },
+  't-2429': { title: 'Move Memory into the household database', lane: 'Waiting', who: 'agent:art', goal: 'Memory stops being the one part outside loom.db.', why: 'Nothing joins, and writes are not atomic.' },
+  't-2430': { title: 'Carry an agent: export, import, backup', lane: 'Working', who: 'agent:art', goal: 'An agent can leave as plain files and come back.', why: 'Nothing takes a backup today.' },
+  't-2411': { title: 'Work trace in every thread', lane: 'Verifying', who: 'agent:art', goal: 'Tool cards outside the pairing room.', why: 'Home shows no work.' },
+  't-2402': { title: 'Tempo picks ready tickets against capacity', lane: 'Waiting', who: 'member:jonathan', goal: 'Tempo drives a ticket through its life.', why: 'Raised 2026-11-25, not yet discussed.' },
+  't-2397': { title: 'Brick: knowledge page', lane: 'Waiting', who: null, goal: 'A page of what the household knows, as a brick.', why: 'Needs the merge spec settled.' },
+  't-2390': { title: 'Layout rule for boards', lane: 'Verifying', who: 'agent:art', goal: 'Rank, fit and area in; rectangles out.', why: 'Nobody chooses a rectangle.' },
+};
+const trend = Array.from({ length: 30 }, (_, i) => ({ opened: 2 + Math.round(2.5 * Math.sin(i / 4) + (i % 5 === 0 ? 3 : 0) + 2), closed: 1 + Math.round(2 * Math.cos(i / 5) + i / 9 + 1) }));
+
+// ───────────────────────────── bricks: five forms each, here three shown ──
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const chipFor = ref => { const [k] = ref.split(':'); return `<button class="chip" data-ref="${ref}"><i></i>${esc(k === 'agent' ? ref.slice(6) : people[ref]?.name || ref)}</button>`; };
+const bricks = {
+  lanes: {
+    title: p => 'Lanes', sub: p => p.project,
+    fit: { primary: [520, 900], side: [260, 420], sideH: 330 },
+    body(p, form) {
+      const cap = form === 'primary' ? 6 : 3;
+      return `<div class="lanes">${['Working', 'Verifying', 'Waiting'].map(l => {
+        const rows = Object.entries(tickets).filter(([, t]) => t.lane === l);
+        return `<div class="lane"><h3>${l}<span>${rows.length}</span></h3><ul>${rows.slice(0, cap).map(([id, t]) =>
+          `<li><button class="tk" data-ticket="${id}" data-flip="tk-${id}">${esc(t.title)}<small class="mono">${id}</small></button></li>`).join('')}</ul></div>`;
+      }).join('')}</div>`;
+    },
+  },
+  trend: {
+    title: p => 'Opened and closed', sub: p => `${p.project} · ${p.days} days`,
+    fit: { primary: [460, 820], side: [260, 420], sideH: 210 },
+    body(p) {
+      const W = 320, H = 110, max = Math.max(...trend.flatMap(d => [d.opened, d.closed]));
+      const line = k => trend.map((d, i) => `${i ? 'L' : 'M'}${(i / 29 * W).toFixed(1)},${(H - d[k] / max * (H - 8) - 4).toFixed(1)}`).join('');
+      const sum = k => trend.reduce((n, d) => n + d[k], 0);
+      return `<div class="trend"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Tickets opened and closed per day">
+        <path d="${line('opened')}" fill="none" stroke="var(--warn)" stroke-width="1.6"/><path d="${line('closed')}" fill="none" stroke="var(--accent)" stroke-width="1.6"/></svg>
+        <div class="legend"><span><i style="background:var(--warn)"></i>opened ${sum('opened')}</span><span><i style="background:var(--accent)"></i>closed ${sum('closed')}</span></div></div>`;
+    },
+  },
+  ticket: {
+    title: p => tickets[p.ticket]?.title || 'Unavailable', sub: p => p.ticket,
+    fit: { primary: [460, 760], side: [260, 420], sideH: 250 },
+    body(p, form) {
+      const t = tickets[p.ticket]; if (!t) return 'This ticket is unavailable.';
+      return `<dl><div><dt>Goal</dt><dd>${esc(t.goal)}</dd></div>${form === 'primary' ? `<div><dt>Why</dt><dd>${esc(t.why)}</dd></div>` : ''}</dl>
+        <div class="row"><select data-act="set status" aria-label="Status">${['Working', 'Verifying', 'Waiting', 'Closed'].map(s => `<option${s === t.lane ? ' selected' : ''}>${s}</option>`).join('')}</select>
+        ${t.who ? chipFor(t.who) : '<span>Unassigned</span>'}</div>`;
+    },
+  },
+  person: {
+    title: p => people[p.person]?.name || p.person.split(':')[1], sub: p => p.person.split(':')[0],
+    fit: { primary: [420, 700], side: [240, 380], sideH: 170 },
+    body(p) { const who = people[p.person]; return who ? `<p style="margin:0 0 .5rem">${esc(who.about)}</p><div class="row">${who.work.map(id => `<button class="chip" data-ticket="${id}"><i></i>${id}</button>`).join('')}</div>` : 'Unavailable.'; },
+  },
+  agent: {
+    title: p => p.agent, sub: () => 'agent',
+    fit: { primary: [420, 700], side: [240, 380], sideH: 150 },
+    body(p) { const mine = Object.entries(tickets).filter(([, t]) => t.who === 'agent:' + p.agent && t.lane === 'Working'); return `<p style="margin:0 0 .5rem">Working on ${mine.length} tickets.</p><div class="row">${mine.map(([id]) => `<button class="chip" data-ticket="${id}"><i></i>${id}</button>`).join('')}</div>`; },
+  },
+};
+
+// ───────────────────────────── the layout: pure. rank, fit, area → form + rectangle ──
+// Rank 0 is primary and never folds. The rest go down a side column as `side`, then `compact`, then fold.
+function layout(placements, area) {
+  const gap = 14, out = new Map(), n = placements.length;
+  if (!n) return out;
+  const p0 = placements[0], f0 = bricks[p0.brick].fit;
+  if (n === 1 || area.w < 620) {
+    const w = Math.min(area.w, f0.primary[1]);
+    out.set(p0.id, { form: 'primary', x: (area.w - w) / 2 * (n === 1 ? 1 : 0), y: 0, w: n === 1 ? w : area.w, h: Math.min(area.h, n === 1 ? 560 : area.h) });
+    for (const p of placements.slice(1)) out.set(p.id, { form: 'folded' });
+    return out;
+  }
+  const sideW = Math.max(260, Math.min(400, area.w * .34)), mainW = Math.min(area.w - sideW - gap, f0.primary[1]);
+  out.set(p0.id, { form: 'primary', x: 0, y: 0, w: mainW, h: area.h });
+  let y = 0; const rest = placements.slice(1);
+  // Give each side its height while there is room for it and a compact row for every one after it.
+  rest.forEach((p, i) => {
+    const want = bricks[p.brick].fit.sideH, after = (rest.length - i - 1) * (44 + gap);
+    if (y + want + after <= area.h) { out.set(p.id, { form: 'side', x: mainW + gap, y, w: area.w - mainW - gap, h: want }); y += want + gap; }
+    else if (y + 44 <= area.h) { out.set(p.id, { form: 'compact', x: mainW + gap, y, w: area.w - mainW - gap, h: 44 }); y += 44 + gap; }
+    else out.set(p.id, { form: 'folded' });
+  });
+  return out;
+}
+
+// ───────────────────────────── boards and the trail ───────────────────────
+const $ = s => document.querySelector(s), page = $('#page'), trailEl = $('#trail');
+let boards = [], shown = -1, seq = 0;
+const board = () => boards[shown];
+function openBoard(title) {
+  const b = { id: 'bd-' + ++seq, title, revision: 1, placements: [], el: document.createElement('div') };
+  b.el.className = 'board';
+  b.el.innerHTML = `<header><h1></h1><small></small><button class="close">Close</button></header><div class="field"></div><div class="folded"></div>`;
+  b.el.querySelector('.close').onclick = () => closeBoard(b);
+  trailEl.append(b.el); boards.push(b); page.classList.add('has-board'); show(boards.length - 1); return b;
+}
+function show(i) {
+  shown = i; trailEl.style.transform = `translateX(${-100 * i}%)`;
+  $('#dots').innerHTML = boards.length > 1 ? boards.map((_, j) => `<i class="${j === i ? 'on' : ''}"></i>`).join('') : '';
+  if (i < 0) page.classList.remove('has-board'); else requestAnimationFrame(() => draw(boards[i]));
+}
+function closeBoard(b) {
+  const i = boards.indexOf(b); told.push(`The member closed board ${b.id}.`);
+  show(Math.max(0, i - 1) === i ? (boards.length > 1 ? 0 : -1) : i - 1);
+  setTimeout(() => { b.el.remove(); boards.splice(i, 1); show(boards.length ? Math.min(shown, boards.length - 1) : -1); }, 620);
+}
+const key = p => p.brick + JSON.stringify(Object.entries(p.params).sort());
+function change(b, ops, by = 'agent') {
+  for (const op of ops) {
+    if (op.place) {
+      const p = { id: 'pl-' + ++seq, brick: op.place, params: op.params, fresh: true };
+      if (b.placements.some(q => key(q) === key(p))) { pulse(b, b.placements.find(q => key(q) === key(p))); continue; }
+      b.placements.splice(op.rank ?? b.placements.length, 0, p);
+      if (by === 'member') told.push(`The member placed ${said(p)} on board ${b.id}.`);
+    } else if (op.remove) {
+      const p = b.placements.find(q => q.id === op.remove); if (!p) continue;
+      p.gone = true; if (by === 'member') told.push(`The member removed ${said(p)} from board ${b.id}.`);
+    }
+  }
+  b.revision++; draw(b);
+}
+const said = p => `${p.brick}(${Object.entries(p.params).sort().map(([k, v]) => k + '=' + v).join(', ')})`;
+function pulse(b, p) { const el = b.el.querySelector(`[data-id="${p.id}"]`); el?.animate([{ boxShadow: '0 0 0 2px var(--accent)' }, { boxShadow: '0 0 0 2px transparent' }], { duration: 900 }); }
+
+// One revision is one animation: everything that changed starts moving in the same frame.
+function draw(b) {
+  const field = b.el.querySelector('.field'), area = { w: field.clientWidth, h: field.clientHeight };
+  const live = b.placements.filter(p => !p.gone), rects = layout(live, area);
+  const before = flipRects(field);
+  b.el.querySelector('h1').textContent = b.title; b.el.querySelector('small').textContent = `revision ${b.revision}`;
+  for (const p of b.placements) {
+    let el = field.querySelector(`[data-id="${p.id}"]`); const r = rects.get(p.id);
+    if (p.gone || !r || r.form === 'folded') { if (el) { el.classList.add('leaving'); setTimeout(() => el.remove(), 320); } continue; }
+    const brick = bricks[p.brick];
+    if (!el) {
+      el = document.createElement('article'); el.className = 'placement entering'; el.dataset.id = p.id;
+      el.innerHTML = `<header><h2></h2><small class="mono"></small><button class="x" aria-label="Remove">✕</button></header><div class="body"></div>`;
+      el.querySelector('.x').onclick = () => change(b, [{ remove: p.id }], 'member');
+      el.style.transform = `translate(${r.x}px, ${r.y}px)`; el.style.width = r.w + 'px'; el.style.height = r.h + 'px';
+      field.append(el); requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove('entering')));
+    }
+    if (el.dataset.form !== r.form || p.dirty || p.fresh) { el.dataset.form = r.form; el.querySelector('.body').innerHTML = brick.body(p.params, r.form); p.dirty = p.fresh = false; }
+    el.querySelector('h2').textContent = brick.title(p.params); el.querySelector('small').textContent = brick.sub(p.params);
+    el.style.transform = `translate(${r.x}px, ${r.y}px)`; el.style.width = r.w + 'px'; el.style.height = r.h + 'px';
+  }
+  b.placements = b.placements.filter(p => !p.gone);
+  const folded = live.filter(p => rects.get(p.id)?.form === 'folded');
+  b.el.querySelector('.folded').innerHTML = folded.length ? 'Also here ' + folded.map(p => `<button class="chip" data-raise="${p.id}"><i></i>${esc(bricks[p.brick].title(p.params))} · ${esc(bricks[p.brick].sub(p.params))}</button>`).join('') : '';
+  flipPlay(field, before);
+}
+// FLIP for things inside bricks (a ticket changing lanes).
+const flipRects = root => new Map([...root.querySelectorAll('[data-flip]')].map(el => [el.dataset.flip, el.getBoundingClientRect()]));
+function flipPlay(root, before) {
+  for (const el of root.querySelectorAll('[data-flip]')) {
+    const a = before.get(el.dataset.flip); if (!a) continue; const z = el.getBoundingClientRect();
+    if (Math.abs(a.left - z.left) + Math.abs(a.top - z.top) < 2) continue;
+    el.animate([{ transform: `translate(${a.left - z.left}px, ${a.top - z.top}px)` }, { transform: 'none' }], { duration: 600, easing: 'cubic-bezier(.22,.72,.18,1)' });
+    el.classList.add('moved'); setTimeout(() => el.classList.remove('moved'), 1700);
+  }
+}
+addEventListener('resize', () => board() && draw(board()));
+
+// Clicks: a chip places its brick at once, with no job. Never waits for a model.
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-ticket], [data-ref], [data-raise]'); if (!t) return;
+  if (t.dataset.raise) { const b = board(), p = b.placements.find(q => q.id === t.dataset.raise); b.placements = [p, ...b.placements.filter(q => q !== p)]; b.revision++; return draw(b); }
+  const op = t.dataset.ticket ? { place: 'ticket', params: { ticket: t.dataset.ticket } }
+    : t.dataset.ref.startsWith('agent:') ? { place: 'agent', params: { agent: t.dataset.ref.slice(6) } } : { place: 'person', params: { person: t.dataset.ref } };
+  if (!board()) { const b = openBoard(''); change(b, [op], 'member'); } else change(board(), [op], 'member');
+});
+document.addEventListener('change', e => {
+  const sel = e.target.closest('select[data-act]'); if (!sel) return;
+  const el = sel.closest('.placement'), b = board(), p = b.placements.find(q => q.id === el.dataset.id);
+  if (sel.value === 'Closed') delete tickets[p.params.ticket].lane; else tickets[p.params.ticket].lane = sel.value;
+  told.push(`The member used set status on ${said(p)} on board ${b.id}: status=${sel.value.toLowerCase()}.`);
+  refresh();
+});
+// Bricks are live: when a record changes, every brick that shows it changes, with no job.
+function refresh() { for (const b of boards) { for (const p of b.placements) p.dirty = true; if (b === board()) draw(b); } }
+
+// ───────────────────────────── the conversation, and a canned Art ─────────
+const log = $('#log'), told = [], wait = ms => new Promise(r => setTimeout(r, ms));
+const say = (who, html) => { const d = document.createElement('div'); d.className = 'msg ' + who; d.innerHTML = html; log.append(d); log.scrollTop = 1e9; return d; };
+const trace = text => { const d = document.createElement('div'); d.className = 'trace'; d.textContent = text; log.append(d); log.scrollTop = 1e9; return d; };
+const mood = (m, text) => { $('#presence').dataset.mood = m; $('#status').textContent = text; };
+async function step(text, fn, ms = 650) { const t = trace(text); await wait(ms); fn(); t.classList.add('done'); await wait(250); }
+
+async function art(q) {
+  mood('working', 'Working'); await wait(500);
+  const heard = told.splice(0);
+  const low = q.toLowerCase(), id = (q.match(/t-\d+/i) || [])[0]?.toLowerCase();
+  if (/what'?s on|on the board|what do (you|i) see/.test(low)) {
+    const b = board();
+    say('art', b ? `<p>${b.placements.map((p, i) => `${i ? '' : 'Primary: '}${esc(bricks[p.brick].title(p.params))}`).join('. ')}.</p>${heard.length ? `<p style="color:var(--dim)">Since I last looked: ${heard.map(esc).join(' ')}</p>` : ''}` : '<p>Nothing. No board is open.</p>');
+  } else if (/pond|unrelated|different|something else|new board/.test(low)) {
+    await step('boards.open "Something else"', () => openBoard('Something else'));
+    await step('place ticket t-2402', () => change(board(), [{ place: 'ticket', params: { ticket: 't-2402' } }]));
+    say('art', '<p>That is a different subject, so it gets its own board to the right. Close it and you are back where you were.</p>');
+  } else if (id || /ticket|stuck|figure out|that one/.test(low)) {
+    const t = tickets[id] ? id : 't-2429';
+    if (!board()) await step('boards.open', () => openBoard(''));
+    await step(`place ticket ${t}`, () => change(board(), [{ place: 'ticket', params: { ticket: t } }]));
+    say('art', `<p><span class="mono">${t}</span> is the one waiting on you. The spec went three rounds of cold review and the last was still blocking, so I have not built anything from it.</p>`);
+  } else if (!board() || /lately|what'?s up|progress|status|loom/.test(low)) {
+    await step('blueprints.list', () => {}, 400);
+    await step('boards.open "Loom lately"', () => openBoard('Loom lately'));
+    await step('place lanes loom', () => change(board(), [{ place: 'lanes', params: { project: 'loom' } }]), 800);
+    await step('place trend loom', () => change(board(), [{ place: 'trend', params: { project: 'loom', days: 30 } }]), 800);
+    say('art', '<p>Three things are moving. Boards has its server side built; the page is what you are looking at a sketch of. The memory merge is specified and waiting on you. Export and backup are being written up.</p><p>The lanes are live. Leave them up and you will see tickets move while we talk.</p>');
+    await step('blueprints.save "project pulse"', () => {}, 500);
+  } else say('art', '<p>This is a canned Art. Try one of the suggestions under the input.</p>');
+  mood('idle', told.length ? 'Has something to tell you' : 'Here when you need me.');
+}
+const form = $('#ask form'), input = $('#q'), send = form.querySelector('button');
+input.oninput = () => send.disabled = !input.value.trim();
+form.onsubmit = async e => { e.preventDefault(); const q = input.value.trim(); if (!q) return; input.value = ''; send.disabled = true; say('you', esc(q)); $('#talk').classList.add('open'); await art(q); };
+$('.hints').innerHTML = ["what's up with loom lately?", "what's up with that one ticket we can't figure out?", "what's on the board?", 'something unrelated: pond'].map(h => `<button>${h}</button>`).join('');
+$('.hints').onclick = e => { if (e.target.tagName === 'BUTTON') { input.value = e.target.textContent; form.requestSubmit(); } };
+$('#presence').onclick = () => $('#talk').classList.toggle('open');
+input.focus();
+
+// The world keeps moving: a ticket changes lanes every few seconds, as it would over the live read.
+const cycle = ['Waiting', 'Working', 'Verifying'];
+setInterval(() => {
+  const ids = Object.keys(tickets).filter(id => tickets[id].lane), id = ids[Math.floor(Math.random() * ids.length)], t = tickets[id];
+  t.lane = cycle[(cycle.indexOf(t.lane) + 1) % 3]; refresh();
+}, 5200);
+</script>
+</body>
+</html>
