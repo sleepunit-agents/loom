@@ -10,7 +10,7 @@ import { memberOperation } from '../data/operation';
 import { memoryQueries } from '../memory/queries';
 import { useMemoryQuery } from '../memory/query';
 import { freshWord, shownPages, type PageRow } from '../pieces/knowledge/model';
-import { Action, Actions, Chip, Lead, Loading, Note, Problem, Row, Rows, Section, State, Time, Unavailable, count, freshTone, pageChip, words, type Act, type Params } from './brick-kit';
+import { Action, Actions, Chip, Few, Lead, Loading, More, Note, Problem, Row, Rows, Section, State, Time, Unavailable, count, freshTone, pageChip, words, type Act, type Params } from './brick-kit';
 import type { Form } from './layout';
 
 type Match = { slug: string; title: string; domain: string; updated: string; verified_at: string | null };
@@ -105,8 +105,7 @@ export function Knowledge({ params, form, act }: { params: Params; form: Form; a
           : <Note>Nothing matches. Every word must be in a page's title, words or topic.</Note>
       ) : (
         <>
-          {rows.length > 0 && <Rows>{rows.slice(0, cap).map((p) => line(p, p.fresh))}</Rows>}
-          {rows.length > cap && <Note>and {rows.length - cap} more</Note>}
+          {rows.length > 0 && <Few of={rows} first={cap} fit={!big}>{(shown, hidden) => <><Rows beside>{shown.map((p) => line(p, p.fresh))}</Rows><More n={hidden} /></>}</Few>}
           {!rows.length && <Note>{every.length ? 'No pages here' : 'No knowledge yet'}</Note>}
         </>
       )}

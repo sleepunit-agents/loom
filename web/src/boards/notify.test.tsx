@@ -67,13 +67,13 @@ import { NOTIFICATION_DEVICE_REF, DEVICE_CACHE, OPEN_IN_BOARDS } from '../../../
 type Node = { type: string; props: Record<string, any>; children: (Node | string)[]; findAll(test: (n: Node) => boolean): Node[]; findAllByType(type: string): Node[] };
 const text = (n: Node | string): string => (typeof n === 'string' ? n : n.children.map(text).join(''));
 let tree: { root: Node; unmount(): void } | undefined;
-const settle = () => act(async () => { for (let n = 0; n < 5; n++) await new Promise((done) => setTimeout(done, 0)); });
+const settle = () => act(async () => { for (let n = 0; n < 25; n++) await new Promise((done) => setTimeout(done, 0)); });
 const mount = async (element: unknown) => { await act(async () => { tree = create(element, { createNodeMock: () => ({ clientWidth: 1200, clientHeight: 800, focus() {} }) }); }); await settle(); };
 const feed = async (answers: typeof f.answers) => { await act(async () => { Object.assign(f.answers, answers); f.version++; for (const fn of [...f.listeners]) fn(); }); await settle(); };
 const buttons = () => tree!.root.findAllByType('button');
 const button = (label: string) => buttons().find((b) => text(b) === label || b.props['aria-label'] === label);
 const press = async (label: string) => { await act(async () => { await button(label)!.props.onClick(); }); await settle(); };
-const dialog = () => tree!.root.findAll((n) => n.props.role === 'dialog' && n.props['aria-label'] === 'Notifications')[0];
+const dialog = () => tree!.root.findAll((n) => n.props.role === 'group' && n.props['aria-label'] === 'Notifications')[0];
 const status = () => text(dialog().findAll((n) => n.props.role === 'status')[0]);
 const alert = () => dialog().findAll((n) => n.props.role === 'alert').map(text).join('');
 const box = () => dialog().findAllByType('input')[0];
@@ -101,12 +101,15 @@ beforeEach(() => { f.answers = {}; f.asked = []; f.tail = null; f.op.mockReset()
 afterEach(async () => { await act(async () => tree?.unmount()); tree = undefined; vi.unstubAllGlobals(); });
 
 describe('the control on the page', () => {
-  it('is drawn beside the presence, registers the worker, and asks the browser nothing when the page opens', async () => {
+  it('is in the one panel beside the presence; the page registers the worker and asks the browser nothing when it opens', async () => {
     const b = browser();
     f.answers = { ...account() };
     await mount(h(Page, { member: 'sam', thread: 'th:pond', agent: 'art', exists: true }));
     const top = tree!.root.findAll((n) => n.props.className === 'boards-top')[0];
-    expect(top.findAllByType('button').map((n) => n.props['aria-label'] ?? n.props.className)).toEqual(['boards-presence', 'Notifications', 'Conversations']);
+    // The header is the presence and one control; notifications are a line of the panel that control opens.
+    expect(top.findAllByType('button').map((n) => n.props['aria-label'] ?? n.props.className)).toEqual(['boards-presence', 'Conversations']);
+    expect(button('Notifications')).toBeUndefined();
+    await press('Conversations');
     expect(button('Notifications')!.props['aria-expanded']).toBe(false);
     expect(dialog()).toBeUndefined();
     expect(b.register).toHaveBeenCalledExactlyOnceWith('/sw.js');

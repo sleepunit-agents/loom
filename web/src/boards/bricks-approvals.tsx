@@ -11,7 +11,7 @@ import { approvalSnapshot, approvalsQuery, type ApprovalsResult } from '../data/
 import { approvalReading } from '../pieces/approval-view/answering';
 import { rows, type Approval as Row } from '../pieces/approval-view/model';
 import { displayName } from '../kit/words';
-import { Chip, Fact, Facts, Lead, Loading, Note, Row as Line, Rows, State, Time, Unavailable, useOwnFlag, type Params, type Raise, type Tone } from './brick-kit';
+import { Chip, Fact, Facts, Few, Lead, Loading, More, Note, Row as Line, Rows, State, Time, Unavailable, useOwnFlag, type Params, type Raise, type Tone } from './brick-kit';
 import type { Form } from './layout';
 
 const name = (id: string) => displayName(id);
@@ -38,8 +38,7 @@ export function Approvals({ params, form, raise }: { params: Params; form: Form;
   if (form === 'side') return (
     <>
       {lead}
-      {shown.length > 0 && <Rows>{shown.slice(0, few).map((a) => <Line key={a.id} place={place(a)} title={reading(a).title} meta={<>{name(a.agent)} · {a.state}</>} />)}</Rows>}
-      {shown.length > few && <Note>and {shown.length - few} more</Note>}
+      {shown.length > 0 && <Few of={shown} first={few}>{(some, hidden) => <><Rows>{some.map((a) => <Line key={a.id} place={place(a)} title={reading(a).title} meta={<>{name(a.agent)} · {a.state}</>} />)}</Rows><More n={hidden} /></>}</Few>}
       {!shown.length && empty}
     </>
   );

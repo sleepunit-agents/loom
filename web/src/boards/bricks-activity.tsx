@@ -9,7 +9,7 @@ import { memoryQueries } from '../memory/queries';
 import { useMemoryQuery } from '../memory/query';
 import { Reply } from '../pair/reply';
 import { VENUES, passes, safeHref, type ActivityEntry, type ActivityLink, type Filters } from '../pieces/activity/model';
-import { Action, Actions, Chip, Fact, Facts, Lead, Loading, Note, Row, Rows, Section, Unavailable, ticketChip, type Params } from './brick-kit';
+import { Action, Actions, Chip, Fact, Facts, Few, Lead, Loading, More, Note, Row, Rows, Section, Time, Unavailable, ticketChip, type Params } from './brick-kit';
 import type { Form } from './layout';
 
 /** How many of Activity's three-day windows hold a range of days. */
@@ -29,8 +29,6 @@ export function changeOf(link: ActivityLink): string | undefined {
 }
 const Link = ({ label, href }: ActivityLink) => { const safe = safeHref(href); return safe ? <a href={safe} target="_blank" rel="noopener noreferrer">{label}</a> : <span>{label}</span>; };
 
-/** A log is read by the clock: the hour and minute in the household's zone, under the day it happened. */
-const clock = (at: string, zone: string) => new Date(at).toLocaleTimeString('en-US', { timeZone: zone, hour: 'numeric', minute: '2-digit' });
 /** A household day (YYYY-MM-DD) in words: "Fri, Nov 13". */
 const dayWord = (day: string) => new Date(day + 'T12:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' });
 const stepWord = (state: string) => (state === 'running' ? 'running' : state === 'error' ? 'failed' : 'done');
@@ -60,7 +58,7 @@ function Opened({ id, zone }: { id: string; zone: string }) {
         )}
         {!!e.steps?.length && <Fact wide label={`Steps · ${e.steps.length}`}>{e.steps.slice(-8).map((s, i) => <span key={i} className="block">{s.label} · {stepWord(s.state)}</span>)}</Fact>}
         {e.links.length > 0 && <Fact wide label="Read more"><span className="board-meta">{e.links.map((l, i) => <Link key={i} {...l} />)}</span></Fact>}
-        <Fact label="When"><span className="board-note">{dayWord(e.day)}, {clock(e.at, zone)}{e.owner ? ' · with you' : ''}</span></Fact>
+        <Fact label="When"><span className="board-note">{dayWord(e.day)}, <Time at={e.at} clock zone={zone} />{e.owner ? ' · with you' : ''}</span></Fact>
       </Facts>
     </div>
   );
@@ -97,15 +95,15 @@ export function Activity({ params, form }: { params: Params; form: Form }) {
   const on = filters.who.length + filters.where.length + filters.what.length > 0;
   const total = `${on ? `${entries.length} of ${all.length}` : entries.length} ${(on ? all : entries).length === 1 ? 'entry' : 'entries'} ${range}`;
   if (form === 'compact') return <p className="board-brief">{total}{entries[0] ? ` · latest from ${entries[0].agent}: ${entries[0].title}` : ''}</p>;
-  const big = form === 'primary', cap = big ? 80 : 3, shown = entries.slice(0, cap);
+  const big = form === 'primary', cap = big ? 80 : 3;
   const kindWord = (e: ActivityEntry) => (e.what === 'work' ? 'Work done' : e.what === 'system' ? 'System' : '');
   const row = (e: ActivityEntry) => (
     <Row key={e.id}
       title={big ? <button type="button" className="board-activity-open" aria-expanded={open === e.id} onClick={() => setOpen(open === e.id ? '' : e.id)}>{e.title}</button> : e.title}
       meta={big
         ? <>{agentChip(e.agent)} <span>{e.where}{e.owner ? ' · with you' : ''}{e.line ? ' · ' + e.line : ''}</span>{ticketsIn(`${e.title} ${e.line ?? ''}`).map((t) => <span key={t}> {ticketChip(t)}</span>)}</>
-        : <>{e.agent}{kindWord(e) && ' · ' + kindWord(e)} · {days === 1 ? clock(e.at, zone) : `${dayWord(e.day)}, ${clock(e.at, zone)}`}</>}
-      end={big ? <>{kindWord(e) && <span>{kindWord(e)}</span>}<span className="board-time">{clock(e.at, zone)}</span></> : undefined}>
+        : <>{e.agent}{kindWord(e) && ' · ' + kindWord(e)} · <Time at={e.at} /></>}
+      end={big ? <>{kindWord(e) && <span>{kindWord(e)}</span>}<Time at={e.at} clock zone={zone} /></> : undefined}>
       {big && open === e.id ? <Opened id={e.id} zone={zone} /> : undefined}
     </Row>
   );
@@ -125,6 +123,8 @@ export function Activity({ params, form }: { params: Params; form: Form }) {
         <Actions>
           <button type="button" className="board-action" data-kind="quiet" aria-expanded={filtering} onClick={() => setFiltering(!filtering)}>Filter activity</button>
           {on && <Action kind="quiet" onClick={() => setFilters(none)}>Show everything</Action>}
+          {/* Its days and times are the household's: the zone is said once, quietly. */}
+          <small className="board-zone" title="Days and times are on the household’s clock">{zone}</small>
         </Actions>
       )}
       {big && filtering && (
@@ -140,10 +140,12 @@ export function Activity({ params, form }: { params: Params; form: Form }) {
       {big && records.some((w) => w.conversations !== 'available') && <p role="status" className="board-note">Conversations and digests {records.some((w) => w.conversations === 'error') ? 'couldn’t load' : 'are not available yet'}.</p>}
       {big && records.some((w) => w.episodes !== 'available') && <p role="status" className="board-note">Some episode stores {records.some((w) => w.episodes === 'error') ? 'couldn’t load' : 'are not available'}.</p>}
       {big && records.some((w) => w.truncated) && <p role="status" className="board-note">Showing the newest 600 entries per window.</p>}
-      {big
-        ? [...kept].sort().reverse().map((day) => { const rows = shown.filter((e) => e.day === day); return rows.length ? <Section key={day} title={dayWord(day)} count={rows.length}><Rows>{rows.map(row)}</Rows></Section> : null; })
-        : shown.length > 0 && <Rows>{shown.map(row)}</Rows>}
-      {entries.length > cap && <Note>and {entries.length - cap} more</Note>}
+      {entries.length > 0 && <Few of={entries} first={cap} fit={!big}>{(shown, hidden) => <>
+        {big
+          ? [...kept].sort().reverse().map((day) => { const rows = shown.filter((e) => e.day === day); return rows.length ? <Section key={day} title={dayWord(day)} count={rows.length}><Rows beside>{rows.map(row)}</Rows></Section> : null; })
+          : <Rows>{shown.map(row)}</Rows>}
+        <More n={hidden} />
+      </>}</Few>}
       {!entries.length && <Note>{big && on ? 'Nothing matches these filters. Try fewer filters or more days.' : 'Quiet'}</Note>}
     </>
   );

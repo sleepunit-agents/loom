@@ -14,8 +14,7 @@ import { hostingWord, listedAgents } from '../pieces/runtime/machine-hosting-mod
 import { conditionLine, readingAge, readingLine, readingsOf, type Reading } from '../pieces/runtime/machine-readings';
 import { machinesInventoryQuery, ownerMachinesQuery, signInWarnings, type Machine, type MachineReadEntry, type MachinesInventory, type OwnerMachinesData, type ReaderCard } from '../pieces/runtime/machines-query';
 import { isMember, isRef, useHouseholdOwner } from './admin-data';
-import { Action, Actions, Chip, Fact, Facts, Lead, Loading, Note, Problem, Row, Rows, Section, State, Time, Unavailable, count, type Act, type BodyProps } from './brick-kit';
-import { Opened, Opens } from './settings-kit';
+import { Action, Actions, Chip, Fact, Facts, Few, Lead, Loading, More, Note, Opened, Opens, Problem, Row, Rows, Section, State, Time, Unavailable, count, type Act, type BodyProps } from './brick-kit';
 
 export const machineFactsQuery = `query BrickMachineFacts { boxes { id sameMachineAsLoom lastSeenAt slots } ${alertLinesSelection} }`;
 type MachineFacts = { boxes: { id: string; sameMachineAsLoom: boolean; lastSeenAt: string | null; slots: number | null }[]; boxAlertSettings: AlertLines[] };
@@ -191,8 +190,9 @@ export function Machines({ form, act }: BodyProps) {
     <>
       <Lead>{summary}</Lead>
       {!boxes.length && <Note>No machines are visible to this account.</Note>}
+      <Few of={boxes} first={boxes.length} fit={!primary}>{(some, hidden) => <>
       <Rows>
-        {boxes.map((box) => {
+        {some.map((box) => {
           const more = fact.get(box.id), list = read(box.id), disks = list.filter((r) => r.kind === 'disk').length, setting = settings.get(box.id);
           const shown = primary && open === box.id, open_ = !box.revokedAt ? conditions(box.id) : [];
           return (
@@ -200,13 +200,13 @@ export function Machines({ form, act }: BodyProps) {
               meta={<>
                 {more?.sameMachineAsLoom && <>The loom machine · </>}
                 {more?.lastSeenAt ? <>last seen <Time at={more.lastSeenAt} /></> : more ? 'never seen' : ''}
-                {!primary && more?.slots != null && <> · {count(more.slots, 'slot')}</>}
+                {!primary && open_.length > 0 && <> · {count(open_.length, 'open alert')}</>}
               </>}
               end={<>
                 {box.revokedAt && <State tone="muted">Revoked</State>}
                 {!box.revokedAt && warnings.has(box.id) && <State tone="waiting">A sign-in needs attention</State>}
               </>}>
-              {open_.map(({ key, line }) => <p key={key} role="status" className="board-machines-alert">{line}</p>)}
+              {primary && open_.map(({ key, line }) => <p key={key} role="status" className="board-machines-alert">{line}</p>)}
               {primary && !box.revokedAt && !!list.length && <Note>{list.map((reading) => readingLine(reading, disks, now)).join(' · ')}</Note>}
               {primary && !box.revokedAt && !!setting && setting.readingsLeftOut > 0 && <p role="status" className="board-note">More than 24 things reported; {setting.readingsLeftOut} were left out.</p>}
               {shown && (
@@ -225,6 +225,8 @@ export function Machines({ form, act }: BodyProps) {
           );
         })}
       </Rows>
+      <More n={hidden} />
+      </>}</Few>
       {primary && lines && <Section title="Machine alerts"><AlertLinesForm lines={lines} owner={owner} act={act} /></Section>}
       {primary && <Note>Enrolling or revoking a machine is not done from a board.</Note>}
     </>

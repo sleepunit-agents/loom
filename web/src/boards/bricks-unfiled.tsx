@@ -4,7 +4,7 @@
 import { useState } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { unfiledPageSize, workUnfiledQuery } from '../pieces/work/query';
-import { Action, Loading, Note, Problem, Row, Rows, State, type Act, type Tone } from './brick-kit';
+import { Action, Few, Loading, More, Note, Problem, Row, Rows, State, type Act, type Tone } from './brick-kit';
 import { Pick, useTaskChoices, useTaskCommand } from './bricks-work';
 import type { Form } from './layout';
 
@@ -23,16 +23,15 @@ export function Unfiled({ form, act }: { form: Form; act: Act }) {
   const total = `${all.length > unfiledPageSize ? `More than ${unfiledPageSize}` : rows.length || 'No'} unfiled ticket${rows.length === 1 ? '' : 's'}`;
   if (form === 'compact') return <p className="board-brief">{total}</p>;
   if (!rows.length) return <Note>No unfiled tickets. Every ticket you can see belongs to a project.</Note>;
-  const shown = rows.slice(0, big ? unfiledPageSize : 6);
   const file = async (id: string, project: string) => { if (project && await run('project', { action: 'edit', id, input: { project } })) setFiling(undefined); };
   return (
     <>
       <Note>{total}.</Note>
+      <Few of={rows} first={big ? unfiledPageSize : 6} fit={!big}>{(shown, hidden) => <>
       <Rows>
         {shown.map((t) => (
           <Row key={t.id} place={{ brick: 'ticket', params: { ticket: t.id } }} title={<>{t.title} <span className="font-mono board-row-ref">{t.id}</span></>}
-            meta={big ? undefined : <State tone={tone(t.status)}>{statusWords[t.status] ?? t.status}</State>}
-            end={big ? <><State tone={tone(t.status)}>{statusWords[t.status] ?? t.status}</State>{filing !== t.id && <Action kind="quiet" label={`File ${t.id} into a project`} onClick={() => setFiling(t.id)}>File…</Action>}</> : undefined}>
+            end={<><State tone={tone(t.status)}>{statusWords[t.status] ?? t.status}</State>{big && filing !== t.id && <Action kind="quiet" label={`File ${t.id} into a project`} onClick={() => setFiling(t.id)}>File…</Action>}</>}>
             {big && filing === t.id && <div className="board-pick">
               {projects.length ? <Pick<string> label="Project" value="" options={projects.map((p) => ({ value: p.id, label: p.label }))} disabled={busy} onChange={(project) => void file(t.id, project)} />
                 : <Note>There is no project to file it into.</Note>}
@@ -41,7 +40,8 @@ export function Unfiled({ form, act }: { form: Form; act: Act }) {
           </Row>
         ))}
       </Rows>
-      {all.length > shown.length && <Note>and more</Note>}
+      {hidden > 0 ? <More n={hidden} /> : all.length > rows.length && <Note>and more</Note>}
+      </>}</Few>
       <Problem>{error}</Problem>
     </>
   );

@@ -22,7 +22,7 @@ import { approvalTitle, recordWord, type Approval as Row, type ApprovalSnapshot 
 import { tempoChangeWords } from '../pieces/tempo/change';
 import { measuringChangeWords } from '../pieces/measuring/change';
 import { displayName } from '../kit/words';
-import { Action, Actions, Chip, Fact, Facts, Lead, Loading, Note, Problem, Row as Line, Rows, Section, State, Time, Unavailable, words, type Act, type Params, type Tone } from './brick-kit';
+import { Action, Actions, Asking, Chip, Fact, Facts, Lead, Loading, Note, Problem, Row as Line, Rows, Section, State, Time, Unavailable, useSettling, words, type Act, type Params, type Tone } from './brick-kit';
 import type { Form } from './layout';
 
 const name = (id: string) => displayName(id);
@@ -36,38 +36,29 @@ export const approvalTone = (state: string): Tone => (state === 'pending' ? 'wai
 /** Allow and Deny, drawn from the shared steps. Keyed by the reading it answers (answerKey): a request read again
  * in a new version starts over. */
 function Answer({ approval, actions }: { approval: Row; actions?: ApprovalActions }) {
-  const answer = useAnswering(approval, actions, { askStanding: true }), busy = answer.busy;
+  // An answer is never given to a request the page only remembers: the controls wait for the fresh reading.
+  const answer = useAnswering(approval, actions, { askStanding: true }), stale = useSettling(), busy = answer.busy || stale;
   const caution = cautionWords(approval), always = answer.always;
   return (
     <>
       {!answer.allowed && caution && <p role="note" className="board-approval-caution">{caution}</p>}
       {answer.open && (
         <div className="board-form">
-          {answer.confirming && <p className="board-approval-caution">{secondYesWords}</p>}
+          {/* The steps are the shared ones (answering.ts); the questions are drawn by the kit's own, as every brick's are. */}
+          {answer.confirming && <Asking label="Second yes" kind="primary" yes="Yes, allow it" disabled={busy} onYes={answer.confirm} onNo={answer.cancel}>{secondYesWords}</Asking>}
           <Actions label="Answer approval">
-            {answer.confirming
-              ? <>
-                  <Action kind="primary" disabled={busy} onClick={answer.confirm}>Yes, allow it</Action>
-                  <Action kind="quiet" disabled={busy} onClick={answer.cancel}>Cancel</Action>
-                </>
-              : <Action kind="primary" disabled={busy} onClick={answer.allow}>Allow</Action>}
+            {!answer.confirming && <Action kind="primary" disabled={busy} onClick={answer.allow}>Allow</Action>}
             {always && !always.asking && <Action disabled={busy} onClick={always.ask}>{always.label}…</Action>}
             <Action disabled={busy} onClick={answer.deny}>Deny</Action>
           </Actions>
-          {always?.asking && (
-            <div className="board-confirm" role="group" aria-label="Standing answer">
-              <p>{always.label}? {standingWords}</p>
-              <Action kind="primary" disabled={busy} onClick={always.run}>Yes, always allow</Action>
-              <Action kind="quiet" disabled={busy} onClick={always.cancel}>Cancel</Action>
-            </div>
-          )}
+          {always?.asking && <Asking label="Standing answer" kind="primary" yes="Yes, always allow" disabled={busy} onYes={always.run} onNo={always.cancel}>{always.label}? {standingWords}</Asking>}
           <details className="board-approval-reason">
             <summary>Add a reason for denying</summary>
             <textarea className="board-input" aria-label="Reason for the requesting agent" value={answer.reason} maxLength={reasonLimit} disabled={busy} onChange={(e) => answer.setReason(e.target.value)} />
           </details>
         </div>
       )}
-      {busy && <p role="status" className="board-note">Saving answer…</p>}
+      {answer.busy && <p role="status" className="board-note">Saving answer…</p>}
       <Problem>{answer.error}</Problem>
     </>
   );

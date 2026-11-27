@@ -11,6 +11,7 @@ import { act, create } from 'react-test-renderer';
 const feed = vi.hoisted(() => vi.fn());
 vi.mock('../data/graphql', () => ({ useDataQuery: feed }));
 import { brickView, loadBricks } from './bricks';
+import { Frame } from './brick-kit';
 import type { Form } from './layout';
 import { shellCommandRecord } from '../../../src/apps/shell-command-record';
 
@@ -369,6 +370,22 @@ it('names no version where loom gave none, and says what stands against a househ
   await press('Deny');
   expect(answers()).toEqual([{ id: 'a-1', answer: 'deny', reason: 'Not yet.' }]);
   expect(reported.mock.calls.at(-1)).toEqual(['refuse', {}]);
+});
+
+it('gives no answer from a remembered reading: while its placement is getting new data every control waits, and an answer then goes as ever', async () => {
+  // The page drew this approval from what it remembered when its board came back (./remember.ts); the fresh reading has not arrived.
+  const drawn = (settling: boolean) => h(Frame.Provider, { value: { settling } }, element('primary'));
+  for (const kind of ['command', 'dangerous']) {
+    world.row = { ...approval, kind };
+    await act(async () => { tree?.unmount(); tree = create(drawn(true)); });
+    expect(labels()).toEqual(['Allow', 'Deny']);
+    expect(buttons().map((b) => b.props.disabled), kind).toEqual([true, true]);
+    expect(tree!.root.findAllByType('textarea')[0].props.disabled).toBe(true);
+    expect(text()).not.toContain('Saving answer');
+    await act(async () => { tree!.update(drawn(false)); });
+    expect(buttons().map((b) => b.props.disabled), kind).toEqual([false, false]);
+  }
+  expect(answers()).toEqual([]);
 });
 
 it('decides nothing about the answer in the brick itself: every send goes through the code the desktop runs', () => {

@@ -14,6 +14,7 @@ vi.mock('../data/graphql', () => ({
   },
 }));
 vi.mock('../data/operation', () => ({ memberOperation: f.op }));
+vi.mock('../contexts/portrait', async () => { const { createElement } = await import('react'); return { Portrait: () => createElement('art-sprite') }; });
 import { brickView, loadBricks, type Params } from './bricks';
 import type { Form } from './layout';
 
@@ -312,7 +313,7 @@ describe('person and agent', () => {
     expect(f.queries.at(-1)).toMatchObject({ variables: { ref: 'sam' } });
     expect(f.queries.at(-1)!.query).toContain('assigneeKind:{eq:member}');
     expect(text(tree!.root.findAllByType('p')[0])).toBe('2 open tickets.');
-    await draw('agent', { agent: 'art' }, 'side');
+    await draw('agent', { agent: 'art' }, 'primary');
     expect(f.queries.find((q) => q.query.includes('assigneeKind:{eq:agent}'))).toMatchObject({ variables: { ref: 'art' } });
     expect(tree!.root.findAllByType('p').map(text)).toContain('2 open tickets.');
     expect(tree!.root.findAllByType('button').map((b) => JSON.parse(b.props['data-place']))).toEqual(['t-7', 't-8'].map((ticket) => ({ brick: 'ticket', params: { ticket } })));
@@ -321,7 +322,7 @@ describe('person and agent', () => {
     data({ BrickAssigned: live({ rows: [] }) });
     expect(text((await draw('person', { person: 'member:sam' }, 'compact')).root.findAllByType('p')[0])).toBe('No open tickets');
     expect(text((await draw('person', { person: 'member:sam' }, 'side')).root.findAllByType('p')[0])).toBe('No open tickets.');
-    expect((await draw('agent', { agent: 'art' }, 'side')).root.findAllByType('p').map(text)).toContain('No open tickets.');
+    expect((await draw('agent', { agent: 'art' }, 'primary')).root.findAllByType('p').map(text)).toContain('No open tickets.');
   });
 });
 

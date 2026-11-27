@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { Reply } from '../pair/reply';
-import { Action, Actions, Chip, Fact, Facts, Lead, Loading, Note, Problem, Row, Rows, Section, State, Time, Unavailable, actorChip, count, useOwnFlag, words, type BodyProps, type Tone } from './brick-kit';
+import { Action, Actions, Chip, Excerpt, Fact, Facts, Lead, Loading, Note, Problem, Row, Rows, Section, State, Time, Unavailable, actorChip, count, useOwnFlag, words, type BodyProps, type Tone } from './brick-kit';
 import { useTicketMore } from './bricks-ticket-edit';
 import type { Form } from './layout';
 import { useTicketAction } from './ticket-action';
@@ -18,7 +18,7 @@ function TicketSessions({ ticket, form }: { ticket: string; form: Form }) {
   const read = useDataQuery<{ rows: WorkedBy[] }>(
     'query BrickTicketSessions($t:String!){rows:ticketSessions(ticket:$t){conversation title state at}}', { t: ticket }, { keep: true });
   const rows = read.data?.rows ?? [];
-  if (form !== 'primary') return rows.length ? <p className="board-note" data-ticket-sessions="">{count(rows.length, 'session')} worked this</p> : null;
+  if (form !== 'primary') return rows.length ? <span data-ticket-sessions="">{count(rows.length, 'session')} worked this</span> : null;
   return (
     <div data-ticket-sessions="">
       <Section title="Sessions">
@@ -48,25 +48,7 @@ export function Ticket({ params, form, act, raise }: BodyProps) {
   if (form === 'compact') return <p className="board-brief"><State tone={ticketTone(t.status)}>{t.status}</State> {t.title}</p>;
   const big = form === 'primary';
   const close = async (e: FormEvent) => { e.preventDefault(); if (reason.trim() && await run('close', { id, reason: reason.trim() })) { setClosing(false); setReason(''); } };
-  return (
-    <>
-      <Lead>{t.title}</Lead>
-      <div className="board-meta">
-        <State tone={ticketTone(t.status)}>{t.status}</State>
-        {t.project && <Chip place={{ brick: 'project', params: { project: t.project } }}>{t.project}</Chip>}
-        {t.assignee ? actorChip(t.assigneeKind, t.assignee) : <span>Unassigned</span>}
-        <Chip place={{ brick: 'comments', params: { ticket: id } }}>Comments</Chip>
-        {more.meta}
-      </div>
-      {(t.goal || (big && (t.why || t.doneWhen))) && (
-        <Facts>
-          {t.goal && <Fact wide label="Goal"><Reply words={t.goal} /></Fact>}
-          {big && t.why && <Fact wide label="Why"><Reply words={t.why} /></Fact>}
-          {big && t.doneWhen && <Fact wide label="Done when"><Reply words={t.doneWhen} /></Fact>}
-        </Facts>
-      )}
-      {more.facts}
-      {!more.open && !closing && (
+  const controls = !more.open && !closing && (
         <Actions>
           {t.status === 'closed'
             ? <Action disabled={busy} onClick={() => void run('reopen', { id })}>Reopen</Action>
@@ -76,8 +58,32 @@ export function Ticket({ params, form, act, raise }: BodyProps) {
                 <Action disabled={busy} onClick={() => setClosing(true)}>Close…</Action>
               </>}
           {more.controls}
+          {!big && <Chip place={{ brick: 'comments', params: { ticket: id } }}>Comments</Chip>}
         </Actions>
+        );
+  return (
+    <>
+      <Lead>{t.title}</Lead>
+      <div className="board-meta">
+        <State tone={ticketTone(t.status)}>{t.status}</State>
+        {t.project && <Chip place={{ brick: 'project', params: { project: t.project } }}>{t.project}</Chip>}
+        {t.assignee ? actorChip(t.assigneeKind, t.assignee) : <span>Unassigned</span>}
+        {more.priority}
+        {big && <Chip place={{ brick: 'comments', params: { ticket: id } }}>Comments</Chip>}
+        {big ? more.meta : <TicketSessions ticket={id} form={form} />}
+      </div>
+      {/* Small, its controls come straight under where it stands, so they are never below the fold. */}
+      {!big && controls}
+      {/* The small form says the goal while the ticket is open, and why it was closed once it is. */}
+      {((t.goal && (big || t.status !== 'closed')) || (big && (t.why || t.doneWhen))) && (
+        <Facts>
+          {t.goal && (big || t.status !== 'closed') && <Fact wide label="Goal">{big ? <Reply words={t.goal} /> : <Excerpt lines={2}><Reply words={t.goal} /></Excerpt>}</Fact>}
+          {big && t.why && <Fact wide label="Why"><Reply words={t.why} /></Fact>}
+          {big && t.doneWhen && <Fact wide label="Done when"><Reply words={t.doneWhen} /></Fact>}
+        </Facts>
       )}
+      {more.facts}
+      {big && controls}
       {closing && (
         <form className="board-form" onSubmit={(e) => void close(e)}>
           <input className="board-input" aria-label="Why it is closed" placeholder="Why is it closed?" value={reason} autoFocus onChange={(e) => setReason(e.target.value)} />
@@ -86,7 +92,7 @@ export function Ticket({ params, form, act, raise }: BodyProps) {
       )}
       {more.forms}
       <Problem>{error}</Problem>
-      <TicketSessions ticket={id} form={form} />
+      {big && <TicketSessions ticket={id} form={form} />}
     </>
   );
 }

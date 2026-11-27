@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { usePendingRead } from '../loading';
 import { createRequest, type AnyVariables, type TypedDocumentNode } from '@urql/core';
 import type { DocumentNode } from 'graphql';
 import type { generatedDataClient } from './client';
+import { Remembered, RememberedWatch } from './remembered';
 
-/** `settling` is set only on a kept snapshot: `data` answers this hook's previous
- * variables while the current ones load. It is never set on a current answer. */
+/** `settling` is set only on a kept snapshot (`data` answers this hook's previous
+ * variables while the current ones load) or a remembered one (`data` is the last
+ * answer this page had to the same selection: ./remembered.ts). It is never set
+ * on a current answer. */
 export type DataQuerySnapshot<T> = { status: 'loading' | 'live' | 'offline' | 'denied'; data?: T; settling?: boolean };
 export interface DataQueryOptions {
   /** While new variables load, keep showing the last answer this mounted hook
@@ -23,7 +26,7 @@ function client() {
   ).catch(error => { shared = undefined; throw error; });
 }
 type Client = Awaited<ReturnType<typeof client>>;
-interface Held<T> { key: number; doc: number; snapshot: DataQuerySnapshot<T>; from?: Client }
+interface Held<T> { key: number; doc: number; snapshot: DataQuerySnapshot<T>; from?: Client; /** The snapshot is a remembered answer, not yet replaced. */ remembered?: boolean }
 /** What a hook shows between a change of variables and the first answer to it. */
 function between<T>(held: Held<T>, doc: number, keep: boolean): DataQuerySnapshot<T> {
   return keep && held.doc === doc && held.snapshot.status === 'live' && held.snapshot.data !== undefined
@@ -38,7 +41,12 @@ function between<T>(held: Held<T>, doc: number, keep: boolean): DataQuerySnapsho
  * the moment that request errors or the feed closes, when the document changes,
  * when the option goes off, on unmount, and if the shared client is ever not
  * the one that produced it. Nothing is read from Graphcache or from disk: every
- * request stays network-only, so access is decided by the server each time. */
+ * request stays network-only, so access is decided by the server each time.
+ *
+ * Under a `Remembered` provider (./remembered.ts; the boards page, and nothing of
+ * the desktop) a hook also starts from the last live answer this page had to
+ * the same selection, marked `settling`, whatever `keep` says, and drops it on
+ * the same occasions. */
 export function useDataQuery<T, V extends AnyVariables = AnyVariables>(document: DocumentNode | TypedDocumentNode<T, V> | string, variables?: V, options?: DataQueryOptions): DataQuerySnapshot<T> {
   const keep = options?.keep === true, pause = options?.pause === true;
   const request = createRequest(document, variables as V);
@@ -46,9 +54,14 @@ export function useDataQuery<T, V extends AnyVariables = AnyVariables>(document:
   const stable = useMemo(() => request, [key]);
   // The same number for the same document, whatever the variables.
   const doc = useMemo(() => createRequest(document, undefined as V).key, [document]);
-  const [state, setState] = useState<Held<T>>({ key, doc, snapshot: { status: 'loading' } });
+  const memory = useContext(Remembered), watch = useContext(RememberedWatch);
+  const recalled = (): Held<T> | undefined => {
+    const found = pause ? undefined : memory?.get(key);
+    return found && found.data !== undefined ? { key, doc, snapshot: { status: 'live', data: found.data as T, settling: true }, from: found.from as Client, remembered: true } : undefined;
+  };
+  const [state, setState] = useState<Held<T>>(() => recalled() ?? { key, doc, snapshot: { status: 'loading' } });
   useEffect(() => {
-    setState(held => ({ key, doc, snapshot: pause ? { status: 'loading' } : between(held, doc, keep), from: held.from }));
+    setState(held => (held.key === key && held.remembered && !pause ? held : recalled() ?? { key, doc, snapshot: pause ? { status: 'loading' } : between(held, doc, keep), from: held.from }));
     if (pause) return;
     let stopped = false, unsubscribe: (() => void) | undefined;
     void client().then(value => {
@@ -56,14 +69,22 @@ export function useDataQuery<T, V extends AnyVariables = AnyVariables>(document:
       // A kept answer must not outlive the client that gave it.
       setState(held => held.key === key && held.snapshot.settling && held.from !== value ? { key, doc, snapshot: { status: 'loading' } } : held);
       const sub = value.query<T, V>(stable.query, stable.variables as V, { requestPolicy: 'network-only' }).subscribe(result => {
-        if (!stopped) setState({ key, doc, from: value, snapshot: result.error ? { status: 'offline' } : result.data ? { status: 'live', data: result.data } : { status: 'loading' } });
+        if (stopped) return;
+        // What the page remembers follows the feed: the newest live answer, and nothing once it fails.
+        if (result.error) memory?.drop(key); else if (result.data) memory?.set(key, result.data, value);
+        setState({ key, doc, from: value, snapshot: result.error ? { status: 'offline' } : result.data ? { status: 'live', data: result.data } : { status: 'loading' } });
       });
       unsubscribe = () => sub.unsubscribe();
-    }).catch(() => { if (!stopped) setState({ key, doc, snapshot: { status: 'offline' } }); });
+    }).catch(() => { if (!stopped) { memory?.drop(key); setState({ key, doc, snapshot: { status: 'offline' } }); } });
     return () => { stopped = true; unsubscribe?.(); };
-  }, [key, stable, doc, keep, pause]);
-  const shown = state.key === key ? state.snapshot : between(state, doc, keep);
+  }, [key, stable, doc, keep, pause, memory]);
+  const current = state.key === key;
+  const shown = current ? state.snapshot : between(state, doc, keep);
+  const remembered = current && !pause && !!state.remembered && !!shown.settling;
+  // Whoever draws this hook is told while it shows a remembered answer, before the frame is painted.
+  const me = useRef({});
+  useLayoutEffect(() => { if (!watch || !remembered) return; watch(me.current, true); return () => watch(me.current, false); }, [watch, remembered]);
   usePendingRead(!pause && (shown.status === 'loading' || !!shown.settling));
   if (pause) return { status: 'loading' };
-  return shown.settling && !keep ? { status: 'loading' } : shown;
+  return shown.settling && !keep && !remembered ? { status: 'loading' } : shown;
 }

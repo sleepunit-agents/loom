@@ -36,6 +36,7 @@ const shared = new Set([
   'pieces/attention/agent-directory.ts', // the shared directory's agent names, as Comms and Home say them (imports data/ only)
   'pieces/attention/agent-displays.ts', // an agent's mark colours, face shape and eyes (imports data/ only)
   'face-data.json', // the shapes of an agent's face, as data
+  'pixel-face.tsx', // an agent's stored pixel sprite, drawn on a canvas by the desktop's own renderer (imports data/, access.ts, contexts/portrait-player.ts and one plain file under src/; no kit, no sheet)
   'shell/shortcuts.ts', // the declared shortcuts and the engine that reads their keys (imports react only)
   'pieces/attention/home-model.ts', // an agent's state word and line, the roster's order (types and functions)
   'pieces/attention/roster.ts', // Home's roster: the member's own agents (imports data/ only)

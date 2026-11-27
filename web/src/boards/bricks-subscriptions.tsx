@@ -12,8 +12,7 @@ import { useDeadline } from '../pieces/comms/use-deadline';
 import { accountServices, loginCounts, loginLine, loginState, modelGroups, runtimeAccountsQuery, serviceLevel, serviceNeedsSignIn, subscriptionSetupQuery, subscriptionWords, usagePercent, usageReadStale, weeklyNote, weeklyUsageQuery, windowName,
   type AccountLogin, type RuntimeAccountDetail, type RuntimeAccountsData, type SubscriptionSetup, type WeeklyAccount, type WeeklyDimension } from '../pieces/runtime/model-query';
 import { isMember, isRef } from './admin-data';
-import { Action, Actions, Chip, Fact, Facts, Lead, Loading, Meter, Note, Row, Rows, Section, Segmented, State, Time, Unavailable, count, useOwnFlag, type Act, type BodyProps, type Tone } from './brick-kit';
-import { Opened, Opens } from './settings-kit';
+import { Action, Actions, Chip, Fact, Facts, Few, Lead, Loading, Meter, More, Note, Opened, Opens, Row, Rows, Section, Segmented, State, Time, Unavailable, count, useOwnFlag, type Act, type BodyProps, type Tone } from './brick-kit';
 
 const share = new Intl.NumberFormat(undefined, { style: 'percent', maximumFractionDigits: 2 });
 const dimensions: { value: WeeklyDimension; label: string }[] = [{ value: 'agents', label: 'Agent' }, { value: 'triggers', label: 'Trigger' }, { value: 'conversations', label: 'Conversation' }];
@@ -186,7 +185,13 @@ export function Subscriptions({ form, act, raise }: BodyProps) {
           <Action kind="quiet" pressed={attentionOnly} onClick={() => setAttentionOnly(!attentionOnly)}>Needs attention</Action>
         </div>
       )}
-      {!rows.length ? <Note>No model accounts yet.</Note> : !services.size ? <Note>No matching subscriptions.</Note> : [...services].map(([provider, accounts]) => (
+      {/* Small, it is each subscription and how full it is; its windows, sign-ins and settings are in the big form. */}
+      {!primary && rows.length > 0 && <Few of={[...services].flatMap(([, accounts]) => accounts)} first={6}>{(shown, hidden) => <>
+        <Rows beside>{shown.map((account, index) => <Row key={index} title={account.label} end={<State tone={levelTone(account.level)}>{account.level}</State>}
+          meta={account.__typename === 'RuntimeAccountDetail' && (account.logins ?? []).some((login) => login.needsSignIn) ? 'Sign-in needed' : undefined} />)}</Rows>
+        <More n={hidden} />
+      </>}</Few>}
+      {!rows.length ? <Note>No model accounts yet.</Note> : !services.size ? <Note>No matching subscriptions.</Note> : primary && [...services].map(([provider, accounts]) => (
         <Section key={JSON.stringify(provider)} title={provider ?? 'Shared summaries'} count={`${accounts.length} · ${serviceLevel(accounts)}${serviceNeedsSignIn(accounts) ? ' · Sign-in needed' : ''}`}>
           <Rows>
             {accounts.map((account, index) => {

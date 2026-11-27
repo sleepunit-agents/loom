@@ -47,7 +47,7 @@ it('shows a project\'s goal, lifecycle, the members and agents on it, and its re
   expect(b.all()).not.toContain('Raised beds');
   await b.draw('project', { project: 'garden' }, 'compact');
   b.oneLine();
-  expect(b.all()).toBe('active Keep the garden tidy.');
+  expect(b.all()).toBe('active Garden Keep the garden tidy.');
   expect(b.controls()).toEqual([]);
   expect(bricks.project.title({ project: 'garden' })).toBe('Project');
   expect(b.sent).not.toHaveBeenCalled();

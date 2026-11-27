@@ -1,7 +1,8 @@
-/** More than one conversation on the boards page: the list of the member's threads beside the presence, and the
- * open thread's title with its rename and archive. Which thread is shown is the address and nothing else; whether
+/** More than one conversation on the boards page: the one quiet control beside the presence and the panel it opens,
+ * which holds the list of the member's threads and whatever else the page puts there (the open thread's rename and
+ * archive, this device's notifications), so the conversation's header is one line. Which thread is shown is the address and nothing else; whether
  * the list is open is this page's own and is kept nowhere. The reads, the order and the calls are Comms' own. */
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { memberOperation } from '../data/operation';
 import { newId } from '../data/id';
@@ -9,6 +10,7 @@ import { threadFields } from '../pieces/comms/thread-fields';
 import type { CommsThread } from '../pieces/comms-view/model';
 import { SHORTCUTS, keysOf, onMac, shortcutEngine } from '../shell/shortcuts';
 import { threadPath, useAgentNames, useThreads } from './agents-data';
+import { Asking } from './brick-kit';
 
 /** The desktop's launcher keys (shell/shortcuts.ts: its chord, its older chords, a double tap of Shift), read by
  * its own engine. Here they open and close the list of conversations. */
@@ -22,20 +24,23 @@ function useLauncherKeys(toggle: () => void) {
   }, []);
 }
 
-/** The control beside the presence, and the list it opens. */
-export function ThreadSwitch({ thread, visit }: { thread: string; visit(path: string): void }) {
+/** The one control beside the presence, and the panel it opens: the list of conversations, then `children` (what
+ * else the page keeps out of its header). */
+export function ThreadSwitch({ thread, visit, children }: { thread: string; visit(path: string): void; children?: ReactNode }) {
   const [open, setOpen] = useState(false);
   useLauncherKeys(() => setOpen((now) => !now));
   return (
     <>
-      <button type="button" className="boards-threads-open board-action" aria-haspopup="dialog" aria-expanded={open} aria-label="Conversations"
-        title={'Conversations · ' + keysOf(SHORTCUTS[0], onMac())} onClick={() => setOpen((now) => !now)}>☰</button>
-      {open && <ThreadList thread={thread} visit={visit} close={() => setOpen(false)} />}
+      <button type="button" className="boards-threads-open" aria-haspopup="dialog" aria-expanded={open} aria-label="Conversations"
+        title={'Conversations · ' + keysOf(SHORTCUTS[0], onMac())} onClick={() => setOpen((now) => !now)}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3" cy="8" r="1.1" /><circle cx="8" cy="8" r="1.1" /><circle cx="13" cy="8" r="1.1" /></svg>
+      </button>
+      {open && <ThreadList thread={thread} visit={visit} close={() => setOpen(false)}>{children}</ThreadList>}
     </>
   );
 }
 
-function ThreadList({ thread, visit, close }: { thread: string; visit(path: string): void; close(): void }) {
+function ThreadList({ thread, visit, close, children }: { thread: string; visit(path: string): void; close(): void; children?: ReactNode }) {
   const list = useThreads(), name = useAgentNames();
   const [at, setAt] = useState(0), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const box = useRef<HTMLDivElement>(null), fresh = useRef<Record<string, string>>({});
@@ -52,7 +57,10 @@ function ThreadList({ thread, visit, close }: { thread: string; visit(path: stri
   const count = list.rows.length + list.agents.length;
   const choose = (n: number) => { const row = list.rows[n]; if (row) go(row.id); else if (list.agents[n - list.rows.length]) void start(list.agents[n - list.rows.length]); };
   const keys = (e: KeyboardEvent) => {
+    // Typing in the panel (a new title) and its own controls keep their keys; Escape closes from anywhere in it.
+    const typing = e.target !== e.currentTarget && (e.target as { closest?(selector: string): unknown } | null)?.closest?.('input, textarea, button, a, label');
     if (e.key === 'Escape') close();
+    else if (typing) return;
     else if (e.key === 'ArrowDown' && count) setAt((n) => (n + 1) % count);
     else if (e.key === 'ArrowUp' && count) setAt((n) => (n - 1 + count) % count);
     else if (e.key === 'Enter' && count) choose(Math.min(at, count - 1));
@@ -82,6 +90,7 @@ function ThreadList({ thread, visit, close }: { thread: string; visit(path: stri
         </ul>
       )}
       {error && <p role="alert" className="text-destructive">{error}</p>}
+      {children}
     </div>
   );
 }
@@ -120,29 +129,25 @@ export function ThreadHead({ thread, member }: { thread: string; member: string 
     <div className="boards-thread">
       <div className="board-line">
         <strong className="boards-thread-title">{t.title}</strong>
-        {t.archivedAt && <span className="board-state">Archived</span>}
+        {t.archivedAt && <span className="board-state" data-tone="muted">Archived</span>}
         {t.member === member && !mode && (
           <>
-            <button type="button" className="board-action" disabled={busy} onClick={() => { setTitle(t.title); setMode('rename'); }}>Rename</button>
+            <button type="button" className="board-action" data-kind="quiet" disabled={busy} onClick={() => { setTitle(t.title); setMode('rename'); }}>Rename</button>
             {t.archivedAt
-              ? <button type="button" className="board-action" disabled={busy} onClick={() => void run({ change: 'archive', archived: false })}>Restore</button>
-              : <button type="button" className="board-action" disabled={busy} onClick={() => setMode('archive')}>Archive…</button>}
+              ? <button type="button" className="board-action" data-kind="quiet" disabled={busy} onClick={() => void run({ change: 'archive', archived: false })}>Restore</button>
+              : <button type="button" className="board-action" data-kind="quiet" disabled={busy} onClick={() => setMode('archive')}>Archive…</button>}
           </>
         )}
       </div>
       {mode === 'rename' && (
         <form className="board-line" aria-label="Rename conversation" onSubmit={rename}>
           <input className="board-input" aria-label="Conversation title" value={title} maxLength={120} autoFocus onChange={(e) => setTitle(e.target.value)} />
-          <button type="submit" className="board-action" disabled={busy || !fits}>Save title</button>
-          <button type="button" className="board-action" disabled={busy} onClick={() => setMode(null)}>Cancel</button>
+          <button type="submit" className="board-action" data-kind="primary" disabled={busy || !fits}>Save title</button>
+          <button type="button" className="board-action" data-kind="quiet" disabled={busy} onClick={() => setMode(null)}>Cancel</button>
         </form>
       )}
       {mode === 'archive' && (
-        <div className="board-line" role="group" aria-label="Archive conversation">
-          <span>Archive this conversation? It leaves the list of conversations.</span>
-          <button type="button" className="board-action" disabled={busy} onClick={() => void run({ change: 'archive', archived: true })}>Archive conversation</button>
-          <button type="button" className="board-action" disabled={busy} onClick={() => setMode(null)}>Keep it</button>
-        </div>
+        <Asking label="Archive conversation" kind="plain" yes="Archive conversation" no="Keep it" disabled={busy} onYes={() => void run({ change: 'archive', archived: true })} onNo={() => setMode(null)}>Archive this conversation? It leaves the list of conversations.</Asking>
       )}
       {error && <p role="alert" className="text-destructive">Could not save. Try again.</p>}
     </div>

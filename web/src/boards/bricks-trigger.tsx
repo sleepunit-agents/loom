@@ -11,8 +11,8 @@ import { history, kindLabels, nextScheduledAt, source, status, target, terminal,
 import { journalDetailsQuery, programDetailsQuery, tempoCardQuery, triggerHistoryQuery, type JournalDetails, type ProgramDetails, type TempoData } from '../pieces/tempo/query';
 import { runWords, type TriggerRun } from '../pieces/tempo/runs';
 import { useAgentNames } from './agents-data';
-import { Action, Actions, Chip, Fact, Facts, Lead, Loading, Note, Problem, Row, Rows, Section, State, Unavailable, useOwnFlag, words, type BodyProps } from './brick-kit';
-import { clock, jobFailed, stateTone, stateWord } from './tempo-data';
+import { Action, Actions, Asking, Chip, Fact, Facts, Lead, Loading, Note, Problem, Row, Rows, Section, State, Time, Unavailable, useOwnFlag, words, type BodyProps } from './brick-kit';
+import { jobFailed, stateTone, stateWord } from './tempo-data';
 
 type Asking = '' | 'runNow' | 'stop';
 
@@ -34,12 +34,11 @@ export function Trigger({ params, form, act, raise }: BodyProps) {
   if (read.status === 'loading' || (read.status === 'live' && !read.data)) return <Loading />;
   if (!trigger) return <Unavailable what="trigger" />;
   const pauses = read.data?.agentPauses ?? [], zone = read.data?.tempoTimezone ?? 'UTC';
-  const format = clock(zone), time = (at: string) => format.format(new Date(at));
   const next = nextScheduledAt(trigger), agent = triggerAgent(trigger), paused = !!agent && pauses.some((item) => item.agent === agent);
   const standing = trigger.lifespan === 'until-stopped';
   if (small) return (
     <p className="board-brief">
-      <State tone={stateTone(trigger, pauses)}>{stateWord(trigger, pauses)}</State> {title(trigger)}{next ? ` · next ${time(next)}` : ''}
+      <State tone={stateTone(trigger, pauses)}>{stateWord(trigger, pauses)}</State> {title(trigger)}{next ? <> · next <Time at={next} /></> : null}
     </p>
   );
   const run = async (action: 'runNow' | 'stop' | 'start' | 'pause' | 'resume') => {
@@ -59,14 +58,12 @@ export function Trigger({ params, form, act, raise }: BodyProps) {
   const entries = log.status === 'live' && Array.isArray(log.data?.triggerLog) ? history(log.data.triggerLog, trigger.id) : undefined;
   const lastDecision = program?.lastResult ?? entries?.find((event) => event.event === 'program')?.note;
   const stopWord = standing ? 'Stop' : 'Cancel';
-  const shownRuns = primary ? runs ?? [] : (runs ?? []).slice(0, 3);
+  const shownRuns = runs ?? [];
   // One question at a time: while the brick asks, the question stands in place of its controls.
   const controls = asking ? (
-        <div className="board-confirm" role="group" aria-label="Trigger actions">
-          {asking === 'runNow'
-            ? <><Action kind="primary" disabled={busy} onClick={() => void run('runNow')}>Run it now</Action><Action kind="quiet" onClick={() => setAsking('')}>Not now</Action></>
-            : <><Action kind="danger" disabled={busy} onClick={() => void run('stop')}>{stopWord} this trigger</Action><Action kind="quiet" onClick={() => setAsking('')}>Keep it</Action></>}
-        </div>
+        asking === 'runNow'
+          ? <Asking label="Trigger actions" kind="primary" yes="Run it now" no="Not now" busy={busy} onYes={() => void run('runNow')} onNo={() => setAsking('')} />
+          : <Asking label="Trigger actions" yes={`${stopWord} this trigger`} no="Keep it" busy={busy} onYes={() => void run('stop')} onNo={() => setAsking('')} />
       ) : (
         <Actions label="Trigger actions">
           {!terminal(trigger) && <>
@@ -74,7 +71,7 @@ export function Trigger({ params, form, act, raise }: BodyProps) {
             <Action disabled={busy} onClick={() => setAsking('stop')}>{stopWord}…</Action>
           </>}
           {standing && !trigger.enabled && trigger.state === 'stopped' && !trigger.scheduleRemovedAt && <Action kind="primary" disabled={busy} onClick={() => void run('start')}>Start</Action>}
-          {agent && <Action kind="quiet" disabled={busy} onClick={() => void run(paused ? 'resume' : 'pause')}>{paused ? 'Resume agent' : 'Pause agent'}</Action>}
+          {primary && agent && <Action kind="quiet" disabled={busy} onClick={() => void run(paused ? 'resume' : 'pause')}>{paused ? 'Resume agent' : 'Pause agent'}</Action>}
         </Actions>
       );
   const prose = { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } as const;
@@ -83,16 +80,16 @@ export function Trigger({ params, form, act, raise }: BodyProps) {
       <Lead>{title(trigger)}</Lead>
       <div className="board-meta">
         <State tone={stateTone(trigger, pauses)}>{stateWord(trigger, pauses)}</State>
-        <span>{kindLabels[triggerKind(trigger)]} · {trigger.sourceKind} · {trigger.lifespan} · {status(trigger, pauses)}</span>
+        <span>{primary ? `${kindLabels[triggerKind(trigger)]} · ${trigger.sourceKind} · ${trigger.lifespan} · ${status(trigger, pauses)}` : kindLabels[triggerKind(trigger)]}</span>
       </div>
       {failed && <p className="board-problem">Its last firing failed.</p>}
       <Facts>
-        <Fact label="When">{source(trigger)}</Fact>
-        {next && <Fact label="Due">{time(next)} · {zone}</Fact>}
-        {trigger.lastFiredAt && <Fact label="Last fired">{time(trigger.lastFiredAt)}</Fact>}
+        <Fact label="When">{source(trigger)} <small className="board-zone">{zone}</small></Fact>
+        {next && <Fact label="Due"><Time at={next} /></Fact>}
+        {trigger.lastFiredAt && <Fact label="Last fired"><Time at={trigger.lastFiredAt} /></Fact>}
       </Facts>
       {!primary && controls}
-      <Facts>
+      {primary && <Facts>
         <Fact label="Set by">{trigger.ownerKind === 'household' ? 'Household'
           : trigger.ownerKind === 'agent' && trigger.owner ? <>Agent · <Chip place={{ brick: 'agent', params: { agent: trigger.owner } }}>{name(trigger.owner)}</Chip></>
           : `Person · ${displayName(trigger.owner)}`}</Fact>
@@ -112,17 +109,17 @@ export function Trigger({ params, form, act, raise }: BodyProps) {
           {program?.programState != null && <Fact wide label="Program state"><pre className="board-tail">{JSON.stringify(program.programState, null, 2)}</pre></Fact>}
           {journal && <>
             <Fact wide label="Lessons"><span style={prose}>{journal.lessons || 'No lessons yet.'}</span></Fact>
-            <Fact wide label="Saved state"><pre className="board-tail">{journal.state || 'Empty'}</pre>{journal.stateChangedAt && <p className="board-note">Last changed {time(journal.stateChangedAt)} · {zone}</p>}</Fact>
+            <Fact wide label="Saved state"><pre className="board-tail">{journal.state || 'Empty'}</pre>{journal.stateChangedAt && <p className="board-note">Last changed <Time at={journal.stateChangedAt} /></p>}</Fact>
           </>}
         </>}
-      </Facts>
-      {shownRuns.length > 0 && (
+      </Facts>}
+      {primary && shownRuns.length > 0 && (
         <Section title="Recent runs">
           <div className="board-tempo">
-            <Rows>{shownRuns.map((item) => (
+            <Rows beside>{shownRuns.map((item) => (
               <Row key={item.event + '-' + item.kind} place={item.conversation ? { brick: 'session', params: { session: item.conversation.id } } : undefined}
                 title={<span className={jobFailed(item.job?.state) ? 'board-tempo-failed' : undefined}>{runWords(item).join(' · ')}</span>}
-                end={<span className="board-tempo-at">{time(item.at)}</span>} />
+                end={<Time at={item.at} />} />
             ))}</Rows>
           </div>
         </Section>
@@ -131,7 +128,7 @@ export function Trigger({ params, form, act, raise }: BodyProps) {
         <Section title="Recent history">
           {entries?.length ? (
             <div className="board-tempo">
-              <Rows>{entries.slice(0, 40).map((event) => <Row key={event.seq} title={event.event} meta={event.note || undefined} end={<span className="board-tempo-at">{time(event.at)}</span>} />)}</Rows>
+              <Rows beside>{entries.slice(0, 40).map((event) => <Row key={event.seq} title={event.event} meta={event.note || undefined} end={<Time at={event.at} />} />)}</Rows>
             </div>
           ) : entries ? <Note>No events yet.</Note>
             : log.status === 'loading' ? <Loading /> : <Note>Trigger history unavailable.</Note>}
@@ -140,7 +137,7 @@ export function Trigger({ params, form, act, raise }: BodyProps) {
       {primary && controls}
       {busy && <p role="status" className="board-note">Waiting for Tempo…</p>}
       <Problem>{error}</Problem>
-      <Note>To change its times or words, ask its agent: Tempo has no editor here or on the desktop.</Note>
+      {primary && <Note>To change its times or words, ask its agent: Tempo has no editor here or on the desktop.</Note>}
     </>
   );
 }

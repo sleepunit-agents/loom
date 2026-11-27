@@ -126,3 +126,69 @@ it('shows a kept selection as it was decoded, never through the next selectionâ€
   await answer('two'); expect(shown(tree)).toEqual({ status: 'live', data: 'mark:two' });
   await act(async () => tree.unmount()); vi.unstubAllGlobals();
 });
+
+// Remembering answers across an unmount, for a page that asks for it (./remembered.ts: the boards page).
+import { Remembered, RememberedWatch, rememberedAnswers } from './remembered';
+const under = (answers: ReturnType<typeof rememberedAnswers>, watch: ((hook: object, on: boolean) => void) | undefined, child: ReturnType<typeof createElement>) =>
+  createElement(Remembered.Provider, { value: answers }, createElement(RememberedWatch.Provider, { value: watch }, child));
+it('under a page that remembers, a hook mounted again shows its last answer at once, marked settling and told to its watcher, then the fresh answer', async () => {
+  await wired(); let tree!: ReturnType<typeof create>;
+  const answers = rememberedAnswers(), settling = new Set<object>(), watch = (hook: object, on: boolean) => { if (on) settling.add(hook); else settling.delete(hook); };
+  const stored = vi.fn();
+  vi.stubGlobal('localStorage', { setItem: stored, getItem: stored }); vi.stubGlobal('sessionStorage', { setItem: stored, getItem: stored }); vi.stubGlobal('indexedDB', { open: stored });
+  await act(async () => { tree = create(under(answers, watch, createElement(Kept, { agent: 'art' }))); });
+  expect(shown(tree)).toEqual({ status: 'loading' }); expect(settling.size).toBe(0);
+  await answer('before'); expect(shown(tree)).toEqual({ status: 'live', data: { currentJobs: [{ id: 'before' }] } });
+  await act(async () => tree.unmount());
+  // Mounted again: the old answer at once, with no `keep`, and a new request all the same.
+  const asked = f.query.mock.calls.length;
+  await act(async () => { tree = create(under(answers, watch, createElement(Kept, { agent: 'art' }))); });
+  expect(shown(tree)).toEqual({ status: 'live', data: { currentJobs: [{ id: 'before' }] }, settling: true });
+  expect(settling.size).toBe(1);
+  expect(f.query).toHaveBeenCalledTimes(asked + 1);
+  expect(f.query.mock.calls.at(-1)![2]).toEqual({ requestPolicy: 'network-only' });
+  await answer('after');
+  expect(shown(tree)).toEqual({ status: 'live', data: { currentJobs: [{ id: 'after' }] } });
+  expect(settling.size).toBe(0);
+  // Another selection of the same document has nothing remembered.
+  await act(async () => { tree.update(under(answers, watch, createElement(Kept, { agent: 'mark' }))); });
+  expect(shown(tree)).toEqual({ status: 'loading' });
+  await act(async () => tree.unmount());
+  expect(stored).not.toHaveBeenCalled();
+  vi.unstubAllGlobals();
+});
+it.each([['the request is refused', { error: new Error('Data selection refused') }], ['the feed goes offline', { error: new Error('Connection closed') }]])('drops a remembered answer at once when %s, and remembers nothing of it', async (_name, failure) => {
+  await wired(); let tree!: ReturnType<typeof create>;
+  const answers = rememberedAnswers();
+  await act(async () => { tree = create(under(answers, undefined, createElement(Kept, { agent: 'art' }))); });
+  await answer('private');
+  await act(async () => tree.unmount());
+  await act(async () => { tree = create(under(answers, undefined, createElement(Kept, { agent: 'art' }))); });
+  expect(JSON.stringify(shown(tree))).toContain('private');
+  await act(async () => { f.sinks.at(-1)!(failure); });
+  expect(shown(tree)).toEqual({ status: 'offline' });
+  expect(answers.size).toBe(0);
+  await act(async () => tree.unmount());
+  await act(async () => { tree = create(under(answers, undefined, createElement(Kept, { agent: 'art' }))); });
+  expect(shown(tree)).toEqual({ status: 'loading' });
+  await act(async () => tree.unmount()); vi.unstubAllGlobals();
+});
+it('remembers nothing once the store is cleared, holds a bounded number of answers, and a hook with no such page above it is as it was', async () => {
+  await wired(); let tree!: ReturnType<typeof create>;
+  const answers = rememberedAnswers(2);
+  await act(async () => { tree = create(under(answers, undefined, createElement(Kept, { agent: 'art' }))); });
+  await answer('mine');
+  await act(async () => tree.unmount());
+  // The same selection outside the provider: loading, as ever.
+  await act(async () => { tree = create(createElement(Kept, { agent: 'art', keep: true })); });
+  expect(shown(tree)).toEqual({ status: 'loading' });
+  await act(async () => tree.unmount());
+  answers.clear();
+  await act(async () => { tree = create(under(answers, undefined, createElement(Kept, { agent: 'art' }))); });
+  expect(shown(tree)).toEqual({ status: 'loading' });
+  await act(async () => tree.unmount());
+  // The oldest answer goes when there are more than the store holds.
+  for (const key of [1, 2, 3]) answers.set(key, { n: key }, undefined);
+  expect(answers.size).toBe(2); expect(answers.get(1)).toBeUndefined(); expect(answers.get(3)).toEqual({ data: { n: 3 }, from: undefined });
+  vi.unstubAllGlobals();
+});

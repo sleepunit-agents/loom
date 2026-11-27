@@ -16,7 +16,7 @@ import { useTaskCommandSubmitter } from '../data/task-command';
 import { useDeadline } from '../pieces/comms/use-deadline';
 import { answerWord, from, managed, safeLink, stateWord, volumeNote, volumeWords, type InboxAnswer, type InboxItem } from '../pieces/inbox-view/model';
 import { threadPath, useAgentNames } from './agents-data';
-import { Action, Actions, Chip, Confirm, Fact, Facts, Lead, Loading, Note, Problem, Segmented, State, Time, Unavailable, ticketChip, words, type Act, type Params, type Tone } from './brick-kit';
+import { Action, Actions, Chip, Confirm, Excerpt, Fact, Facts, Lead, Loading, Note, Problem, Segmented, State, Time, Unavailable, ticketChip, words, type Act, type Params, type Tone } from './brick-kit';
 import type { Form } from './layout';
 
 /** Something the question is about, as a chip where a brick shows it. */
@@ -119,11 +119,11 @@ export function Question({ params, form, act }: { params: Params; form: Form; ac
   // What it is weighed by, and the answer: the big form reads down to the answer; the small one answers first.
   const facts = (
     <>
-      {(item.body?.why || item.body?.ifYes || item.body?.ifNo) && (
+      {(item.body?.why || (big && (item.body?.ifYes || item.body?.ifNo))) && (
         <Facts>
-          {item.body?.why && <Fact label="Why">{item.body.why}</Fact>}
-          {item.body?.ifYes && <Fact label="If yes">{item.body.ifYes}</Fact>}
-          {item.body?.ifNo && <Fact label="If no">{item.body.ifNo}</Fact>}
+          {item.body?.why && <Fact label="Why">{big ? item.body.why : <Excerpt lines={2}>{item.body.why}</Excerpt>}</Fact>}
+          {big && item.body?.ifYes && <Fact label="If yes">{item.body.ifYes}</Fact>}
+          {big && item.body?.ifNo && <Fact label="If no">{item.body.ifNo}</Fact>}
         </Facts>
       )}
     </>
@@ -137,16 +137,16 @@ export function Question({ params, form, act }: { params: Params; form: Form; ac
               <Action kind="primary" disabled={busy} onClick={() => void answer('yes')}>Yes</Action>
               <Action disabled={busy} onClick={() => void answer('no')}>No</Action>
             </>}
-            {open && <>
+            {open && big && <>
               <Action kind="quiet" disabled={busy} onClick={() => void answer('done')}>Mark done</Action>
               <Action kind="quiet" disabled={busy} onClick={() => void answer('dismiss')}>Dismiss</Action>
             </>}
           </Actions>
-          <form className="board-pick" onSubmit={record}>
+          {(big || !yesNo) && <form className="board-pick" onSubmit={record}>
             <input className="board-input" aria-label="Answer in your own words" placeholder={yesNo ? 'Or answer in your own words' : 'Answer in your own words'}
               value={draft} disabled={busy} onChange={(e) => setDraft(e.target.value)} />
             <Action submit kind={yesNo ? 'plain' : 'primary'} disabled={busy || !draft.trim()}>Record answer</Action>
-          </form>
+          </form>}
         </div>
       )}
       {join && (
@@ -159,15 +159,15 @@ export function Question({ params, form, act }: { params: Params; form: Form; ac
   );
   return (
     <>
-      <Lead>{said}</Lead>
+      {big ? <Lead>{said}</Lead> : <Excerpt lines={4}><Lead>{said}</Lead></Excerpt>}
       <div className="board-meta">
         <State tone={tone(item)}>{stateWord(item)}</State>
         {item.agent ? <Chip place={{ brick: 'agent', params: { agent: item.agent } }}>{item.agent}</Chip> : <span>{from(item)}</span>}
-        {item.project && <Chip place={{ brick: 'project', params: { project: item.project } }}>{item.project}</Chip>}
-        {item.refs.map(about)}
+        {big && item.project && <Chip place={{ brick: 'project', params: { project: item.project } }}>{item.project}</Chip>}
+        {big && item.refs.map(about)}
         <Time at={item.at} />
       </div>
-      {big ? <>{facts}{answers}</> : <>{answers}{facts}</>}
+      {facts}{answers}
       {decided && <p role="status" className="board-note">{decided}</p>}
       {ofTask && waitsOn && <div className="board-meta"><span>Its task</span>{waitsOn}</div>}
       {item.state === 'waiting' && !open && !ofTask && !join && (
@@ -175,12 +175,12 @@ export function Question({ params, form, act }: { params: Params; form: Form; ac
       )}
       {item.answer && (
         <Facts>
-          <Fact label="Answer"><span>{[answerWord(item.answer), item.answeredBy].filter(Boolean).join(' · ')}</span><Time at={item.answeredAt} />{item.answerText && <span className="block w-full">{item.answerText}</span>}</Fact>
+          <Fact label="Answer"><span>{[answerWord(item.answer), item.answeredBy].filter(Boolean).join(' · ')}</span><Time at={item.answeredAt} />{item.answerText && <span className="block w-full">{big ? item.answerText : <Excerpt lines={2}>{item.answerText}</Excerpt>}</span>}</Fact>
         </Facts>
       )}
-      {item.resolution && <Note>{item.resolution}</Note>}
-      {link && <Note><a href={link} target="_blank" rel="noreferrer">Open linked page</a></Note>}
-      {item.discussionAgent && <Discuss key={item.id + ' ' + item.discussionAgent} item={item.id} agent={item.discussionAgent} act={act} />}
+      {big && item.resolution && <Note>{item.resolution}</Note>}
+      {big && link && <Note><a href={link} target="_blank" rel="noreferrer">Open linked page</a></Note>}
+      {big && item.discussionAgent && <Discuss key={item.id + ' ' + item.discussionAgent} item={item.id} agent={item.discussionAgent} act={act} />}
       {item.canSetVolume && big && (
         <>
           <Segmented<InboxItem['volume']> label="Notify" value={item.volume} options={volumes.map((value) => ({ value, label: volumeWords[value] }))} disabled={busy} onChange={(volume) => void notify(volume)} />

@@ -11,7 +11,7 @@ import { useDataQuery } from '../data/graphql';
 import { bridgeCommand, commandWords } from '../pieces/bridges/command';
 import { activityLine, awaitingReview, bridgeLabels, bridgesQuery, bridgesSnapshot, sendNotes, type BridgesData } from '../pieces/bridges/data';
 import { isMember, isRef } from './admin-data';
-import { Chip, Confirm, Fact, Facts, Lead, Loading, Note, Row, Rows, Section, State, Time, Unavailable, count, useOwnFlag, type Act, type BodyProps, type Tone } from './brick-kit';
+import { Chip, Confirm, Excerpt, Fact, Facts, Few, Lead, Loading, More, Note, Row, Rows, Section, State, Time, Unavailable, count, useOwnFlag, type Act, type BodyProps, type Tone } from './brick-kit';
 
 type Send = BridgesData['bridgeSends'][number];
 const agentChip = (id: string) => (isRef(id) ? <Chip place={{ brick: 'agent', params: { agent: id } }}>{id}</Chip> : <span>{id}</span>);
@@ -60,21 +60,23 @@ export function Bridges({ form, act, raise }: BodyProps) {
       <Lead>{summary}</Lead>
       <Section title={bridgeLabels.sends} count={sends.length || undefined}>
         {!sends.length ? <Note>No pending sends</Note> : (
+          <Few of={sends} first={cap} fit={!primary}>{(shown, hidden) => <>
           <Rows>
-            {sends.slice(0, cap).map((send) => (
+            {shown.map((send) => (
               <Row key={send.id} flagged={send.state === 'held'} title={<>Reply to {send.channel}</>} end={<><State tone={sendTone(send.state)}>{send.state}</State>{primary && <Time at={send.createdAt} />}</>}
                 meta={primary && send.thread ? <>Thread: {send.thread}</> : undefined}>
-                <p className="board-tail board-bridges-text" data-short={!primary || undefined}>{send.text}</p>
+                {primary ? <p className="board-tail board-bridges-text">{send.text}</p> : <Excerpt lines={2}><p className="board-bridges-text">{send.text}</p></Excerpt>}
                 {primary && send.state === 'uncertain' && <Note>{sendNotes.uncertain}</Note>}
                 {primary && send.state === 'held' && <Note>{sendNotes.held}</Note>}
                 {primary && <Review key={JSON.stringify(send)} row={send} act={act} />}
               </Row>
             ))}
           </Rows>
+          <More n={hidden} />
+          </>}</Few>
         )}
-        {sends.length > cap && <Note>and {sends.length - cap} more</Note>}
       </Section>
-      {manage && (
+      {manage && primary && (
         <Section title={bridgeLabels.connections} count={snapshot.connections.length || undefined}>
           {!snapshot.connections.length ? <Note>No connections</Note> : (
             <Rows>

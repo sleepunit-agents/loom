@@ -35,7 +35,9 @@ it('shows one trigger in full from the desktop\'s reads: when it fires, its word
   expect(all).toContain('Morning water');
   expect(all).toContain('StandingWakes an agent · time · until-stopped · standing');
   expect(all).toContain('When07:17 · weekdays');
-  expect(all).toContain(`Due${at('2026-11-28T07:17:00.000Z')} · UTC`);
+  expect(all).toContain(`Due${at('2026-11-28T07:17:00.000Z')}`);
+  // The household's zone is said once, quietly, beside the schedule it belongs to.
+  expect(all).toContain('When07:17 · weekdays UTC');
   expect(all).toContain('Set byAgent · Art');
   expect(all).toContain('TargetAn item in art\'s inbox');
   expect(all).toContain('Requested modelAgent default');
@@ -54,10 +56,12 @@ it('shows one trigger in full from the desktop\'s reads: when it fires, its word
 it('draws the small form without the program, the journal and the history, and folds to one line with no controls', async () => {
   b.answer(data());
   await draw('side');
-  expect(b.all()).toContain('WordsWater the beds');
+  // The side form is where it stands and when it fires, with its two main controls; the rest is in the big form.
+  expect(b.all()).toContain('When07:17 · weekdays');
+  expect(b.all()).not.toContain('WordsWater the beds');
   expect(b.all()).not.toContain('Lessons');
   expect(b.all()).not.toContain('Recent history');
-  expect(b.placed()).toContainEqual({ brick: 'session', params: { session: 'cv-water-1' } });
+  expect(b.labels()).toEqual(['Run now…', 'Stop…']);
   await draw('compact');
   b.oneLine();
   expect(b.all()).toBe(`Standing Morning water · next ${at('2026-11-28T07:17:00.000Z')}`);
@@ -66,7 +70,7 @@ it('draws the small form without the program, the journal and the history, and f
 
 it('runs it now and stops it only after asking, with the desktop\'s input, and tells the board nothing typed', async () => {
   b.answer(data());
-  await draw('side');
+  await draw('primary');
   expect(b.labels()).toEqual(['Run now…', 'Stop…', 'Pause agent']);
   await b.press('Run now…');
   expect(b.sent).not.toHaveBeenCalled();
@@ -88,13 +92,13 @@ it('runs it now and stops it only after asking, with the desktop\'s input, and t
 
 it('pauses and resumes the trigger\'s agent, and starts a stopped standing trigger', async () => {
   b.answer(data());
-  await draw('side');
+  await draw('primary');
   await b.press('Pause agent');
   expect(b.sent.mock.calls).toEqual([['/api/tempo/pause', { agent: 'art' }]]);
   expect(b.reported.mock.calls).toEqual([['pause', {}]]);
   b.sent.mockReset(); b.reported.mockReset();
   b.answer(data({ state: 'held' }, { TempoCard: { tempoTimezone: 'UTC', triggers: [trigger('tr-water', { state: 'held' })], agentPauses: [{ agent: 'art', since: '2026-11-27T10:00:00.000Z' }] } }));
-  await draw('side');
+  await draw('primary');
   expect(b.all()).toContain('Held · agent paused');
   expect(b.button('Run now…')!.props.disabled).toBe(true);
   await b.press('Resume agent');
@@ -102,17 +106,17 @@ it('pauses and resumes the trigger\'s agent, and starts a stopped standing trigg
   expect(b.reported.mock.calls).toEqual([['resume', {}]]);
   b.sent.mockReset(); b.reported.mockReset();
   b.answer(data({ state: 'stopped', enabled: false, nextDueAt: null }));
-  await draw('side');
+  await draw('primary');
   expect(b.labels()).toEqual(['Start', 'Pause agent']);
   await b.press('Start');
   expect(b.sent.mock.calls).toEqual([['/api/tempo/start', { id: 'tr-water' }]]);
   expect(b.reported.mock.calls).toEqual([['start', {}]]);
   // A schedule that was removed, and a wait that was for once, cannot be started again.
   b.answer(data({ state: 'stopped', enabled: false, scheduleRemovedAt: '2026-11-27T00:00:00.000Z' }));
-  await draw('side');
+  await draw('primary');
   expect(b.labels()).toEqual(['Pause agent']);
   b.answer(data({ lifespan: 'once' }));
-  await draw('side');
+  await draw('primary');
   expect(b.labels()).toEqual(['Run now…', 'Cancel…', 'Pause agent']);
 });
 

@@ -10,7 +10,7 @@ import { displayName } from '../kit/words';
 import { memoryQueries } from '../memory/queries';
 import { useMemoryRecord } from '../memory/query';
 import { Reply } from '../pair/reply';
-import { Chip, Fact, Facts, Lead, Loading, Note, Row, Rows, Section, State, Unavailable, repositoryKey, words, type Params, type Tone } from './brick-kit';
+import { Chip, Excerpt, Fact, Facts, Few, Lead, Loading, More, Note, Row, Rows, Section, State, Unavailable, plain, repositoryKey, words, type Params, type Tone } from './brick-kit';
 import type { Form } from './layout';
 
 type Contribution = { id: string; agent: string; name: string; goal: string | null; summary: string | null };
@@ -39,10 +39,11 @@ export function Project({ params, form }: { params: Params; form: Form }) {
   const p = read.data?.project;
   if (read.status === 'loading') return <Loading />;
   if (read.status !== 'live' || !p) return <Unavailable what="project" />;
-  if (form === 'compact') return <p className="board-brief"><State tone={tone(p.lifecycle)}>{p.lifecycle}</State> {p.goal || p.name}</p>;
+  if (form === 'compact') return <p className="board-brief"><State tone={tone(p.lifecycle)}>{p.lifecycle}</State> <b>{p.name}</b>{p.goal ? <> {plain(p.goal)}</> : null}</p>;
   const cards = notes.status === 'live' ? notes.data?.workProjectContributions ?? [] : [];
   const agents = [...new Set([...(claims.status === 'live' ? claims.data?.projectClaimStates ?? [] : []), ...cards].map((row) => row.agent))].filter(placeable);
   const members = [...new Set((p.projectMembersByProject ?? []).map((edge) => edge.member))];
+  const on = [...members.map((id) => ({ kind: 'member', id })), ...agents.map((id) => ({ kind: 'agent', id }))];
   return (
     <>
       <Lead>{p.name}</Lead>
@@ -51,13 +52,16 @@ export function Project({ params, form }: { params: Params; form: Form }) {
         <Chip place={{ brick: 'lanes', params: { project: id } }}>Lanes</Chip>
         <Chip place={{ brick: 'trend', params: { project: id, days: 30 } }}>Trend</Chip>
       </div>
-      {p.goal ? <div className="board-project-goal"><Reply words={p.goal} /></div> : <Note>No goal written.</Note>}
-      {(members.length > 0 || agents.length > 0) && (
+      {!p.goal ? <Note>No goal written.</Note> : big ? <div className="board-project-goal"><Reply words={p.goal} /></div> : <Excerpt><div className="board-project-goal"><Reply words={p.goal} /></div></Excerpt>}
+      {on.length > 0 && (
         <div role="group" aria-label="On this project">
           <Facts>
             <Fact label="On it">
-              {members.map((m) => (memberId(m) ? <Chip key={'m:' + m} place={{ brick: 'person', params: { person: 'member:' + m } }}>{displayName(m)}</Chip> : <span key={'m:' + m}>{displayName(m)}</span>))}
-              {agents.map((a) => <Chip key={'a:' + a} place={{ brick: 'agent', params: { agent: a } }}>{displayName(a)}</Chip>)}
+              <Few of={on} first={big ? on.length : 4} fit={!big}>{(shown, hidden) => <>
+                {shown.map(({ kind, id: who }) => (kind === 'agent' ? <Chip key={'a:' + who} place={{ brick: 'agent', params: { agent: who } }}>{displayName(who)}</Chip>
+                  : memberId(who) ? <Chip key={'m:' + who} place={{ brick: 'person', params: { person: 'member:' + who } }}>{displayName(who)}</Chip> : <span key={'m:' + who}>{displayName(who)}</span>))}
+                <More n={hidden} />
+              </>}</Few>
             </Fact>
           </Facts>
         </div>

@@ -8,7 +8,7 @@ import { useRef, useState } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { memberOperation } from '../data/operation';
 import { displayName } from '../kit/words';
-import { Action, Actions, Loading, Problem, Row, Rows, Section, State, Time, Unavailable, words, type Act, type Params } from './brick-kit';
+import { Action, Actions, Few, Loading, More, Problem, Row, Rows, Section, State, Time, Unavailable, words, type Act, type Params } from './brick-kit';
 import { priorityWord } from './bricks-work';
 import type { Form } from './layout';
 
@@ -67,30 +67,35 @@ export function Lanes({ params, form, act }: { params: Params; form: Form; act: 
   const cap = form === 'primary' ? 8 : 3;
   const count = (lane: string) => read.data!.projectBoardTickets.filter((t) => t.lane === lane).length;
   if (form === 'compact') return <p className="board-brief">{count('Working')} working · {count('Verifying')} verifying · {count('Waiting')} waiting</p>;
+  const names = ['Working', 'Verifying', 'Waiting'], inLane = names.map((lane) => read.data!.projectBoardTickets.filter((t) => t.lane === lane));
+  // The side form has room for a few tickets in all: they are dealt to the lanes in turn, so each lane shows its first.
+  const dealt = Array.from({ length: cap }, (_, n) => inLane.flatMap((rows) => (rows[n] ? [rows[n]] : []))).flat();
   return (
     <>
+      <Few of={dealt} first={dealt.length} fit={form === 'side'} least={0} most={9}>{(drawn) => (
       <div className="board-lanes">
-        {['Working', 'Verifying', 'Waiting'].map((lane) => {
-          const rows = read.data!.projectBoardTickets.filter((t) => t.lane === lane);
+        {names.map((lane, at) => {
+          const all = inLane[at], rows = all.filter((t) => drawn.includes(t));
           return (
-            <section key={lane} aria-label={lane} data-empty={rows.length === 0}>
-              <h3><span>{lane}</span><small>{rows.length}</small></h3>
+            <section key={lane} aria-label={lane} data-empty={all.length === 0}>
+              <h3><span>{lane}</span><small>{all.length}</small></h3>
               <ul>
-                {rows.slice(0, cap).map((t) => (
-                  <li key={t.id}>
-                    <button type="button" className="board-ticket" data-flip={'tk-' + t.id} data-place={JSON.stringify({ brick: 'ticket', params: { ticket: t.id } })}>
-                      {t.title}
-                      <small><span className="font-mono">{t.id}</span>{typeof t.priority === 'number' ? ' · ' + priorityWord(t.priority) : ''}{t.assignee ? ' · ' + displayName(t.assignee) : ''}</small>
-                      {t.reason && <small>{t.reason}</small>}
-                    </button>
-                  </li>
-                ))}
-                {rows.length > cap && <li className="board-note">and {rows.length - cap} more</li>}
+                  {rows.map((t) => (
+                    <li key={t.id}>
+                      <button type="button" className="board-ticket" data-flip={'tk-' + t.id} data-place={JSON.stringify({ brick: 'ticket', params: { ticket: t.id } })}>
+                        {t.title}
+                        <small><span className="font-mono">{t.id}</span>{typeof t.priority === 'number' ? ' · ' + priorityWord(t.priority) : ''}{t.assignee ? ' · ' + displayName(t.assignee) : ''}</small>
+                        {t.reason && <small>{t.reason}</small>}
+                      </button>
+                    </li>
+                  ))}
+                  {all.length > rows.length && <li><More n={all.length - rows.length} /></li>}
               </ul>
             </section>
           );
         })}
       </div>
+      )}</Few>
       {form === 'primary' && <Tools project={project} act={act} />}
     </>
   );

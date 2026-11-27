@@ -1,7 +1,7 @@
 /** What every brick's module shares (docs/specs/boards.md, "The first bricks"): the types of a brick's body, the two
  * one-line states, the chip that places another brick, and the watch a brick keeps on its own record. A brick's
  * module imports this file and never another brick's module, so each brick is loaded alone (./bricks.tsx). */
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { briefTime, fullTime } from '../kit/time';
 import { knowledgePageRef } from '../../../src/core/boards/refs';
 import type { Form } from './layout';
@@ -30,12 +30,61 @@ export function useOwnFlag<T>(value: T | undefined, raise: Raise, name: (before:
 }
 
 export const words = (v: unknown) => (v === undefined || v === null ? '' : String(v));
+/** Written words as one plain line for a compact form: markdown's marks are left out, its words kept. */
+export const plain = (text: string) => text.replace(/[*_`#>]+/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\s+/g, ' ').trim();
 export const Unavailable = ({ what }: { what: string }) => <p className="board-note">This {what} is unavailable.</p>;
 export const Loading = () => <p role="status" className="board-note">Loading…</p>;
 
 /* ── The bricks' vocabulary (docs/specs/boards.md, "The design kit"; styles in ./board-kit.css) ────────────────────
  * Every brick is made of these and of nothing else of its own: one lead, facts, rows, a state, sections, actions.
  * They hold no data and call nothing. Labels wrap; nothing here cuts a word short. */
+
+/** What a brick's body may know of the placement around it (./placement.tsx): the element its body is drawn in, and
+ * the way to make the placement the big one, where it can be, and whether its data is still a remembered answer. Drawn alone, as the suites draw a body, it has neither. */
+export const Frame = createContext<{ body?: RefObject<HTMLElement | null>; maximize?(): void; /** One of its reads still shows a remembered answer: the fresh one has not arrived. */ settling?: boolean }>({});
+/** Whether the brick is drawn from an answer the page remembered and the fresh one has not arrived yet. A brick whose
+ * controls must never act on old data (an approval's answer, a secret's) waits for this to be false. */
+export const useSettling = () => !!useContext(Frame).settling;
+
+/** "and N more": what a list left out, said quietly. Where the placement can be the big one, the words are the
+ * control that makes it so (the frame's own maximize); anywhere else they are a line. */
+export function More({ n, words = 'more' }: { n: number; words?: string }) {
+  const { maximize } = useContext(Frame);
+  if (n <= 0) return null;
+  return maximize ? <button type="button" className="board-more" onClick={maximize}>and {n}{' ' + words}</button> : <p className="board-note">and {n}{' ' + words}</p>;
+}
+/** A list in a small form: as many of its things as the placement has room for, never fewer than one, so a side form
+ * is a glance that does not scroll (`least` says how few it may come down to: one, unless the brick says none). `first` is how many are drawn where nothing can be measured. The children draw
+ * the ones shown and are told how many were left out. */
+export function Few<T>({ of, first, fit = true, most = 12, least = 1, children }: { of: readonly T[]; first: number; least?: number; /** False where the form may scroll (the primary): `first` are drawn and nothing is measured. */ fit?: boolean; most?: number; children(shown: readonly T[], hidden: number): ReactNode }) {
+  const frame = useContext(Frame), body = fit ? frame.body : undefined;
+  const top = Math.min(of.length, most);
+  const [shown, setShown] = useState(Math.min(of.length, first)), measured = useRef(''), [, again] = useState(0);
+  useLayoutEffect(() => {
+    const el = body?.current;
+    if (!el || !el.clientHeight) return;
+    const room = `${of.length}:${el.clientWidth}:${el.clientHeight}`;
+    if (measured.current !== room) { measured.current = room; if (shown !== top) return setShown(top); }
+    if (shown > least && el.scrollHeight > el.clientHeight + 1) setShown(shown - 1);
+  });
+  useEffect(() => {
+    const el = body?.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const watch = new ResizeObserver(() => again((n) => n + 1));
+    watch.observe(el);
+    // Words measured before the page's own type arrived are measured again in it.
+    let live = true;
+    void document.fonts?.ready.then(() => { if (live) { measured.current = ''; again((n) => n + 1); } });
+    return () => { live = false; watch.disconnect(); };
+  }, [body]);
+  // Where nothing is measured the count is worked out afresh each time: a list that grows while the page is
+  // open shows its new row, and is not held to the number it started with.
+  const n = body ? Math.min(shown, of.length) : Math.min(of.length, first);
+  return <>{children(of.slice(0, n), of.length - n)}</>;
+}
+
+/** Prose in a small form: its first few lines, fading where it goes on. The whole of it is in the primary form. */
+export const Excerpt = ({ lines = 3, children }: { lines?: number; children: ReactNode }) => <div className="board-excerpt" style={{ '--lines': lines } as React.CSSProperties}>{children}</div>;
 
 /** n things, in words: `count(1, 'ticket')` is "1 ticket", `count(3, 'ticket')` is "3 tickets". */
 export const count = (n: number, one: string, many: string = one + 's') => `${n} ${n === 1 ? one : many}`;
@@ -68,8 +117,9 @@ export const Fact = ({ label, wide, children }: { label: string; wide?: boolean;
   <div data-wide={wide || undefined}><dt>{label}</dt><dd>{children}</dd></div>
 );
 
-/** A list of records, one to a row, parted by a hairline. */
-export const Rows = ({ children, label }: { children: ReactNode; label?: string }) => <ul className="board-rows" aria-label={label}>{children}</ul>;
+/** A list of records, one to a row, parted by a hairline. Where a placement is narrow a row's end goes under its
+ * words; `beside` keeps it at the row's right at any width, for an end that is one short thing (a state, a time). */
+export const Rows = ({ children, label, beside }: { children: ReactNode; label?: string; beside?: boolean }) => <ul className="board-rows" aria-label={label} data-ends={beside ? 'beside' : undefined}>{children}</ul>;
 /** One record in a list: its title, a quiet line under it, what stands at its end (a state, a time), and any
  * controls below. With `place` the title is the control that places that record's brick. */
 export function Row({ title, meta, end, place, children, flagged }: { title: ReactNode; meta?: ReactNode; end?: ReactNode; place?: Place; children?: ReactNode; flagged?: boolean }) {
@@ -90,6 +140,20 @@ type ActionProps = { kind?: 'primary' | 'plain' | 'quiet' | 'danger'; children: 
 export const Action = ({ kind = 'plain', children, disabled, onClick, submit, pressed, label }: ActionProps) => (
   <button type={submit ? 'submit' : 'button'} className="board-action" data-kind={kind} disabled={disabled} aria-pressed={pressed} aria-label={label} onClick={onClick}>{children}</button>
 );
+/** The question a brick asks before it acts: what will happen, the act in full, and the way back. `Confirm` opens
+ * one; a brick that keeps its own asking (one question standing in place of several controls, or steps that are not
+ * its to decide) draws this and nothing of its own. */
+export function Asking({ yes, no = 'Cancel', kind = 'danger', onYes, onNo, disabled, busy, label, children }: {
+  yes: string; no?: string; kind?: 'danger' | 'primary' | 'plain'; onYes(): void; onNo(): void; /** Neither answer can be given. */ disabled?: boolean; /** The act is under way: only the way back is open. */ busy?: boolean; label?: string; children?: ReactNode;
+}) {
+  return (
+    <div className="board-confirm" role="group" aria-label={label}>
+      {children && <p>{children}</p>}
+      <Action kind={kind} disabled={disabled || busy} onClick={onYes}>{yes}</Action>
+      <Action kind="quiet" disabled={disabled} onClick={onNo}>{no}</Action>
+    </div>
+  );
+}
 /** Asking before acting, the same everywhere: one control that opens the question, then the act and the way back.
  * `act` answers false when it did not happen, and the question stays open. */
 export function Confirm({ ask, yes, no = 'Cancel', act, kind = 'danger', disabled, busy, label, children }: {
@@ -99,13 +163,38 @@ export function Confirm({ ask, yes, no = 'Cancel', act, kind = 'danger', disable
   const [open, setOpen] = useState(false), [acting, setActing] = useState(false);
   if (!open) return <Action kind={kind === 'danger' ? 'plain' : kind} disabled={disabled || busy} label={label} onClick={() => setOpen(true)}>{ask}</Action>;
   const go = async () => { setActing(true); try { if ((await act()) !== false) setOpen(false); } finally { setActing(false); } };
-  return (
-    <div className="board-confirm" role="group">
-      {children && <p>{children}</p>}
-      <Action kind={kind} disabled={disabled || busy || acting} onClick={() => void go()}>{yes}</Action>
-      <Action kind="quiet" onClick={() => setOpen(false)}>{no}</Action>
-    </div>
-  );
+  return <Asking yes={yes} no={no} kind={kind} busy={disabled || busy || acting} onYes={() => void go()} onNo={() => setOpen(false)}>{children}</Asking>;
+}
+
+/** A record's name as the control that opens the rest of it under its row. */
+export const Opens = ({ open, onToggle, children, label }: { open: boolean; onToggle(): void; children: ReactNode; label?: string }) => (
+  <button type="button" className="board-opens" aria-expanded={open} aria-label={label} onClick={onToggle}>{children}</button>
+);
+/** What a row opened: set in from the row, beside a hairline. */
+export const Opened = ({ children }: { children: ReactNode }) => <div className="board-opened">{children}</div>;
+
+type AsksProps = { /** The opening control's full name: "Remove passkey Laptop key". */ label?: string; ask: string; yes: string; no?: string;
+  act(): Promise<boolean | void> | boolean | void; busy?: boolean; /** What will happen, said before it does. */ children?: ReactNode };
+/** `Confirm` in two parts, so a row can hold them apart: the quiet control that opens the question, named for its row
+ * so a screen reader can tell one row's from the next, and the question (`Asking`). `act` answers false when it did
+ * not happen, and the question stays open. */
+function useAsks({ label, ask, yes, no = 'Cancel', act, busy, children }: AsksProps) {
+  const [open, setOpen] = useState(false), [acting, setActing] = useState(false);
+  const go = async () => { setActing(true); try { if ((await act()) !== false) setOpen(false); } finally { setActing(false); } };
+  return {
+    control: open ? null : <Action kind="quiet" label={label} disabled={busy} onClick={() => setOpen(true)}>{ask}</Action>,
+    question: !open ? null : <Asking label={label} yes={yes} no={no} disabled={busy || acting} onYes={() => void go()} onNo={() => setOpen(false)}>{children}</Asking>,
+  };
+}
+/** The question alone, behind a quiet control, where it is not in a row. */
+export function Asks(props: AsksProps) {
+  const { control, question } = useAsks(props);
+  return question ?? <div className="board-actions">{control}</div>;
+}
+/** A row whose record can be taken away: the control sits at the row's end, and the question opens under the row. */
+export function AskRow({ title, meta, end, asks, children }: { title: ReactNode; meta?: ReactNode; end?: ReactNode; asks: AsksProps; children?: ReactNode }) {
+  const { control, question } = useAsks(asks);
+  return <Row title={title} meta={meta} end={<>{end}{control}</>}>{question || children ? <>{children}{question}</> : undefined}</Row>;
 }
 
 /** A field of words under its label. */
@@ -172,8 +261,10 @@ export function when(at: string | number, now: number = Date.now()): string {
   if (span) return minutes > 0 ? span + ' ago' : 'in ' + span;
   return briefTime(new Date(then).toISOString(), undefined, now).replace(/, \d+:\d+.*$/, '');
 }
-export const Time = ({ at }: { at: string | number | null | undefined }) => (at === null || at === undefined || !when(at) ? null
-  : <time className="board-time" dateTime={new Date(at).toISOString()} title={fullTime(at)}>{when(at)}</time>);
+/** `clock` writes the time of day alone, for a row under its day's heading; with `zone` it is that zone's clock (the
+ * household's, where a brick's days are the household's days: the brick says the zone once, quietly). */
+export const Time = ({ at, clock, zone }: { at: string | number | null | undefined; clock?: boolean; zone?: string }) => (at === null || at === undefined || !when(at) ? null
+  : <time className="board-time" dateTime={new Date(at).toISOString()} title={fullTime(at)}>{clock ? new Intl.DateTimeFormat(undefined, { timeZone: zone, hour: '2-digit', minute: '2-digit' }).format(new Date(at)) : when(at)}</time>);
 
 /** A reference to another brick's record. Clicking it places that brick, at once, with no job. */
 export function Chip({ place, children }: { place: Place; children: ReactNode }) {

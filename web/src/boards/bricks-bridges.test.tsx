@@ -105,8 +105,9 @@ it('shows someone who does not run the bridges only the replies loom sends them,
 
 it('draws the side form as a short list and the compact form as one line, neither with a control', async () => {
   await draw('side');
-  for (const words of ['1 connection · 2 pending sends', 'Secret words of s-held', 'connected']) expect(shown(), words).toContain(words);
-  expect(shown()).not.toContain('Channel rules');
+  for (const words of ['1 connection · 2 pending sends', 'Secret words of s-held']) expect(shown(), words).toContain(words);
+  // The side form is what waits to be sent; the connections are counted in its lead and listed in the big form.
+  for (const words of ['Channel rules', 'connected']) expect(shown(), words).not.toContain(words);
   expect(controls()).toEqual([]);
   await draw('compact');
   const json = tree!.toJSON() as { type: string; props: { className: string } };

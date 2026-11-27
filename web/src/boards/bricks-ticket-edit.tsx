@@ -8,7 +8,7 @@ import { useState, type FormEvent } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { displayName } from '../kit/words';
 import { Reply } from '../pair/reply';
-import { Action, Actions, Fact, Facts, Problem, Segmented, Time, ticketChip, type Act } from './brick-kit';
+import { Action, Actions, Excerpt, Fact, Facts, Problem, Segmented, Time, ticketChip, type Act } from './brick-kit';
 import { Words, priorityWord, ticketChoicesQuery, useSummary, useTaskChoices, useTaskCommand, type Summary } from './bricks-work';
 import type { Form } from './layout';
 import { TicketPicker } from './ticket-picker';
@@ -26,6 +26,8 @@ export { ticketChoicesQuery };
 /** A linked ticket: a chip, with its title in the primary form. One the member may not read is its id alone. */
 function Linked({ label, rows, titles }: { label: string; rows: { id: string; row: Near }[]; titles: boolean }) {
   if (!rows.length) return null;
+  // The small form says its links in one quiet line; the big one gives each kind its own, with titles.
+  if (!titles) return <>{<span>{label}</span>}{rows.map(({ id, row }) => (row ? <span key={id}>{ticketChip(id)}</span> : <span key={id} className="font-mono">{id}</span>))}</>;
   return (
     <Fact label={label}>
       {rows.map(({ id, row }) => <span key={id} className="board-linked">{row ? ticketChip(id) : <span className="font-mono">{id}</span>}{titles && row ? <span> {row.title}</span> : null}</span>)}
@@ -139,23 +141,32 @@ export function useTicketMore(id: string, form: Form, act: Act) {
   const read = useDataQuery<{ ticket: More | null }>(ticketMoreQuery, { id }, { keep: true });
   const [open, setOpen] = useState<'edit' | 'links' | 'ask' | 'promote'>();
   const t = read.status === 'live' ? read.data?.ticket : undefined;
-  if (!t || form === 'compact') return { meta: null, facts: null, controls: null, forms: null, open: false };
+  if (!t || form === 'compact') return { priority: null, meta: null, facts: null, controls: null, forms: null, open: false };
   const big = form === 'primary', done = () => setOpen(undefined);
   const up = (t.taskLinksByTask ?? []).map((l) => ({ type: l.type, id: l.dependsOn, row: l.dependsOnRow }));
   const down = (t.taskLinksByDependsOn ?? []).map((l) => ({ type: l.type, id: l.task, row: l.taskRow }));
   const linked = up.length + down.length > 0;
   return {
     open: big && !!open,
-    meta: <><span className="board-priority">{priorityWord(t.priority)}</span>{t.createdBy && <span>Filed by {displayName(t.createdBy)}{t.createdAt && <> · <Time at={t.createdAt} /></>}</span>}</>,
+    priority: <span className="board-priority">{priorityWord(t.priority)}</span>,
+    meta: <>{t.createdBy && <span>Filed by {displayName(t.createdBy)}{t.createdAt && <> · <Time at={t.createdAt} /></>}</span>}</>,
     facts: (
       <>
         {((big && t.description) || (t.status === 'closed' && t.closeReason)) && (
           <Facts>
             {big && t.description && <Fact wide label="Description"><Reply words={t.description} /></Fact>}
-            {t.status === 'closed' && t.closeReason && <Fact wide label="Closed">{t.closedAt && <Time at={t.closedAt} />}<Reply words={t.closeReason} /></Fact>}
+            {t.status === 'closed' && t.closeReason && <Fact wide label="Closed">{t.closedAt && <Time at={t.closedAt} />}{big ? <Reply words={t.closeReason} /> : <Excerpt lines={2}><Reply words={t.closeReason} /></Excerpt>}</Fact>}
           </Facts>
         )}
-        {linked && (
+        {linked && !big && (
+          <div className="board-meta">
+            <Linked label="Parent" titles={false} rows={up.filter((l) => l.type === 'parent-child')} />
+            <Linked label="Children" titles={false} rows={down.filter((l) => l.type === 'parent-child')} />
+            <Linked label="Blocked by" titles={false} rows={up.filter((l) => l.type === 'blocks')} />
+            <Linked label="Blocks" titles={false} rows={down.filter((l) => l.type === 'blocks')} />
+          </div>
+        )}
+        {linked && big && (
           <Facts>
             <Linked label="Parent" titles={big} rows={up.filter((l) => l.type === 'parent-child')} />
             <Linked label="Children" titles={big} rows={down.filter((l) => l.type === 'parent-child')} />
