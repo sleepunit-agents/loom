@@ -1,3 +1,4 @@
+import {reportedSessions} from './work-sessions.js';
 import {projectPosts} from './project-posts.js';
 import { ticketPosts } from './ticket-posts.js';
 import { workForPage } from './agent-post-work.js';
@@ -15,7 +16,7 @@ function activityCursor(value: string) {
   return cursor;
 }
 
-export function agentPostFields(db: DataDatabase, key: WordsKey, allowed: (viewer: Viewer) => SQL):
+export function agentPostFields(db: DataDatabase, key: WordsKey, allowed: (viewer: Viewer) => SQL, now:()=>string = ()=>new Date().toISOString()):
 GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
   const string = new GraphQLNonNull(GraphQLString);
   const workLink = new GraphQLObjectType({ name: 'AgentActivityWorkLink', fields: {
@@ -47,6 +48,12 @@ GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
   };
   const args = { agent: { type: string }, limit: { type: GraphQLInt, defaultValue: 20 } };
   return {
+    contextReportedSessions:{
+      type:new GraphQLList(new GraphQLNonNull(new GraphQLObjectType({name:'ContextReportedSession',fields:{
+        id:{type:string},agent:{type:string},at:{type:string},heardAt:{type:GraphQLString},tasks:{type:new GraphQLList(string)}
+      }}))),args:{project:{type:GraphQLString},task:{type:GraphQLString}},
+      resolve:(_,args,{viewer})=>reportedSessions(db,key,viewer,allowed(viewer),now,args.project,args.task),
+    },
     projectActivityHighlights: {
       type:new GraphQLList(new GraphQLNonNull(new GraphQLObjectType({name:'ProjectActivityHighlight',fields:{
         project:{type:string},task:{type:string},title:{type:string},id:{type:string},at:{type:string},

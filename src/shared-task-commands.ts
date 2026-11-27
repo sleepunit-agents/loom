@@ -1,6 +1,6 @@
 /** One registered Tasks command for browser, CLI and other outside callers. */
-import { eq } from 'drizzle-orm';
-import { inbox } from './core/data/schema.js';
+import { and, eq } from 'drizzle-orm';
+import { inbox, tasks } from './core/data/schema.js';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
 import { type Operations, OperationError } from './core/operations/index.js';
@@ -14,6 +14,28 @@ import type { Viewer } from './policy.js';
  * (shared-place-mail.ts, heldRefusal). Every task change comes through this one command, so it is asked once here. What
  * such a body reads of tasks is what visibility gives its agent, as before. */
 export function registerSharedTaskCommands(operations: Operations, db: DataDatabase, service: TaskService, held: (viewer: Viewer) => string | undefined = () => undefined) {
+  const draft = z.object({title:z.string().trim().min(1),goal:z.string().trim().min(1),why:z.string().trim().min(1),doneWhen:z.string().trim().min(1)}).strict();
+  operations.register({name:'tasks.split',write:true,recheckPolicy:true,refuses:true,doors:['http'],
+    input:z.object({parent:z.string().min(1),project:z.string().nullable(),drafts:z.array(draft).length(2)}).strict(),
+    output:z.object({children:z.array(z.string())}).strict(),
+    may(viewer,input) {
+      if(viewer.kind!=='member') return false;
+      const parent=db.select().from(tasks).where(eq(tasks.id,input.parent)).get();
+      if(!parent || parent.project!==input.project) return false;
+      return taskCommandAllowed(db,viewer,{action:'create',input:{...input.drafts[0],parent:input.parent,project:input.project,owner:{kind:'member',id:viewer.id}}},()=>false);
+    },
+    run(ctx,input) {
+      if(ctx.viewer.kind!=='member') throw new OperationError('denied','Member approval required');
+      const actor=ctx.viewer;
+      const source={kind:'context-split',id:JSON.stringify([actor.id,input.parent,ctx.receipt!.id])};
+      if(db.select({id:tasks.id}).from(tasks).where(and(eq(tasks.sourceKind,source.kind),eq(tasks.sourceId,source.id))).limit(1).get())
+        throw new OperationError('conflict','This split has already been approved');
+      const children=input.drafts.map(d=>service.create({...d,parent:input.parent,project:input.project,owner:actor,source},actor).id);
+      service.comment(input.parent,'Approved split into '+children.join(' and '),actor);
+      for(const id of [input.parent,...children]) ctx.changed('task',id);
+      return {children};
+    },
+  });
   operations.register({ name: 'tasks.command', write: true, recheckPolicy: true, refuses: true,
     input: taskCommandSchema, output: z.object({ id: z.string().optional(), moved: z.array(z.string()).optional() }).strict(),
     may: (viewer, command) => taskCommandAllowed(db, viewer, command, (actor, id) => canReadSharedConversation(db, actor, id)),

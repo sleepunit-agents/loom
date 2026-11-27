@@ -10,11 +10,11 @@ import { readCommsHome } from '../data/comms-home.js';
 import { wordsDeadline, wordsKept } from './retention.js';
 /** Shared Comms read projection. Composition owns current SQL sharing and the
  * authenticated query door; metadata never loads private ciphertext. */
-import { and, eq, getTableColumns, is, SQL, type AnyColumn } from 'drizzle-orm';
+import { and, eq, inArray, getTableColumns, is, SQL, type AnyColumn } from 'drizzle-orm';
 import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap, type GraphQLResolveInfo } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
-import { conversations, household, messages, threads } from '../data/schema.js';
+import { conversations, household, messageFiles, messages, threads } from '../data/schema.js';
 import { keepReadUntil } from '../data/read-lease.js';
 import type { WordsKey } from './words.js';
 import { commsKeepDays } from '../data/comms-days.js';
@@ -33,7 +33,7 @@ export class CommsQueries {
     return allowed;
   }
   activityFields() {
-    return agentPostFields(this.db, this.key, viewer => this.allowed(viewer));
+    return agentPostFields(this.db, this.key, viewer => this.allowed(viewer),this.now);
   }
   archivedHistory() {
     return archivedQuestionsField(this.db, this.key, viewer => this.allowed(viewer), this.now);
@@ -86,6 +86,8 @@ export class CommsQueries {
     const fields=selectedQueryFields(info),words=fields.has('words'),details=fields.has('stepDetails'),thread=rows[0].thread,seqs=rows.map(row=>row.seq);
     const before=readCommsSet(this.db,thread,seqs,this.allowed(viewer),words,details);
     const service=new CommsQueries(this.db,this.key,this.policy,this.now);service.readSet=before;
+    const attached = new Set(fields.has('hasFiles') ? this.db.select({seq:messageFiles.seq}).from(messageFiles)
+      .where(and(eq(messageFiles.thread,thread),inArray(messageFiles.seq,seqs))).all().map(row=>row.seq) : []);
     const deadlines:number[]=[];
     const result=await readAll(rows.map(async row=>{
       const current=before.entry(row.seq);
@@ -93,6 +95,8 @@ export class CommsQueries {
       const {words:_cipher,archivedStepWords:_step,...message}=current.message;
       if(JSON.stringify({...message,conversation:current.conversation,agent:current.agent,project:current.project,member:current.member})!==JSON.stringify(row))throw Error('Comms changed; retry the query');
       const values:Record<string,unknown>={};
+      if(fields.has('hasFiles')) values.hasFiles=attached.has(row.seq) && wordsKept(row,before.days,this.now());
+      if(values.hasFiles) deadlines.push(wordsDeadline(row,before.days));
       if(fields.has('wordsKeepUntil'))values.wordsKeepUntil=service.wordsKeepUntil(viewer,row);
       if(words)values.words=await service.words(viewer,row,at=>deadlines.push(at));
       if(details)values.stepDetails=await service.stepDetails(viewer,row,at=>deadlines.push(at));
@@ -157,6 +161,7 @@ export function commsQueryFields(service: CommsQueries): GraphQLFieldConfigMap<u
   const message = new GraphQLObjectType<MessageView, { viewer: Viewer }>({ name: 'CommsMessageView', fields: {
     ...Object.fromEntries(['thread', 'kind', 'sender', 'at'].map(name => [name, { type: new GraphQLNonNull(GraphQLString) }])),
     ...Object.fromEntries(['keepUntil', 'delivery', 'inboxItem', 'verdict', 'run', 'tool', 'cardState', 'clientId'].map(name => [name, { type: GraphQLString }])),
+    hasFiles:{type:GraphQLBoolean,resolve:row=>row[projected]?.hasFiles===true},
     notice:{type:notice,resolve:row=>row.archivedNotice?noticeInfo.parse(JSON.parse(row.archivedNotice)):null},
     stepInfo:{type:stepInfo,resolve:row=>row.archivedStepMeta?legacyToolCard.parse(JSON.parse(row.archivedStepMeta)):null},
     stepDetails:{type:stepDetails,resolve:(row,_args,context)=>row[projected]&&Object.hasOwn(row[projected],'stepDetails')?row[projected].stepDetails:

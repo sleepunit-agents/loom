@@ -1380,6 +1380,105 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `blueprints` (
+	`id` text PRIMARY KEY NOT NULL,
+	`agent` text NOT NULL,
+	`name` text NOT NULL,
+	`description` text NOT NULL,
+	`parameters` text NOT NULL,
+	`design` text NOT NULL,
+	`created_at` text NOT NULL,
+	`used_at` text,
+	`uses` integer DEFAULT 0 NOT NULL,
+	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "blueprints_created_at_utc" CHECK("blueprints"."created_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "blueprints"."created_at") = "blueprints"."created_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "blueprints"."created_at") = "blueprints"."created_at", 0)),
+	CONSTRAINT "blueprints_used_at_utc" CHECK("blueprints"."used_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "blueprints"."used_at") = "blueprints"."used_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "blueprints"."used_at") = "blueprints"."used_at", 0)),
+	CONSTRAINT "blueprints_name_length" CHECK(length("blueprints"."name") between 1 and 80),
+	CONSTRAINT "blueprints_description_length" CHECK(length("blueprints"."description") <= 300),
+	CONSTRAINT "blueprints_parameters_json" CHECK(json_valid("blueprints"."parameters")),
+	CONSTRAINT "blueprints_design_json" CHECK(json_valid("blueprints"."design"))
+);
+
+CREATE UNIQUE INDEX `blueprints_agent_name` ON `blueprints` (`agent`,`name`);
+CREATE TABLE `board_threads` (
+	`thread` text PRIMARY KEY NOT NULL,
+	`since` text NOT NULL,
+	FOREIGN KEY (`thread`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "board_threads_since_utc" CHECK("board_threads"."since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "board_threads"."since") = "board_threads"."since" or strftime('%Y-%m-%dT%H:%M:%fZ', "board_threads"."since") = "board_threads"."since", 0))
+);
+
+CREATE TABLE `boards` (
+	`id` text PRIMARY KEY NOT NULL,
+	`thread` text NOT NULL,
+	`title` text DEFAULT '' NOT NULL,
+	`blueprint` text,
+	`revision` integer DEFAULT 1 NOT NULL,
+	`agent_seen` integer DEFAULT 0 NOT NULL,
+	`opened_at` text NOT NULL,
+	`trail_at` text NOT NULL,
+	`changed_at` text NOT NULL,
+	`closed_at` text,
+	`shown_at` text,
+	FOREIGN KEY (`thread`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`blueprint`) REFERENCES `blueprints`(`id`) ON UPDATE no action ON DELETE set null,
+	CONSTRAINT "boards_opened_at_utc" CHECK("boards"."opened_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "boards"."opened_at") = "boards"."opened_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "boards"."opened_at") = "boards"."opened_at", 0)),
+	CONSTRAINT "boards_shown_at_utc" CHECK("boards"."shown_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "boards"."shown_at") = "boards"."shown_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "boards"."shown_at") = "boards"."shown_at", 0)),
+	CONSTRAINT "boards_trail_at_utc" CHECK("boards"."trail_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "boards"."trail_at") = "boards"."trail_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "boards"."trail_at") = "boards"."trail_at", 0)),
+	CONSTRAINT "boards_changed_at_utc" CHECK("boards"."changed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "boards"."changed_at") = "boards"."changed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "boards"."changed_at") = "boards"."changed_at", 0)),
+	CONSTRAINT "boards_closed_at_utc" CHECK("boards"."closed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "boards"."closed_at") = "boards"."closed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "boards"."closed_at") = "boards"."closed_at", 0)),
+	CONSTRAINT "boards_title_length" CHECK(length("boards"."title") <= 80),
+	CONSTRAINT "boards_revision_range" CHECK("boards"."revision" >= 1 and "boards"."agent_seen" between 0 and "boards"."revision")
+);
+
+CREATE INDEX `boards_thread_trail` ON `boards` (`thread`,`trail_at`);
+CREATE TABLE `board_placements` (
+	`id` text PRIMARY KEY NOT NULL,
+	`board` text NOT NULL,
+	`brick` text NOT NULL,
+	`params` text NOT NULL,
+	`rank` integer NOT NULL,
+	`placed_by_kind` text NOT NULL,
+	`placed_at` text NOT NULL,
+	`removed_at` text,
+	`flagged_at` text,
+	FOREIGN KEY (`board`) REFERENCES `boards`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "board_placements_placed_at_utc" CHECK("board_placements"."placed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "board_placements"."placed_at") = "board_placements"."placed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "board_placements"."placed_at") = "board_placements"."placed_at", 0)),
+	CONSTRAINT "board_placements_removed_at_utc" CHECK("board_placements"."removed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "board_placements"."removed_at") = "board_placements"."removed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "board_placements"."removed_at") = "board_placements"."removed_at", 0)),
+	CONSTRAINT "board_placements_flagged_at_utc" CHECK("board_placements"."flagged_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "board_placements"."flagged_at") = "board_placements"."flagged_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "board_placements"."flagged_at") = "board_placements"."flagged_at", 0)),
+	CONSTRAINT "board_placements_placed_by_kind_choice" CHECK("board_placements"."placed_by_kind" in ('agent', 'member')),
+	CONSTRAINT "board_placements_params_json" CHECK(json_valid("board_placements"."params")),
+	CONSTRAINT "board_placements_rank_range" CHECK("board_placements"."rank" >= 0)
+);
+
+CREATE INDEX `board_placements_board_rank` ON `board_placements` (`board`,`removed_at`,`rank`);
+CREATE TABLE `board_changes` (
+	`board` text NOT NULL,
+	`revision` integer NOT NULL,
+	`seq` integer NOT NULL,
+	`at` text NOT NULL,
+	`actor_kind` text NOT NULL,
+	`change` text NOT NULL,
+	`placement` text,
+	`from_value` text,
+	`to_value` text,
+	`action` text,
+	`detail` text,
+	PRIMARY KEY(`board`, `revision`, `seq`),
+	FOREIGN KEY (`board`) REFERENCES `boards`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "board_changes_at_utc" CHECK("board_changes"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "board_changes"."at") = "board_changes"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "board_changes"."at") = "board_changes"."at", 0)),
+	CONSTRAINT "board_changes_actor_kind_choice" CHECK("board_changes"."actor_kind" in ('agent', 'member')),
+	CONSTRAINT "board_changes_change_choice" CHECK("board_changes"."change" in ('open', 'place', 'remove', 'rank', 'title', 'close', 'reopen', 'act', 'maximize', 'flag')),
+	CONSTRAINT "board_changes_detail_json" CHECK("board_changes"."detail" is null or json_valid("board_changes"."detail"))
+);
+
+CREATE TABLE `message_files` (
+	`thread` text NOT NULL,
+	`seq` integer NOT NULL,
+	`sealed` blob NOT NULL,
+	PRIMARY KEY(`thread`, `seq`),
+	FOREIGN KEY (`thread`,`seq`) REFERENCES `messages`(`thread`,`seq`) ON UPDATE no action ON DELETE cascade
+);
+
 CREATE TABLE `project_claim_directions` (
 	`seq` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`project` text NOT NULL,
@@ -1936,6 +2035,7 @@ CREATE TABLE `secret_write_journal` (
 	CONSTRAINT "secret_write_journal_input_hash_required" CHECK(length(trim("secret_write_journal"."input_hash", char(9,10,11,12,13,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0)
 );
 
+CREATE TRIGGER message_files_expire AFTER UPDATE OF words ON messages WHEN NEW.words IS NULL BEGIN DELETE FROM message_files WHERE thread=NEW.thread AND seq=NEW.seq; END;
 CREATE UNIQUE INDEX triggers_clock_schedule_name ON triggers
   ("to", coalesce(schedule_name, id)) WHERE schedule_removed_at IS NULL AND source_kind = 'time'
   AND lifespan = 'until-stopped' AND target_kind = 'inbox' AND to_kind = 'agent';

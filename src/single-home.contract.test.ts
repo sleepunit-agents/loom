@@ -522,6 +522,7 @@ it('writes the number of a named limit in that limit\'s home and nowhere else', 
       'src/runtime/kit-container.ts': 'the CPU period for a Podman helper, in microseconds',
       'web/src/pieces/comms/composer.tsx': 'the message bar\'s hint, held to MESSAGE_WORDS_MAX below',
       'web/src/components/ui/code-block.tsx': 'the longest code the app colours',
+      'web/src/pair/highlight.tsx': 'the longest code the boards page colours; its build may not load the app\'s code block',
       'web/src/lib/cojeev-motion/use-morph.ts': 'arithmetic in a hash' } },
     { value: GRANT_MINUTES_MAX, homes: { 'src/pieces/secrets/input.ts': 'GRANT_MINUTES_MAX' }, others: {
       'web/src/pieces/settings/controls.tsx': 'the form\'s hint, held to GRANT_MINUTES_MAX above' } },

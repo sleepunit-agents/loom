@@ -1,6 +1,7 @@
 /**
  * No dead weight in the app (web/; t-1875's trim): every module under web/src is reached from the app's entry
- * (main.tsx, or the boot script vite.config.ts emits), every 000h-library stylesheet is imported (one
+ * (main.tsx, the boot script vite.config.ts emits, or the boards page's boards/main.tsx, which board.html loads and
+ * vite.boards.config.ts builds), every 000h-library stylesheet is imported (one
  * that isn't ships nothing; one that's imported but gone breaks the build), and no Tailwind theme key is declared in
  * both index.css and theme.css (index.css carried a 230-line copy of theme.css's block until 2026-11-05).
  */
@@ -20,7 +21,7 @@ const resolveSpec = (from: string, spec: string): string | undefined => {
 describe('the app carries nothing it doesn\'t use', () => {
   it('every module under web/src is reached from a shipped entry', () => {
     const seen = new Set<string>();
-    const todo = [join(src, 'main.tsx'), join(src, 'shell/main.tsx'), join(src, 'looks/boot.js')];
+    const todo = [join(src, 'main.tsx'), join(src, 'shell/main.tsx'), join(src, 'looks/boot.js'), join(src, 'boards/main.tsx')];
     while (todo.length) {
       const f = todo.pop()!;
       if (seen.has(f)) continue;

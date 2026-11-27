@@ -1,3 +1,6 @@
+import {pairEvents} from './pair-events.js';
+import {PAIR_THREAD} from './pair-thread.js';
+import {boardsMail} from '../core/boards/brief.js';
 /** Fixed private child: bootstrap enters on stdin only, after the parent's
  * running ACK. Native execution and mail acceptance happen in this program.
  *
@@ -12,7 +15,7 @@ import { bodyInput, eraseBootstrap, type BodyBootstrap } from './body-bootstrap.
 import { bodyConversationClient,bodyMailContext } from './conversation-client.js';
 import { omittedWakeTools, type OmittedWakeTools } from './wake-tool-profiles.js';
 import { bodyHarness, harnessCannotRun, harnesses } from './body-harnesses.js';
-import { BODY_OWN_HARNESS, BODY_SCRATCH, HarnessResumeUnavailable, type HarnessRun } from './body-harness.js';
+import { BODY_OWN_HARNESS, BODY_SCRATCH, harnessTools, HarnessResumeUnavailable, type HarnessRun } from './body-harness.js';
 import {kitReasons,kitUnavailableList,type KitUnavailable} from './kit-availability.js';
 import {bodyKitTools,KIT_SOCKET} from './body-kit-tools.js';
 import {KitCapacity} from './kit-refused.js';
@@ -25,7 +28,7 @@ import {BodyContactExpired,BODY_CONTACT_MESSAGE} from './body-contact.js';
 import {bodyCommandClient} from './body-command-client.js';
 import {bodyMemoryIdentity,bodyChannelBrief} from './body-memory-identity.js';
 import {discordAttachmentLabels} from '../pieces/bridges/discord-link.js';
-import {saveBodyAttachments,showBodyAttachments} from './body-attachments.js';
+import {receiveChatFiles,saveBodyAttachments,showBodyAttachments} from './body-attachments.js';
 import {bodyFileReader,bodyNoteFileReader} from './body-files.js';
 import {bodySessions,type BodySessions} from './body-session.js';
 import { usageReport, type UsageReport } from './usage-report.js';
@@ -154,10 +157,12 @@ export async function bodyProgram(input: {
     let deliveredItems = 0;
     let hasOwnSchedule = false;
     const journalDeliveries: string[] = [];
+    const attachedMail: string[] = [];
     const claimed=job.run?.policy?.mail;let lateStranger=false,placed=false;
     const batch = await client.takeAndAccept(async (item, sinkSignal) => {
       if (sinkSignal.aborted || signal.aborted) throw new Error();
       deliveredItems++;
+      if(job.venue==='loom' && item.source==='thread' && item.words?.match(/(?:^|\n)Attached files: \[/)) attachedMail.push(item.id);
       // This is the receiving body's context, never a parent's pipe queue.
       // Mail in a bridge conversation that is no message from the bridge: a trigger's firing there, or a note
       // from another body of this agent. Its answer is a post in the conversation, answering no message.
@@ -243,7 +248,21 @@ export async function bodyProgram(input: {
       :discordAttachments.size?'You cannot open these attachments because this body has no file tools.'
       :bridge?await (input.showAttachments??showBodyAttachments)(memoryClient,incoming):null;
     if(signal.aborted)throw new Error();
+    if(attachedMail.length){
+      const attachments=await receiveChatFiles(memoryClient,attachedMail,hasFileTools(reach,policy)?input.env[BODY_SCRATCH]:undefined);
+      context.push(attachments);continued.push(attachments);
+    }
     if(sent){context.push(sent);continued.push(sent);}
+    // A thread whose member has the second window: the body is told what is on its boards and what the member did
+    // there, before its mail. Any other thread refuses the read and is told nothing (core/boards/operations.ts).
+    if(job.venue==='loom'&&memoryClient){
+      try{
+        const brief=await memoryClient.command('boards.brief',{},randomUUID());
+        const text=brief.ok&&(brief.value as {text?:unknown}|null)?.text;
+        if(typeof text==='string'){const told=boardsMail(text);context.unshift(told);continued.unshift(told);}
+      }catch{/* A brief that cannot be read is no reason to refuse the work. */}
+      if(signal.aborted)throw new Error();
+    }
     // In a bridge's room others speak beside the one who asked. The body is told who this job works for, by loom's
     // reading of the room, before its mail: a body that continues a kept session is told too, since the asker of
     // this job need not be the asker of the last (harness-traits.ts, workingFor).
@@ -332,7 +351,21 @@ export async function bodyProgram(input: {
     if(tools?.houseSend)shellEnv.LOOM_BODY_HOUSE_SEND=tools.houseSend;
     delete shellEnv.LOOM_BODY_HOUSE_NOTE;
     if(tools?.houseNote)shellEnv.LOOM_BODY_HOUSE_NOTE=tools.houseNote;
-    const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, reach, omitClaudeTools, env: shellEnv, failedUsage:usage=>{failureReport=usage;}, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
+    // Only the owner's dedicated pairing room opts in to native work cards.
+    let posted = Promise.resolve();
+    const privateValues = [parsed.bootstrap.token, harnessTools(tools?.config)?.authorization.slice(7), tools?.houseSend, tools?.houseNote,...Object.entries(shellEnv)
+      .filter(([key])=>/token|secret|password|api.?key|authorization/i.test(key))
+      .map(([,value])=>value)].filter((v):v is string=>typeof v==='string'&&v.length>=8);
+    const pairOutput = coordinating && !guest && PAIR_THREAD.test(job.thread||'')
+      ? pairEvents(step=>{
+          const sensitive=(value:string)=>!(tools??secrets).allowsReply(value)||privateValues.some(v=>value.includes(v))||
+            /(?:Bearer\s+[A-Za-z0-9_.+/=-]{12,}|-----BEGIN [^\n]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{16,})/i.test(value);
+          const tool=sensitive(step.tool)?'Tool':step.tool.slice(0,180);
+          const words=sensitive(step.words)?'Output withheld.':step.words.length>16000?step.words.slice(0,16000)+'\n[Output truncated]':step.words;
+          const callId=step.call ? 'pair.'+keyOf(step.call).slice(0,24)+'.'+(step.parent?keyOf(step.parent).slice(0,24):'-')+'.'+randomUUID() : randomUUID();
+          posted=posted.then(async()=>{if(!signal.aborted)await client!.card({tool,words,cardState:step.cardState,clientId:callId})}).catch(()=>{});
+        }) : undefined;
+    const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, reach, omitClaudeTools, pairOutput, env: shellEnv, failedUsage:usage=>{failureReport=usage;}, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
     // A second one for the case the session cannot be continued: each takes its own copy of the tools file.
     const native = harness(), afresh = resume ? harness() : undefined;
     tools?.config.fill(0);
@@ -354,6 +387,7 @@ export async function bodyProgram(input: {
     }
     catch { if(!stopped) throw new Error(); }
     finally {
+      await posted;
       const report = {...(answer?.usage ?? failureReport ?? {source:'none' as const}), harness:job.harness,
         model:answer?.model ?? job.model, wallMs:Math.round(performance.now()-harnessStarted)};
       // Keep a valid measurement in flight during retirement and reply settlement.

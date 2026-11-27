@@ -461,3 +461,18 @@ it('resolves one repeated Slack account across many workspaces in a fixed number
    expect(slackGrantDirectory(probe,requests).size).toBe(0);
  }finally{probe.close();}
 });
+
+it('joins a visible member account to a unique directory card in its recorded workspace',async()=>{
+ const path=join(home(),'people.db'), directory=store(path);
+ directory.write({slug:'friend',name:'Friend',where:{slack:{value:'UFRIEND'},slack_workspace:{value:'TTEAM'}}});
+ const accounts=[{platform:'slack',workspace:'TTEAM',user:'UFRIEND',member:'member'},{platform:'slack',workspace:'TOTHER',user:'UFRIEND',member:'peer'}];
+ const sharing:Sharing={members:{owner:{owner:true,agents:[]}},projects:{}};
+ const service=peopleQueryFields({directory:path,agents:[],sharing:()=>sharing,now:Date.now,memberAccounts:v=>v.id==='owner'?accounts:[]});
+ closes.push(service.close);
+ const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:service.fields})});
+ const read=(id:string)=>graphql({schema,source:'{memoryPeopleMemberLinks{slug member}}',contextValue:{viewer:{kind:'member',id}}});
+ expect(await read('owner')).toEqual({data:{memoryPeopleMemberLinks:[{slug:'friend',member:'member'}]}});
+ expect(await read('peer')).toEqual({data:{memoryPeopleMemberLinks:[]}});
+ directory.write({slug:'other',name:'Other',where:{slack:{value:'UFRIEND'},slack_workspace:{value:'TTEAM'}}});
+ expect(await read('owner')).toEqual({data:{memoryPeopleMemberLinks:[]}});
+});

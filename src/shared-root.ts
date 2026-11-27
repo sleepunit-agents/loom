@@ -59,6 +59,7 @@ import { registerSharedSecretCommands } from './shared-secret-commands.js';
  * the connection; this never bootstraps legacy tables or opens another store. */
 import { sharedTempoSettings } from './shared-tempo-settings.js';
 import type { IncomingMessage } from 'node:http';
+import { registerBoardOperations } from './core/boards/operations.js';
 import { createHmac, randomBytes } from 'node:crypto';
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -81,9 +82,10 @@ import { registerTerminalSession } from './shared-terminal-session.js';
 import { registerJobUsage } from './shared-job-usage.js';
 import { registerConversationSessions } from './shared-conversation-sessions.js';
 import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
-import { sharedChangesReader } from './shared-changes-reader.js';
+import {pullCheckReader} from './pieces/changes/check-runs.js';
+import { sharedChangesReader,sharedForgeSecrets } from './shared-changes-reader.js';
 import { pollChanges } from './apps/changes-polling.js';
-import { registerWorkRefresh } from './shared-work-refresh.js';
+import { registerWorkRefresh,registerPullChecks } from './shared-work-refresh.js';
 import { inboxProposalTitles, workQueryFields } from './shared-work-queries.js';
 import { workLifetime } from './shared-work-lifetime.js';
 import { guardedResponse, isGuardedCommandRead } from './core/data/guarded-response.js';
@@ -98,6 +100,7 @@ import { approvalRulesService } from './apps/approval-rules.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { sharedConversations } from './shared-conversations.js';
 import { sameRequestOrigin } from './core/data/origin.js';
+import { CHAT_FILE_REQUEST_BYTES } from './core/conversations/chat-files.js';
 import { DOOR_REQUEST_BYTES } from './core/data/http.js';
 import { takeBodyInput } from './core/conversations/body-input.js';
 import { conversationBodyScope } from './core/conversations/body-scope.js';
@@ -591,7 +594,7 @@ export function sharedRoot(options: {
       }else if(name==='household.setPortrait'){
         if(!auth.window||!householdOwner(db,auth.viewer))return c.json(failure('denied','Sign in as a household owner to change a portrait'),403);
         body=await bodyRequest(request,{signal},true,PORTRAIT_REQUEST_BYTES).json();
-      }else body=await bodyRequest(request,{signal},true).json();
+      }else body=await bodyRequest(request,{signal},true,name==='comms.send' && auth.viewer.kind==='member' ? CHAT_FILE_REQUEST_BYTES : DOOR_REQUEST_BYTES).json();
     }catch(error){return error instanceof BodyTooLarge?c.json(failure('invalid','Request body too large'),413):c.json(failure('invalid',multipart?'Invalid attachment':'Invalid JSON'),400);}
     const parsed = envelope.safeParse(body);
     if (!parsed.success) return c.json(failure('invalid', 'Expected {input, id?}'), 400);
@@ -599,8 +602,9 @@ export function sharedRoot(options: {
     const epoch = isGuardedCommandRead(name) ? data.readVersion() : undefined;
     const answer=await executeCommand(auth,name,parsed.data.input,parsed.data.id,signal);
     if (epoch !== undefined && answer.ok) {
+      const until=name==='conversation.messageFiles' ? Number((answer.value as {until:number}).until) : Infinity;
       return guardedResponse(JSON.stringify(answer), {status:200, headers:{'content-type':'application/json', 'cache-control':'no-store'}},
-        () => !closing && auth.valid() && data.readVersion() === epoch);
+        () => !closing && auth.valid() && clock.now() < until && data.readVersion() === epoch);
     }
 
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
@@ -613,6 +617,9 @@ export function sharedRoot(options: {
     terminal: viewer => credentials.terminalMachine(viewer),
   });
   registerSharedWorkAlways(operations,db,services.approvals,services.approvalRules);
+  // Boards follow Comms: a board is a thread's second window, so without threads there is nothing to open one in.
+  const boardStore=comms?registerBoardOperations(operations,db,bodyScope,words=>comms.service.key.hash(words)):undefined;
+  if(options.changes && 'github' in options.changes) registerPullChecks(operations,db,pullCheckReader(sharedForgeSecrets(options.changes.github),options.changes.github.request));
   if (changePolling) registerWorkRefresh(operations,db,changePolling.refresh);
   if(comms)for(const row of recentReviewEnds(comms.service))deliverReview(row.id);
   if (!options.deferRuntimeStart) runtime.start();

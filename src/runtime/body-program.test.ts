@@ -625,3 +625,25 @@ it.each(['slack','discord'] as const)('executes a private decision at guest reac
  expect(f.calls[reply].body.input).toMatchObject({text:'The quote is ready.'});
  expect(f.calls.findIndex(c=>c.path==='confirm')).toBeGreaterThan(reply);
 });
+
+it('tells a body in a loom thread what is on its boards, before its mail, and nothing where the read is refused', async () => {
+  const run = async (venue: string | null, answer: unknown) => {
+    const f = fixture(), fetcher = f.options.fetch, value = JSON.parse(f.input.toString()); value.job.venue = venue;
+    const asked: unknown[] = [];
+    f.native.mockImplementation(async () => ({ text: 'Actual answer', model: 'observed', actions: [] }));
+    expect(await bodyProgram({ ...f.options, stdin: async () => Buffer.from(JSON.stringify(value)), fetch: async (url, init) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { operation?: string };
+      if (String(url).endsWith('/boards/brief') || body.operation === 'boards.brief') { asked.push(body); return Response.json(answer); }
+      return fetcher(url, init);
+    } })).toBe(0);
+    return { asked, words: f.native.mock.calls[0][1] };
+  };
+  const told = await run('loom', { ok: true, value: { text: 'The member is looking at this board:\nBoard bd-1 "Loom lately", open, revision 3.' } });
+  expect(told.asked).toHaveLength(1);
+  expect(told.words).toMatch(/second window beside it[\s\S]*Board bd-1 "Loom lately"[\s\S]*PRIVATE MAIL$/);
+  const refused = await run('loom', { ok: false, code: 'denied', message: 'no' });
+  expect(refused.asked).toHaveLength(1);
+  expect(refused.words).not.toContain('second window');
+  const elsewhere = await run(null, { ok: true, value: { text: 'x' } });
+  expect(elsewhere.asked).toHaveLength(0);
+});
