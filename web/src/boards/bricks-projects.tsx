@@ -15,7 +15,7 @@ export const PROJECTS_SHOWN = 200;
 export const projectsQuery = `query BrickProjects{projects(orderBy:{name:{direction:asc,priority:1},id:{direction:asc,priority:0}},limit:${PROJECTS_SHOWN + 1}){id name goal lifecycle}}`;
 type ProjectRow = { id: string; name: string; goal: string | null; lifecycle: string };
 /** What a board takes as a reference (src/core/boards/bricks/kit.ts, `ref`): a project with any other id is listed with no chip. */
-const placeable = (id: string) => /^[A-Za-z0-9][A-Za-z0-9:._\/@-]{0,119}$/.test(id);
+const placeable = (id: string) => /^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,119}$/.test(id);
 const tone = (lifecycle: string): Tone => (lifecycle === 'active' ? 'working' : 'muted');
 /** The words searched for: every one must be in the project's name, id or goal, in any case. */
 const terms = (typed: string) => typed.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 20);

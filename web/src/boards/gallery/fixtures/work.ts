@@ -266,12 +266,40 @@ const openPulls = [
 ].map((c) => ({ ...c, id: `github:hollow-lane/irrigation-controller#${c.number}`, state: 'open', project: 'garden' }));
 const repositoryData = (open: unknown[], known = true): Record<string, Answer> => ({ ...shared, BrickRepository: { open, known: known ? [{ id: change.id }] : [] } });
 
+// The project brick's agents' notes, once opened (one request for every card), and one note read whole.
+const notePreview = (ref: string, title: string, status: string, hours: number) => ({ title, ref, when: ago(60 * hours), status });
+const cardNotes: Record<string, object[]> = {
+  'fern:garden': [notePreview('n-1', 'Compost bay — The timber for the second bay arrives Thursday; build it the same weekend.', 'decision', 20),
+    notePreview('n-2', 'Bed sizes — Each raised bed is 1.2 m by 2.4 m, liner cut 10 cm proud.', 'fact', 70)],
+  'moss:garden-water': [notePreview('n-7', 'Drip line pressure — Pressure drops past the third emitter; filter first, then the line.', 'observation', 5)],
+  'art:garden': [],
+};
+const notesAnswer = (v: Record<string, unknown>) => Object.fromEntries(Object.entries(v).map(([alias, id]) => [alias, { id, agent: String(id).split(':')[0], sections: [
+  { key: 'memories', available: true, error: null, total: (cardNotes[String(id)] ?? []).length + 12, items: cardNotes[String(id)] ?? [] }] }]));
+const noteWhole = { note: { id: 'fern:n-1', agent: 'fern', title: 'Compost bay', content: 'The timber for the second bay arrives **Thursday**. Build it the same weekend so the autumn leaves have somewhere to go.', category: 'decision', created: ago(60 * 20) } };
+// ── projects ───────────────────────────────────────────────────────────────────────────────────────────────────
+const directory = { projects: [
+  { id: 'garden', name: 'Garden', goal: 'Get the garden through winter in good shape.', lifecycle: 'active' },
+  { id: 'greenhouse', name: 'Greenhouse', goal: null, lifecycle: 'planned' },
+  { id: 'kitchen', name: 'Kitchen shelves', goal: 'Two shelves above the counter, level and **bolted to the studs**.', lifecycle: 'active' },
+  { id: 'pond', name: 'Pond', goal: 'Keep the pond clear and the pump running through summer.', lifecycle: 'retired' },
+  { id: 'shed', name: 'Shed roof', goal: 'A roof that keeps the tools dry.', lifecycle: 'active' },
+  { id: 'tax-2026', name: 'Tax return 2026', goal: null, lifecycle: 'active' },
+  { id: 'workshop', name: 'Workshop wiring', goal: 'Every socket on its own breaker.', lifecycle: 'removed' },
+] };
+
 export const scenes: BrickScenes[] = [
   { brick: 'project', scenes: [
     { name: 'default', params: { project: 'garden' }, data: projectData() },
     { name: 'empty', params: { project: 'greenhouse' }, data: projectData({ BrickProject: { project: { name: 'Greenhouse', goal: null, lifecycle: 'planned', projectMembersByProject: [] } }, WorkProjectNotes: { workProjectContributions: [] }, WorkClaimStates: { projectClaimStates: [] } }) },
     { name: 'retired', params: { project: 'pond' }, only: ['side', 'compact'], data: projectData({ BrickProject: { project: { name: 'Pond', goal: 'Keep the pond clear and the pump running through summer.', lifecycle: 'retired', projectMembersByProject: [{ member: 'robin' }] } }, WorkProjectNotes: { workProjectContributions: [contributions[1]] }, WorkClaimStates: { projectClaimStates: [] } }) },
     { name: 'unavailable', params: { project: 'garden' }, only: ['side'], data: projectData({ BrickProject: 'offline' }) },
+    { name: 'notes', params: { project: 'garden' }, only: ['primary'], press: ["Show the agents' notes", 'Compost bay — The timber for the second bay arrives Thursday; build it the same weekend.'], data: projectData({ BrickProjectNotes: notesAnswer, BrickProjectNote: noteWhole }) },
+  ] },
+  { brick: 'projects', scenes: [
+    { name: 'default', params: {}, data: { ...shared, BrickProjects: directory } },
+    { name: 'empty', params: {}, data: { ...shared, BrickProjects: { projects: [] } } },
+    { name: 'unavailable', params: {}, only: ['side'], data: { ...shared, BrickProjects: 'offline' } },
   ] },
   { brick: 'lanes', scenes: [
     { name: 'default', params: { project: 'garden' }, data: lanesData() },
