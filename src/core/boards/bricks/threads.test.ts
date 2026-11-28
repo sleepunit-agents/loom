@@ -11,7 +11,7 @@ it('threads: whether it can be big, what it flags itself for, how it is named, a
     flags: [],
     linkKey: null,
     references: {},
-    actions: {},
+    actions: { pin: 'comms.change', unpin: 'comms.change', delete: 'comms.change' },
   });
 });
 
@@ -19,7 +19,8 @@ describe('the threads brick', () => {
   const place = (params: Record<string, unknown>) => agent(empty(), [{ change: 'place', brick: 'threads', params }]);
   it('takes no reference: its one parameter is Comms\' folder, open unless archived is asked for', () => {
     const brick = bricks.find((b) => b.name === 'threads')!;
-    expect(brick).toMatchObject({ references: {}, actions: {}, big: true, flags: [] });
+    expect(brick).toMatchObject({ references: {}, big: true, flags: [] });
+    expect(Object.keys(brick.actions)).toEqual(['pin', 'unpin', 'delete']);
     expect(brick.linkKey).toBeUndefined();
     expect(live(place({}).board)[0].params).toEqual({ scope: 'open' });
     expect(live(place({ scope: 'archived' }).board)[0].params).toEqual({ scope: 'archived' });
