@@ -119,8 +119,8 @@ it('says when a patch was cut, when GitHub gives none, when it could not be read
   await draw('primary');
   await open('docs/pump.md');
   expect(lines()).toEqual([['board-patch-add', '+first part\n']]);
-  // Code keeps its lines and the patch scrolls sideways, so it is a named region the keyboard can reach.
-  expect([patchOf().props.role, patchOf().props.tabIndex, patchOf().props['aria-label']]).toEqual(['region', 0, 'Patch of docs/pump.md']);
+  // The patch wraps and does not scroll, so it is a named region and no stop of its own for the keyboard.
+  expect([patchOf().props.role, patchOf().props.tabIndex, patchOf().props['aria-label']]).toEqual(['region', undefined, 'Patch of docs/pump.md']);
   expect(notes()).toContain('Only the first 200 KB of this patch is shown. The whole of it is on GitHub.');
   const cases: [unknown, string][] = [
     [{ status: 'live', data: { patch: { state: 'none', patch: null, cut: false } } }, 'GitHub has no patch for this file: it may be binary, too large for GitHub to show, renamed with no change in it, or empty.'],

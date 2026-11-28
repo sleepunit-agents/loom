@@ -70,10 +70,12 @@ export const brickRetryMs = [700, 2500];
  * after a moment, twice, saying only that it is being fetched again. The rest of the board stays drawn. If it still
  * fails the placement says sorry and offers to try again; where loom now serves a newer page it offers that page,
  * which the page takes by itself once nothing typed would be lost (see `stale` below). */
-class BodyBoundary extends Component<{ children: ReactNode; stale: boolean; onLost(): void; /** Makes the body fetchable again (bricks.tsx `again`). */ again?(): void }, { failed: boolean; tries: number }> {
-  state = { failed: false, tries: 0 };
+class BodyBoundary extends Component<{ children: ReactNode; stale: boolean; onLost(): void; /** Makes the body fetchable again (bricks.tsx `again`). */ again?(): void }, { failed: boolean; tries: number; why: string }> {
+  state = { failed: false, tries: 0, why: '' };
   private timer: ReturnType<typeof setTimeout> | undefined;
-  static getDerivedStateFromError() { return { failed: true }; }
+  // What was caught is kept, cut short, and shown under the sorry line: a brick that fails on one person's screen and
+  // not another's can only be mended from what it said.
+  static getDerivedStateFromError(error: unknown) { return { failed: true, why: (error instanceof Error ? `${error.name}: ${error.message}` : String(error)).replace(/\s+/g, ' ').slice(0, 200) }; }
   componentDidCatch() {
     this.props.onLost();
     const wait = brickRetryMs[this.state.tries];
@@ -83,7 +85,7 @@ class BodyBoundary extends Component<{ children: ReactNode; stale: boolean; onLo
   render() {
     if (!this.state.failed) return this.props.children;
     if (this.state.tries < brickRetryMs.length) return <Fetching />;
-    return <Lost again={() => { this.props.again?.(); this.setState({ failed: false, tries: brickRetryMs.length }); }} reload={this.props.stale ? () => location.reload() : undefined} />;
+    return <Lost again={() => { this.props.again?.(); this.setState({ failed: false, tries: brickRetryMs.length }); }} reload={this.props.stale ? () => location.reload() : undefined} why={this.state.why} />;
   }
 }
 
