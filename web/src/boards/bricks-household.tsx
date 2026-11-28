@@ -8,9 +8,14 @@
  * changed on its row from two files chosen in the brick and sent straight to `household.setPortrait`
  * (./bricks-household-portrait.tsx); the board is told the agent and whether it was uploaded or restored.
  *
- * THE LISTS. Tokens and browsers are drawn live first; the revoked, expired and signed-out ones are folded behind one
- * heading with their count, thirty at a time once opened. A search over label, kind and owner filters the rows loom
- * already sent, on Enter or Search: its words are this page's state and are never sent, stored or told (`Listed`).
+ * THE LISTS. Tokens and browsers are drawn live first, thirty at a time; the revoked, expired and signed-out ones are
+ * folded behind one heading with their count, thirty at a time once opened. A body's tokens, each bound to one job,
+ * are not among the household's others: they are in one fold, 'Job tokens', whose heading counts the running and the
+ * ended, opened thirty at a time. One whose job has ended is 'Ended with its job' as loom's read says (sign-in refuses
+ * it, src/core/data/authentication.ts `jobTokenCurrent`) and has no Revoke; a running job's token keeps it. Only tokens
+ * that can still sign in are counted as active. A search over label, kind and owner filters the rows loom already
+ * sent, every list of them, on Enter or Search: its words are this page's state and are never sent, stored or told
+ * (`Listed`).
  *
  * MAKING A TOKEN. By the desktop's own door, `POST /api/signin/token` (`/api/signin/program` for an outside program;
  * src/core/signin/shared-links.ts), which answers a current household owner whose browser signed in within the last
@@ -31,7 +36,7 @@ import { SECRET_VALUE_WORDS, loomBearer, looksLikeSecretValue } from '../../../s
 import { useDataQuery } from '../data/graphql';
 import { liveAgents } from '../data/live-agents';
 import { memberOperation } from '../data/operation';
-import { agentOwnership, householdSetupQuery, programLine, programNote, programQuery, sessionLine, setupWords, tokenState, type HouseholdSetup, type ProgramSetupData } from '../pieces/household/model';
+import { agentOwnership, householdSetupQuery, programLine, programNote, programQuery, sessionLine, setupWords, tokenState, type HouseholdSetup, type ProgramSetupData, type SetupToken } from '../pieces/household/model';
 import { sessionChange } from '../signin/session-change';
 import { isMember, isRef } from './admin-data';
 import { PortraitRow } from './bricks-household-portrait';
@@ -41,6 +46,12 @@ const agentChip = (id: string) => (isRef(id) ? <Chip key={id} place={{ brick: 'a
 const memberChip = (id: string) => (isMember(id) ? <Chip key={id} place={{ brick: 'person', params: { person: 'member:' + id } }}>{id}</Chip> : <span key={id}>{id}</span>);
 
 const tokenTone = (state: string): Tone => (state === 'Active' ? 'good' : state === 'Expired' ? 'waiting' : 'muted');
+/** A token's state as loom's setup read says it (household-read.ts): a body's token whose job has ended is 'Ended with
+ * its job', since sign-in refuses it, whatever its own row says. A loom that does not say falls back to the row. */
+const STATE_WORDS = { active: 'Active', revoked: 'Revoked', expired: 'Expired', 'ended with its job': 'Ended with its job' } as const;
+const stateOf = (token: SetupToken): string => (token.state && STATE_WORDS[token.state]) || tokenState(token);
+/** Can this token still sign in? Only these count as active tokens, in the headline too. */
+const canSignIn = (token: SetupToken) => stateOf(token) === 'Active';
 
 type Program = ProgramSetupData['tokens'][number];
 function Grants({ token, catalogue, busy, save }: { token: Program; catalogue: ProgramSetupData['catalogue']; busy: boolean; save: (input: { fingerprint: string; records: string[]; operations: string[] }) => void }) {
@@ -80,7 +91,7 @@ export function Household({ form, act }: BodyProps) {
   if (feed.status === 'loading') return <>{notice}<Loading /></>;
   if (!setup) return <>{notice}<Unavailable what="household setup" /></>;
   const agents = liveAgents(setup.agents), removed = setup.agents.filter((agent) => agent.removedAt);
-  const tokens = setup.tokens.filter((token) => tokenState(token) === 'Active').length, browsers = setup.sessions.filter((session) => !session.ended).length;
+  const tokens = setup.tokens.filter(canSignIn).length, browsers = setup.sessions.filter((session) => !session.ended).length;
   const summary = `${count(setup.members.length, 'member')} · ${count(agents.length, 'agent')}`, access = `${count(tokens, 'active token')} · ${count(browsers, 'signed-in browser')}`;
   if (form === 'compact') return <>{notice}<p className="board-brief">{summary} · {access}</p></>;
   const change = async (name: 'token.revoke' | 'sessions.revoke' | 'program.setGrants', input: object, report: string) => {
@@ -132,13 +143,15 @@ export function Household({ form, act }: BodyProps) {
         <Note>Default agent: {setup.defaultAgent ?? 'None'}{primary && !!removed.length && <> · Removed: {removed.map((agent) => agent.id).join(', ')}</>}</Note>
       </Section>
       {primary && (
-        <Listed title="Tokens" what="token" rows={setup.tokens} live={(token) => tokenState(token) === 'Active'} id={(token) => token.fingerprint}
+        <Listed title="Tokens" what="token" rows={setup.tokens} live={canSignIn} id={(token) => token.fingerprint}
           fields={(token) => [token.label, token.kind, token.identity]} fieldWords="label, kind or owner" folded="Revoked or expired" none="No tokens"
+          apart={{ is: (token) => !!token.forJob, title: 'Job tokens', live: 'running', past: 'ended' }}
           top={<TokenMaker setup={setup} boxes={feed.status === 'live' ? feed.data?.boxes ?? [] : []} programs={programs} act={act} />}
           draw={(token) => {
             const line = <>{token.kind} · {token.identity}<br />Created <Time at={token.createdAt} /> · Last used {token.lastUsedAt ? <Time at={token.lastUsedAt} /> : 'Never'}{token.expiresAt && <> · Expires <Time at={token.expiresAt} /></>}</>;
-            const state = <State tone={tokenTone(tokenState(token))}>{tokenState(token)}</State>;
-            return token.revokedAt ? <Row key={token.fingerprint} title={token.label} meta={line} end={state} />
+            const state = <State tone={tokenTone(stateOf(token))}>{stateOf(token)}</State>;
+            // A revoked token has nothing to revoke, and neither has a body's token whose job is over: sign-in refuses it.
+            return token.revokedAt || (token.forJob && !canSignIn(token)) ? <Row key={token.fingerprint} title={token.label} meta={line} end={state} />
               : <AskRow key={token.fingerprint} title={token.label} meta={line} end={state}
                   asks={{ busy, label: `Revoke token ${token.label}`, ask: 'Revoke token…', yes: 'Revoke it', no: 'Keep it', act: () => change('token.revoke', { fingerprint: token.fingerprint }, 'revokeToken'),
                     children: 'Revoke this token? Whatever uses it stops working, and it cannot be restored.' }} />;
@@ -177,18 +190,34 @@ const matches = (fields: readonly (string | null)[], words: string[]) => {
   const text = fields.filter(Boolean).join(' ').toLowerCase();
   return words.every((word) => text.includes(word));
 };
-/** A list of tokens or browsers as loom sent it: the live ones first, every one drawn; the rest (revoked, expired,
- * signed out) folded behind one heading, drawn thirty at a time once it is opened. Above them, a search over what
- * is already here: what is typed is this component's state, applied on Enter or Search to the rows loom sent, and is
- * never a parameter, never sent, never stored, never in the address and never told to the board (rule 1). */
-function Listed<T>({ title, what, rows, live, id, fields, fieldWords, folded, none, top, draw }: { title: string; what: string; rows: readonly T[]; live(row: T): boolean; id(row: T): string;
-  fields(row: T): readonly (string | null)[]; /** What is searched, said when nothing matches: "label, kind or owner". */ fieldWords: string; folded: string; none: string; top?: ReactNode; draw(row: T): ReactNode }) {
-  const [typed, setTyped] = useState(''), [asked, setAsked] = useState(''), [open, setOpen] = useState(false), [shown, setShown] = useState(FOLD_PAGE);
+/** Rows drawn thirty at a time, with Show 30 more until every one is. Drawn anew (its `key`) when the search changes. */
+function Paged<T>({ rows, label, id, draw }: { rows: readonly T[]; label: string; id(row: T): string; draw(row: T): ReactNode }) {
+  const [shown, setShown] = useState(FOLD_PAGE);
+  return (
+    <>
+      <Rows label={label}>{rows.slice(0, shown).map((row) => <Fragment key={id(row)}>{draw(row)}</Fragment>)}</Rows>
+      {rows.length > shown && <Actions><Action kind="quiet" label={`Show ${FOLD_PAGE} more ${label.toLowerCase()}`} onClick={() => setShown(shown + FOLD_PAGE)}>{`Show ${FOLD_PAGE} more`}</Action></Actions>}
+    </>
+  );
+}
+/** Rows set apart from the rest in a fold of their own (a body's tokens, bound to one job): its heading counts the
+ * live and the past ones, and it opens thirty at a time, the live ones first. */
+type Apart<T> = { is(row: T): boolean; title: string; /** What a live one is called in the heading: "running". */ live: string; past: string };
+/** A list of tokens or browsers as loom sent it: the live ones first, thirty at a time; the rest (revoked, expired,
+ * signed out) folded behind one heading, drawn thirty at a time once it is opened. Rows `apart` says are not among
+ * either: they are in one fold of their own. Above them, a search over what is already here, every row of them: what
+ * is typed is this component's state, applied on Enter or Search to the rows loom sent, and is never a parameter,
+ * never sent, never stored, never in the address and never told to the board (rule 1). */
+function Listed<T>({ title, what, rows, live, id, fields, fieldWords, folded, none, top, apart, draw }: { title: string; what: string; rows: readonly T[]; live(row: T): boolean; id(row: T): string;
+  fields(row: T): readonly (string | null)[]; /** What is searched, said when nothing matches: "label, kind or owner". */ fieldWords: string; folded: string; none: string; top?: ReactNode; apart?: Apart<T>; draw(row: T): ReactNode }) {
+  const [typed, setTyped] = useState(''), [asked, setAsked] = useState(''), [open, setOpen] = useState(false), [openApart, setOpenApart] = useState(false);
   const words = asked ? terms(asked) : [];
   const found = words.length ? rows.filter((row) => matches(fields(row), words)) : rows;
-  const current = found.filter(live), past = found.filter((row) => !live(row));
+  const own = apart ? found.filter((row) => !apart.is(row)) : found, set = apart ? found.filter(apart.is) : [];
+  const current = own.filter(live), past = own.filter((row) => !live(row));
+  const setLive = set.filter(live), setPast = set.filter((row) => !live(row));
   const name = `Search ${what}s`;
-  const submit = (event: FormEvent) => { event.preventDefault(); setAsked(typed.trim()); setShown(FOLD_PAGE); };
+  const submit = (event: FormEvent) => { event.preventDefault(); setAsked(typed.trim()); };
   return (
     <Section title={title} count={rows.length ? `${current.length} live` : undefined}>
       {top}
@@ -198,14 +227,18 @@ function Listed<T>({ title, what, rows, live, id, fields, fieldWords, folded, no
             <input className="board-input" type="search" aria-label={name} placeholder={`${name}…`} maxLength={400} autoComplete="off" value={typed}
               onChange={(event) => { setTyped(event.target.value); if (!event.target.value.trim()) setAsked(''); }} />
             <Action submit disabled={!typed.trim()}>Search</Action>
-            {asked && <Action kind="quiet" onClick={() => { setTyped(''); setAsked(''); setShown(FOLD_PAGE); }}>{`Show every ${what}`}</Action>}
+            {asked && <Action kind="quiet" onClick={() => { setTyped(''); setAsked(''); }}>{`Show every ${what}`}</Action>}
           </form>
-          {current.length ? <Rows label={`Live ${what}s`}>{current.map(draw)}</Rows>
+          {current.length ? <Paged key={asked} rows={current} label={`Live ${what}s`} id={id} draw={draw} />
             : <Note>{words.length ? `No live ${what} matches.` : `No live ${what}s`}</Note>}
           {!!past.length && (
             <Fold title={`${folded} · ${past.length}`} open={open} onToggle={() => setOpen(!open)}>
-              <Rows label={`${folded} ${what}s`}>{past.slice(0, shown).map((row) => <Fragment key={id(row)}>{draw(row)}</Fragment>)}</Rows>
-              {past.length > shown && <Actions><Action kind="quiet" onClick={() => setShown(shown + FOLD_PAGE)}>{`Show ${FOLD_PAGE} more`}</Action></Actions>}
+              <Paged key={asked} rows={past} label={`${folded} ${what}s`} id={id} draw={draw} />
+            </Fold>
+          )}
+          {apart && !!set.length && (
+            <Fold title={`${apart.title} · ${setLive.length} ${apart.live} · ${setPast.length} ${apart.past}`} open={openApart} onToggle={() => setOpenApart(!openApart)}>
+              <Paged key={asked} rows={[...setLive, ...setPast]} label={apart.title} id={id} draw={draw} />
             </Fold>
           )}
           {words.length > 0 && !found.length && <Note>{`No ${what} matches. Every word must be in its ${fieldWords}.`}</Note>}
