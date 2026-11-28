@@ -6,7 +6,8 @@ import { createElement as h } from 'react';
 import { act, create } from 'react-test-renderer';
 
 const feed = vi.hoisted(() => vi.fn());
-vi.mock('../data/graphql', () => ({ useDataQuery: feed }));
+const once = vi.hoisted(() => vi.fn());
+vi.mock('../data/graphql', () => ({ useDataQuery: feed, useDataOnce: once }));
 import { brickView, loadBricks, type Params } from './bricks';
 import type { Form } from './layout';
 
@@ -15,7 +16,7 @@ await loadBricks();
 
 type Node = { type: string; props: Record<string, any>; children: (Node | string)[]; findAll(match: (node: Node) => boolean): Node[]; findAllByType(type: string): Node[] };
 let tree: { root: Node; toJSON(): unknown; unmount(): void } | undefined;
-afterEach(async () => { await act(async () => tree?.unmount()); tree = undefined; feed.mockReset(); });
+afterEach(async () => { await act(async () => tree?.unmount()); tree = undefined; feed.mockReset(); once.mockReset(); });
 
 const said = (node: Node): string => node.children.map((child) => (typeof child === 'string' ? child : said(child))).join('');
 const change = { id: 'github:acme/app#12', repository: 'acme/app', number: 12, url: 'https://github.com/acme/app/pull/12', title: 'Read the pump twice', state: 'open',
@@ -71,5 +72,67 @@ it('says the files are not known yet when none are stored, or the read leaves th
     expect(rows()).toEqual([]);
     expect(JSON.stringify(tree!.toJSON())).toContain('Which files it changes is not known yet.');
     expect(JSON.stringify(tree!.toJSON())).toContain('Read the pump twice');
+  }
+});
+
+// ── A changed file's patch, opened in place ──────────────────────────────────────────────────────────────────────
+const opener = (path: string) => tree!.root.findAll((node) => node.type === 'button' && node.props.className === 'board-opens' && said(node) === path)[0];
+async function open(path: string) { await act(async () => opener(path).props.onClick()); }
+const patchOf = () => tree!.root.findAll((node) => node.type === 'pre' && node.props.className === 'board-patch')[0];
+const lines = () => patchOf().findAllByType('span').map((line) => [line.props.className, said(line)]);
+const notes = () => tree!.root.findAll((node) => node.type === 'p' && node.props.className === 'board-note').map(said);
+const patched = (patch: unknown) => once.mockImplementation(() => ({ status: 'live', data: { patch } }));
+
+it('opens a file in place to its patch, asked for once it is opened, its lines marked and keeping their signs', async () => {
+  answer(read({}, { changeFiles: files }));
+  patched({ state: 'patch', patch: '@@ -1,3 +1,3 @@ export\n context\n-old line\n+new line', cut: false });
+  await draw('primary');
+  expect(once).not.toHaveBeenCalled();
+  expect(opener('src/pump/read.ts').props['aria-expanded']).toBe(false);
+  await open('src/pump/read.ts');
+  expect(opener('src/pump/read.ts').props['aria-expanded']).toBe(true);
+  expect(once.mock.calls[0][0]).toContain('changeFilePatch(change:$change,path:$path){state patch cut}');
+  expect(once.mock.calls[0][1]).toEqual({ change: change.id, path: 'src/pump/read.ts' });
+  expect(lines()).toEqual([['board-patch-hunk', '@@ -1,3 +1,3 @@ export\n'], [undefined, ' context\n'], ['board-patch-remove', '-old line\n'], ['board-patch-add', '+new line\n']]);
+  expect(patchOf().props['aria-label']).toBe('Patch of src/pump/read.ts');
+  // Only the opened file asks; closing it draws no patch.
+  expect(new Set(once.mock.calls.map((call) => call[1].path))).toEqual(new Set(['src/pump/read.ts']));
+  await open('src/pump/read.ts');
+  expect(patchOf()).toBeUndefined();
+});
+
+it('shows a patch that holds markup as its text, and nothing in it as markup or a link', async () => {
+  answer(read({}, { changeFiles: files }));
+  const words = '+<script>alert(1)</script> <a href="https://evil.test">[x](https://evil.test)</a> <b>bold</b>';
+  patched({ state: 'patch', patch: words, cut: false });
+  await draw('primary');
+  await open('docs/pump.md');
+  expect(lines()).toEqual([['board-patch-add', words + '\n']]);
+  for (const type of ['script', 'b']) expect(patchOf().findAllByType(type), type).toEqual([]);
+  expect(patchOf().findAllByType('a')).toEqual([]);
+  expect(JSON.stringify(tree!.toJSON())).not.toContain('dangerouslySetInnerHTML');
+});
+
+it('says when a patch was cut, when GitHub gives none, when it could not be read, and while it loads', async () => {
+  answer(read({}, { changeFiles: files }));
+  patched({ state: 'patch', patch: '+first part', cut: true });
+  await draw('primary');
+  await open('docs/pump.md');
+  expect(lines()).toEqual([['board-patch-add', '+first part\n']]);
+  expect(notes()).toContain('This patch is longer than 200 KB: only its first part is shown. The whole of it is on GitHub.');
+  const cases: [unknown, string][] = [
+    [{ status: 'live', data: { patch: { state: 'none', patch: null, cut: false } } }, 'GitHub shows no patch for this file: it may be a binary file, or a change too large for GitHub to show.'],
+    [{ status: 'live', data: { patch: { state: 'unavailable', patch: null, cut: false } } }, 'GitHub could not be read for this file just now. Close it and open it again to try again.'],
+    [{ status: 'live', data: { patch: null } }, "This file's patch could not be read. Close it and open it again to try again."],
+    [{ status: 'offline' }, "This file's patch could not be read. Close it and open it again to try again."],
+    [{ status: 'loading' }, 'Loading…'],
+  ];
+  for (const [snapshot, note] of cases) {
+    once.mockImplementation(() => snapshot);
+    await draw('primary');
+    await open('docs/pump.md');
+    expect(patchOf(), note).toBeUndefined();
+    expect(notes(), note).toContain(note);
+    expect(notes(), note).not.toContain('This patch is longer than 200 KB: only its first part is shown. The whole of it is on GitHub.');
   }
 });

@@ -343,6 +343,12 @@ button.board-step-line::after { content: ''; grid-column: 3; grid-row: 1; justif
 .board-repository-number { color: var(--faint); margin-right: var(--bk-0); }
 .board-pull-list { display: grid; gap: var(--bk-0); justify-items: start; }
 .board-pull-list .board-state { white-space: normal; }
+/* A changed file's patch: plain text, one line to a span, long lines wrapping in a narrow placement. */
+.board-patch { margin: 0; font-family: var(--font-mono); font-size: var(--bk-xs); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted-foreground); }
+.board-patch > span { display: block; padding-inline: var(--bk-1); }
+.board-patch-add { color: var(--foreground); background: color-mix(in srgb, var(--tone-good) 14%, transparent); }
+.board-patch-remove { color: var(--foreground); background: color-mix(in srgb, var(--tone-bad) 14%, transparent); }
+.board-patch-hunk { color: var(--faint); }
 .board-row-ref { color: var(--faint); margin-left: var(--bk-15); white-space: nowrap; }
 .board-placement[data-form='side'] form[aria-label='File a ticket'] { gap: var(--bk-2); }
 .board-placement[data-form='side'] form[aria-label='File a ticket'] textarea { min-height: 2.2em; }

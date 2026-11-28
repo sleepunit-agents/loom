@@ -107,3 +107,29 @@ export function useDataQuery<T, V extends AnyVariables = AnyVariables>(document:
   if (pause) return { status: 'loading' };
   return shown.settling && !keep && !remembered ? { status: 'loading' } : shown;
 }
+
+/** A read asked once, by one POST to /graphql under the page's own sign-in, when the hook is drawn and again
+ * whenever its variables change; never a live selection, so no write anywhere reads it again. For a read that goes
+ * outside loom each time it is asked (a changed file's patch, from GitHub: docs/specs/boards.md). `pause` asks
+ * nothing. A failed request or an answer with errors is `offline`; a refused sign-in is `denied`. */
+export function useDataOnce<T>(document: string, variables: Record<string, unknown>, options?: { pause?: boolean }): DataQuerySnapshot<T> {
+  const pause = options?.pause === true, key = JSON.stringify([document, variables]);
+  const [state, setState] = useState<{ key: string; snapshot: DataQuerySnapshot<T> }>({ key, snapshot: { status: 'loading' } });
+  useEffect(() => {
+    if (pause) return;
+    const stop = new AbortController();
+    setState({ key, snapshot: { status: 'loading' } });
+    void fetch('/graphql', { method: 'POST', credentials: 'same-origin', signal: stop.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: document, variables }) })
+      .then(async (response) => {
+        if (response.status === 401 || response.status === 403) return { status: 'denied' } as const;
+        const body = (await response.json()) as { data?: T; errors?: unknown[] };
+        return response.ok && !body.errors?.length && body.data ? { status: 'live', data: body.data } as const : { status: 'offline' } as const;
+      })
+      .catch(() => ({ status: 'offline' }) as const)
+      .then((snapshot) => { if (!stop.signal.aborted) setState({ key, snapshot }); });
+    return () => stop.abort();
+    // The key is the document and variables, written out.
+  }, [key, pause]);
+  usePendingRead(!pause && (state.key !== key || state.snapshot.status === 'loading'));
+  return pause || state.key !== key ? { status: 'loading' } : state.snapshot;
+}
