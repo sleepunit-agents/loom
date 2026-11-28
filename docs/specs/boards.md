@@ -957,7 +957,12 @@ it in the desktop's words.
     round (`conversation.review`, `docs/runtime/worker.md`, "Frozen reviews") also has a `session` chip, "Session",
     beside its commit, opening the session that reviewed it: the round's `conversation`, the child conversation id the
     review's receipt returned, read in the same query. A cold review's round has none. A round with no verdict line
-    reads "No verdict", never "Clear". None: "Loom has not
+    reads "No verdict", never "Clear". Who sees a frozen review's round: a round is read with its job, and a frozen
+    review's job is in the asking member's private conversation, so the round is that member's alone. Any other
+    reader of the same pull request sees the change's other rounds and not that one, and the round numbers it sees
+    skip it. Until the review's job has ended the round reads "Pending" (its verdict is filed only then), and its
+    findings are loom's own line (the verdict and where the findings are kept, or why there is no verdict): the
+    reviewer's words are in the sealed reply to the asking thread. None: "Loom has not
     reviewed it."; a read that fails: "Loom's reviews are unavailable. Close them and open them again to try again."
   - **Read GitHub again.** The desktop's Refresh of Changes (`refreshChanges`, `web/src/data/work-refresh.ts`: one
     POST to `/api/changes/refresh`, operation `changes.refresh`, `src/shared-work-refresh.ts`), which reads every pull

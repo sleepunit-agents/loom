@@ -291,7 +291,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
   return {repository,head,change:row?.id??null,pull:undefined,body:undefined};
  };
  operations.register(operation({...common,name:'conversation.review',
-  input:reviewInput.describe('Hand a pull request or a commit to a reviewer: loom pins the exact commit and its diff, gives the reviewer a read-only copy and no credential that can push, and relays its answer here. Its verdict is filed on the pull request\'s round.'),
+  input:reviewInput.describe('Hand a pull request or a commit to a reviewer: loom pins the exact commit and its diff, gives the reviewer a read-only copy and no credential that can push, and relays its answer here once its job has ended. Its verdict is filed then, on the pull request\'s round, which only the member of this conversation sees.'),
   output:z.object({conversation:z.string(),item:z.string(),commit:z.string(),base:z.string()}).strict(),
   may(viewer){const found=current(viewer);return !!found && ownerThread(found);},
   async prepare(input,context){

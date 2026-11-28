@@ -285,6 +285,15 @@ it('answers with the final result alone: a verdict line in an earlier message, a
   f.finish([...first, ...more].join('\n'));
   expect((await run).text).toBe(last);
 });
+it('loads no settings file and no CLAUDE.md for any job, a frozen review\'s included: no setting source is named', async () => {
+  const f = fixture(), run = f.run({ ...job, frozenReview: { repository: 'acme/app', head: 'a'.repeat(40), base: 'b'.repeat(40) } }, 'mail', f.abort.signal);
+  const args = f.launch.mock.calls[0][1];
+  // Claude Code 2.1.326, run 2026-11-28: with no setting source it loads no CLAUDE.md, the working directory's or one
+  // beside a file it reads (docs/accepted-tradeoffs.md, "Frozen reviews and instruction files").
+  expect(args.slice(args.indexOf('--setting-sources'), args.indexOf('--setting-sources') + 2)).toEqual(['--setting-sources', '']);
+  expect(args).not.toContain('--add-dir');
+  f.finish(f.rows()); await run;
+});
 it('still refuses a run any of whose results is an error', async () => {
   const f = fixture(), run = f.run(job, 'mail', f.abort.signal);
   const rows = f.rows([{ type: 'assistant', parent_tool_use_id: null, message: { model: 'tool-model', content: [{ type: 'tool_use', name: 'Bash' }] } }]).map(row => JSON.stringify(row));

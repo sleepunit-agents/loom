@@ -24,6 +24,7 @@ import {bodyKitTools,KIT_SOCKET} from './body-kit-tools.js';
 import {KitCapacity} from './kit-refused.js';
 import { mayAttachNoteFile,mayReadNoteFile } from './house-note-request.js';
 import { bodyProgramTools } from './body-program-tools.js';
+import { frozenReviewCwd } from './review-cwd.js';
 import { bodySecretTools } from './body-secret-tools.js';
 import { bodyStartupSecrets } from './body-secrets.js';
 import {BodyJobEnded} from './body-job-ended.js';
@@ -431,7 +432,7 @@ export async function bodyProgram(input: {
           const callId=step.call ? 'pair.'+keyOf(step.call).slice(0,24)+'.'+(step.parent?keyOf(step.parent).slice(0,24):'-')+'.'+randomUUID() : randomUUID();
           posted=posted.then(async()=>{if(!signal.aborted)await client!.card({tool,words,cardState:step.cardState,clientId:callId})}).catch(()=>{});
         }) : undefined;
-    const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, reach, omitClaudeTools, pairOutput, env: shellEnv, failedUsage:usage=>{failureReport=usage;}, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
+    const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, ...(frozen?{cwd:frozenReviewCwd(plan.cwd,input.env[BODY_SCRATCH])}:{}), reach, omitClaudeTools, pairOutput, env: shellEnv, failedUsage:usage=>{failureReport=usage;}, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
     // A second one for the case the session cannot be continued: each takes its own copy of the tools file.
     const native = harness(), afresh = resume ? harness() : undefined;
     tools?.config.fill(0);

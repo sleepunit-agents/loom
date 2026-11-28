@@ -138,3 +138,12 @@ it('answers with the last agent message alone: a verdict line in an earlier mess
     { type: 'turn.completed', usage: { input_tokens: 1 } }]);
   expect((await result).text).toBe('- MAJOR one.\nVERDICT: BLOCKING');
 });
+
+it('gives a frozen review no AGENTS.md to read, and every other job its usual discovery', async () => {
+  const frozen = fixture(), run = frozen.run({ ...job, frozenReview: { repository: 'acme/app', head: 'a'.repeat(40), base: 'b'.repeat(40) } } as WorkerAssignment, 'mail', frozen.abort.signal);
+  expect(frozen.launch.mock.calls[0][1]).toEqual(expect.arrayContaining(['-c', 'project_doc_max_bytes=0']));
+  frozen.finish(good); await run;
+  const plain = fixture(), other = plain.run(job, 'mail', plain.abort.signal);
+  expect(plain.launch.mock.calls[0][1]).not.toContain('project_doc_max_bytes=0');
+  plain.finish(good); await other;
+});
