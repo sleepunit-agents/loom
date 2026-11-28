@@ -642,6 +642,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `inbox` | yes: every folder's count, and up to fifty of the folder's items newest first, each with its words as a chip that places its `question` brick, who asked, when, its state, read or unread, and Mark read on an unread one; the outcomes of the member's own actions where the Inbox lists them, each with Dismiss; Newer and Older for a longer folder. Small: the folder's count and its first four items as chips. Folded: one line of counts | more waits on the member than before (the count of `needs` goes up) |
 | `approvals` | yes: every pending request oldest first, or every answered one newest first, each with its title as a chip that places its `approval` brick, its state, kind, agent, project, when it was asked, why, what it allows and, once answered, who answered. Small: the count and the first four as chips. Folded: one line of counts | a new request is waiting (the count of pending goes up) |
 | `ticket`, added 2026-11-27 | yes: also its description, its linked tickets with their titles, and the Edit and Links forms; small, its priority, who filed it, why it closed and its links as chips | as above; an edit or a link flags nothing |
+| `ticket`, added later on 2026-11-27 | yes: also its pull requests, each a `pull` chip with its title and state; the conversation it was filed from; and two sections opened on a press, Reviews (loom's rounds and GitHub's reviews, newest first) and Story (what agents posted about it, newest first), each read only when opened, thirty at a time; small, its pull requests as `pull` chips by number | as above |
 | `lanes`, added 2026-11-27 | yes: also how many of the project's questions wait on the member, and each agent's new claims with pause and resume | never |
 | `project`, added 2026-11-27 | yes: also its name, what each agent calls it, and its repositories | never |
 | `new-ticket` | yes: every field of the desktop's Create task form; small, title, goal and why with that form's defaults; folded, "File a ticket in <project name>" | never |
@@ -861,8 +862,29 @@ read offered as they type; an id that is not one of them is not sent.
   blockers and the tickets it blocks as `ticket` chips (a linked ticket the member may not read is its id and no
   chip). The big form has Edit (title, goal, why, done when, description, priority, project: `edit` with all seven,
   refused on the page while title, goal or why is empty) and Links (Parent and Blocked by: `link` and `unlink`; a
-  ticket with a parent is offered no second one). Not on the brick: Ask a person and Promote to epic, the ticket's
-  story (comments are the `comments` brick), its pull requests and reviews, and the desktop's display names.
+  ticket with a parent is offered no second one). Not on the brick: Ask a person and Promote to epic, and the
+  desktop's display names. Comments are the `comments` brick.
+  Since made fuller with the desktop's own reads of a ticket (web/src/pieces/tasks/index.tsx), visibility being
+  what each of those reads already enforces:
+  - *Its pull requests* (`changeTasksByTask`, one the member may not read left out): asked with the ticket's own
+    read, so they add no read of their own. Big, a `pull` chip by number with the title and state (open, draft,
+    merged, closed); small, the chips alone on the meta line. An id a board cannot hold is its number, no chip.
+  - *Where it was filed from*, big only (`taskSourceQuery`: `conversationsSingle` for its `sourceId`), asked only
+    for a ticket whose source is a conversation, and asked once, not live: the conversation a ticket names does not
+    change. A conversation of the app's own or a terminal's links to its thread on this page; a handed-off session
+    is a `session` chip; any other is named by its venue. One the member may not read is not drawn.
+  - *Reviews*, big only and only for a ticket with a pull request the member may read, as on the desktop: loom's
+    rounds (`taskReviewHistory`) for those pull requests, each "Review N · #number · head", its verdict and its
+    findings; then GitHub's reviews (`taskGithubReviews`), who, the verdict, the body and "Open on GitHub" for a
+    `https://github.com/` link alone.
+  - *Story*, big only: the agents' activity posts about it (`ticketActivityPosts`), each by its agent as an `agent`
+    chip, with when and its words.
+  Reviews and Story are closed until the member opens them, and nothing of either is read until then; hiding one
+  forgets what was read. Each is read once when opened (`useDataOnce`, as a pull request's file patch is), not as a
+  live read: a long history read again for every commit in the household would cost the most of any read on the
+  brick for what changes least. GitHub's reviews and the story are read thirty-one at a time, thirty drawn, and the
+  thirty-first shows a control (Older GitHub reviews, Older posts) that reads the next page, once. Loom's rounds are
+  one read, as on the desktop. Loading, empty and unreadable each say so in the section.
 - `new-ticket`: the desktop's Create task form for the brick's project: title, goal, why, done when, description,
   priority, type, owner (the household, a member or an agent in use) and parent. After filing it shows the new
   ticket as a chip and clears. It does not record a conversation as the ticket's source.

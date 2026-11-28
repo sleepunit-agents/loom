@@ -125,7 +125,28 @@ const ticketMore = {
     { task: 't-17', type: 'blocks', taskRow: { id: 't-17', title: title('t-17') } },
     { task: 't-10', type: 'blocks', taskRow: { id: 't-10', title: title('t-10') } },
   ],
+  sourceKind: 'conversation', sourceId: 'cv-garden-walk',
+  changeTasksByTask: [
+    { changeRow: { id: 'github:sleepunit/garden#41', number: 41, title: 'Log emitter pressure each morning', state: 'open', draft: false } },
+    { changeRow: { id: 'github:sleepunit/garden#38', number: 38, title: 'Note the filter change in the garden log', state: 'merged', draft: false } },
+    { changeRow: null },
+  ],
 };
+/** What the ticket's opened sections read (./bricks-ticket-history.tsx): its source, its story and its reviews. */
+const ticketSource = { source: { id: 'cv-garden-walk', venue: 'loom', place: 'th:garden-walk' } };
+const ticketPosts = { posts: [
+  { task: 't-3', id: 'ap-3', at: ago(35), agent: 'moss', thread: 'at-drip', words: 'Pressure at the last emitter is back to 1.5 bar after rinsing the filter. **Replacement still needed**: the mesh is torn (t-12).' },
+  { task: 't-3', id: 'ap-2', at: ago(60 * 6), agent: 'moss', thread: 'at-drip', words: 'Opened #41 so the morning pressure is logged and a drop is noticed within a day.' },
+  { task: 't-3', id: 'ap-1', at: ago(60 * 24 * 2), agent: 'fern', thread: 'at-beans', words: 'Moved the beans watering to mornings while the line is low.' },
+] };
+const ticketRounds = { rounds: [
+  { change: 'github:sleepunit/garden#41', job: 'j-r1', headCommit: '9f2c1e0a7b3d', tier: 'standard', round: 1, requestedAt: ago(60 * 5), completedAt: ago(60 * 4), verdict: 'BLOCKING', findings: 'The log line has no unit: write `bar` after the reading.' },
+  { change: 'github:sleepunit/garden#41', job: 'j-r2', headCommit: '4a8d0b2c6e1f', tier: 'standard', round: 2, requestedAt: ago(60 * 2), completedAt: null, verdict: null, findings: null },
+] };
+const ticketGithubReviews = { reviews: [
+  { id: 'gr-2', change: 'github:sleepunit/garden#38', login: 'sam', submittedAt: ago(60 * 24), state: 'APPROVED', headCommit: '1b2c3d4e5f60', body: 'Good, that is where I would look for it.', url: 'https://github.com/sleepunit/garden/pull/38#pullrequestreview-2' },
+  { id: 'gr-1', change: 'github:sleepunit/garden#38', login: 'alex', submittedAt: ago(60 * 26), state: 'COMMENTED', headCommit: '0a1b2c3d4e5f', body: 'Say which filter it was.', url: 'https://github.com/sleepunit/garden/pull/38#pullrequestreview-1' },
+] };
 const ticketSessions = { rows: [
   { conversation: 'cv-drip-0003', title: 'Trace the pressure drop on the south fence line', state: 'running', at: ago(42) },
   { conversation: 'cv-drip-0002', title: 'Read the irrigation timer log for the last fortnight', state: 'done', at: ago(60 * 20) },
@@ -137,13 +158,18 @@ const ticketData = (over: Record<string, Answer> = {}): Record<string, Answer> =
   BrickTicket: { ticket: ticketBase },
   BrickTicketMore: { ticket: ticketMore },
   BrickTicketSessions: ticketSessions,
+  BrickTicketSource: ticketSource,
+  BrickTicketPosts: ticketPosts,
+  BrickTicketRounds: ticketRounds,
+  BrickTicketGithubReviews: ticketGithubReviews,
   ...over,
 });
 const closedTicket = { ...ticketBase, id: 't-8', title: title('t-8'), status: 'closed', assignee: 'fern', goal: 'The gate closes and stays closed in wind.', why: 'The hens got out twice last week.', doneWhen: null };
 const closedMore = { ...ticketMore, ...closedTicket, type: 'task', priority: 3, description: '', createdBy: 'alex', createdAt: ago(60 * 24 * 21), closedAt: ago(60 * 24 * 2),
-  closeReason: 'Replaced the latch with a self-closing one and re-hung the gate on the lower hinge. Checked in a gale on Tuesday: it held.', taskLinksByTask: [], taskLinksByDependsOn: [] };
+  closeReason: 'Replaced the latch with a self-closing one and re-hung the gate on the lower hinge. Checked in a gale on Tuesday: it held.', taskLinksByTask: [], taskLinksByDependsOn: [],
+  sourceKind: null, sourceId: null, changeTasksByTask: [{ changeRow: { id: 'github:sleepunit/garden#29', number: 29, title: 'Self-closing latch for the hen gate', state: 'merged', draft: false } }] };
 const bareTicket = { id: 't-4', title: title('t-4'), status: 'open', assignee: null, assigneeKind: null, goal: null, why: null, doneWhen: null, project: null };
-const bareMore = { ...bareTicket, type: 'task', priority: 3, description: '', ask: null, ifYes: null, ifNo: null, createdAt: ago(60 * 5), createdBy: 'robin', closedAt: null, closeReason: null, taskLinksByTask: [], taskLinksByDependsOn: [] };
+const bareMore = { ...bareTicket, type: 'task', priority: 3, description: '', ask: null, ifYes: null, ifNo: null, createdAt: ago(60 * 5), createdBy: 'robin', closedAt: null, closeReason: null, taskLinksByTask: [], taskLinksByDependsOn: [], sourceKind: null, sourceId: null, changeTasksByTask: [] };
 
 // ── comments ───────────────────────────────────────────────────────────────────────────────────────────────────
 const noteTexts: [string, string][] = [
@@ -254,6 +280,10 @@ export const scenes: BrickScenes[] = [
     { name: 'closed', params: { ticket: 't-8' }, data: ticketData({ BrickTicket: { ticket: closedTicket }, BrickTicketMore: { ticket: closedMore }, BrickTicketSessions: { rows: [ticketSessions.rows[1]] } }) },
     { name: 'flagged', params: { ticket: 't-8' }, flag: 'Closed', only: ['side', 'compact'], data: ticketData({ BrickTicket: { ticket: closedTicket }, BrickTicketMore: { ticket: closedMore }, BrickTicketSessions: { rows: [ticketSessions.rows[1]] } }) },
     { name: 'sessions-unavailable', params: { ticket: 't-3' }, only: ['primary'], data: ticketData({ BrickTicketSessions: 'offline' }) },
+    { name: 'story-and-reviews-opened', params: { ticket: 't-3' }, only: ['primary'], press: ['Show reviews', 'Show the story'], data: ticketData() },
+    { name: 'story-and-reviews-empty', params: { ticket: 't-3' }, only: ['primary'], press: ['Show reviews', 'Show the story'], data: ticketData({ BrickTicketPosts: { posts: [] }, BrickTicketRounds: { rounds: [] }, BrickTicketGithubReviews: { reviews: [] } }) },
+    { name: 'story-and-reviews-loading', params: { ticket: 't-3' }, only: ['primary'], press: ['Show reviews', 'Show the story'], data: ticketData({ BrickTicketPosts: 'loading', BrickTicketRounds: 'loading', BrickTicketGithubReviews: 'loading' }) },
+    { name: 'story-and-reviews-unavailable', params: { ticket: 't-3' }, only: ['primary'], press: ['Show reviews', 'Show the story'], data: ticketData({ BrickTicketPosts: 'offline', BrickTicketRounds: 'offline', BrickTicketGithubReviews: 'offline' }) },
     { name: 'loading', params: { ticket: 't-3' }, only: ['side'], data: ticketData({ BrickTicket: 'loading' }) },
     { name: 'unavailable', params: { ticket: 't-3' }, only: ['side'], data: ticketData({ BrickTicket: 'offline' }) },
   ] },
