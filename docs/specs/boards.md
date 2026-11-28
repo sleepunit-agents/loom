@@ -965,10 +965,13 @@ token shaped like one are replaced by "Tool" and by "Output withheld."; words pa
 not in the thread: the thread's transcript, its turns and its unread state are untouched, and the child's final
 reply is relayed to the thread exactly as before. A retried report writes one row.
 
-The page reads them with `sessionTrace(conversation, job, limit, after)`: the latest `limit` steps (100 by default,
+The page reads them with `sessionTrace(conversation, job, limit, after, before)`: the latest `limit` steps (100 by default,
 200 at most), oldest first; or, with `after`, the earliest `limit` steps whose `seq` is greater, so a reader that
-has some steps asks only for newer ones and no step is opened twice (a stored step never changes). The page does not
-use `after` yet: it re-reads its latest 100, and so re-opens up to 100 steps, each time a step arrives.
+has some steps asks only for newer ones and no step is opened twice (a stored step never changes); or, with `before`,
+the latest `limit` steps whose `seq` is smaller, oldest first, which is how the page loads earlier steps. `after` and
+`before` together are refused. The page does not use `after` yet: it re-reads its latest 100, and so re-opens up to
+100 steps, each time a step arrives. `sessionTraceCount(conversation, job)` is how many steps the trace holds in all,
+under the same rule (nought for anybody else).
 `sessionTraceExpired(conversation, job)` is true when that job has no step and was queued more than 90 days ago: an
 expired step's row is deleted, and this is how the page tells "its steps are no longer kept" from "it reported
 none". It is worked out from the job's age and nothing is stored for it; a job that old that never reported a step
@@ -982,6 +985,11 @@ deleted the row. The read is live like any other.
 The big form draws them under "Steps" with the conversation's own work-trace cards (`web/src/pair/work-trace.tsx`):
 a call and its result are one card, a subagent's steps sit inside its card, the newest is at the bottom and stays in
 view unless the member has scrolled up. It asks for the trace only when the conversation's venue is `handoff`.
+A step's line is the first line of its command (or its tool) and its state; it opens in place to the whole command,
+where that is longer than its first line, and its output. Above the list a note says how many steps there are in
+all, and, where the page holds fewer, "Load earlier steps" reads the 100 before the oldest it has; the steps already
+read are kept. In a step's output each `https:` address is a link that opens in a new tab (`rel="noopener
+noreferrer"`); nothing else becomes a link.
 
 **How long a step is kept: 90 days, on its own clock.** Decided by the owner, 2026-11-27: "record things period,
 because we might want to review the session that made something later on... if we look at a closed ticket, having
@@ -1463,7 +1471,7 @@ thread's message is erased at `comms_days`; `sessionTraceExpired` false until th
 alone; a row with an earlier stamped limit ending at that limit; an archived
 thread keeping what it has; the rows deleted with the thread; a step past the cap for a job and for a session
 refused with its message; a tool that is not one clean line refused; `after` reading only newer steps and opening
-only those; a job on anybody else's word refused at the door; and what a deleted thread takes and leaves), `src/single-home.contract.test.ts` (the 90 written
+only those; `before` reading the latest steps before one, and the count, for the member alone; a job on anybody else's word refused at the door; and what a deleted thread takes and leaves), `src/single-home.contract.test.ts` (the 90 written
 once, the trace's arithmetic, and `job-trace.ts` asking nothing of the Comms keep time), `src/proposal-words.test.ts`
 (the settings card saying the keep time is a message's and that steps are kept 90 days),
 `src/runtime/body-program.test.ts` (which jobs report steps, and the redaction),

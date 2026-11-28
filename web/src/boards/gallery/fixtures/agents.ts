@@ -132,6 +132,8 @@ const said: Said[] = [
   [12, 0, 'Write', 'done', 'house/garden/suppliers/2026-11-posts.md · 38 lines', 22],
   [13, 0, 'Terminal', 'running', 'git add -A house/garden && git commit -s -m "Garden: the north bed’s fence, measured and priced"', 9],
   [13, 0, 'Terminal', 'done', '[art/fence-plan 4c1e9a2] Garden: the north bed’s fence, measured and priced\n 2 files changed, 79 insertions(+), 12 deletions(-)\n create mode 100644 house/garden/suppliers/2026-11-posts.md', 9],
+  [15, 0, 'Terminal', 'running', 'git push -u origin art/fence-plan\ngh pr create --fill', 5],
+  [15, 0, 'Terminal', 'done', 'branch \'art/fence-plan\' set up to track \'origin/art/fence-plan\'.\nhttps://git.example.test/house/garden/pull/12', 5],
   [14, 0, 'Terminal', 'running', 'npm test -- house/garden', 2],
 ];
 const steps = stepsFrom(said);
@@ -140,7 +142,7 @@ const usage = { model: 'claude-fable-5-2', harness: 'claude-code', tools: [
 ] };
 const brief = 'Rebuild the fence plan for the north bed from the survey Sam took on the second. Work out how many posts it needs at the spacing we settled on last winter, and price them from two suppliers. Write the plan up in house/garden and tell me which supplier you would choose and why.';
 const sessionTitle = 'Rebuild the fence plan for the north bed and price the posts from two suppliers';
-const sessionData = (state: string, over: { queued?: number; detail?: object; venue?: string; steps?: TraceStep[] | 'offline'; title?: string } = {}): Data => {
+const sessionData = (state: string, over: { queued?: number; detail?: object; venue?: string; steps?: TraceStep[] | 'offline'; title?: string; total?: number; earlier?: TraceStep[] } = {}): Data => {
   const trace = over.steps ?? steps;
   return {
     BrickSession: {
@@ -151,7 +153,8 @@ const sessionData = (state: string, over: { queued?: number; detail?: object; ve
       cv: { agent: 'fern', label: 'Fence plan', venue: over.venue ?? 'handoff' },
     },
     BrickSessionJob: { rows: [{ brief, logTail: null, endedNote: null, claimedAt: ago((over.queued ?? 47) - 1), endedAt: null, ...over.detail }] },
-    BrickSessionTrace: trace === 'offline' ? 'offline' : { steps: trace },
+    BrickSessionTrace: trace === 'offline' ? 'offline' : { steps: trace, total: over.total ?? trace.length, gone: false },
+    BrickSessionEarlier: { steps: over.earlier ?? [] },
     BrickSessionStep: trace === 'offline' ? 'offline' : { steps: trace.slice(-1).map(({ seq, tool, cardState }) => ({ seq, tool, cardState })) },
   };
 };
@@ -273,6 +276,9 @@ export const scenes: BrickScenes[] = [
     { name: 'queued', params: { session: 'cv-fence-0001' }, only: ['primary', 'side'], data: sessionData('queued', { queued: 1, steps: [], detail: { claimedAt: null } }) },
     { name: 'no-trace', params: { session: 'cv-walk-0009' }, data: sessionData('done', { venue: 'tempo', title: 'Morning walk-round of the beds', queued: 310, steps: [], detail: { brief: walkWords, endedAt: ago(304), endedNote: null } }) },
     { name: 'steps-erased', params: { session: 'cv-fence-0001' }, only: ['primary'], data: sessionData('done', { queued: 100 * 1440, steps: doneSteps.map((s) => ({ ...s, words: null })), detail: { endedAt: ago(100 * 1440 - 52), claimedAt: ago(100 * 1440 - 1) } }) },
+    // A long session: the page holds its latest steps, and the earlier ones are a press away.
+    { name: 'many-steps', params: { session: 'cv-fence-0001' }, only: ['primary'], data: sessionData('running', { queued: 300,
+      steps: steps.map((s) => ({ ...s, seq: s.seq + 100 })), total: 100 + steps.length, earlier: stepsFrom(said.slice(0, 12)).map((s) => ({ ...s, clientId: s.clientId.replace('pair.0', 'pair.e') })) }) },
     { name: 'steps-unavailable', params: { session: 'cv-fence-0001' }, only: ['primary', 'side'], data: sessionData('running', { steps: 'offline' }) },
     { name: 'loading', params: { session: 'cv-fence-0001' }, only: ['side'], data: { ...sessionData('running'), BrickSession: 'loading' } },
     { name: 'unavailable', params: { session: 'cv-gone-0404' }, data: { ...sessionData('running'), BrickSession: { jobs: [], cv: null } } },
