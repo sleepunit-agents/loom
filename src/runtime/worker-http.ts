@@ -88,7 +88,7 @@ function operationCaller(input: WorkerHttpOptions) {
       } catch (error) { throw new WorkerOperationFailure(name, true, !signal.aborted && connectionRefused(error)); }
       // Only a parsed refusal from Loom says this worker has lost authority. A gateway
       // can return its own page (including a 403) while Loom is starting.
-      if (!response.ok && !((name === 'next' || name === 'machineReadings') && response.status === 400) && !(name === 'heartbeat' && (response.status === 401 || response.status === 403))) {
+      if (!response.ok && !((name === 'next' || name === 'finish' || name === 'machineReadings') && response.status === 400) && !(name === 'heartbeat' && (response.status === 401 || response.status === 403))) {
         throw new WorkerOperationFailure(name, response.status === 408 || response.status === 429 || response.status >= 500);
       }
       if (!response.body) throw new WorkerOperationFailure(name, false);
@@ -112,7 +112,7 @@ function operationCaller(input: WorkerHttpOptions) {
           throw new WorkerWatchedThingLimit(WATCHED_THING_LIMIT_ERROR);
         }
         const denied = z.object({ ok: z.literal(false), code: z.literal('denied'), message: z.string() }).strict().safeParse(data).success;
-        const schemaRefusal = name === 'next' && response.status === 400 && z.object({
+        const schemaRefusal = (name === 'next' || name === 'finish') && response.status === 400 && z.object({
           ok:z.literal(false),code:z.literal('invalid'),message:z.literal('Input does not match operation schema')
         }).strict().safeParse(data).success;
         throw new WorkerOperationFailure(name, false, false, denied, schemaRefusal);
@@ -273,9 +273,12 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
     // The body has already ended, so nothing is lost by asking again, and one dropped reply should not turn
     // finished work into a lost job. Every try carries the same operation id: if loom saved the first one,
     // it answers the next from that receipt and the job is finished once.
-    finish: async (job, exitCode, logTail, exitBy, programResult, coldReview) => {
+    finish: async (job, exitCode, logTail, exitBy, programResult, coldReview, failure) => {
       const review = coldReview && boundedReviewReport(coldReview);
-      await reportWithRetry(input, 'finish', (id, remaining) => call('finish', { job, exitCode, logTail, exitBy, programResult, coldReview: review }, ack, undefined, id, remaining));
+      const send = (failed?: typeof failure) => reportWithRetry(input, 'finish', (id, remaining) => call('finish', { job, exitCode, logTail, exitBy, programResult, coldReview: review, ...(failed ? { failed } : {}) }, ack, undefined, id, remaining));
+      // A loom from before a failure's reason was asked for refuses the field: the job is finished without it.
+      try { await send(failure); }
+      catch (error) { if (!failure || !(error instanceof WorkerOperationFailure && error.schemaRefusal)) throw error; await send(); }
     },
   };
 }

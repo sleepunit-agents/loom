@@ -229,3 +229,24 @@ it('keeps one current-job statement as visible rows grow from two to ten',()=>{
   expect(f.summaries.current('art')).toHaveLength(10);expect(prepared).toHaveBeenCalledTimes(1);
  }finally{prepared.mockRestore();}
 });
+it('says why a failed job failed in plain words, to exactly those who may read the job', async () => {
+  const f = fixture();
+  f.add('a-limit', 'failed', { exitCode: 14, exitBy: 'body', failedReason: 'usage-limit', failedDetail: { resetsAt: '2026-11-15T01:00:00.000Z' } });
+  f.add('b-none-kept', 'failed', { exitCode: 14, exitBy: 'body' }); f.add('c-killed', 'failed', { exitCode: 29, exitBy: 'worker', failedReason: 'out-of-memory' });
+  f.add('d-build', 'failed', { exitCode: 22, exitBy: 'worker' }); f.add('e-later', 'failed', { exitCode: 14, exitBy: 'body', failedReason: 'a-later-reason' });
+  f.add('f-private', 'failed', { member: 'owner', exitCode: 14, exitBy: 'body', failedReason: 'api-error', failedDetail: { status: 529 } });
+  const read = async () => (await graphql({ schema: new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: jobSummaryFields(f.summaries) }) }),
+    source: '{jobHistory(agent:"art", first: 20){id failedReason failedWhy failedResetsAt}}' })).data?.jobHistory as Record<string, unknown>[];
+  const zone = new Intl.DateTimeFormat('en-US', { timeZone: f.db.query.household.findFirst().sync()?.timezone ?? 'UTC', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date('2026-11-15T01:00:00.000Z'));
+  expect((await read()).reverse()).toEqual([
+    { id: 'a-limit', failedReason: 'usage-limit', failedResetsAt: '2026-11-15T01:00:00.000Z', failedWhy: expect.stringContaining('the model\'s usage limit was reached; it resets ' + zone) },
+    { id: 'b-none-kept', failedReason: 'unknown', failedResetsAt: null, failedWhy: 'the harness ended without an answer and gave no reason loom could read' },
+    { id: 'c-killed', failedReason: 'out-of-memory', failedResetsAt: null, failedWhy: 'the session ran out of memory' },
+    { id: 'd-build', failedReason: null, failedResetsAt: null, failedWhy: null },
+    { id: 'e-later', failedReason: 'unknown', failedResetsAt: null, failedWhy: 'the harness ended without an answer and gave no reason loom could read' },
+    { id: 'f-private', failedReason: 'api-error', failedResetsAt: null, failedWhy: 'the harness stopped with an API error (529)' },
+  ]);
+  // The reason is the job's: a viewer the jobs rule hides the job from reads none of it.
+  f.policy({ jobs: fields => sql`${fields.member} is null` });
+  expect((await read()).map(row => row.id)).not.toContain('f-private'); expect(JSON.stringify(await read())).not.toContain('529');
+});

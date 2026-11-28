@@ -14,7 +14,8 @@
 import { codexUsage, failedReport } from './harness-usage.js';
 import { z } from 'zod';
 import { BODY_INPUT_BYTES } from './body-input-limit.js';
-import { BODY_TOOLS_SERVER, harnessModel, harnessToolNames, harnessTools, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness } from './body-harness.js';
+import { codexFailure, streamRows } from './harness-failure.js';
+import { BODY_TOOLS_SERVER, HarnessExit, harnessModel, harnessToolNames, harnessTools, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness } from './body-harness.js';
 
 const tokenVariable = 'LOOM_BODY_TOOLS_TOKEN';
 const event = z.object({ type: z.string() }).passthrough();
@@ -40,7 +41,11 @@ export const codexBody: BodyHarness = input => {
         '-c', `${server}tool_timeout_sec=86400`, '-c', `shell_environment_policy.exclude=[${quote(tokenVariable)}]`] : []),
       '-'];
     const env = { ...input.env, ...(tools ? { [tokenVariable]: tools.authorization.slice('Bearer '.length) } : {}) };
-    const output = await runHarnessChild({ command: input.command, args, cwd: input.cwd, env, words, signal, spawn: input.spawn, onFailedOutput, onOutput:input.pairOutput });
+    // What a failed run had printed, for reading why it failed (harness-failure.ts).
+    let printed: unknown[] = [];
+    const output = await runHarnessChild({ command: input.command, args, cwd: input.cwd, env, words, signal, spawn: input.spawn, onOutput:input.pairOutput,
+      onFailedOutput: bytes => { printed = streamRows(bytes); onFailedOutput?.(bytes); } })
+      .catch((error: unknown) => { throw error instanceof HarnessExit ? codexFailure(printed, error.end) : error; });
     try {
       const rows = new TextDecoder('utf-8', { fatal: true }).decode(output).split(/\r?\n/).filter(line => line.trim()).map(line => event.parse(JSON.parse(line)));
       let started = 0, completed = 0, last: string | undefined;
@@ -58,7 +63,7 @@ export const codexBody: BodyHarness = input => {
       // One thread, one finished turn, and words after it: anything else is not a reply.
       if (started !== 1 || completed !== 1 || rows.at(-1)?.type !== 'turn.completed' || !last) throw harnessUnavailable();
       return { text: last, model: job.model, actions, usage: codexUsage(rows) };
-    } catch { onFailedOutput?.(output);throw harnessUnavailable(); }
+    } catch { onFailedOutput?.(output);throw signal.aborted ? harnessUnavailable() : codexFailure(streamRows(output), { exitCode: 0, signal: null, aborted: false, stderr: '' }); }
     finally { output.fill(0); }
   };
 };

@@ -26,7 +26,8 @@ import { join } from 'node:path';
 import { agyUsage, failedReport } from './harness-usage.js';
 import { z } from 'zod';
 import { BODY_INPUT_BYTES } from './body-input-limit.js';
-import { BODY_SCRATCH, BODY_TOOLS_SERVER, harnessModel, harnessToolNames, harnessTools, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness } from './body-harness.js';
+import { exitFailure } from './harness-failure.js';
+import { BODY_SCRATCH, BODY_TOOLS_SERVER, HarnessExit, harnessModel, harnessToolNames, harnessTools, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness } from './body-harness.js';
 
 const conversationId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const row = z.object({ event: z.string() }).passthrough();
@@ -97,7 +98,7 @@ export const agyBody: BodyHarness = input => {
         if (started !== 1 || finished !== 1 || rows.at(-1)?.event !== 'result' || model !== job.model || !text) throw harnessUnavailable();
         return { text, model, actions, usage:agyUsage(rows) };
       } catch(error){onFailedOutput?.(output);throw error;} finally { output.fill(0); }
-    } catch { throw harnessUnavailable(); }
+    } catch (error) { throw error instanceof HarnessExit ? exitFailure(error.end) : harnessUnavailable(); }
     finally {
       head = '';
       if (workspace) try { rmSync(workspace, { recursive: true, force: true }); } catch { /* the worker removes the scratch directory around it */ }

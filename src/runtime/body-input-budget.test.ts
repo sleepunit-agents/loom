@@ -1,4 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest';
+import {HARNESS_OUTPUT_BYTES} from './body-harness.js';
 import {eq} from 'drizzle-orm';
 import {bodyFixture,bodyCredentials as raw} from '../../test/fixtures/conversation-body.js';
 import * as s from '../core/data/schema.js';
@@ -19,8 +20,8 @@ it('accepts native UTF8 input near the existing receiving-envelope ceiling',asyn
 it('refuses native input above the receiving ceiling before spawn',async()=>{
  const f=nativeClaudeFixture();await expect(f.run(job,'x'.repeat(BODY_INPUT_BYTES+1),f.abort.signal)).rejects.toThrow('Native execution unavailable');expect(f.launch).not.toHaveBeenCalled();expect(f.words()).toBe('');
 });
-it('keeps native output bounded at one MiB independently of the larger input ceiling',async()=>{
- const f=nativeClaudeFixture(),result=f.run(job,'mail',f.abort.signal);f.finish('x'.repeat(1_048_577));await expect(result).rejects.toThrow();expect(f.child.kill).toHaveBeenCalledWith('SIGKILL');
+it('keeps native output bounded, at its own limit, independently of the input ceiling',async()=>{
+ const f=nativeClaudeFixture(),result=f.run(job,'mail',f.abort.signal);f.finish('x'.repeat(HARNESS_OUTPUT_BYTES+1));await expect(result).rejects.toThrow();expect(f.child.kill).toHaveBeenCalledWith('SIGKILL');
 });
 it.each(['declared','streamed'] as const)('shrinks an oversized %s unaccepted Root batch without confirming skipped mail',async mode=>{
  const f=await bodyFixture(clean);expect((await f.send('FIRST PRIVATE','one')).status).toBe(200);expect((await f.send('SECOND PRIVATE','two')).status).toBe(200);

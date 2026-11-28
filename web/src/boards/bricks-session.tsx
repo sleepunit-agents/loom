@@ -7,7 +7,7 @@ import { Chip, Confirm, Excerpt, Fact, Facts, Lead, Loading, Problem, Section, S
 import { SessionLatestStep, SessionTrace } from './session-trace';
 
 type SessionJob = { id: string; title: string; state: string; queuedAt: string; usage: { model: string | null; harness: string | null; tools: { name: string; count: number | null }[] | null } | null };
-type SessionDetail = { brief: string | null; logTail: string | null; endedNote: string | null; claimedAt: string | null; endedAt: string | null };
+type SessionDetail = { brief: string | null; logTail: string | null; endedNote: string | null; failedWhy?: string | null; claimedAt: string | null; endedAt: string | null };
 const running = (state: string) => state === 'queued' || state === 'starting' || state === 'running';
 const tone = (state: string): Tone => (running(state) ? 'working' : state === 'done' ? 'good' : state === 'stopped' ? 'muted' : 'bad');
 const lasted = (from: string, to: number) => { const m = Math.max(0, Math.round((to - Date.parse(from)) / 60000)); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
@@ -25,7 +25,7 @@ export function Session({ params, form, act, raise }: BodyProps) {
     'query BrickSessionReport($c:String!){report:sessionReport(conversation:$c){words}}',
     { c: conversation }, { keep: true, pause: form !== 'primary' || read.data?.cv?.venue !== 'handoff' });
   const more = useDataQuery<{ rows: SessionDetail[] }>(
-    'query BrickSessionJob($agent:String!,$id:String!){rows:jobHistory(agent:$agent,id:$id){brief logTail endedNote claimedAt endedAt}}',
+    'query BrickSessionJob($agent:String!,$id:String!){rows:jobHistory(agent:$agent,id:$id){brief logTail endedNote failedWhy claimedAt endedAt}}',
     { agent, id: job?.id ?? '' }, { keep: true, pause: !agent || !job || form !== 'primary' });
   const own = useOwnFlag(job?.state, raise, (was, now) => (!running(was) ? null : now === 'done' ? 'Finished' : now === 'stopped' ? 'Stopped' : running(now) ? null : 'Failed'));
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
@@ -56,6 +56,7 @@ export function Session({ params, form, act, raise }: BodyProps) {
         <Facts>
           {detail?.brief && <Fact wide label="Asked"><Reply words={detail.brief} /></Fact>}
           {detail?.endedNote && <Fact wide label="How it ended">{detail.endedNote}</Fact>}
+          {job.state === 'failed' && detail?.failedWhy && <Fact wide label="Why it failed">{detail.failedWhy.charAt(0).toUpperCase() + detail.failedWhy.slice(1)}.</Fact>}
           {!running(job.state) && job.state !== 'done' && detail?.logTail && <Fact wide label="Last output"><pre className="board-tail">{detail.logTail}</pre></Fact>}
           <Fact label="Result"><span className="board-note">{job.state === 'done' ? 'Its answer is in the conversation.' : running(job.state) ? 'Its answer will arrive in the conversation.' : 'It gave no answer.'}</span></Fact>
           {job.usage?.model && <Fact label="Running on">{[job.usage.harness, job.usage.model].filter(Boolean).join(' · ')}</Fact>}

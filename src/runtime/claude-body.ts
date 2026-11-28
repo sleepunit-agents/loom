@@ -17,10 +17,11 @@ import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, normalize, sep } from 'node:path';
 import { filesUnfollowed, listUnfollowed } from './unfollowed.js';
-import { HarnessResumeUnavailable, harnessModel, harnessToolNames, harnessToolPrefix, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness, type HarnessSpawn } from './body-harness.js';
+import { HarnessExit, HarnessResumeUnavailable, harnessModel, harnessToolNames, harnessToolPrefix, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness, type HarnessSpawn } from './body-harness.js';
 import { SESSION_ID } from '../core/conversations/session-limit.js';
 import { bodyReach, deniedTools } from './harness-traits.js';
 import { bodyDeniedTools } from './body-named-tools.js';
+import { claudeFailure, streamRows } from './harness-failure.js';
 
 /** What marks an event of the model's own in the harness's output. */
 const SPOKE = '"type":"assistant"';
@@ -83,11 +84,14 @@ export const claudeBody: BodyHarness = input => {
       ...(control&&reach!=='all'?['--allowedTools',...allowed]:[]),
       ...(withheld.length ? ['--disallowedTools', ...withheld] : [])];
     let output: Buffer;
-    try { output = await runHarnessChild({ command: input.command, args, cwd: input.cwd, env, words, signal, spawn: input.spawn, onFailedOutput, control,
+    // What a failed run had printed, for reading why it failed (harness-failure.ts). Nothing when it printed too much.
+    let printed: unknown[] = [];
+    try { output = await runHarnessChild({ command: input.command, args, cwd: input.cwd, env, words, signal, spawn: input.spawn, control,
+      onFailedOutput: bytes => { printed = streamRows(bytes); onFailedOutput?.(bytes); },
       // Looked for across the join of two pieces of output too: a marker cut in half is still the model speaking.
       onOutput: chunk => { input.pairOutput?.(chunk); const seen = tail + chunk.toString('latin1'); if (seen.includes(SPOKE)) spoke = true; tail = seen.slice(-SPOKE.length); } }); }
     // A session that cannot be continued ends the program before the model is asked anything.
-    catch { throw resume && !spoke && !signal.aborted ? new HarnessResumeUnavailable() : harnessUnavailable(); }
+    catch (error) { throw resume && !spoke && !signal.aborted ? new HarnessResumeUnavailable() : error instanceof HarnessExit ? claudeFailure(printed, error.end) : harnessUnavailable(); }
     try {
       const rows: unknown[] = new TextDecoder('utf-8', { fatal: true }).decode(output).split(/\r?\n/).filter(line => line.trim()).map(line => JSON.parse(line));
       let result: string | undefined, last: { text: string; model: string } | undefined;
@@ -113,7 +117,8 @@ export const claudeBody: BodyHarness = input => {
       // A configured/requested/init model is never evidence of a response.
       if (!last || result !== last.text) throw harnessUnavailable();
       return { ...last, actions, usage: claudeUsage(rows), ...(keep && session ? { session } : {}) };
-    } catch { onFailedOutput?.(output);throw harnessUnavailable(); }
+    // It ended well and what it printed is no answer loom can vouch for: an error it reported, or nothing readable.
+    } catch { onFailedOutput?.(output);throw signal.aborted ? harnessUnavailable() : claudeFailure(streamRows(output), { exitCode: 0, signal: null, aborted: false, stderr: '' }); }
     finally { output.fill(0); }
   };
 };

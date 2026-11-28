@@ -19,6 +19,7 @@ import { BODY_EXIT, LOOM_EXIT, type WorkerExitBy } from './job-exit.js';
 import { claimedJobStates, jobUnended, unendedJobStates } from '../core/data/job-states.js';
 import { CONTACT_PROBE_MS, REPORT_MS, SILENCE_MS, WORKER_FAILURE_OBSERVATION_MS } from './silence.js';
 import { LOG_TAIL_MAX } from './log-tail.js';
+import { failsAgain, jobFailure, retryNotBefore, type JobFailure } from './job-failure.js';
 
 export type Job = typeof jobs.$inferSelect;
 /** Join condition: this job is the one working in the conversation row, that is, its one job that has not ended. */
@@ -363,8 +364,13 @@ export class Jobs {
    * until fresh mail arrives.
    * The one case where unconfirmed mail starts a new chain: a body that reported success and confirmed part
    * of its mail (it took less than the whole batch to stay inside its input budget). The rest is fresh mail
-   * for the next admission. Each such job settles at least one piece, so the mail itself bounds them. */
-  finish(id: string, box: string, exitCode: number, logTail = '', exitBy?: WorkerExitBy): { job: Job; retry?: Job } {
+   * for the next admission. Each such job settles at least one piece, so the mail itself bounds them.
+   *
+   * `failure` is why a failed job failed, as loom's body program or the worker said it (job-failure.ts): kept on
+   * the row whatever the conversation, since it holds no words, and never for a machine's own runner. It also
+   * decides the next attempt (retry): none for a reason the same job would fail on again, and none before a
+   * limit's known reset time. */
+  finish(id: string, box: string, exitCode: number, logTail = '', exitBy?: WorkerExitBy, failure?: JobFailure): { job: Job; retry?: Job } {
     return this.db.transaction(() => {
       const before = this.assigned(id, box, claimedJobStates);
       const at = this.now();
@@ -378,10 +384,16 @@ export class Jobs {
       const progressed = !failed && held(['done']), unsettled = !failed && !progressed && held(['waiting', 'taken']);
       // Work someone asked to stop is not run again because its body died before noticing.
       if (failed || unsettled) { const asked = this.endIfStopAsked(before, { exitCode }); if (asked) return { job: asked }; }
+      // Checked again here, whoever calls: one of the fixed reasons with bounded detail, or nothing.
+      const said = failed && exitCode !== 0 && (exitBy === 'body' || exitBy === 'worker') ? jobFailure.safeParse(failure).data : undefined;
+      const { reason, ...detail } = said ?? { reason: null };
       const job = this.end(before, failed ? 'failed' : 'done',
-        { exitCode, exitBy: exitBy ?? null, logTail: this.keepText(before) ? logTail.slice(-LOG_TAIL_MAX) : null, endedAt: at, ...(unsettled ? { endedNote: UNSETTLED_NOTE } : {}) });
+        { exitCode, exitBy: exitBy ?? null, logTail: this.keepText(before) ? logTail.slice(-LOG_TAIL_MAX) : null, endedAt: at, ...(unsettled ? { endedNote: UNSETTLED_NOTE } : {}),
+          failedReason: reason, failedDetail: reason && Object.keys(detail).length ? detail : null });
       if (progressed) { this.db.update(inbox).set({ job: null }).where(and(eq(inbox.job, id), eq(inbox.state, 'waiting'))).run(); return { job }; }
-      const retry = this.retry(before, at);
+      // The same job would fail the same way: its mail stays with it, as when a chain runs out of attempts.
+      // A limit with a known reset time is not tried before then, nor later than a queued job may wait at all.
+      const retry = failsAgain(said) ? undefined : this.retry(before, at, Math.min(retryNotBefore(said) ?? -Infinity, Date.parse(at) + QUEUE_DEADLINE_MS));
       // Out of attempts: what this body left was not delivered, and says so like a failure's.
       if (unsettled && !retry) this.delivery(id, 'failed');
       return retry ? { job, retry } : { job };
@@ -406,7 +418,7 @@ export class Jobs {
     const retryAt = new Date(Math.max(earliest, Date.parse(at) + backoff)).toISOString();
     const retry = this.db.insert(jobs).values({ ...snapshot, brief: this.keepText(before) ? before.brief : '', id: `job-${randomUUID()}`, state: 'queued', box: null, account: null, harness: null,
       placementDecision: null, signInBlocked: false, retryOf: before.id, retryAt, queuedAt: at,
-      claimedAt: null, heardAt: null, endedAt: null, build: null, exitCode: null, exitBy: null, logTail: null, endedNote: null,
+      claimedAt: null, heardAt: null, endedAt: null, build: null, exitCode: null, exitBy: null, logTail: null, endedNote: null, failedReason: null, failedDetail: null,
     }).returning().get();
     for (const need of this.db.select().from(jobNeeds).where(eq(jobNeeds.job, before.id)).all()) this.db.insert(jobNeeds).values({ job: retry.id, need: need.need }).run();
     this.db.update(inbox).set({ job: retry.id, changedAt: at }).where(unconfirmed).run();

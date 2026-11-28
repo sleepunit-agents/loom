@@ -38,6 +38,8 @@ describe('the approved data model', () => {
     // The schema keeps these three with its plumbing; the approved model describes each column by column.
     const described = [plumbing.modelAccountLogins, plumbing.jobUsage, plumbing.programFirings];
     for (const table of described) actual[getTableName(table)] = columnsOf(table);
+    // Why a failed job failed, as loom's programs say it (runtime/job-failure.ts): bookkeeping of a job's ending.
+    expect(actual.jobs.splice(-2)).toEqual(['failed_reason', 'failed_detail']);
     // The dispatcher retains one anonymous diagnostic across polls and queue expiry.
     expect(actual.jobs.pop()).toBe('sign_in_blocked');
     // Delivery bookkeeping is recorded by the mail service.

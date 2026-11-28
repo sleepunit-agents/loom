@@ -1,6 +1,7 @@
 import {prepareHouseCli} from './house-cli-file.js';
 import { BUILD_DEADLINE_MAX_MS, HOUSE_BUILD_DEFAULT_MS, STEP_DEADLINE_MAX_MS, validDeadline } from './worker-limits.js';
 import { logTail } from './log-tail.js';
+import { failureLines, failureSignal, type JobFailure } from './job-failure.js';
 import { bodyInput } from './body-bootstrap.js';
 /** Container bodies run only in the separate worker. One worker runs any agent's house: it fetches the
  * job's house repository and builds its image itself (house-source.ts, house-image.ts), mounts its own
@@ -126,7 +127,10 @@ function output(socket: Duplex, signal: AbortSignal) {
   let privateOutput = false;
   let tail = '', header = Buffer.alloc(0), remaining = 0, stream = 0;
   const decoders = [new StringDecoder('utf8'), new StringDecoder('utf8'), new StringDecoder('utf8')];
-  const append = (text: string) => { if (!privateOutput) tail = logTail(tail + text); };
+  // A body's output is dropped (discard). The one thing read from it either way is the line its body program
+  // writes to say why it failed, kept only when it is exactly one of the fixed reasons (job-failure.ts).
+  const failures = failureLines();
+  const append = (text: string, from = 0) => { if (from === 2) failures.write(text); if (!privateOutput) tail = logTail(tail + text); };
   const done = new Promise<void>((resolve, reject) => {
     const fail = () => { socket.destroy(); reject(new Error('Container output unavailable')); };
     const data = (chunk: Buffer) => {
@@ -142,7 +146,7 @@ function output(socket: Duplex, signal: AbortSignal) {
           if (!remaining) continue;
         }
         const count = Math.min(remaining, chunk.length - offset);
-        append(decoders[stream].write(chunk.subarray(offset, offset + count)));
+        append(decoders[stream].write(chunk.subarray(offset, offset + count)), stream);
         remaining -= count; offset += count;
       }
     };
@@ -150,7 +154,7 @@ function output(socket: Duplex, signal: AbortSignal) {
     socket.once('error', fail);
     socket.once('end', () => {
       if (remaining || header.length) reject(new Error('Incomplete container output'));
-      else { decoders.forEach(decoder => append(decoder.end())); resolve(); }
+      else { decoders.forEach((decoder, from) => append(decoder.end(), from)); resolve(); }
     });
     socket.once('close', () => { if (!socket.readableEnded) reject(new Error('Container output closed')); });
     signal.addEventListener('abort', fail, { once: true });
@@ -159,7 +163,7 @@ function output(socket: Duplex, signal: AbortSignal) {
     socket.once('close', () => signal.removeEventListener('abort', fail));
   });
   void done.catch(() => {});
-  return { done, tail: () => tail, discard: () => { privateOutput = true; tail = ''; } };
+  return { done, tail: () => tail, failure: failures.failure, discard: () => { privateOutput = true; tail = ''; } };
 }
 
 /** How long looking after the disk may take, each time: the longest one step may. */
@@ -512,7 +516,14 @@ export function containerWorkerExecutor(config: {
           if (abort.signal.aborted || !result || typeof result !== 'object' || !('StatusCode' in result)
             || !Number.isSafeInteger(result.StatusCode) || ('Error' in result && result.Error)) throw new Error('Invalid container exit');
           const status = result.StatusCode as number, exitCode = containerExit(status);
-          return { exitCode, logTail: logs!.tail(), signalled: exitCode !== status };
+          if (exitCode === status) return { exitCode, logTail: logs!.tail(), signalled: false, failure: logs!.failure() };
+          // A signal ended the body, so it said nothing. The worker says which, and whether the engine saw the
+          // system's memory killer at work in the container (`State.OOMKilled`): read before the container is removed.
+          const state: unknown = await engine.json('GET', `/containers/${id}/json`, undefined, abort.signal)
+            .then(found => found && typeof found === 'object' && 'State' in found ? found.State : undefined, () => undefined);
+          const signal = failureSignal(status - 128);
+          const failure: JobFailure = state && typeof state === 'object' && 'OOMKilled' in state && state.OOMKilled === true ? { reason: 'out-of-memory' } : { reason: 'killed', ...(signal ? { signal } : {}) };
+          return { exitCode, logTail: logs!.tail(), signalled: true, failure };
         } finally { if (drainTimer) clearTimeout(drainTimer); void both.catch(() => {}); }
       })();
       void exited.catch(() => {});

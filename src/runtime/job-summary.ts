@@ -14,6 +14,8 @@ import { claimedJobStates, unendedJobStates } from '../core/data/job-states.js';
 import { SILENCE_MS } from './silence.js';
 import { jobUsageFields } from './job-usage-queries.js';
 import { exitStage } from './job-exit.js';
+import { failureOf, failureWords } from './job-failure.js';
+import { householdTimezone } from '../core/data/household-settings.js';
 
 import { terminalFolder, terminalSilenceMs } from '../core/conversations/terminal-sessions.js';
 export function nextTerminalDeadline(db: DataDatabase, now: number) {
@@ -224,14 +226,19 @@ export class JobSummaries {
     return this.db.select({account: jobs.account}).from(jobs).where(this.historyFilter(agent, id)).get()?.account;
   }
   history(agent: string, first = 20, id?: string) {
+    const zone = householdTimezone(this.db);
     return this.db.select({ id: jobs.id, agent: jobs.agent, title: jobs.title, state: jobs.state, box: jobs.box,
       signInBlocked: sql<boolean>`(${jobs.state} = 'failed' and ${jobs.signInBlocked})`.mapWith(jobs.signInBlocked), prefers: jobs.prefers, placementDecision: jobs.placementDecision,
       conversation: jobs.conversation, project: jobs.project, brief: jobs.brief, model: jobs.model,
       startedByKind: jobs.startedByKind, startedBy: jobs.startedBy, retryOf: jobs.retryOf, exitCode: jobs.exitCode, exitBy: jobs.exitBy, logTail: jobs.logTail,
+      failedReason: jobs.failedReason, failedDetail: jobs.failedDetail,
       endedBy: jobs.endedBy, endedReason: jobs.endedReason, endedNote: jobs.endedNote, queuedAt: jobs.queuedAt, claimedAt: jobs.claimedAt, heardAt: jobs.heardAt, endedAt: jobs.endedAt }).from(jobs)
       .where(this.historyFilter(agent, id)).orderBy(desc(jobs.queuedAt), desc(jobs.id)).limit(Math.min(Math.max(first, 1), 100)).all()
       // Where a failed job failed, read from its exit code and whose code it is: what a private conversation's job keeps.
-      .map(row => ({ ...row, exitStage: exitStage(row.exitCode, row.exitBy) ?? null }));
+      // Why it failed, where that is known: the fixed reason, and the same in plain words with times in the household's zone
+      // (job-failure.ts). Both are part of the job's row and are read under the job's rule, like its exit code.
+      .map(({ failedDetail, ...row }) => { const failure = failureOf({ ...row, failedDetail });
+        return { ...row, exitStage: exitStage(row.exitCode, row.exitBy) ?? null, failedReason: failure?.reason ?? null, failedResetsAt: failure?.resetsAt ?? null, failedWhy: failure ? failureWords(failure, zone) : null }; });
   }
 }
 const text = { type: GraphQLString };
@@ -246,7 +253,10 @@ const job = new GraphQLObjectType({ name: 'JobRecord', fields: {
   signInBlocked: { type: GraphQLBoolean },
   placementDecision: { type: new GraphQLList(new GraphQLNonNull(placementCandidate)) },
   box: text, conversation: text, project: text, brief: text, model: text, startedByKind: text, startedBy: text, retryOf: text,
-  exitCode: { type: GraphQLInt }, exitBy: text, exitStage: text, logTail: text, endedBy: text, endedReason: text, endedNote: text,
+  exitCode: { type: GraphQLInt }, exitBy: text, exitStage: text, logTail: text,
+  failedReason: { ...text, description: 'Why a failed job failed, as one of a fixed set of reasons (runtime/job-failure.ts); `unknown` for a harness failure nothing could be read from.' },
+  failedWhy: { ...text, description: 'The same in plain words, built from the reason and its numbers only. Times are in the household\'s time zone.' },
+  failedResetsAt: { ...text, description: 'When the limit that failed it resets, where the harness said.' }, endedBy: text, endedReason: text, endedNote: text,
   queuedAt: { type: new GraphQLNonNull(GraphQLString) }, claimedAt: text, heardAt: text, endedAt: text,
 } });
 const currentJob = new GraphQLObjectType({ name: 'CurrentJobSummary', fields: {
