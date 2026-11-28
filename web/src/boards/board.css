@@ -102,7 +102,13 @@
 .boards-face .loom-pixel-face { position: relative; display: block; }
 .boards-face .loom-pixel-face canvas { position: absolute; left: 50%; top: 50%; translate: -50% -50%; image-rendering: pixelated; max-width: none; pointer-events: none; }
 /* The presence, the control that lists the member's conversations, and the list it opens under them. */
-.boards-top { position: relative; display: flex; align-items: center; }
+.boards-top { position: relative; display: flex; flex-wrap: wrap; align-items: center; }
+/* Stop for the whole conversation (./threads.tsx, ThreadStop): one control before the header's own. Its question,
+   and anything that went wrong, take a line of their own under the presence instead of pressing on it. */
+.boards-stop { flex: none; margin-right: var(--bk-1); }
+.boards-stop:has(> :is(.board-confirm, [role='alert'])) { order: 1; flex: 1 0 100%; display: grid; gap: var(--bk-2); justify-items: start; margin: 0; padding: 0 1.25rem .75rem; }
+/* The bridge receipt: one small line under the header, in the header's margins. */
+.boards-talk > .boards-receipt { padding: 0 1.25rem .6rem; font-size: var(--bk-xs); line-height: 1.5; color: var(--muted-foreground); }
 .boards-top .boards-presence { flex: 1; min-width: 0; }
 /* The one control of the header: three small dots, no box, seen when it is looked for. */
 .boards-threads-open { flex: none; display: grid; place-items: center; width: 2rem; height: 2rem; margin-right: 1rem; border-radius: var(--radius-control); color: var(--faint); }
@@ -118,6 +124,13 @@
 .boards-notify { display: grid; gap: .5rem; padding: .5rem 0 .25rem; justify-items: start; font-size: var(--bk-sm); color: var(--muted-foreground); }
 .boards-threads { position: absolute; z-index: 20; top: 100%; left: 1.25rem; right: 1.25rem; max-height: 60dvh; overflow: auto; padding: .4rem;
   background: var(--popover); border: 1px solid var(--surface-edge); border-radius: var(--radius-frame); box-shadow: var(--shadow-float); }
+/* The list scrolls inside the panel, so what stands under it (this conversation's own controls, notifications) is
+   in view however many conversations there are. */
+.boards-threads { display: flex; flex-direction: column; }
+.boards-threads > * { flex: none; }
+.boards-threads > ul { flex: 0 1 auto; min-height: 6rem; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--surface-edge) transparent; }
+.boards-threads > .board-search { padding: .2rem .2rem .4rem; }
+.boards-threads > :is(.board-note, .board-problem), .boards-threads li.board-note { padding: .45rem .6rem; }
 .boards-threads ul { display: grid; gap: .15rem; }
 .boards-threads a, .boards-threads li > button { display: flex; flex-wrap: wrap; align-items: baseline; gap: .15rem .5rem; width: 100%; padding: .45rem .6rem; border-radius: var(--radius-control); text-align: left; }
 .boards-threads [data-active='true'] { background: var(--accent); }
@@ -126,7 +139,10 @@
 .boards-threads { font-size: var(--bk-md); }
 .boards-thread { display: grid; gap: .4rem; }
 .boards-thread-title { overflow-wrap: anywhere; }
-.boards-thread .boards-thread-title { flex: 1 1 8rem; font-weight: 500; color: var(--foreground); }
+/* This conversation in the panel: its title on a line of its own, its quiet controls in one row under it, their words in line with the title. */
+.boards-thread .boards-thread-title { flex: 1 0 100%; font-weight: 500; color: var(--foreground); }
+.boards-thread .board-line > .boards-thread-title + .board-state { margin-right: var(--bk-2); }
+.boards-thread .board-line > .board-action[data-kind='quiet']:first-of-type { margin-left: calc(-1 * var(--bk-2)); }
 .boards-log { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .boards-ask { padding: .75rem 1.25rem 1.25rem; }
 .boards-page[data-board='false'] .boards-ask textarea { font-size: 1.15rem; }

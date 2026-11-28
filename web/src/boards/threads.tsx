@@ -112,9 +112,9 @@ function ThreadList({ thread, visit, close, children }: { thread: string; visit(
   return (
     <div ref={box} className="boards-threads" role="dialog" aria-label="Conversations" tabIndex={-1} onKeyDown={keys}>
       {threads.status === 'live' && <ThreadSearch asked={asked} ask={ask} />}
-      {list.status === 'loading' && <p role="status" className="text-muted-foreground">Loading…</p>}
-      {list.status === 'unavailable' && <p className="text-muted-foreground">{asked ? searchFailed : 'Conversations are unavailable.'}</p>}
-      {asked && list.status === 'live' && !list.rows.length && <p className="text-muted-foreground">{searchNone}</p>}
+      {list.status === 'loading' && <p role="status" className="board-note">Loading…</p>}
+      {list.status === 'unavailable' && <p className="board-note">{asked ? searchFailed : 'Conversations are unavailable.'}</p>}
+      {asked && list.status === 'live' && !list.rows.length && <p className="board-note">{searchNone}</p>}
       {list.status === 'live' && (
         <ul>
           {list.rows.map((t, n) => (
@@ -124,7 +124,7 @@ function ThreadList({ thread, visit, close, children }: { thread: string; visit(
               </a>
             </li>
           ))}
-          {list.more && <li className="text-muted-foreground">{asked ? 'More match than these; the rest are in Comms.' : 'Older conversations are in Comms.'}</li>}
+          {list.more && <li className="board-note">{asked ? 'More match than these; the rest are in Comms.' : 'Older conversations are in Comms.'}</li>}
           {list.agents.map((agent, n) => (
             <li key={'new:' + agent}>
               <button type="button" data-active={list.rows.length + n === at} disabled={busy} onClick={() => void start(agent)} onPointerEnter={() => setAt(list.rows.length + n)}>New conversation with {name(agent)}</button>
@@ -132,7 +132,7 @@ function ThreadList({ thread, visit, close, children }: { thread: string; visit(
           ))}
         </ul>
       )}
-      {error && <p role="alert" className="text-destructive">{error}</p>}
+      {error && <p role="alert" className="board-problem">{error}</p>}
       {children}
     </div>
   );
@@ -199,7 +199,7 @@ export function ThreadHead({ thread, member, visit }: { thread: string; member: 
       {mode === 'delete' && (
         <Asking label="Delete conversation" yes="Delete conversation" no="Keep it" disabled={busy} onYes={() => void run({ change: 'delete' })} onNo={() => setMode(null)}>{deleteQuestion(t.title)}</Asking>
       )}
-      {error && <p role="alert" className="text-destructive">Could not save. Try again.</p>}
+      {error && <p role="alert" className="board-problem">Could not save. Try again.</p>}
     </div>
   );
 }
@@ -229,7 +229,7 @@ export function ThreadStop({ thread, member, name }: { thread: string; member: s
       {asking
         ? <Asking label={`Stop conversation ${t.title}`} yes="Stop the conversation" no="Keep it going" busy={busy} onYes={() => void stop()} onNo={() => { setAsking(false); setError(''); }}>{stopQuestion(t.title, name)}</Asking>
         : <Action label={`Stop ${name} in ${t.title}…`} onClick={() => { setError(''); setAsking(true); }}>Stop…</Action>}
-      {error && <p role="alert" className="text-destructive">{error}</p>}
+      {error && <p role="alert" className="board-problem">{error}</p>}
     </div>
   );
 }

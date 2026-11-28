@@ -7,7 +7,7 @@ import { useState, type ReactNode } from 'react';
 import { memberOperation } from '../data/operation';
 import type { CommsThread } from '../pieces/comms-view/model';
 import { threadPath, useAgentNames, useThreads, type ThreadsReading } from './agents-data';
-import { Action, Actions, Asking, Few, Lead, Loading, More, Note, Problem, Row, Rows, Time, Unavailable, useHereThread, words, type Act, type Params } from './brick-kit';
+import { Action, Asking, Few, Lead, Loading, More, Note, Problem, Row, RowTools, Rows, Time, Unavailable, useHereThread, words, type Act, type Params } from './brick-kit';
 import type { Form } from './layout';
 import { changeFor, deleteQuestion, searchFailed, searchNone, ThreadLine, ThreadSearch, useThreadSearch, type ThreadAct } from './threads';
 
@@ -59,7 +59,7 @@ function Found({ asked, archived, draw }: { asked: string; archived: boolean; dr
 /** One row of the big form: the link, when it was last used, and for the member's own thread Pin or Unpin and Delete. */
 function ThreadRow({ thread: t, name, done }: { thread: CommsThread; name(id: string): string; done(what: ThreadAct): void }) {
   const [asking, setAsking] = useState(false), [busy, setBusy] = useState(false), [failed, setFailed] = useState('');
-  const here = useHereThread() === t.id;
+  const here = useHereThread() === t.id, open = asking && !here;
   const run = async (what: ThreadAct) => {
     if (busy) return;
     setBusy(true); setFailed('');
@@ -68,16 +68,21 @@ function ThreadRow({ thread: t, name, done }: { thread: CommsThread; name(id: st
     finally { setBusy(false); }
   };
   return (
-    <Row title={<span className="board-threads-line"><a href={threadPath(t.id)}><ThreadLine thread={t} name={name} /></a></span>} end={<Time at={t.lastAt} />}>
-      {asking && !here
-        ? <Asking label={`Delete conversation ${t.title}`} yes="Delete conversation" no="Keep it" busy={busy} onYes={() => void run('delete')} onNo={() => setAsking(false)}>{deleteQuestion(t.title)}</Asking>
-        : (
-          <Actions>
+    <Row title={<span className="board-threads-line"><a href={threadPath(t.id)}><ThreadLine thread={t} name={name} /></a></span>}
+      end={<>
+        {/* The row's own controls are quiet: seen when the row is pointed at or holds the keyboard (the kit's RowTools). */}
+        {!open && (
+          <RowTools label={`Change ${t.title}`}>
             <Action kind="quiet" disabled={busy} label={`${t.pinned ? 'Unpin' : 'Pin'} ${t.title}`} onClick={() => void run(t.pinned ? 'unpin' : 'pin')}>{t.pinned ? 'Unpin' : 'Pin'}</Action>
             {!here && <Action kind="quiet" disabled={busy} label={`Delete ${t.title}…`} onClick={() => { setFailed(''); setAsking(true); }}>Delete…</Action>}
-          </Actions>
+          </RowTools>
         )}
-      <Problem>{failed}</Problem>
+        <Time at={t.lastAt} />
+      </>}>
+      {open || failed ? <>
+        {open && <Asking label={`Delete conversation ${t.title}`} yes="Delete conversation" no="Keep it" busy={busy} onYes={() => void run('delete')} onNo={() => setAsking(false)}>{deleteQuestion(t.title)}</Asking>}
+        <Problem>{failed}</Problem>
+      </> : undefined}
     </Row>
   );
 }

@@ -95,10 +95,11 @@ export function SessionTrace({ conversation, job, running }: { conversation: str
   const oldest = steps[0].seq, loading = before !== null && earlier.status === 'loading';
   return (
     <>
-      <Note data-session-trace-count="">{count(total, 'step') + ' in all' + (steps.length < total ? `, the latest ${steps.length} shown.` : '.')}</Note>
-      {steps.length < total && (
-        <Actions><Action kind="quiet" disabled={loading} onClick={() => setBefore(oldest)}>{loading ? 'Loading earlier steps…' : 'Load earlier steps'}</Action></Actions>
-      )}
+      {/* How many there are, and beside it the way to the ones before: one quiet line. */}
+      <Actions>
+        <Note data-session-trace-count="">{count(total, 'step') + ' in all' + (steps.length < total ? `, the latest ${steps.length} shown.` : '.')}</Note>
+        {steps.length < total && <Action kind="quiet" disabled={loading} onClick={() => setBefore(oldest)}>{loading ? 'Loading earlier steps…' : 'Load earlier steps'}</Action>}
+      </Actions>
       {before !== null && earlier.status !== 'loading' && earlier.status !== 'live' && <Note>The earlier steps are unavailable.</Note>}
       <ol ref={box} className="board-steps" role="log" aria-label="Steps" data-session-trace="" data-scroll=""
         onScroll={(e) => { const el = e.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24; }}>

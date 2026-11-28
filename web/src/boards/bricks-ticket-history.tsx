@@ -8,7 +8,7 @@
 import { useState, type ReactNode } from 'react';
 import { useDataOnce } from '../data/graphql';
 import { Reply } from '../pair/reply';
-import { Action, Actions, Chip, Fact, Loading, Note, Opened, Opens, Row, Rows, Section, State, Time, actorChip, type Tone } from './brick-kit';
+import { Action, Actions, Chip, Fact, Fold, Loading, Note, Row, Rows, State, Time, actorChip, type Tone } from './brick-kit';
 import { threadPath } from './agents-data';
 
 /** A pull request linked to the ticket, as the ticket's own read holds it. A link the member may not read has no row. */
@@ -29,7 +29,7 @@ const rows = (links: TicketChange[] | undefined) => (links ?? []).flatMap((l) =>
 export function TicketPulls({ links, big }: { links: TicketChange[] | undefined; big: boolean }) {
   const changes = rows(links);
   if (!changes.length) return null;
-  if (!big) return <span data-ticket-pulls=""><span>Pull requests</span>{changes.map((c) => changeChip(c, '#' + c.number))}</span>;
+  if (!big) return <span className="board-linked" data-ticket-pulls=""><span>Pull requests</span>{changes.map((c) => changeChip(c, '#' + c.number))}</span>;
   return (
     <Fact label="Pull requests">
       {changes.map((c) => <span key={c.id} className="board-linked" data-ticket-pulls="">{changeChip(c, '#' + c.number)} {c.title} <State tone={changeTone(c)}>{changeWord(c)}</State></span>)}
@@ -55,14 +55,9 @@ export function TicketSource({ id }: { id: string }) {
 }
 
 /** One section the member opens before anything in it is read. Closing it forgets what was read. */
-function OnDemand({ title, show, hide, children }: { title: string; show: string; hide: string; children: () => ReactNode }) {
+function OnDemand({ title, children }: { title: string; children: () => ReactNode }) {
   const [open, setOpen] = useState(false);
-  return (
-    <Section title={title}>
-      <Opens open={open} onToggle={() => setOpen(!open)}>{open ? hide : show}</Opens>
-      {open && <Opened>{children()}</Opened>}
-    </Section>
-  );
+  return <Fold title={title} open={open} onToggle={() => setOpen(!open)}>{open && children()}</Fold>;
 }
 
 /** Pages of a read asked thirty-one at a time, newest first: thirty are drawn and the thirty-first says there are
@@ -80,12 +75,12 @@ type Post = { task: string; id: string; at: string; agent: string; thread: strin
 function PostPage({ ticket, before, more }: { ticket: string; before: string; more: (next: string) => ReactNode }) {
   const read = useDataOnce<{ posts: Post[] | null }>(ticketPostsQuery, { task: ticket, before });
   if (read.status === 'loading') return <Loading />;
-  if (read.status !== 'live') return <Note>Its story is unavailable. Hide it and show it again to try again.</Note>;
+  if (read.status !== 'live') return <Note>Its story is unavailable. Close it and open it again to try again.</Note>;
   const posts = (read.data?.posts ?? []).filter((p) => p.task === ticket);
   if (!posts.length) return <Note>{before === '0' ? 'No agent has posted about this ticket.' : 'There is nothing older.'}</Note>;
   return (
     <>
-      <Rows label="Ticket story">{posts.slice(0, PAGE).map((p) => (
+      <Rows label="Ticket story" beside>{posts.slice(0, PAGE).map((p) => (
         <Row key={p.id} title={actorChip('agent', p.agent)} end={<Time at={p.at} />}><Reply words={p.words} /></Row>
       ))}</Rows>
       {posts.length > PAGE && more(posts[PAGE - 1].id)}
@@ -96,7 +91,7 @@ function PostPage({ ticket, before, more }: { ticket: string; before: string; mo
 export function TicketStory({ ticket }: { ticket: string }) {
   return (
     <div data-ticket-story="">
-      <OnDemand title="Story" show="Show the story" hide="Hide the story">{() => <Pages first="0" older="Older posts" page={(before, more) => <PostPage ticket={ticket} before={before} more={more} />} />}</OnDemand>
+      <OnDemand title="Story">{() => <Pages first="0" older="Older posts" page={(before, more) => <PostPage ticket={ticket} before={before} more={more} />} />}</OnDemand>
     </div>
   );
 }
@@ -115,11 +110,11 @@ const githubHref = (url: string) => (url.startsWith('https://github.com/') ? url
 function Rounds({ ticket, changes }: { ticket: string; changes: Map<string, number> }) {
   const read = useDataOnce<{ rounds: Round[] | null }>(ticketRoundsQuery, { task: ticket });
   if (read.status === 'loading') return <Loading />;
-  if (read.status !== 'live') return <Note>Loom's reviews are unavailable. Hide them and show them again to try again.</Note>;
+  if (read.status !== 'live') return <Note>Loom's reviews are unavailable. Close them and open them again to try again.</Note>;
   const rounds = (read.data?.rounds ?? []).filter((r) => changes.has(r.change)).reverse();
   if (!rounds.length) return <Note>Loom has not reviewed its pull requests.</Note>;
   return (
-    <Rows label="Loom's reviews">{rounds.map((r) => (
+    <Rows label="Loom's reviews" beside>{rounds.map((r) => (
       <Row key={r.job} title={`Review ${r.round} · #${changes.get(r.change)} · ${r.headCommit.slice(0, 8)}`}
         end={<><State tone={roundTone(r)}>{roundWord(r)}</State><Time at={r.completedAt ?? r.requestedAt} /></>}>
         {r.findings ? <Reply words={r.findings} /> : undefined}
@@ -130,12 +125,12 @@ function Rounds({ ticket, changes }: { ticket: string; changes: Map<string, numb
 function GithubPage({ ticket, before, more }: { ticket: string; before: Cursor; more: (next: Cursor) => ReactNode }) {
   const read = useDataOnce<{ reviews: GithubReview[] | null }>(ticketGithubReviewsQuery, { task: ticket, at: before.at, id: before.id });
   if (read.status === 'loading') return <Loading />;
-  if (read.status !== 'live') return <Note>GitHub's reviews are unavailable. Hide them and show them again to try again.</Note>;
+  if (read.status !== 'live') return <Note>GitHub's reviews are unavailable. Close them and open them again to try again.</Note>;
   const reviews = read.data?.reviews ?? [];
   if (!reviews.length) return <Note>{before.id === null ? 'No one has reviewed its pull requests on GitHub.' : 'There is nothing older.'}</Note>;
   return (
     <>
-      <Rows label="GitHub reviews">{reviews.slice(0, PAGE).map((r) => {
+      <Rows label="GitHub reviews" beside>{reviews.slice(0, PAGE).map((r) => {
         const [word, tone] = githubWords[r.state] ?? [r.state.toLowerCase(), 'neutral' as Tone], href = githubHref(r.url);
         return (
           <Row key={r.id} title={r.login ?? 'GitHub reviewer'} end={<><State tone={tone}>{word}</State><Time at={r.submittedAt} /></>}>
@@ -155,7 +150,7 @@ export function TicketReviews({ ticket, links }: { ticket: string; links: Ticket
   if (!changes.size) return null;
   return (
     <div data-ticket-reviews="">
-      <OnDemand title="Reviews" show="Show reviews" hide="Hide reviews">{() => (
+      <OnDemand title="Reviews">{() => (
         <>
           <Rounds ticket={ticket} changes={changes} />
           <Pages<Cursor> first={{ at: null, id: null }} older="Older GitHub reviews" page={(before, more) => <GithubPage ticket={ticket} before={before} more={more} />} />
