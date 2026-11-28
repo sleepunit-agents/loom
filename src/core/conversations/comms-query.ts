@@ -16,6 +16,7 @@ import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectT
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import { conversations, household, jobs, messageFiles, messages, threads } from '../data/schema.js';
+import { readsOnlyTables } from '../data/table-tracker.js';
 import { keepReadUntil } from '../data/read-lease.js';
 import type { WordsKey } from './words.js';
 import { commsKeepDays } from '../data/comms-days.js';
@@ -204,10 +205,13 @@ export function commsQueryFields(service: CommsQueries): GraphQLFieldConfigMap<u
   const folders = new GraphQLObjectType({ name: 'CommsFolders', fields: {
     threads: { type: new GraphQLNonNull(GraphQLInt) }, archived: { type: new GraphQLNonNull(GraphQLInt) },
   } });
+  // Inspected for live scoping (t-2431): these read only the shared connection. Their clock is the words' keeping
+  // time, and the conversation lifetime sweep writes each message at that time (lifetime.ts). The activity and
+  // archived-question fields are not yet inspected.
   return {
     ...service.activityFields(),
     commsArchivedQuestions: service.archivedHistory(),
-    homeComms: { type: home, resolve: (_row, _args, context, info) => service.home(context.viewer, selectedQueryFields(info)) },
+    ...readsOnlyTables({ homeComms: { type: home, resolve: (_row, _args, context, info) => service.home(context.viewer, selectedQueryFields(info)) },
     commsFolders: { type: new GraphQLNonNull(folders), resolve: (_row, _args, context) => service.folders(context.viewer) },
     commsThreads: { type: many(thread), args: { search: { type: GraphQLString }, member: { type: GraphQLString }, agent: { type: GraphQLString }, archived: { type: GraphQLBoolean }, limit: { type: GraphQLInt }, offset: { type: GraphQLInt } }, resolve: (_row, args, context) => service.list(context.viewer, args) },
     commsThread: { type: thread, args: { id }, resolve: (_row, args, context) => service.thread(context.viewer, args.id) },
@@ -215,5 +219,6 @@ export function commsQueryFields(service: CommsQueries): GraphQLFieldConfigMap<u
     sessionReport: { type: message, args: { conversation: id }, description: 'A handed-off session\'s final report, read as a message of its originating thread; null for anybody who may not read that thread, and when there is none yet.',
       resolve: async (_row, args, context, info) => { const row = service.sessionReport(context.viewer, args.conversation); return row ? (await service.projectMessages(context.viewer, [row], info, until => keepReadUntil(context, until)))[0] ?? null : null; } },
     commsRefs: { type: many(ref), args: { thread: id, limit: { type: GraphQLInt, defaultValue: 100 } }, resolve: (_row, args, context) => service.refs(context.viewer, args.thread, args.limit) },
+    }),
   };
 }

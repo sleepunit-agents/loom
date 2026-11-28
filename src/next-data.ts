@@ -24,7 +24,7 @@ import { dataHttp } from './core/data/http.js';
 import type { memoryQueryFields } from './transport/memory-queries.js';
 import { DataLive, type MeasureRead } from './core/data/live.js';
 import { liveScope } from './core/data/live-scope.js';
-import { installTableTracker, markUnscoped, type WrittenTables } from './core/data/table-tracker.js';
+import { installTableTracker, markUnscoped, readOnlyTables, type WrittenTables } from './core/data/table-tracker.js';
 import { defaultFieldResolver, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import { LIVE_RELAXED_MS } from './core/data/live-pace.js';
 import { dataQueries } from './core/data/queries.js';
@@ -183,7 +183,8 @@ export function nextData(db: DataDatabase, baseClock: Clock, originAllowed: (req
   };
 }
 
-/** The same fields, each marking the reading that resolves it unscoped (core/data/table-tracker.ts). */
+/** The same fields, each marking the reading that resolves it unscoped (core/data/table-tracker.ts), except those
+ * inspected and said to read only tables (`readsOnlyTables`). */
 function unscopedFields<F extends GraphQLFieldConfigMap<any, any>>(fields: F, reason: string): F {
-  return Object.fromEntries(Object.entries(fields).map(([name, field]) => [name, { ...field, resolve: (...args: Parameters<typeof defaultFieldResolver>) => { markUnscoped(reason); return (field.resolve ?? defaultFieldResolver)(...args); } }])) as F;
+  return Object.fromEntries(Object.entries(fields).map(([name, field]) => [name, readOnlyTables(field) ? field : { ...field, resolve: (...args: Parameters<typeof defaultFieldResolver>) => { markUnscoped(reason); return (field.resolve ?? defaultFieldResolver)(...args); } }])) as F;
 }

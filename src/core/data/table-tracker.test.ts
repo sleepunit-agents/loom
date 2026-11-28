@@ -83,7 +83,24 @@ it('counts the rows a foreign key cascade deletes', () => {
 
 it('counts a table cleared whole', () => {
   const { client, tracker } = setup();
+  client.prepare('INSERT INTO quiet (x) VALUES (1)').run();
+  tracker.capture(() => undefined);
   expect(tables(tracker.capture(() => client.prepare('DELETE FROM quiet').run()).written)).toEqual(['quiet']);
+});
+
+it('counts a writing statement that changed no row as writing nothing, unless a trigger or cascade wrote', () => {
+  const { client, tracker } = setup();
+  expect(tables(tracker.capture(() => client.prepare('UPDATE children SET name = ? WHERE id = 99').run('Nobody')).written)).toEqual([]);
+  expect(tables(tracker.capture(() => client.prepare('DELETE FROM quiet').run()).written)).toEqual([]);
+  // INSERT OR IGNORE that hit its conflict wrote nothing; the trigger fired for a new row wrote audit.
+  expect(tables(tracker.capture(() => client.prepare('INSERT OR IGNORE INTO parents (id, name) VALUES (1, ?)').run('Again')).written)).toEqual([]);
+  expect(tables(tracker.capture(() => client.prepare('INSERT INTO parents (id, name) VALUES (2, ?)').run('Bo')).written)).toEqual(['audit', 'parents']);
+  // A row changed by an INSTEAD OF trigger only is still counted: the connection's count includes it.
+  client.exec("CREATE VIEW renames AS SELECT id, name FROM children; CREATE TRIGGER renames_set INSTEAD OF UPDATE ON renames BEGIN UPDATE children SET name = new.name WHERE id = old.id; END;");
+  tracker.capture(() => undefined);
+  expect(tables(tracker.capture(() => client.prepare('UPDATE renames SET name = ? WHERE id = 1').run('Via view')).written)).toEqual(['children']);
+  // Through iterate (RETURNING read row by row) it is counted as writing whatever it did.
+  expect(tables(tracker.capture(() => { for (const row of client.prepare('UPDATE quiet SET x = 1 WHERE x = 99 RETURNING x').iterate()) void row; }).written)).toEqual(['quiet']);
 });
 
 it('over-reports a write that was rolled back, and says nothing for transaction control alone', () => {
@@ -117,10 +134,12 @@ it('takes a virtual table, sqlite_schema, a pragma and another database as unkno
   client.exec("CREATE VIRTUAL TABLE words USING fts5(text); ATTACH ':memory:' AS other; CREATE TABLE other.elsewhere (x); CREATE TEMP TABLE scratch (x)");
   expect(tracker.shape('SELECT * FROM words WHERE words MATCH ?').unknown).toBe('a virtual table');
   expect(tracker.capture(() => client.prepare('INSERT INTO words (text) VALUES (?)').run('hello')).written).toBe('unknown');
+  // Only reading a virtual table, or sqlite_schema, leaves a commit's writes known.
+  expect(tables(tracker.capture(() => { client.prepare('SELECT * FROM words WHERE words MATCH ?').all('hello'); client.prepare('SELECT name FROM sqlite_schema').all(); client.prepare('INSERT INTO quiet (x) VALUES (5)').run(); }).written)).toEqual(['quiet']);
   expect(tracker.shape('SELECT name FROM sqlite_schema').unknown).toBe('sqlite_schema');
   expect(tracker.shape('SELECT * FROM other.elsewhere').unknown).toBe('an attached database');
   expect(tracker.shape('SELECT * FROM scratch').unknown).toBe('the temp database');
-  expect(tracker.shape('PRAGMA user_version').unknown).toBe('statement PRAGMA');
+  expect(tracker.shape('PRAGMA user_version').unknownWrite).toBe('statement PRAGMA');
   const { record } = recordReads(() => { client.prepare('SELECT name FROM sqlite_schema').all(); client.pragma('user_version'); });
   expect([...record.unscoped].sort()).toEqual(['sqlite_schema', 'statement PRAGMA']);
 });

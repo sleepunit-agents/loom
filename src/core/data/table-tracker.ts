@@ -21,8 +21,12 @@ export interface ReadRecord {
 interface Shape {
   reads: readonly string[];
   writes: readonly string[];
-  /** Set when the statement's tables cannot be known: it is unscoped as a read and `unknown` as a write. */
+  /** Set when the tables it reads cannot be known (a virtual table, another database, sqlite_schema): unscoped as
+   * a read. */
   unknown?: string;
+  /** Set when the tables it writes cannot be known: `unknown` as a write, and unscoped as a read too. A statement
+   * that only reads where no table is known (a pragma table, say) leaves the commit it runs in scoped. */
+  unknownWrite?: string;
   /** Set when its answer can change with nothing written (random(), changes(), a function not marked deterministic). */
   unscopedRead?: string;
   /** Calls a date or time function, which reads the clock when an argument is 'now'. */
@@ -45,7 +49,9 @@ const SCHEMA_VERSION_SQL = 'PRAGMA schema_version';
 const DATA_VERSION_SQL = 'PRAGMA data_version';
 const SCHEMA_ROWS_SQL = 'SELECT type, name, tbl_name AS tableName, rootpage FROM main.sqlite_schema WHERE rootpage > 0';
 const FUNCTION_ROWS_SQL = 'SELECT name, type, flags FROM pragma_function_list';
-const OWN_SQL = new Set([SCHEMA_VERSION_SQL, DATA_VERSION_SQL, SCHEMA_ROWS_SQL, FUNCTION_ROWS_SQL]);
+// Not the text rows-written.ts uses, so a test counting statements leaves out only the tracker's.
+const TOTAL_CHANGES_SQL = 'SELECT total_changes() AS tracked';
+const OWN_SQL = new Set([SCHEMA_VERSION_SQL, DATA_VERSION_SQL, SCHEMA_ROWS_SQL, FUNCTION_ROWS_SQL, TOTAL_CHANGES_SQL]);
 
 const recorder = new AsyncLocalStorage<ReadRecord>();
 const trackers = new WeakMap<object, TableTracker>();
@@ -60,6 +66,16 @@ export function recordReads<T>(read: () => T): { record: ReadRecord; value: T } 
   const record: ReadRecord = { tables: new Set(), unscoped: new Set(), statements: 0 };
   return { record, value: recorder.run(record, read) };
 }
+const tablesOnly = new WeakSet<object>();
+/** Say that these fields were inspected (t-2431) and depend only on what they read from the shared connection: a
+ * composition that marks the fields it is given as unscoped (next-data.ts) leaves these as they are. A field's
+ * use of the clock counts as reading only tables when every time it compares with is a deadline at which loom
+ * writes (as the conversation lifetime sweep does for words and steps): that write wakes it. Returns them. */
+export function readsOnlyTables<F extends Record<string, object>>(fields: F): F {
+  for (const field of Object.values(fields)) tablesOnly.add(field);
+  return fields;
+}
+export function readOnlyTables(field: object): boolean { return tablesOnly.has(field); }
 /** Say that the reading under way depends on something no table of the shared database holds. Free outside one. */
 export function markUnscoped(reason: string): void { recorder.getStore()?.unscoped.add(reason); }
 export function readingUnderWay(): boolean { return recorder.getStore() !== undefined; }
@@ -97,8 +113,22 @@ function patchStatements(sample: Database.Statement) {
     prototype[name] = function (this: Database.Statement, ...args: unknown[]) {
       if (quiet) return call.apply(this, args);
       const entry = observe(this, args);
-      if (!entry?.shape.schema) return call.apply(this, args);
-      try { return call.apply(this, args); } finally { entry.tracker.checkSchema(); }
+      if (!entry) return call.apply(this, args);
+      const { shape, tracker } = entry;
+      // A statement that may write tables it names is told as writing them only when the connection's count of
+      // changed rows moved while it ran. That count includes what its triggers, foreign key actions and REPLACE
+      // wrote, so an UPDATE that matched no row (as many sweeps do, after every commit) writes nothing. A rows
+      // iterator writes as it is read, so it is told as writing whatever it does.
+      const counted = shape.writes.length && !shape.unknownWrite && name !== 'iterate';
+      if (shape.writes.length && !counted) tracker.wrote(shape.writes);
+      const before = counted ? tracker.totalChanges() : 0;
+      let threw = true;
+      try { const value = call.apply(this, args); threw = false; return value; }
+      finally {
+        // A statement that threw is told as writing: over-reporting is allowed, missing a write is not.
+        if (counted && (threw || tracker.totalChanges() !== before)) tracker.wrote(shape.writes);
+        if (shape.schema) tracker.checkSchema();
+      }
     };
   }
 }
@@ -115,19 +145,14 @@ function observe(statement: Database.Statement, args: unknown[]) {
   const record = recorder.getStore();
   if (record) {
     record.statements++;
-    if (shape.unknown) record.unscoped.add(shape.unknown);
+    if (shape.unknown || shape.unknownWrite) record.unscoped.add((shape.unknown ?? shape.unknownWrite)!);
     else {
       for (const table of shape.reads) record.tables.add(table);
       if (shape.unscopedRead) record.unscoped.add(shape.unscopedRead);
       if (shape.dateFunctions && mentionsNow(args)) record.unscoped.add('the clock (now)');
     }
   }
-  if (shape.unknown || shape.writes.length) {
-    for (const capture of tracker.writing()) {
-      if (shape.unknown) capture.unknown ??= shape.unknown;
-      for (const table of shape.writes) capture.tables.add(table);
-    }
-  }
+  if (shape.unknownWrite) for (const capture of tracker.writing()) capture.unknown ??= shape.unknownWrite;
   return entry;
 }
 
@@ -170,6 +195,7 @@ export class TableTracker {
   private readonly dataVersion: Database.Statement;
   private readonly schemaRows: Database.Statement;
   private readonly functionRows: Database.Statement;
+  private readonly changeCount: Database.Statement;
   // Read first when first needed, so installing runs no statement.
   private lastSchema: number | undefined;
   private lastData: number | undefined;
@@ -180,6 +206,7 @@ export class TableTracker {
     this.dataVersion = prepare(DATA_VERSION_SQL).pluck();
     this.schemaRows = prepare(SCHEMA_ROWS_SQL);
     this.functionRows = prepare(FUNCTION_ROWS_SQL);
+    this.changeCount = prepare(TOTAL_CHANGES_SQL).pluck();
     patchStatements(this.schemaVersion);
     const tracker = this;
     client.prepare = function (this: Database.Database, source: string) {
@@ -200,6 +227,10 @@ export class TableTracker {
   }
 
   private quietly<T>(read: () => T): T { quiet++; try { return read(); } finally { quiet--; } }
+  /** SQLite's count of rows this connection changed, rolled back or not. */
+  totalChanges(): number { return this.quietly(() => this.changeCount.get() as number); }
+  /** Add tables written now to every open capture, or to what the next one starts with. */
+  wrote(tables: readonly string[]): void { for (const capture of this.writing()) for (const table of tables) capture.tables.add(table); }
 
   /** Read the schema version; when it moved, forget every classification. */
   checkSchema(): void {
@@ -251,26 +282,29 @@ export class TableTracker {
   private classify(source: string): Shape {
     const word = keyword(source);
     if (TRANSACTION_CONTROL.has(word)) return { reads: [], writes: [] };
-    if (!DATA_STATEMENTS.has(word)) return { reads: [], writes: [], unknown: `statement ${word || '(empty)'}`, schema: true };
+    if (!DATA_STATEMENTS.has(word)) return { reads: [], writes: [], unknownWrite: `statement ${word || '(empty)'}`, schema: true };
     let program: { opcode: string; p1: number; p2: number; p3: number; p4: unknown }[];
     try { program = this.quietly(() => (this.client as unknown as { explain(sql: string): unknown }).explain(source) as typeof program); }
-    catch { return { reads: [], writes: [], unknown: 'unexplained statement', schema: true }; }
+    catch { return { reads: [], writes: [], unknownWrite: 'unexplained statement', schema: true }; }
     const reads = new Set<string>(), writes = new Set<string>();
-    let unknown: string | undefined, unscopedRead: string | undefined, dates = false, now = false, schema = false;
-    const table = (database: number, root: number): string | undefined => {
-      if (database !== 0) { unknown ??= database === 1 ? 'the temp database' : 'an attached database'; return undefined; }
-      if (root === 1) { unknown ??= 'sqlite_schema'; return undefined; }
+    let unknown: string | undefined, unknownWrite: string | undefined, unscopedRead: string | undefined, dates = false, now = false, schema = false;
+    const table = (database: number, root: number, write: boolean): string | undefined => {
+      const not = (why: string) => { if (write) unknownWrite ??= why; else unknown ??= why; return undefined; };
+      if (database !== 0) return not(database === 1 ? 'the temp database' : 'an attached database');
+      if (root === 1) return not('sqlite_schema');
       let name = this.roots.get(root);
       if (name === undefined) { this.loadRoots(); name = this.roots.get(root); }
-      if (name === undefined) unknown ??= `root page ${root}`;
+      if (name === undefined) return not(`root page ${root}`);
       return name;
     };
     for (const op of program) {
-      if (OPEN_READ.has(op.opcode)) { const name = table(op.p3, op.p2); if (name) reads.add(name); }
-      else if (op.opcode === 'OpenWrite') { const name = table(op.p3, op.p2); if (name) writes.add(name); }
-      else if (op.opcode === 'Clear') { const name = table(op.p2, op.p1); if (name) writes.add(name); }
+      if (OPEN_READ.has(op.opcode)) { const name = table(op.p3, op.p2, false); if (name) reads.add(name); }
+      else if (op.opcode === 'OpenWrite') { const name = table(op.p3, op.p2, true); if (name) writes.add(name); }
+      else if (op.opcode === 'Clear') { const name = table(op.p2, op.p1, true); if (name) writes.add(name); }
+      // A virtual table is written through VUpdate (and VBegin, VRename); the rest only read it.
+      else if (op.opcode === 'VUpdate' || op.opcode === 'VBegin' || op.opcode === 'VRename') unknownWrite ??= 'a virtual table';
       else if (VIRTUAL_OPCODES.has(op.opcode)) unknown ??= 'a virtual table';
-      else if (SCHEMA_OPCODES.has(op.opcode)) { unknown ??= `schema (${op.opcode})`; schema = true; }
+      else if (SCHEMA_OPCODES.has(op.opcode)) { unknownWrite ??= `schema (${op.opcode})`; schema = true; }
       else if (op.opcode === 'String8' && typeof op.p4 === 'string' && op.p4.trim().toLowerCase() === 'now') now = true;
       else if (FUNCTION_OPCODES.has(op.opcode) && typeof op.p4 === 'string') {
         const name = op.p4.replace(/\(.*$/, '').toLowerCase();
@@ -279,7 +313,7 @@ export class TableTracker {
       }
     }
     if (dates && now) unscopedRead ??= 'the clock (now)';
-    return { reads: [...reads], writes: [...writes], ...(unknown ? { unknown } : {}), ...(unscopedRead ? { unscopedRead } : {}), ...(dates ? { dateFunctions: true } : {}), ...(schema ? { schema } : {}) };
+    return { reads: [...reads], writes: [...writes], ...(unknown ? { unknown } : {}), ...(unknownWrite ? { unknownWrite } : {}), ...(unscopedRead ? { unscopedRead } : {}), ...(dates ? { dateFunctions: true } : {}), ...(schema ? { schema } : {}) };
   }
 
   private loadRoots() {
