@@ -44,3 +44,32 @@ it('draws no link when the stored address is not a GitHub page', async () => {
     expect(links(), url).toEqual([]);
   }
 });
+
+const files = [
+  { change: change.id, path: 'src/pump/read.ts', additions: 84, deletions: 12 },
+  { change: change.id, path: 'docs/pump.md', additions: 9, deletions: 0 },
+];
+const rows = () => tree!.root.findAll((node) => node.props.className === 'board-row').map((row) => said(row));
+
+it('lists the files the pull request changed, each with its added and removed lines, in the primary form, the query asking for them', async () => {
+  answer(read({}, { changeFiles: files }));
+  await draw('primary');
+  expect(feed.mock.calls[0][0]).toContain('changeFiles(where:{change:{eq:$id}}){change path additions deletions}');
+  const section = tree!.root.findAll((node) => node.type === 'section').find((s) => said(s).startsWith('Files changed'))!;
+  expect(said(section.findAllByType('h3')[0])).toBe('Files changed2');
+  expect(rows()).toEqual(['docs/pump.md+9 −0', 'src/pump/read.ts+84 −12']);
+  for (const form of ['side', 'compact'] as const) {
+    await draw(form);
+    expect(JSON.stringify(tree!.toJSON()), form).not.toContain('src/pump/read.ts');
+  }
+});
+
+it('says the files are not known yet when none are stored, or the read leaves them out', async () => {
+  for (const more of [{ changeFiles: [] }, { changeFiles: undefined }]) {
+    answer(read({}, more));
+    await draw('primary');
+    expect(rows()).toEqual([]);
+    expect(JSON.stringify(tree!.toJSON())).toContain('Which files it changes is not known yet.');
+    expect(JSON.stringify(tree!.toJSON())).toContain('Read the pump twice');
+  }
+});
