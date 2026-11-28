@@ -35,7 +35,7 @@ import { agentOwnership, householdSetupQuery, programLine, programNote, programQ
 import { sessionChange } from '../signin/session-change';
 import { isMember, isRef } from './admin-data';
 import { PortraitRow } from './bricks-household-portrait';
-import { Action, Actions, AskRow, Chip, Fact, Facts, Field, Lead, Loading, Menu, Note, Opened, Opens, Problem, Row, Rows, Section, Segmented, State, Time, Unavailable, count, type Act, type BodyProps, type Tone } from './brick-kit';
+import { Action, Actions, AskRow, Chip, Fact, Facts, Field, Fold, Lead, Loading, Menu, Note, Opened, Opens, Problem, Row, Rows, Section, Segmented, State, Time, Unavailable, count, type Act, type BodyProps, type Tone } from './brick-kit';
 
 const agentChip = (id: string) => (isRef(id) ? <Chip key={id} place={{ brick: 'agent', params: { agent: id } }}>{id}</Chip> : <span key={id}>{id}</span>);
 const memberChip = (id: string) => (isMember(id) ? <Chip key={id} place={{ brick: 'person', params: { person: 'member:' + id } }}>{id}</Chip> : <span key={id}>{id}</span>);
@@ -203,15 +203,10 @@ function Listed<T>({ title, what, rows, live, id, fields, fieldWords, folded, no
           {current.length ? <Rows label={`Live ${what}s`}>{current.map(draw)}</Rows>
             : <Note>{words.length ? `No live ${what} matches.` : `No live ${what}s`}</Note>}
           {!!past.length && (
-            <div data-folded={what}>
-              <Opens open={open} onToggle={() => setOpen(!open)}>{`${folded} · ${past.length}`}</Opens>
-              {open && (
-                <Opened>
-                  <Rows label={`${folded} ${what}s`}>{past.slice(0, shown).map((row) => <Fragment key={id(row)}>{draw(row)}</Fragment>)}</Rows>
-                  {past.length > shown && <Actions><Action kind="quiet" onClick={() => setShown(shown + FOLD_PAGE)}>{`Show ${FOLD_PAGE} more`}</Action></Actions>}
-                </Opened>
-              )}
-            </div>
+            <Fold title={`${folded} · ${past.length}`} open={open} onToggle={() => setOpen(!open)}>
+              <Rows label={`${folded} ${what}s`}>{past.slice(0, shown).map((row) => <Fragment key={id(row)}>{draw(row)}</Fragment>)}</Rows>
+              {past.length > shown && <Actions><Action kind="quiet" onClick={() => setShown(shown + FOLD_PAGE)}>{`Show ${FOLD_PAGE} more`}</Action></Actions>}
+            </Fold>
           )}
           {words.length > 0 && !found.length && <Note>{`No ${what} matches. Every word must be in its ${fieldWords}.`}</Note>}
         </>

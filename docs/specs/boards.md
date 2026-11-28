@@ -1880,7 +1880,7 @@ on Copy.
 
 **The household's tokens and browsers, 2026-11-28** (t-2428; a real household holds over a hundred). The big form
 draws the live ones (a token neither revoked nor expired, a browser not signed out) first, each with its control as
-before. The rest are folded under one heading that opens on click and says how many it holds ("Revoked or expired ·
+before. The rest are folded under one heading that opens on click (the kit's `Fold`) and says how many it holds ("Revoked or expired ·
 12", "Signed out · 3"); opened, it draws thirty and "Show 30 more" until every one is drawn. An expired token keeps
 its "Revoke token…", asked first, and a revoked one has none, as before. Each section's heading counts its live ones.
 Make a token sits at the top of the tokens, above the search and the list. Above each list is a search over label,
