@@ -91,7 +91,12 @@ export class HarnessExit extends Error { constructor(readonly end: HarnessEnd) {
 /** How much of a harness's diagnostics is held, from their end, while it runs. */
 const STDERR_TAIL = 4_096;
 export const harnessModel = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$/;
-const outputLimit = 1_048_576;
+/** The most a harness may print in one job before the body ends it. Everything the harness streams counts: each
+ * tool's result as well as its words. It was 1 MiB while a job was a chat reply; a session that reads source
+ * files and test output passes that in about ten minutes (2026-11-27: every build job longer than that died
+ * here, with no reason kept). 64 MiB is a bound on a runaway, not on a working session. */
+export const HARNESS_OUTPUT_BYTES = 64 * 1_048_576;
+const outputLimit = HARNESS_OUTPUT_BYTES;
 /** Names the body's scratch directory in its environment; set by the worker, removed by it after the body. */
 export const BODY_SCRATCH = 'LOOM_BODY_SCRATCH';
 /** The name every harness is given a body's tools server under. A terminal session registers loom's own

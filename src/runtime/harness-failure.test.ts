@@ -1,4 +1,5 @@
 import {EventEmitter} from 'node:events';
+import { HARNESS_OUTPUT_BYTES } from './body-harness.js';
 import {PassThrough} from 'node:stream';
 import type {ChildProcessWithoutNullStreams} from 'node:child_process';
 import { expect, it, vi } from 'vitest';
@@ -98,7 +99,7 @@ it('gives a Claude Code run that ended well with an error of its own a reason to
 });
 it('ends a run that prints more than the body reads and says that is why', async () => {
   const f = nativeClaudeFixture(), run = f.run(job, 'mail', f.abort.signal);
-  (f.child.stdout as PassThrough).write(Buffer.alloc(1_048_577, 0x20));
+  (f.child.stdout as PassThrough).write(Buffer.alloc(HARNESS_OUTPUT_BYTES + 1, 0x20));
   const error = await run.then(() => new Error('answered'), (caught: Error) => caught);
   expect(why(error)).toEqual({ reason: 'output-limit' }); expect(f.child.kill).toHaveBeenCalledWith('SIGKILL');
 });
