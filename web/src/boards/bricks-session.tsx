@@ -21,12 +21,12 @@ export function Session({ params, form, act, raise }: BodyProps) {
     { c: conversation }, { keep: true });
   const job = [...(read.data?.jobs ?? [])].sort((a, b) => a.queuedAt.localeCompare(b.queuedAt)).at(-1);
   const agent = read.data?.cv?.agent ?? '';
-  const more = useDataQuery<{ rows: SessionDetail[] }>(
-    'query BrickSessionJob($agent:String!,$id:String!){rows:jobHistory(agent:$agent,id:$id){brief logTail endedNote claimedAt endedAt}}',
-    { agent, id: job?.id ?? '' }, { keep: true, pause: !agent || !job || form !== 'primary' });
   const report = useDataQuery<{ report: { words: string | null } | null }>(
     'query BrickSessionReport($c:String!){report:sessionReport(conversation:$c){words}}',
     { c: conversation }, { keep: true, pause: form !== 'primary' || read.data?.cv?.venue !== 'handoff' });
+  const more = useDataQuery<{ rows: SessionDetail[] }>(
+    'query BrickSessionJob($agent:String!,$id:String!){rows:jobHistory(agent:$agent,id:$id){brief logTail endedNote claimedAt endedAt}}',
+    { agent, id: job?.id ?? '' }, { keep: true, pause: !agent || !job || form !== 'primary' });
   const own = useOwnFlag(job?.state, raise, (was, now) => (!running(was) ? null : now === 'done' ? 'Finished' : now === 'stopped' ? 'Stopped' : running(now) ? null : 'Failed'));
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [now, setNow] = useState(Date.now);
