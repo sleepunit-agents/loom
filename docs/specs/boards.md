@@ -665,7 +665,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `subscriptions` | none: the account opened and what is searched for are picked inside the brick | `signIn {}`, by `runtime.accountSignIn`; `create {}`, by `runtime.accountCreate`. The label typed goes to the operation and never to the board | none |
 | `usage` | `days`: 1, 7 or 30, default 7. The conversation whose jobs are listed is picked inside the brick | none | none |
 | `bridges` | none | `release {}` and `dismiss {}`, each after `/api/bridges/command` (`bridges.command`) took the review, and each asked first. A reply's words never reach the board. A connection, a channel rule and a person link are changed by asking the agent | none |
-| `household` | none | `revokeToken {}`, by `token.revoke`, and `revokeSession {}`, by `sessions.revoke`, each asked first; `setGrants {}`, by `program.setGrants`; `token {label, kind}`, after the sign-in door (`signin.token`: `POST /api/signin/token`, or `/api/signin/program` for an outside program) made one, `label` the token's label in the shape of a reference and `kind` `member`, `agent`, `machine` or `program`; never its value. A member, an agent's appearance and accounts and a restore are changed by asking the agent; changing a portrait stays on the desktop | none |
+| `household` | none | `revokeToken {}`, by `token.revoke`, and `revokeSession {}`, by `sessions.revoke`, each asked first; `setGrants {}`, by `program.setGrants`; `token {label, kind}`, after the sign-in door (`signin.token`: `POST /api/signin/token`, or `/api/signin/program` for an outside program) made one, `label` the token's label in the shape of a reference and `kind` `member`, `agent`, `machine` or `program`; never its value; `setPortrait {agent, outcome}`, after `household.setPortrait` changed an agent's animated portrait, `agent` the agent's id (a `ref`) and `outcome` `uploaded` or `restored`; never a file's name, size or contents. A member, an agent's appearance and accounts and a restore are changed by asking the agent | none |
 | `sharing` | none | none: a project's sharing is changed by asking the agent | none |
 | `tickets` | `state`: `ready`, `in-progress`, `shelved` or `all`, default `ready` (what the desktop's Tasks opens on). No record reference, and no parameter holds words to search for | none: a ticket is acted on in its `ticket` brick | none |
 | `projects` | none: the words searched for are typed inside the brick and are no parameter | none | none |
@@ -774,7 +774,7 @@ calls through modules both sides import.
 | `subscriptions` | yes: the search box and "Needs attention", an account opened for its usage windows, weekly usage by agent, trigger or conversation, sign-ins with "Sign in on this machine" where loom allows it, and settings; each agent's models in order; "Add a subscription". Small: each service and account in one line with its windows. Folded: the count, how many are almost full and how many sign-ins are needed | another sign-in is needed (the count of sign-ins needing attention goes up) |
 | `usage` | yes: up to 60 conversations with reported tokens, jobs, retries and peak context, and one picked conversation's jobs, each opened for its measurements. Small: the first six. Folded: tokens, jobs and conversations in the period | never |
 | `bridges` | yes: every waiting reply with its words, thread and state, with Release (a held one) and Dismiss; for a household owner each connection with its state, activity, filters and the names of its stored secrets, the channel rules and the person links. Small: the first four waiting replies and the connections. Folded: the counts | another reply is held (the count of held replies goes up) |
-| `household` | yes: members with their roles and agents, agents with their owners, description and accounts, removed agents; every token and signed-in browser by label and state, never a value, with revoke and sign out; Make a token, for a member, an agent, a machine or an outside program, whose value is then shown once; each outside program's grants, which can be changed. Small: members and agents. Folded: the counts. Anyone who is not a household owner is told it is unavailable | never |
+| `household` | yes: members with their roles and agents, agents with their owners, description and accounts, removed agents, each agent's Portrait (upload a PixelLab sheet and its JSON, or restore the generated face); every token and signed-in browser by label and state, never a value, with revoke and sign out: the live ones first, the revoked, expired and signed-out ones folded under one heading with their count and opened thirty at a time, and a search over label, kind and owner of the rows already read; Make a token at the top of the tokens, for a member, an agent, a machine or an outside program, whose value is then shown once; each outside program's grants, which can be changed. Small: members and agents. Folded: the counts. Anyone who is not a household owner is told it is unavailable | never |
 | `sharing` | yes: up to 60 projects, each with its goal, its members and agents as chips and its repositories as `repository` chips. Small: the first six with who is on them. Folded: the counts. Anyone who is not a household owner is told it is unavailable | never |
 | `tickets` | yes: thirty tickets at a time, each a chip that places its `ticket` brick, with its id, title, project, state and who has it; "Show 30 more", up to 300; chips for the other three states; the search box. Small: as many of the first thirty as fit, and how many more. Folded: the count | never |
 
@@ -1450,7 +1450,7 @@ Nothing else lists the bricks. `src/core/boards/catalogue.test.ts` holds what mu
 none: the catalogue and the registry hold the same names, each once; every brick has a rectangle for each form it
 has, and one that can be big has a primary one; every parameter that is not a reference has a default; no action's
 detail takes anything but a fixed choice or the one id shape declared for that property of that brick's action
-(`detailIds` in the suite: today a token's label, a `ref`, in `household.token`, and a secret's name, `secretName`, in
+(`detailIds` in the suite: today a token's label, a `ref`, in `household.token`, the agent whose portrait changed, a `ref`, in `household.setPortrait`, and a secret's name, `secretName`, in
 `secrets.setValue` and `secrets.remove`; none admits a blank, and a shape the kit has but no action declared is
 refused); every action's operation is one loom registers (found by its registration in the source; those whose names
 are put together where they are registered, and the sign-in door's two token routes, are listed there); every brick has the
@@ -1816,12 +1816,11 @@ answer a household owner and say "unavailable" to anyone else; `bridges` shows a
 bridges only the replies loom sends them; `machines` shows a member their own machines and an owner every one,
 and offers the alert lines' form to a household owner alone; `subscriptions` shows an account the member may not
 read in full as a label and a level. Each has `src/core/boards/bricks/<name>.test.ts` (its pins, what its
-parameters refuse, that no detail takes an id or a word, apart from the household's `token` below) and `web/src/boards/bricks-<name>.test.tsx` (every form
+parameters refuse, that no detail takes an id or a word, apart from the household's `token` and `setPortrait` below) and `web/src/boards/bricks-<name>.test.tsx` (every form
 from fake data, the compact form one line with no control, the loading and unavailable lines, the heading, and
 every action: the request loom receives, that it is asked first where it cannot be undone, and that `act` is told
 nothing typed and no id, apart from a new token's label). `admin-queries.test.ts` runs the two selections `machines` wrote for itself against the
-fields loom serves. Not on a board: enrolling or revoking a machine and changing an agent's portrait (two chosen
-files), which stay on the desktop; and whatever the desktop itself does by
+fields loom serves. Not on a board: enrolling or revoking a machine, which stays on the desktop; and whatever the desktop itself does by
 a message to the agent, which a brick says in one line. There is no `held-work` brick: the desktop's Held work view
 reads `core.effect` records over a `/live` socket and calls `core.releaseEffect`, and this server serves none of
 the three, so there is nothing to draw or release.
@@ -1878,6 +1877,46 @@ label the board could not be told, a credential-shaped label (the fixture list),
 with each late answer; `web/src/boards/page.test.tsx` draws the real page and checks the notice outlives the body
 folded, removed and behind another board, and that a token made is told to the board; the clipboard is written only
 on Copy.
+
+**The household's tokens and browsers, 2026-11-28** (t-2428; a real household holds over a hundred). The big form
+draws the live ones (a token neither revoked nor expired, a browser not signed out) first, each with its control as
+before. The rest are folded under one heading that opens on click (the kit's `Fold`) and says how many it holds ("Revoked or expired ·
+12", "Signed out · 3"); opened, it draws thirty and "Show 30 more" until every one is drawn. An expired token keeps
+its "Revoke token…", asked first, and a revoked one has none, as before. Each section's heading counts its live ones.
+Make a token sits at the top of the tokens, above the search and the list. Above each list is a search over label,
+kind and owner (a browser's name, Browser or Agent browser, its sign-in label and member): applied on Enter or Search
+to the rows `householdSetup` already sent, as the `projects` brick searches; every word must be in one of them; the
+counts and the fold follow it. **Reads:** the same two as before, `householdSetup` live (relaxed, kept) and
+`programSetup` live in the big form; the search and the fold ask nothing. The words are the brick's state: no
+parameter, no read, no request, no `act`, no flag, the address or storage (rule 1). The page tests
+(`web/src/boards/bricks-household-lists.test.tsx`) check the order, the fold and its counts, paging by thirty, the
+search over each field and that it reaches no read, request, report, address or storage, and Make a token first.
+
+**A file chosen in a brick, 2026-11-28** (t-2428: an agent's animated portrait, the first brick to take a file). The
+household brick's agent rows (big form) each have Portrait, opening Household setup's portrait change under the row.
+**Chosen** by two file inputs in the brick, the desktop's: "PixelLab sprite sheet" (`accept="image/png"`) and
+"PixelLab animation JSON" (`accept=".json,application/json"`). **Bounded** before anything is sent, by the desktop's
+own reader and limits, imported and not copied (`readPortraitFiles` in `web/src/pieces/household/portrait-request.ts`, a module with no component that
+the desktop's form, `portrait.tsx`, calls too): the sheet must be `image/png` and at most `SPRITE_MAX_BYTES` (4 MiB,
+`src/desk-sprite-layout.ts`), the JSON a `.json` or `application/json` file of at most `DOOR_REQUEST_BYTES` (1 MiB,
+`src/core/data/door-limit.ts`) that `manifestFromPixelLab` reads as a PixelLab sheet's; the type check is the brick's
+(the desktop leaves it to its `accept`), the rest is the desktop's. Anything else is refused in the desktop's words
+and nothing is sent. **Sent** from the page straight to the desktop's operation, `household.setPortrait`
+(`POST /api/household/setPortrait` by `memberOperation`, the sheet as base64 and the layout read from the JSON, with
+the agent's current portrait version; src/shared-agent-portrait.ts), whose rule is the permission: a household owner
+in a signed-in browser window (`windowOnly`; src/shared-root.ts also bounds the body at `PORTRAIT_REQUEST_BYTES`).
+"Use generated face" sends it with no portrait. A 4xx is a refusal in the desktop's words (`portraitRefusal`: a 409
+the portrait changed, a 401 or 403 an owner's sign-in, any other an invalid sheet) and clears the files; no reply, a
+5xx or an answer that is not loom's keeps the request and its id, and "Retry portrait change" sends it again, as on the
+desktop. The files are held in the component's state and nowhere else: never in board state, a read, `act`, a flag,
+the address or storage. **The board is told** `setPortrait {agent, outcome}` once loom answers that it was done:
+the agent's id and `uploaded` or `restored`, never a file's name, size, type or contents; the agent can read the
+agent's record itself. An agent whose id a board cannot hold has no Portrait. `src/core/boards/bricks/household.test.ts`
+holds the detail to those two fields and follows a report into the stored rows, `boards.read` and the brief;
+`web/src/boards/bricks-household-portrait.test.tsx` checks accepted files and the request loom receives, each file
+refused before sending (wrong type, over the limit, empty, missing, JSON not PixelLab's), restore, each 4xx, a failed
+request retried with the same id, and that nothing of the files reaches the board, a read, a flag, the address or
+storage. Not checked: a real browser's file chooser and `FileReader` (the tests fake the reader).
 
 A session's steps have their own suites, outside the numbered checks: `src/shared-session-trace.test.ts` (kept,
 sealed, read by the thread's member alone and not by a full owner, absent from the thread, the relay unchanged; a
