@@ -1,5 +1,5 @@
 /** The session brick's big form (./bricks-session.tsx) draws its Tools fact only when the session reports a tool count,
- * and a handed-off session's report under Report, above its steps, only when there is one. */
+ * and a handed-off session's report as the last message of its conversation, only when there is one. */
 import { afterEach, expect, it, vi } from 'vitest';
 import { createElement as h } from 'react';
 // @ts-expect-error Renderer has no bundled declarations.
@@ -50,13 +50,18 @@ it('draws the Tools label and the count when the session reports one', async () 
 
 const headings = () => tree.root.findAll((node: Node) => node.type === 'h3').map(text);
 
-it('shows a handed-off session\'s report, as message words, under Report above its steps', async () => {
+const reported = () => tree.root.findAll((node: Node & { props: Record<string, unknown> }) => node.props['data-session-report'] === '' && typeof node.type === 'string');
+it('shows a handed-off session\'s report, as message words, as the last message of its conversation', async () => {
   f.venue = 'handoff'; f.report = { words: 'The fictional plan is **done**.' };
   await draw();
-  expect(headings()).toEqual(['Report', 'Steps']);
-  const section = tree.root.findAll((node: Node) => node.type === 'section').find((node: Node) => text(node).startsWith('Report'))!;
-  expect(text(section)).toContain('The fictional plan is');
-  expect(section.findAll((node: Node) => node.type === 'strong').map(text)).toEqual(['done']);
+  expect(headings()).toEqual(['Conversation']);
+  expect(reported()).toHaveLength(1);
+  expect(text(reported()[0])).toContain('Art · Report');
+  expect(text(reported()[0])).toContain('The fictional plan is');
+  expect(reported()[0].findAll((node: Node) => node.type === 'strong').map(text)).toEqual(['done']);
+  // It is last: nothing of the conversation follows it.
+  const log = tree.root.find((node: Node & { props: Record<string, unknown> }) => node.props['data-session-trace'] === '');
+  expect((log.children as unknown as { props: Record<string, unknown> }[]).at(-1)!.props['data-session-report']).toBe('');
 });
 
 it('draws nothing for the report when there is none', async () => {
@@ -64,7 +69,8 @@ it('draws nothing for the report when there is none', async () => {
   for (const report of [null, { words: null }]) {
     f.report = report;
     await draw();
-    expect(headings()).toEqual(['Steps']);
+    expect(headings()).toEqual(['Conversation']);
+    expect(reported()).toHaveLength(0);
     expect(text(tree.root)).not.toContain('Report');
     await act(async () => tree.unmount());
   }

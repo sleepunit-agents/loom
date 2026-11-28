@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import * as adapters from './body-harnesses.js';
 import { expect, it, vi } from 'vitest';
-import { bodyProgram } from './body-program.js';
+import { bodyProgram, TRACE_TEXT_CUT, TRACE_TEXT_FULL, TRACE_TEXT_JOB_MAX, TRACE_TEXT_STEP_MAX } from './body-program.js';
 import { BODY_EXIT, LOOM_EXIT, WORKER_EXIT, exitStage } from './job-exit.js';
 import type { WorkerAssignment } from './worker.js';
 import { createHash } from 'node:crypto';
@@ -248,6 +248,62 @@ it.each(['handed off','not delegated','on another word','ordinary thread'] as co
   // Its answer is still the one reply that returns to the originating thread, after the steps.
   const messages=f.calls.filter(row=>row.path==='message').map(row=>row.body.input as Record<string,string>);
   expect(messages.at(-1)).toMatchObject({kind:'reply',clientId:'review-result',words:'Findings'});
+ }finally{harness.mockRestore();}
+});
+it.each(['handed off','pairing thread','ordinary thread'] as const)('reports a session\'s own words and readable reasoning as steps of their kinds, in order with its tools, through the same check (%s)',async mode=>{
+ const f=fixture(),value=JSON.parse(f.input.toString());
+ if(mode==='handed off')Object.assign(value.job,{venue:'handoff',thread:null,review:true});
+ if(mode==='pairing thread')Object.assign(value.job,{venue:'loom',thread:'th:pair-'+'a'.repeat(64)});
+ const line=(row:object)=>JSON.stringify(row)+'\n';
+ const said=(block:object)=>line({type:'assistant',parent_tool_use_id:null,message:{content:[block]}});
+ const long='x'.repeat(TRACE_TEXT_STEP_MAX+50);
+ const harness=vi.spyOn(adapters,'bodyHarness').mockImplementation((_name,input)=>async()=>{
+  input.pairOutput?.(Buffer.from(said({type:'thinking',thinking:'Which file first?',signature:'sig'})+said({type:'text',text:'I will read the notes.'})
+   +said({type:'tool_use',id:'call-1',name:'Bash',input:{command:'cat notes.md'}})+line({type:'user',message:{content:[{type:'tool_result',tool_use_id:'call-1',content:'notes'}]}})
+   +said({type:'thinking',thinking:'',signature:'sealed'})+said({type:'text',text:'The token is '+raw})+said({type:'text',text:long})));
+  return {text:'Findings',model:'observed',actions:[]};
+ });
+ try{
+  expect(await bodyProgram({...f.options,native:undefined,stdin:async()=>Buffer.from(JSON.stringify(value))})).toBe(0);
+  const cards=f.calls.filter(row=>row.path==='message').map(row=>row.body.input as Record<string,string>).filter(input=>input.kind==='card');
+  // A pairing thread's cards, and any thread's, are tool steps only: words and reasoning never enter a thread.
+  if(mode==='pairing thread')expect(cards.map(card=>card.tool)).toEqual(['Terminal','Terminal']);
+  if(mode!=='handed off'){expect(cards.some(card=>card.stepKind&&card.stepKind!=='tool')).toBe(false);expect(JSON.stringify(cards)).not.toContain('read the notes');return;}
+  expect(cards.map(card=>[card.stepKind??'tool',card.tool,card.cardState,card.words.slice(0,40)])).toEqual([
+   ['reasoning','Reasoning','done','Which file first?'],['words','Words','done','I will read the notes.'],
+   ['tool','Terminal','running','cat notes.md'],['tool','Terminal','done','notes'],
+   // An empty thinking block (a signature only) is no step; words that say the body's own credential are withheld.
+   ['words','Words','done','Output withheld.'],
+   ['words','Words','done','x'.repeat(40)]]);
+  // One step's text is cut, and says so.
+  expect(cards.at(-1)!.words).toBe('x'.repeat(TRACE_TEXT_STEP_MAX)+TRACE_TEXT_CUT);
+  expect(cards[0].clientId).toMatch(/^think\.[\w-]+$/);expect(cards[1].clientId).toMatch(/^say\.[\w-]+$/);
+  expect(JSON.stringify(f.calls)).not.toContain(raw);expect(JSON.stringify(cards)).not.toContain('sealed');
+  const messages=f.calls.filter(row=>row.path==='message').map(row=>row.body.input as Record<string,string>);
+  expect(messages.at(-1)).toMatchObject({kind:'reply',clientId:'review-result',words:'Findings'});
+ }finally{harness.mockRestore();}
+});
+it('keeps a job\'s words and reasoning up to a total, says once that it reached it, and goes on keeping tool steps',async()=>{
+ const f=fixture(),value=JSON.parse(f.input.toString());
+ Object.assign(value.job,{venue:'handoff',thread:null,review:true});
+ const line=(row:object)=>JSON.stringify(row)+'\n';
+ const said=(text:string)=>line({type:'assistant',parent_tool_use_id:null,message:{content:[{type:'text',text}]}});
+ const steps=Math.ceil(TRACE_TEXT_JOB_MAX/TRACE_TEXT_STEP_MAX);
+ const harness=vi.spyOn(adapters,'bodyHarness').mockImplementation((_name,input)=>async()=>{
+  input.pairOutput?.(Buffer.from(Array.from({length:steps+2},(_,i)=>said(String(i%10).repeat(TRACE_TEXT_STEP_MAX))).join('')
+   +line({type:'assistant',parent_tool_use_id:null,message:{content:[{type:'tool_use',id:'call-9',name:'Bash',input:{command:'ls'}}]}})+said('after the cap')));
+  return {text:'Findings',model:'observed',actions:[]};
+ });
+ try{
+  expect(await bodyProgram({...f.options,native:undefined,stdin:async()=>Buffer.from(JSON.stringify(value))})).toBe(0);
+  const cards=f.calls.filter(row=>row.path==='message').map(row=>row.body.input as Record<string,string>).filter(input=>input.kind==='card');
+  const words=cards.filter(card=>card.stepKind==='words');
+  expect(words).toHaveLength(Math.floor(TRACE_TEXT_JOB_MAX/TRACE_TEXT_STEP_MAX));
+  expect(words.reduce((n,card)=>n+card.words.length,0)).toBeLessThanOrEqual(TRACE_TEXT_JOB_MAX);
+  // Said once, in loom's words, as a step of the session; then only tool steps.
+  expect(cards.filter(card=>card.words===TRACE_TEXT_FULL)).toEqual([{kind:'card',tool:'Session',cardState:'done',clientId:'session-text-full',words:TRACE_TEXT_FULL}]);
+  expect(cards.slice(cards.findIndex(card=>card.words===TRACE_TEXT_FULL)+1).map(card=>[card.stepKind??'tool',card.tool])).toEqual([['tool','Terminal']]);
+  expect(JSON.stringify(cards)).not.toContain('after the cap');
  }finally{harness.mockRestore();}
 });
 it('goes on working when loom refuses a step, and sends a step\'s tool as one clean line',async()=>{

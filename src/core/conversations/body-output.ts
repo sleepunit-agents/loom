@@ -1,6 +1,6 @@
 import { agentPostEdit, prepareAgentPost } from './agent-posts.js';
 import { prepareReviewResult } from './review-result.js';
-import { prepareJobTrace } from './job-trace.js';
+import { prepareJobTrace, TRACE_KINDS } from './job-trace.js';
 import { reviewThread } from './review-place.js';
 import { threadTitle } from './title.js';
 /** Job-body producers for a thread's encrypted output and reported state. */
@@ -56,20 +56,23 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
   input:z.discriminatedUnion('kind',[
    z.object({kind:z.literal('reply'),progressId:z.uuid().optional(),clientId:z.string().min(1).max(200),words:z.string().min(1).max(MESSAGE_WORDS_MAX),...details}).strict(),
    z.object({kind:z.literal('progress'),clientId:z.uuid(),words:z.string().min(1).max(MESSAGE_WORDS_MAX),...details}).strict(),
-   z.object({kind:z.literal('card'),clientId:z.string().min(1).max(200),words:z.string().min(1).max(MESSAGE_WORDS_MAX),tool:z.string().min(1).max(200),cardState:z.enum(messages.cardState.enumValues),...details}).strict(),
+   // stepKind: what a session's step is (job-trace.ts). Only a handed-off session's trace keeps steps that are not a
+   // tool's; a card for a thread is a tool step and nothing else.
+   z.object({kind:z.literal('card'),clientId:z.string().min(1).max(200),words:z.string().min(1).max(MESSAGE_WORDS_MAX),tool:z.string().min(1).max(200),cardState:z.enum(messages.cardState.enumValues),stepKind:z.enum(TRACE_KINDS).optional(),...details}).strict(),
   ]),
   output:z.object({saved:z.literal(true),seq:z.number().int()}).strict(),
   may:(viewer,input)=>common.may(viewer)&&(input.kind!=='progress'||maySendProgress?.(viewer)===true),
   async prepare(input,ctx){
    const child=traced(ctx.viewer,input.kind);
    if(child&&input.kind==='card'){
-    const save=await prepareJobTrace(service,child.cv,child.job.id,{clientId:input.clientId,words:input.words,tool:input.tool,cardState:input.cardState});
+    const save=await prepareJobTrace(service,child.cv,child.job.id,{clientId:input.clientId,words:input.words,tool:input.tool,cardState:input.cardState,kind:input.stepKind});
     return ()=>{
      const live=traced(ctx.viewer,input.kind);
      if(!live||live.job.id!==child.job.id||live.cv.id!==child.cv.id||live.cv.member!==child.cv.member||live.cv.project!==child.cv.project||live.cv.agent!==child.cv.agent||live.cv.place!==child.cv.place)throw new OperationError('denied','Conversation changed');
      return save();
     };
    }
+   if(input.kind==='card'&&input.stepKind&&input.stepKind!=='tool')throw new OperationError('invalid','Only a handed-off session keeps steps of words or reasoning; a thread\'s card is a tool step');
    const before=replyTarget(ctx.viewer,input.kind),{kind,clientId,words,model,outcome,latencyMs}=input;
    if(kind==='progress'||kind==='reply'&&input.progressId){
     if(before.cv.venue!=='loom'||kind==='reply'&&clientId!==input.progressId)throw new OperationError('invalid','Invalid progress receipt');

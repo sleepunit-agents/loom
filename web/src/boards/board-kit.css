@@ -264,6 +264,11 @@ textarea.board-input { display: block; resize: vertical; min-height: 3.6em; fiel
 
 /* ── Steps: a session's log. One line a step: a mark, what ran, and what it said when opened. No boxes. ─────── */
 .board-steps { display: block; font-size: var(--bk-sm); line-height: 1.5; }
+/* A session's big form reads as a conversation (session-trace.tsx): the chat's own messages and folds, in a log that
+   scrolls on its own and keeps the newest in view. */
+.board-session-talk { display: flex; flex-direction: column; gap: var(--bk-3); font-size: var(--bk-sm); line-height: 1.5; }
+.board-session-talk[data-scroll] { max-height: 32rem; overflow-y: auto; overflow-wrap: anywhere; scrollbar-width: thin; scrollbar-color: var(--surface-edge) transparent; padding-right: var(--bk-1); }
+.board-session-talk [data-slot='trace-collapsible-content-inner'] > .board-steps { margin-top: 0; }
 .board-steps[data-scroll] { max-height: 26rem; overflow-y: auto; overflow-wrap: anywhere; scrollbar-width: thin; scrollbar-color: var(--surface-edge) transparent; }
 .board-step-line { display: grid; grid-template-columns: .9rem minmax(0, 1fr) auto; align-items: baseline; column-gap: var(--bk-2); width: 100%; padding: var(--bk-1) var(--bk-15) var(--bk-1) var(--bk-0); margin-inline: calc(-1 * var(--bk-0)); border-radius: var(--radius-small); text-align: left; color: var(--muted-foreground); }
 button.board-step-line:is(:hover, :focus-visible) { background: var(--wash); outline: 0; }
