@@ -128,11 +128,12 @@ it('shows a pull request with its state, checks, review, who it waits on, and th
   await draw('pull', { change: change.id }, 'primary');
   for (const more of ['art/pump', 'into ', 'next', 'Failing', 'build', 'Running', 'unit', 'Asked to review', 'sam', 'Pump reads low', 'Not known yet']) expect(text(), more).toContain(more);
   expect(text()).not.toContain('t-99');
-  // It has no action: a merge is answered through its approval, on the desktop.
+  // A merge is answered through its approval, on the desktop: the only control is the one that opens its review
+  // history (Refresh from GitHub is drawn only for a member loom says may use it; bricks-pull.test.tsx).
   answer(pullData({ waitingOn: 'you' }));
   await draw('pull', { change: change.id }, 'primary');
   expect(text()).toContain('The merge is answered in Changes on the desktop.');
-  expect(controls()).toEqual([]);
+  expect(controls().map((node) => said(node))).toEqual(['Review history']);
   for (const [over, word] of [[{ draft: true }, 'Draft'], [{ state: 'merged' }, 'Merged'], [{ state: 'closed' }, 'Closed'], [{}, 'Open']] as const) {
     answer(pullData(over));
     await draw('pull', { change: change.id }, 'compact');
@@ -263,7 +264,10 @@ it('shows an answered question with its answer and no controls, and offers none 
 // The approval brick's own suite is bricks-approval.test.tsx.
 it('keeps every way of answering a merge out of the pull request brick', () => {
   const pull = readFileSync(new URL('./bricks-pull.tsx', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
-  for (const way of ['memberOperation', 'sendWorkAnswer', 'fetch', 'data/operation', 'onClick', '<button']) expect(pull, way).not.toContain(way);
+  for (const way of ['memberOperation', 'sendWorkAnswer', 'sendWorkAlways', 'work-answer', 'work-always', 'changes.answer', 'fetch(', 'data/operation', '<button']) expect(pull, way).not.toContain(way);
+  // Its one write is the desktop's Refresh of Changes, which answers nothing.
+  expect(pull.match(/onClick=/g)).toEqual(['onClick=']);
+  expect(pull).toContain('await refreshChanges()');
 });
 
 it('shows a contact by the card People opens, and still shows a member by their open tickets', async () => {

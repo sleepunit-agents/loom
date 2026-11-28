@@ -4,9 +4,9 @@ import type { ChangeSnapshot } from '../pieces/change-view/model';
 
 /** Selections from the generated shared schema, filtered by the outside door's
  * SQL policies. A connected task is selected through the visible link only. */
-const approvalFields = `id kind target actingFor operation what why agent project member conversation state
+export const approvalFields = `id kind target actingFor operation what why agent project member conversation state
     ask ifYes ifNo details changeSummary askedAt decidedBy expiresAt`;
-const recordFields = 'seq at event approval agent note';
+export const recordFields = 'seq at event approval agent note';
 export const approvalsQuery = `query ApprovalsView {
   approvals { ${approvalFields} }
   approvalRules { kind scope person tier setBy setAt }

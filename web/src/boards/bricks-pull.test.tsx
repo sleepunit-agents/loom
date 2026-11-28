@@ -173,3 +173,163 @@ it('forgets the opened files when the head commit or the change moves, and asks 
   expect(patchOf()).toBeUndefined();
   expect(once.mock.calls.length).toBe(other);
 });
+
+// ── When loom last read GitHub, the cold review history, and Refresh from GitHub ────────────────────────────────────
+const access = (refresh: boolean) => ({ status: 'live', data: { workAnswerOwner: refresh, workChangesRefresh: refresh, members: [] } });
+function world(pull: unknown, { refresh = false, review = { status: 'live', data: { changeReviewHistory: [] } } as unknown } = {}) {
+  feed.mockImplementation((query: string) => (query.includes('WorkAnswerOwner') ? access(refresh) : query.includes('ChangeReviewHistory') ? review : { status: 'live', data: pull }));
+}
+const asked = (name: string) => feed.mock.calls.filter((call) => String(call[0]).includes(name));
+const text = () => JSON.stringify(tree!.toJSON());
+const button = (words: string) => tree!.root.findAll((node) => node.type === 'button' && said(node) === words)[0];
+const problems = () => tree!.root.findAll((node) => node.type === 'p' && node.props.className === 'board-problem').map(said);
+const readAt = '2026-11-27T20:00:00.000Z';
+
+it('says when loom last read GitHub, and that the last read failed, in the primary form only, the query asking for it', async () => {
+  world(read({}, { changeSync: [{ readAt, failed: false, nextAt: null }] }));
+  await draw('primary');
+  expect(asked('BrickPull')[0][0]).toContain('changeSync{readAt failed nextAt}');
+  const fact = tree!.root.findAll((node) => node.type === 'dt' && said(node) === 'Last read from GitHub');
+  expect(fact).toHaveLength(1);
+  expect(tree!.root.findAll((node) => node.type === 'time' && node.props.dateTime === readAt)).toHaveLength(1);
+  expect(text()).not.toContain("GitHub's last read failed");
+  world(read({}, { changeSync: [{ readAt, failed: true, nextAt: null }] }));
+  await draw('primary');
+  expect(notes()).toContain("GitHub's last read failed: this is the last copy that was read.");
+  for (const form of ['side', 'compact'] as const) {
+    await draw(form);
+    expect(text(), form).not.toContain('Last read from GitHub');
+    expect(text(), form).not.toContain("GitHub's last read failed");
+  }
+  // Anyone but a household owner reads no row of it, and nothing is said.
+  world(read({}, { changeSync: [] }));
+  await draw('primary');
+  expect(text()).not.toContain('Last read from GitHub');
+});
+
+const rounds = [
+  { change: change.id, job: 'j-1', headCommit: 'b'.repeat(40), tier: 'medium', round: 1, verdict: 'BLOCKING', findings: 'The pump is read once.\nRead it twice.' },
+  { change: change.id, job: 'j-2', headCommit: change.headCommit, tier: 'high', round: 2, verdict: 'CLEAR', findings: null },
+  { change: change.id, job: 'j-3', headCommit: change.headCommit, tier: 'high', round: 3, verdict: null, findings: null },
+];
+const reviewOpener = () => tree!.root.findAll((node) => node.type === 'button' && node.props.className === 'board-opens' && said(node) === 'Review history')[0];
+
+it('asks for the cold review history only once it is opened, and draws each round with its verdict, commit and findings', async () => {
+  world(read(), { review: { status: 'live', data: { changeReviewHistory: rounds } } });
+  await draw('primary');
+  expect(asked('ChangeReviewHistory')).toEqual([]);
+  expect(reviewOpener().props['aria-expanded']).toBe(false);
+  await act(async () => reviewOpener().props.onClick());
+  expect(asked('ChangeReviewHistory')[0][1]).toEqual({ change: change.id });
+  expect(rows()).toEqual([
+    'Round 1 · mediumEarlier commit bbbbbbbBlockingFindingsThe pump is read once.\nRead it twice.',
+    'Round 2 · highCurrent commit aaaaaaaClear',
+    'Round 3 · highCurrent commit aaaaaaaPending',
+  ]);
+  expect(tree!.root.findAll((node) => node.type === 'pre' && node.props.className === 'board-tail').map(said)).toEqual(['The pump is read once.\nRead it twice.']);
+  // Closed, it asks for nothing more and draws none of it.
+  const calls = asked('ChangeReviewHistory').length;
+  await act(async () => reviewOpener().props.onClick());
+  expect(text()).not.toContain('Round 1');
+  expect(asked('ChangeReviewHistory').length).toBe(calls);
+  for (const form of ['side', 'compact'] as const) {
+    await draw(form);
+    expect(text(), form).not.toContain('Review history');
+  }
+});
+
+it('says when there is no review, while it loads, and when it cannot be read; and forgets it was opened when the brick leaves its big form', async () => {
+  const cases: [unknown, string][] = [
+    [{ status: 'live', data: { changeReviewHistory: [] } }, 'Loom has not reviewed it.'],
+    [{ status: 'live', data: { changeReviewHistory: [{ ...rounds[0], change: 'github:acme/app#13' }] } }, 'Loom has not reviewed it.'],
+    [{ status: 'loading' }, 'Loading…'],
+    [{ status: 'offline' }, 'Its review history is unavailable.'],
+    [{ status: 'denied' }, 'Its review history is unavailable.'],
+  ];
+  for (const [review, note] of cases) {
+    world(read(), { review });
+    await draw('primary');
+    await act(async () => reviewOpener().props.onClick());
+    expect(notes(), note).toContain(note);
+  }
+  const body = (form: Form) => h(brickView('pull').Body, { params: { change: change.id }, form, act: vi.fn(), raise: vi.fn() });
+  await act(async () => tree!.update(body('side')));
+  const calls = asked('ChangeReviewHistory').length;
+  await act(async () => tree!.update(body('primary')));
+  expect(reviewOpener().props['aria-expanded']).toBe(false);
+  expect(asked('ChangeReviewHistory').length).toBe(calls);
+});
+
+async function drawWith(actFn: ReturnType<typeof vi.fn>) {
+  await act(async () => { tree?.unmount(); tree = create(h(brickView('pull').Body, { params: { change: change.id }, form: 'primary', act: actFn, raise: vi.fn() })); });
+}
+afterEach(() => { vi.unstubAllGlobals(); });
+
+it('offers Refresh from GitHub only to a member loom says may use it, and only in the primary form', async () => {
+  world(read(), { refresh: false });
+  await draw('primary');
+  expect(button('Refresh from GitHub')).toBeUndefined();
+  world(read(), { refresh: true });
+  await draw('primary');
+  expect(button('Refresh from GitHub')).toBeDefined();
+  // The small forms do not even ask whether the member may.
+  for (const form of ['side', 'compact'] as const) {
+    feed.mockClear();
+    await draw(form);
+    expect(button('Refresh from GitHub'), form).toBeUndefined();
+    expect(asked('WorkAnswerOwner'), form).toEqual([]);
+  }
+});
+
+it('a press sends the desktop\'s refresh once, says it is refreshing, then that it is done, and tells the board refresh with nothing more', async () => {
+  world(read(), { refresh: true });
+  let answer!: (r: Response) => void;
+  const request = vi.fn(() => new Promise<Response>((done) => { answer = done; }));
+  vi.stubGlobal('fetch', request);
+  const told = vi.fn();
+  await drawWith(told);
+  await act(async () => button('Refresh from GitHub').props.onClick());
+  // Pending: the button says so and cannot be pressed; a second press is dropped.
+  expect(button('Refreshing…').props.disabled).toBe(true);
+  await act(async () => button('Refreshing…').props.onClick());
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(request.mock.calls[0]).toEqual(['/api/changes/refresh', expect.objectContaining({ method: 'POST', body: JSON.stringify({ input: {} }) })]);
+  expect(told).not.toHaveBeenCalled();
+  await act(async () => answer(Response.json({ ok: true, value: { refreshed: true } })));
+  expect(button('Refresh from GitHub').props.disabled).toBe(false);
+  expect(notes()).toContain('Loom has read GitHub again.');
+  expect(problems()).toEqual([]);
+  expect(told.mock.calls).toEqual([['refresh', {}]]);
+});
+
+it('says loom refused a refresh, apart from one that failed, and tells the board nothing for either', async () => {
+  world(read(), { refresh: true });
+  const cases: [() => Promise<Response>, string][] = [
+    [async () => Response.json({ ok: false, error: 'refused' }, { status: 403 }), 'Loom refused: only a household owner may have it read GitHub again.'],
+    [async () => Response.json({ ok: false }, { status: 503 }), 'GitHub could not be read just now. Try again in a moment.'],
+    [async () => { throw new Error('offline'); }, 'GitHub could not be read just now. Try again in a moment.'],
+    [async () => Response.json({ ok: true, value: { refreshed: false } }), 'GitHub could not be read just now. Try again in a moment.'],
+  ];
+  for (const [reply, words] of cases) {
+    vi.stubGlobal('fetch', vi.fn(reply));
+    const told = vi.fn();
+    await drawWith(told);
+    await act(async () => button('Refresh from GitHub').props.onClick());
+    expect(problems(), words).toEqual([words]);
+    expect(notes(), words).not.toContain('Loom has read GitHub again.');
+    expect(told, words).not.toHaveBeenCalled();
+    // The control stays, so it can be pressed again.
+    expect(button('Refresh from GitHub').props.disabled, words).toBe(false);
+  }
+});
+
+it('keeps saying it was refused once loom no longer offers the refresh, and draws no control', async () => {
+  world(read(), { refresh: true });
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ok: false }, { status: 403 })));
+  await drawWith(vi.fn());
+  await act(async () => button('Refresh from GitHub').props.onClick());
+  world(read(), { refresh: false });
+  await act(async () => tree!.update(h(brickView('pull').Body, { params: { change: change.id }, form: 'primary', act: vi.fn(), raise: vi.fn() })));
+  expect(problems()).toEqual(['Loom refused: only a household owner may have it read GitHub again.']);
+  expect(button('Refresh from GitHub')).toBeUndefined();
+});

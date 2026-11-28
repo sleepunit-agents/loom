@@ -160,6 +160,19 @@ const record: Rec[] = [
 ];
 const approvalsView = (list: Card[]) => ({ approvals: list, approvalRules: [{ kind: 'merge', scope: 'project:garden', person: '', tier: 'do', setBy: 'alex', setAt: ago(4490) }],
   approvalNotices: [], approvalRecord: record });
+const rules = [
+  { kind: 'merge', scope: 'project:garden', person: '', tier: 'do', setBy: 'alex', setAt: ago(4490) },
+  { kind: 'command', scope: '*', person: '', tier: 'ask', setBy: 'alex', setAt: ago(40000) },
+  { kind: 'setting', scope: 'project:greenhouse', person: 'sam', tier: 'tell', setBy: 'alex', setAt: ago(9000) },
+  { kind: 'command', scope: 'pond/pump-*', person: '', tier: 'tell', setBy: 'sam', setAt: ago(12000) },
+  { kind: 'dangerous', scope: '*', person: '', tier: 'ask', setBy: 'alex', setAt: ago(52000) },
+];
+const notices = [
+  { id: 'n-vent', agent: 'fern', kind: 'setting', target: 'greenhouse/vents', what: 'Opened the greenhouse vents to a third: it reached 27 °C at noon.', at: ago(50) },
+  { id: 'n-pump', agent: 'moss', kind: 'command', target: 'pond/pump-north', what: 'Restarted the north pump after it stalled for four minutes.', at: ago(620) },
+  { id: 'n-mist', agent: 'fern', kind: 'setting', target: 'greenhouse/misting', what: 'Moved the misting from every two hours to every three.', at: ago(2100) },
+  { id: 'n-filter', agent: 'moss', kind: 'command', target: 'pond/pump-south', what: 'Ran the south filter backwash.', at: ago(5200) },
+];
 const one = (a: Card, access: object = owner, change: object[] = []) => ({
   InlineApproval: { approvals: [a], approvalRecord: record.filter((r) => r.approval === a.id) }, WorkAnswerOwner: access, WorkViewer: viewer, ApprovalChange: { changes: change } });
 const openChange = [{ id: 'github:hollow/pond-watch#48', state: 'open', agent: 'art', project: 'pond', headCommit: head }];
@@ -216,11 +229,15 @@ export const scenes: BrickScenes[] = [
     { name: 'unavailable', params: { item: 'in-gone' }, data: { ...question(beds), InboxItem: 'offline' }, only: ['side'] },
   ] },
   { brick: 'approvals', scenes: [
-    { name: 'default', params: { state: 'pending' }, data: { ApprovalsView: approvalsView(cards) } },
-    { name: 'answered', params: { state: 'answered' }, data: { ApprovalsView: approvalsView(cards) }, only: ['primary', 'side'] },
-    { name: 'empty', params: { state: 'pending' }, data: { ApprovalsView: { approvals: [], approvalRules: [], approvalNotices: [], approvalRecord: [] } } },
-    { name: 'flagged', params: { state: 'pending' }, data: { ApprovalsView: approvalsView(cards) }, flag: 'New approval', only: ['side', 'compact'] },
-    { name: 'unavailable', params: { state: 'pending' }, data: { ApprovalsView: 'offline' }, only: ['side'] },
+    { name: 'default', params: { state: 'pending' }, data: { BrickApprovals: approvalsView(cards) } },
+    { name: 'answered', params: { state: 'answered' }, data: { BrickApprovals: approvalsView(cards) }, only: ['primary', 'side'] },
+    { name: 'empty', params: { state: 'pending' }, data: { BrickApprovals: { approvals: [], approvalRules: [], approvalNotices: [], approvalRecord: [] } } },
+    { name: 'flagged', params: { state: 'pending' }, data: { BrickApprovals: approvalsView(cards) }, flag: 'New approval', only: ['side', 'compact'] },
+    { name: 'unavailable', params: { state: 'pending' }, data: { BrickApprovals: 'offline' }, only: ['side'] },
+    { name: 'rules', params: { state: 'rules' }, data: { BrickApprovalRules: { approvals: cards.map(({ id, state }) => ({ id, state })), approvalRules: rules } } },
+    { name: 'no-rules', params: { state: 'rules' }, data: { BrickApprovalRules: { approvals: [], approvalRules: [] } }, only: ['primary', 'side'] },
+    { name: 'notices', params: { state: 'notices' }, data: { BrickApprovalNotices: { approvals: cards, approvalNotices: notices, approvalRecord: record } } },
+    { name: 'no-notices', params: { state: 'notices' }, data: { BrickApprovalNotices: { approvals: [], approvalNotices: [], approvalRecord: [] } }, only: ['primary', 'side'] },
   ] },
   { brick: 'approval', scenes: [
     { name: 'default', params: { approval: shell.id }, data: one(shell) },

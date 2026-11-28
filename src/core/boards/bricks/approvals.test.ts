@@ -12,3 +12,10 @@ it('approvals: whether it can be big, what it flags itself for, how it is named,
     actions: {},
   });
 });
+
+it('approvals: its state is one of pending, answered, rules and notices, pending by default, and nothing else', () => {
+  for (const state of ['pending', 'answered', 'rules', 'notices']) expect(definition.params.parse({ state })).toEqual({ state });
+  expect(definition.params.parse({})).toEqual({ state: 'pending' });
+  for (const state of ['history', 'Rules', 'rules ', '', 'all']) expect(() => definition.params.parse({ state }), state).toThrow();
+  expect(() => definition.params.parse({ state: 'rules', search: 'pump' })).toThrow();
+});
