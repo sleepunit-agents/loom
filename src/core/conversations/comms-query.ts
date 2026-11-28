@@ -4,7 +4,8 @@ import { noticeInfo } from './legacy-notice.js';
 import { legacyStepWords, legacyToolCard } from './legacy-tool-card.js';
 import { archivedQuestionsField } from './archived-questions.js';
 import { readAll } from '../data/execution.js';
-import { readCommsFolders, readCommsThreads, readThreadUnread, readCommsRefs, readCommsPage, readCommsSet, type CommsReadSet } from '../data/comms-read.js';
+import { readCommsFolders, readCommsThreads, readThreadUnread, readCommsRefs, readCommsPage, readCommsSet, readCommsByClientId, type CommsReadSet } from '../data/comms-read.js';
+import { reviewParent } from './review-place.js';
 import { selectedQueryFields } from '../data/queries.js';
 import { readCommsHome } from '../data/comms-home.js';
 import { wordsDeadline, wordsKept } from './retention.js';
@@ -14,7 +15,7 @@ import { and, eq, inArray, getTableColumns, is, SQL, type AnyColumn } from 'driz
 import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap, type GraphQLResolveInfo } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
-import { conversations, household, messageFiles, messages, threads } from '../data/schema.js';
+import { conversations, household, jobs, messageFiles, messages, threads } from '../data/schema.js';
 import { keepReadUntil } from '../data/read-lease.js';
 import type { WordsKey } from './words.js';
 import { commsKeepDays } from '../data/comms-days.js';
@@ -74,6 +75,21 @@ export class CommsQueries {
     limit(count, 100);
     if (beforeSeq !== undefined && (!Number.isSafeInteger(beforeSeq) || beforeSeq < 1)) throw new Error('Invalid message cursor');
     return readCommsPage(this.db,thread,this.allowed(viewer),beforeSeq,count);
+  }
+
+  /** A handed-off session's final report: the reply its job wrote into the originating thread (review-result.ts),
+   * found by the session's own (child) conversation. It is that thread's message and is read exactly as the
+   * thread's messages are, under the same conversation rule: anybody who may not read them gets null, the same
+   * null as a session with no report yet. Three statements, each on a key: the child conversation by id, the
+   * parent job by id joined to its conversation's one thread (threads_conversation_unique), and the reply by
+   * messages_client_id_unique. The client id names the child, so another session's reply never matches. */
+  sessionReport(viewer: Viewer, conversation: string) {
+    const cv = this.db.select({ venue: conversations.venue, place: conversations.place, agent: conversations.agent }).from(conversations).where(eq(conversations.id, conversation)).get();
+    const parent = cv && reviewParent(cv);
+    if (!parent) return null;
+    const origin = this.db.select({ thread: threads.id }).from(jobs).innerJoin(threads, eq(threads.conversation, jobs.conversation))
+      .where(and(eq(jobs.id, parent), eq(jobs.agent, cv.agent))).get();
+    return origin ? readCommsByClientId(this.db, origin.thread, cv.agent, 'review:' + conversation, this.allowed(viewer)) ?? null : null;
   }
 
   refs(viewer: Viewer, thread: string, count = 100) {
@@ -196,6 +212,8 @@ export function commsQueryFields(service: CommsQueries): GraphQLFieldConfigMap<u
     commsThreads: { type: many(thread), args: { search: { type: GraphQLString }, member: { type: GraphQLString }, agent: { type: GraphQLString }, archived: { type: GraphQLBoolean }, limit: { type: GraphQLInt }, offset: { type: GraphQLInt } }, resolve: (_row, args, context) => service.list(context.viewer, args) },
     commsThread: { type: thread, args: { id }, resolve: (_row, args, context) => service.thread(context.viewer, args.id) },
     commsMessages: { type: many(message), args: { thread: id, beforeSeq: { type: GraphQLInt }, limit: { type: GraphQLInt, defaultValue: 50 } }, resolve:(_row,args,context,info)=>service.projectMessages(context.viewer,service.messages(context.viewer,args.thread,args.beforeSeq??undefined,args.limit),info,until=>keepReadUntil(context,until)) },
+    sessionReport: { type: message, args: { conversation: id }, description: 'A handed-off session\'s final report, read as a message of its originating thread; null for anybody who may not read that thread, and when there is none yet.',
+      resolve: async (_row, args, context, info) => { const row = service.sessionReport(context.viewer, args.conversation); return row ? (await service.projectMessages(context.viewer, [row], info, until => keepReadUntil(context, until)))[0] ?? null : null; } },
     commsRefs: { type: many(ref), args: { thread: id, limit: { type: GraphQLInt, defaultValue: 100 } }, resolve: (_row, args, context) => service.refs(context.viewer, args.thread, args.limit) },
   };
 }
