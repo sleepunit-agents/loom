@@ -27,11 +27,11 @@
  * through the data hook, so no remembered answer holds it. A token loom made is always told to the board by label
  * and kind, whatever happened on the page meanwhile. What the member must still be told when the form cannot say it
  * (a token that may have been made, or one made after the form went away) is kept outside the component, in memory
- * for the page's life, by label and kind (./token-notices.ts), and every household brick drawn afterwards shows it.
+ * for the page's life, by label and kind (./token-notices.ts), and the board's header row says it (./board-head.tsx).
  * A label here is one word in the shape of a reference (rule 1: a detail holds no sentence), and not one in
  * the shape of a credential (`looksLikeSecretValue`, which `boards.act` refuses by too). */
 import { Fragment, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { addTokenNotice, dismissTokenNotice, seenTokenLabels, settleTokenNotice, useTokenNotices, type TokenNotice } from './token-notices';
+import { addTokenNotice, seenTokenLabels, settleTokenNotice, tokenKindWords, useTokenNotices } from './token-notices';
 import { SECRET_VALUE_WORDS, loomBearer, looksLikeSecretValue } from '../../../src/core/boards/value-shape';
 import { useDataQuery } from '../data/graphql';
 import { liveAgents } from '../data/live-agents';
@@ -84,16 +84,17 @@ export function Household({ form, act }: BodyProps) {
   const [busy, setBusy] = useState(false), [message, say] = useState('');
   const setup = feed.status === 'live' ? feed.data?.householdSetup ?? null : null;
   const programs = primary && programFeed.status === 'live' ? programFeed.data?.programSetup ?? null : null;
-  // What a token form could not say itself, kept outside every brick's body (./token-notices.ts): shown in every form.
-  const notices = useTokenNotices(), notice = <TokenNotices notices={notices} />;
-  // The same label seen anew in the token list ends a notice of unknown fate.
+  // What a token form could not say itself is kept outside every brick's body (./token-notices.ts) and said once, in
+  // the board's header row (./board-head.tsx). Here only the token list is read: the same label seen anew in it ends
+  // a notice of unknown fate.
+  const notices = useTokenNotices();
   useEffect(() => { if (setup) seenTokenLabels((label) => labelled(setup, programs, label)); }, [setup, programs, notices]);
-  if (feed.status === 'loading') return <>{notice}<Loading /></>;
-  if (!setup) return <>{notice}<Unavailable what="household setup" /></>;
+  if (feed.status === 'loading') return <Loading />;
+  if (!setup) return <Unavailable what="household setup" />;
   const agents = liveAgents(setup.agents), removed = setup.agents.filter((agent) => agent.removedAt);
   const tokens = setup.tokens.filter(canSignIn).length, browsers = setup.sessions.filter((session) => !session.ended).length;
   const summary = `${count(setup.members.length, 'member')} · ${count(agents.length, 'agent')}`, access = `${count(tokens, 'active token')} · ${count(browsers, 'signed-in browser')}`;
-  if (form === 'compact') return <>{notice}<p className="board-brief">{summary} · {access}</p></>;
+  if (form === 'compact') return <><p className="board-brief">{summary} · {access}</p></>;
   const change = async (name: 'token.revoke' | 'sessions.revoke' | 'program.setGrants', input: object, report: string) => {
     if (busy) return false;
     setBusy(true); say('');
@@ -106,7 +107,6 @@ export function Household({ form, act }: BodyProps) {
   };
   if (!primary) return (
     <>
-      {notice}
       <Lead>{summary}</Lead>
       <Facts>
         <Fact label="Members">{setup.members.map((member) => <span key={member.id} className="board-household-who">{memberChip(member.id)} {member.role === 'owner' ? 'Household owner' : 'Member'}</span>)}</Fact>
@@ -120,7 +120,6 @@ export function Household({ form, act }: BodyProps) {
       <Lead>{summary}</Lead>
       <div className="board-meta"><span>{access}</span></div>
       {message && <p role="status" className="board-note">{message}</p>}
-      {notice}
       <Section title="Members" count={setup.members.length}>
         <Rows>
           {setup.members.map((member) => (
@@ -250,23 +249,13 @@ function Listed<T>({ title, what, rows, live, id, fields, fieldWords, folded, no
 
 type Box = { id: string; name: string; revokedAt: string | null };
 type Kind = 'member' | 'agent' | 'machine' | 'program';
-const KINDS: readonly { value: Kind; label: string }[] = [{ value: 'member', label: 'Household member' }, { value: 'agent', label: 'Agent' }, { value: 'machine', label: 'Machine' }, { value: 'program', label: 'Outside program' }];
+const KINDS: readonly { value: Kind; label: string }[] = (['member', 'agent', 'machine', 'program'] as const).map((value) => ({ value, label: tokenKindWords[value] }));
 /** What a member's, agent's or machine's token is called at the sign-in door. */
 const doorKind = { member: 'owner', agent: 'agent', machine: 'runner' } as const;
 const LABEL_RULE = 'A label here is one word of up to 120 letters, digits and . _ - : / @, starting with a letter or digit: the board is told it.';
 const STALE = 'Sign in again to make a token. This browser signed in more than ten minutes ago, or is an automated one.';
 const REFUSED = 'Token creation refused. Check its label and identity.';
 const AFTER_WRITE = 'If a token with this label is in the list now, loom made it before it refused: revoke it, because its value was never shown.';
-const kindWords = (kind: string) => KINDS.find((k) => k.value === kind)?.label ?? kind;
-/** The words of a notice: a token that may have been made, or one made whose value cannot be shown. */
-const noticeWords = (notice: TokenNotice) => (notice.fate === 'unknown'
-  ? `Token creation for “${notice.label}” (${kindWords(notice.kind)}) may have completed. Check its label in the token list and revoke it before trying again.`
-  : `Token “${notice.label}” (${kindWords(notice.kind)}) was made after its form went away, so its value cannot be shown. Revoke it if you did not save it, and make another.`);
-function TokenNotices({ notices }: { notices: readonly TokenNotice[] }) {
-  return <>{notices.map((notice) => (
-    <div key={notice.id}><Problem>{noticeWords(notice)}</Problem><Actions><Action kind="quiet" label={`Dismiss the notice for ${notice.label}`} onClick={() => dismissTokenNotice(notice.id)}>Dismiss</Action></Actions></div>
-  ))}</>;
-}
 /** How many tokens of this label the lists hold, each token once. */
 function labelled(setup: HouseholdSetup, programs: ProgramSetupData | null, label: string) {
   return new Set([...setup.tokens, ...(programs?.tokens ?? [])].filter((token) => token.label === label).map((token) => token.fingerprint)).size;

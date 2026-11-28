@@ -38,10 +38,6 @@
 .boards-stage { position: relative; min-width: 0; overflow: hidden; }
 .boards-trail { display: flex; height: 100%; }
 .boards-board { flex: 0 0 100%; min-width: 0; height: 100%; display: flex; flex-direction: column; padding: 1.25rem clamp(1rem, 3vw, 2.5rem) 1rem; }
-.boards-board > header { display: flex; align-items: baseline; gap: .75rem; margin-bottom: 1rem; min-height: 2rem; }
-.boards-board > header h1 { font-size: 1.05rem; font-weight: 600; }
-.boards-board > header button { margin-left: auto; font-size: .85rem; color: var(--faint); }
-.boards-board > header button:hover { color: var(--foreground); }
 .boards-field { position: relative; flex: 1; min-height: 0; }
 .boards-dots { position: absolute; left: 50%; bottom: .5rem; translate: -50% 0; display: flex; gap: 5px; }
 .boards-dots i { width: 14px; height: 2px; border-radius: var(--radius-bar); background: var(--muted-foreground); opacity: .5; }
@@ -51,6 +47,9 @@
   background: color-mix(in srgb, var(--card) 92%, transparent); border: 1px solid var(--surface-edge); border-radius: var(--radius);
   box-shadow: var(--shadow-card); }
 .board-placement[data-entering='true'] { opacity: 0; scale: .97; translate: 0 10px; }
+/* A placement takes the keyboard only from an attention chip of the header row (./board-head.tsx): where that was by keyboard, a ring says where it went. */
+.board-placement:focus { outline: 0; }
+.board-placement:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 @media (prefers-reduced-motion: no-preference) {
   .boards-page { transition: grid-template-columns .55s var(--ease-settle); }
   .boards-trail { transition: transform .6s var(--ease-settle); }

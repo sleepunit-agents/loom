@@ -10,7 +10,8 @@ import { act, create } from 'react-test-renderer';
 const feed = vi.hoisted(() => vi.fn());
 vi.mock('../data/graphql', () => ({ useDataQuery: feed }));
 import { brickView, loadBricks } from './bricks';
-import { forgetTokenNotices } from './token-notices';
+import { forgetTokenNotices, useTokenNotices } from './token-notices';
+import { TokenNoticeList } from './board-head';
 import { ACCEPTED_NAMES, REFUSED_NAMES } from '../../../src/core/boards/value-shape.fixture';
 import { isRef } from './admin-data';
 import type { Form } from './layout';
@@ -66,7 +67,9 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => tree?.unmount()); tree = undefined; vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-const element = (form: Form) => h(brickView('household').Body, { params: {}, form, act: reported, raise: raised });
+/** The brick, and beside it what the board's header row says of token notices (./board-head.tsx): the brick no longer draws them itself. */
+function Notices() { return h(TokenNoticeList, { notices: useTokenNotices() }); }
+const element = (form: Form) => h('div', null, h(brickView('household').Body, { params: {}, form, act: reported, raise: raised }), h(Notices));
 const draw = (form: Form) => act(async () => { tree?.unmount(); tree = create(element(form)); });
 const redraw = (form: Form) => act(async () => tree!.update(element(form)));
 const said = (node: Node | string): string => (typeof node === 'string' ? node : node.children.map(said).join(''));
@@ -168,7 +171,9 @@ it('forgets the value when the brick is drawn again, leaves its big form, or sto
 
 const MAYBE = (label: string) => `Token creation for “${label}” (Household member) may have completed. Check its label in the token list and revoke it before trying again.`;
 const MADE = (label: string) => `Token “${label}” (Household member) was made after its form went away, so its value cannot be shown.`;
-const notices = () => tree!.root.findAll((n) => n.type === 'p' && n.props.role === 'alert').map(said).filter((w) => w.startsWith('Token creation for') || w.startsWith('Token “'));
+const notices = () => tree!.root.findAll((n) => n.type === 'li' && n.props['data-token-notice'] !== undefined).map((n) => said(n.findAllByType('p')[0]));
+/** The brick's own alerts: a notice is never among them, since the header row says it. */
+const alerts = () => tree!.root.findAll((n) => n.type === 'p' && n.props.role === 'alert').map(said);
 
 it('reads the answer by its status first: any 4xx is a refusal and tells the board nothing, whatever its body', async () => {
   await draw('primary');
@@ -203,6 +208,7 @@ it('says it may have been made only when truly unknown: no reply, a 5xx, or a 2x
     await type('Token label', 'pump-' + i);
     await submit();
     expect(notices().at(-1), String(i)).toBe(MAYBE('pump-' + i));
+    expect(alerts().filter((w) => w.startsWith('Token creation for')), String(i)).toEqual([]);
     expect(shown(), String(i)).not.toContain('Token creation refused');
   }
   // Kept outside the form: each one stays until it is dismissed or its label is seen in the token list.
