@@ -120,7 +120,9 @@ export const claudeBody: BodyHarness = input => {
           if (text) last = ended;
         }
         if (row.type === 'result') {
-          if (result !== undefined) throw refuse('second-result');
+          // Claude Code prints a result each time it comes to rest, and goes on if something it left running in the
+          // background reports back (seen 2026-11-28: three results in one run, the work continuing between them).
+          // Each must be a success; the last is the run's.
           refusal = 'result';
           result = z.object({is_error:z.literal(false),subtype:z.literal('success'),result:z.string()}).parse(row).result;
         }

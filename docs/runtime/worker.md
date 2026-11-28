@@ -235,7 +235,7 @@ that is not in its list is recorded as `other`.
 | `events` | How many events of each kind: `assistant`, `user`, `system`, `result`, `rateLimit`, `stream`, `other`. |
 | `quietMs` | Milliseconds from the last thing it printed to its process ending (`runHarnessChild`). |
 | `compacted` | Whether a `compact_boundary` event was seen. |
-| `refusal` | The step at which the adapter refused a run that left with 0: `decode` (not UTF-8), `line` (a line is not JSON), `event` (no type or session), `session` (another session's event), `message` (an answer not shaped like one), `second-result`, `result` (not a success with text), `no-result`, `no-message` (the model said nothing of its own), `empty` (an empty result of a run that called no tool), `mismatch` (the result is not the model's last words). |
+| `refusal` | The step at which the adapter refused a run that left with 0: `decode` (not UTF-8), `line` (a line is not JSON), `event` (no type or session), `session` (another session's event), `message` (an answer not shaped like one), `second-result` (no longer given: a run may come to rest more than once, and its last result is its answer; kept so an older worker's report is still read), `result` (not a success with text), `no-result`, `no-message` (the model said nothing of its own), `empty` (an empty result of a run that called no tool), `mismatch` (the result is not the model's last words). |
 
 The plain words say the short of it: "the harness exited 0 with no final
 result after 177 tool calls". The facts travel as the reason does: on the

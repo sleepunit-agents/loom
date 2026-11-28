@@ -259,13 +259,29 @@ it('still fails an empty result of a run that did no work, or whose last message
   expect(mismatch).toMatchObject({ reason: 'unknown', exitCode: 0, result: 'success', resultEmpty: true, finalText: true, toolCalls: 2, refusal: 'mismatch', compacted: true, numTurns: 3, quietMs: expect.any(Number) });
   expect(JSON.stringify(mismatch)).not.toContain('PRIVATE');
 });
+it('takes the last result of a run that came to rest and went on, as Claude Code does when background work reports back', async () => {
+  const f = fixture(), run = f.run(job, 'mail', f.abort.signal);
+  const first = f.rows([{ type: 'assistant', parent_tool_use_id: null, message: { model: 'tool-model', content: [{ type: 'tool_use', name: 'Bash' }] } }]).map(row => JSON.stringify(row));
+  const session = JSON.parse(first[0]!).session_id as string;
+  const more = [
+    { type: 'assistant', session_id: session, parent_tool_use_id: null, message: { id: 'msg_later', model: 'tool-model', content: [{ type: 'text', text: 'The background check passed too.' }], usage: {} } },
+    { type: 'result', session_id: session, subtype: 'success', is_error: false, result: 'The background check passed too.' },
+  ].map(row => JSON.stringify(row));
+  f.finish([...first, ...more].join('\n'));
+  expect((await run).text).toBe('The background check passed too.');
+});
+it('still refuses a run any of whose results is an error', async () => {
+  const f = fixture(), run = f.run(job, 'mail', f.abort.signal);
+  const rows = f.rows([{ type: 'assistant', parent_tool_use_id: null, message: { model: 'tool-model', content: [{ type: 'tool_use', name: 'Bash' }] } }]).map(row => JSON.stringify(row));
+  f.finish([...rows, rows.at(-1)!.replace('"is_error":false', '"is_error":true')].join('\n'));
+  await expect(run).rejects.toThrow();
+});
 it.each([
   ['no result at all', (rows: string[]) => rows.slice(0, -1).join('\n') + '\n', { result: 'none', refusal: 'no-result', partialLine: false, toolCalls: 2 }],
   ['a result cut off in the middle of its line', (rows: string[]) => rows.join('\n').slice(0, -20), { result: 'none', refusal: 'line', partialLine: true, unparsedLines: 0 }],
   ['a line that is no event', (rows: string[]) => ['warning: PRIVATE', ...rows].join('\n') + '\n', { result: 'success', refusal: 'line', partialLine: false, unparsedLines: 1 }],
   ['an event of another session', (rows: string[]) => [...rows, JSON.stringify({ type: 'system', subtype: 'status', session_id: 'another' })].join('\n'), { result: 'success', refusal: 'session' }],
   ['an event with no session', (rows: string[]) => [JSON.stringify({ type: 'keep_alive' }), ...rows].join('\n'), { result: 'success', refusal: 'event', events: { other: 1 } }],
-  ['two results', (rows: string[]) => [...rows, rows.at(-1)].join('\n'), { result: 'success', refusal: 'second-result', events: { result: 2 } }],
   ['a result that is an error it gave no reason for', (rows: string[]) => [...rows.slice(0, -1), rows.at(-1)!.replace('"is_error":false', '"is_error":true')].join('\n'), { result: 'success', isError: true, refusal: 'result' }],
 ] as const)('says how a run that ended well with %s ended, in counts and fixed choices only', async (_name, shape, expected) => {
   const f = fixture(), run = f.run(job, 'mail', f.abort.signal), rows = f.rows([{ type: 'assistant', parent_tool_use_id: null, message: { model: 'tool-model', content: [{ type: 'tool_use', name: 'Bash' }, { type: 'tool_use', name: 'Edit' }] } }]);
