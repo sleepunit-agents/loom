@@ -78,7 +78,7 @@ export const shared: ReadonlySet<string> = new Set([
   'comms-id.ts', // a Comms message's id, which a draft carries as its retry id (no imports)
   'pieces/comms/conversation-query.ts', // the conversation activity's selections, the bridge receipt's among them, and their shapes (no imports)
 ]);
-const own = /^(access\.ts$|boards\/|pair\/|contexts\/(?:portrait\.tsx|portrait-player\.ts|manifest\.json|sheet\.png)$|data\/|signin\/use-session\.ts$|lib\/utils\.ts$|pieces\/comms\/use-deadline\.ts$)/;
+const own = /^(access\.ts$|boards\/|pair\/|contexts\/(?:portrait\.tsx|portrait-player\.ts|manifest\.json|sheet\.png)$|data\/|signin\/(?:use-session|gate-address)\.ts$|lib\/utils\.ts$|pieces\/comms\/use-deadline\.ts$)/;
 
 /** The server's files the page loads, each with why. `plain`: it must import nothing. */
 export const outside: ReadonlyMap<string, { plain?: true; why: string }> = new Map([
