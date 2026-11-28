@@ -304,6 +304,8 @@ const programSetup = { owner: 'alex', catalogue: { records: ['tickets', 'project
 const householdAnswer = (setupRow: object | null, programs: object | null = programSetup) => ({
   householdSetup: setupRow, boxes: boxRows.map(({ id, name, revokedAt }) => ({ id, name, revokedAt })), boxAlertSettings: machineFacts().boxAlertSettings, programSetup: programs,
 });
+const manyTokens = { ...householdSetup, tokens: [...householdSetup.tokens, ...Array.from({ length: 45 }, (_, i) => token(`fp-old-${i}`, `ci-runner-${String(i + 1).padStart(2, '0')}`, 'worker', 'box-ci',
+  i % 3 ? { revokedAt: ago(60 * 24 * (50 + i)), lastUsedAt: null } : { expired: true, expiresAt: ago(60 * 24 * (20 + i)) }))] };
 const household: Scene[] = [
   { name: 'default', params: {}, data: { '': householdAnswer(householdSetup) } },
   { name: 'small', params: {}, data: { '': householdAnswer({ defaultAgent: null, members: [householdSetup.members[0]], agents: [householdSetup.agents[0]], tokens: [], sessions: [] }, { ...programSetup, tokens: [] }) } },
@@ -344,6 +346,10 @@ export const scenes: BrickScenes[] = [
     // Make a token: its form, a label the board could not be told, and the value shown once after it was made.
     { ...household[0], name: 'making-token', only: ['primary'], press: ['Make a token…', 'Agent'] },
     { ...household[0], name: 'token-label-refused', only: ['primary'], press: ['Make a token…', { field: 'Token label', text: 'Pump laptop' }, 'Make token'] },
-    { ...household[0], name: 'token-shown-once', only: ['primary'], press: ['Make a token…', { field: 'Token label', text: 'pump-laptop' }, 'Make token'] }] },
+    { ...household[0], name: 'token-shown-once', only: ['primary'], press: ['Make a token…', { field: 'Token label', text: 'pump-laptop' }, 'Make token'] },
+    // A household that has made many tokens (t-2428): the live ones first, the rest folded, opened thirty at a time.
+    { ...household[0], name: 'many-tokens-folded', only: ['primary'], data: { '': householdAnswer(manyTokens) }, press: ['Revoked or expired · 47'] },
+    { ...household[0], name: 'tokens-searched', only: ['primary'], press: [{ field: 'Search tokens', text: 'alex' }, 'Search', 'Revoked or expired · 1'] },
+    { ...household[0], name: 'portrait-opened', only: ['primary'], press: ['Portrait'] }] },
   { brick: 'sharing', scenes: sharing },
 ];
