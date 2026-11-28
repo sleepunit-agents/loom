@@ -179,7 +179,9 @@ board.
 `placement` (for `place`, `remove`, `rank`, `act`, `maximize` and `flag`, otherwise null); `from_value` and `to_value`
 (text, read back as text: the old and new rank for `rank` and `maximize`, the old and new title for `title`, the rank
 taken in `to_value` for `place`, otherwise null); `action` (for `act`: the name of one of the brick's actions) and
-`detail` (for `act`: JSON matching that action's declared schema, which holds only choices and ids). Placements
+`detail` (for `act`: JSON matching that action's declared schema, which holds only choices and ids, and, for two
+actions alone, a name a member typed: the `secrets` brick's secret name and the `household` brick's token label,
+each refused in the shape of a credential; see "The first bricks" and docs/accepted-tradeoffs.md). Placements
 shifted by another's `place`, `remove`, `rank` or `maximize` get no rows of their own. Visibility follows the board.
 
 **`blueprints`** (schema 52 added `member`): `id`; `agent`; `member` (the member of the thread it was saved in);
@@ -214,7 +216,8 @@ or its conversation row is deleted, and when the thread the session was handed o
 deletes a conversation row today. Nothing writes a row but
 `conversation.handoff`.
 
-A board holds no record data and none of a conversation's words.
+A board holds no record data and none of a conversation's words. The one exception is the two typed names an `act`
+detail may hold (a secret's name and a token's label, above): never a value, a description or a sentence.
 
 ## Operations
 
@@ -741,8 +744,9 @@ calls through modules both sides import.
   must be in the store's shape. What the schema cannot tell is a value typed INTO Name: a name-shaped string is told
   as the name. So the form refuses, before anything is sent, a Name that has the shape of a credential, with "That
   looks like a secret value, not a name.", and `boards.act` refuses the same names in this detail on the server, by
-  the same function (`looksLikeSecretValue`, `src/core/boards/value-shape.ts`: loom's bearer, the credentials loom's
-  output check knows, and a run of 32 or more letters and digits with no separator). A value of no such shape is
+  the same function (`looksLikeSecretValue`, `src/core/boards/value-shape.ts`, a module with no imports: a known
+  credential prefix in its real case followed by a random-looking body, or a long random run of letters and digits;
+  the rules exactly, and what still passes, are in docs/accepted-tradeoffs.md). A value of no such shape is
   still told; that is an accepted trade-off (docs/accepted-tradeoffs.md, "A secret value typed as a secret's name or
   a token's label reaches the agent's brief"). A stored secret whose name already has that shape can still be
   replaced or removed here, and the board is not told of it. A change that is refused or not confirmed tells the board
@@ -1768,27 +1772,46 @@ member's (`owner`), an agent's or a machine's (`runner`) token and `POST /api/si
 program's, with the same body, and the same reading of the answer
 (`src/core/signin/shared-links.ts`, `issueForOwner`). The door's rule is the permission: a current household owner,
 whose browser signed in within the last ten minutes and is not an automated one (`newProof`), on a same-origin
-request; there is no new server operation. A refusal says Household setup's words ("Sign in again to make a
-token…" or "Token creation refused…"), a reply that is not a token says it may have been made and to check its
-label, and neither tells the board anything. Once made, the board is told `token {label, kind}`. The label is told,
+request; there is no new server operation. The answer is read by its status before its body. Any 4xx made nothing
+and is a refusal, whatever its body: Household setup's words ("Sign in again to make a token…" for the door's
+fresh-sign-in refusal, "Token creation refused…" for any other). Only no reply, a 5xx, or a 2xx whose body is not
+a token leaves it unknown, and only then does the brick say "Token creation for “…” (kind) may have completed. Check
+its label in the token list and revoke it before trying again." Neither tells the board anything. **Once loom made
+it, the board is told `token {label, kind}`, always**, whatever changed on the page meanwhile (the form gone, an
+owner change); `boards.act` itself still refuses it, as any action, if the placement was removed or the board
+closed meanwhile. The label is told,
 so the brick takes one only in the shape of a reference (one word of up to 120 letters, digits and `: . _ / @ -`,
 starting with a letter or digit), narrower than the desktop's, and says so; the desktop still takes any one line.
 A label in the shape of a credential (a bearer pasted into Label) is refused before anything is sent, with "That
 looks like a secret value, not a name.", and refused again by `boards.act`, by the secrets brick's function (above;
-the same accepted trade-off). If the form goes away while loom is asked (the brick leaves its big form or the setup
-stops answering), the brick says, as Household setup does, "Token creation for “…” may have completed. Check its
-label before trying again."; a token loom does make is still told to the board, and its value is drawn nowhere.
+the same accepted trade-off).
+**When the form cannot say it.** What the member must be told of a token whose fate the form could not follow is
+kept outside every brick's body, in memory for the page's life and never in storage, by label and kind and never a
+value (`web/src/boards/token-notices.ts`), and every household brick drawn afterwards, in any form, shows it with
+Dismiss. The form lets go of a request when its body goes away while loom is asked (the brick drawn small or
+compact, folded, removed, another board shown, the setup no longer answered) or loom reports another signed-in
+owner: the notice says it may have been made, and loom's late answer settles it: a refusal ends it, a token made
+turns it into "Token “…” (kind) was made after its form went away, so its value cannot be shown. Revoke it if you did
+not save it, and make another.", and no reply or a 5xx leaves it. A notice that it may have been made also ends when
+the token list holds a new token of that label; one that it was made ends only when dismissed. A reload forgets them.
 **The value** is held in one component's state inside the big form and drawn once, under "Save this token now", with
 Copy (the clipboard) and Hide. It is forgotten when the member hides it, when the body is drawn anew (the brick is
 placed again or the board redrawn), when the brick leaves its big form, when the household setup stops answering
-for the member, when the signed-in owner (`programSetup.owner`) is no longer the one who made it, as on the
-desktop, and when the page reloads; a fresh answer of the same setup keeps it, so the member can still copy
+for the member, when loom reports a signed-in owner (`programSetup.owner`) other than the one it reported when the
+token was asked for, as on the desktop, and when the page reloads. A moment with no program setup answer is not an
+owner change; and if there was none when the token was asked for, this does not apply, but the page's own sign-in
+check reloads the page when the signed-in member changes (`web/src/signin/use-session.ts`). A fresh answer of the
+same setup keeps it, so the member can still copy
 it after the token list grows by one. It never reaches `act`, a flag, the data hook (so no remembered answer), a
 log, the address or the browser's storage. `src/core/boards/bricks/household.test.ts` (over `src/core/boards/house.fixture.ts`, a real household) holds the detail to those two
 fields and follows a report through `boards.act` into the stored rows, `boards.read` and the agent's brief;
 `web/src/boards/bricks-household-token.test.tsx` checks the requests per kind, shown once, Copy (and its words
-with no clipboard), each way it is forgotten (an owner change too), the refusals, a label the board could not be told,
-a credential-shaped label, and the form going away in flight; the clipboard is written only on Copy.
+with no clipboard), each way it is forgotten (an owner change too, and not a gap in the program setup's answer),
+each status read (every 4xx refused, a proxy's non-JSON 403 too; no reply, 5xx and an unreadable 2xx unknown), a
+label the board could not be told, a credential-shaped label (the fixture list), and the form going away in flight
+with each late answer; `web/src/boards/page.test.tsx` draws the real page and checks the notice outlives the body
+folded, removed and behind another board, and that a token made is told to the board; the clipboard is written only
+on Copy.
 
 A session's steps have their own suites, outside the numbered checks: `src/shared-session-trace.test.ts` (kept,
 sealed, read by the thread's member alone and not by a full owner, absent from the thread, the relay unchanged; a

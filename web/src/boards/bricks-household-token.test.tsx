@@ -10,6 +10,9 @@ import { act, create } from 'react-test-renderer';
 const feed = vi.hoisted(() => vi.fn());
 vi.mock('../data/graphql', () => ({ useDataQuery: feed }));
 import { brickView, loadBricks } from './bricks';
+import { forgetTokenNotices } from './token-notices';
+import { ACCEPTED_NAMES, REFUSED_NAMES } from '../../../src/core/boards/value-shape.fixture';
+import { isRef } from './admin-data';
 import type { Form } from './layout';
 
 await loadBricks();
@@ -21,7 +24,9 @@ const BEARER = 'loom_' + 'Q7'.repeat(21) + 'x', at = '2026-11-14T15:00:00Z';
 const ADDRESS = 'https://loom.example.test/boards?board=b-1', moved = vi.fn(), stored = vi.fn();
 const reported = vi.fn(), raised = vi.fn(), written = vi.fn(), logged: unknown[][] = [];
 const requests: { url: string; body: any }[] = [];
-let reply: () => { status: number; body: unknown };
+/** loom's answer: a status and a body (`NOT_JSON`: one that is not JSON), or no reply at all. */
+let reply: () => { status: number; body: unknown } | 'no reply';
+const NOT_JSON = Symbol('not JSON');
 /** When set, loom answers only once it resolves: a request still in flight. */
 let hold: Promise<void> | null = null;
 const setup = {
@@ -32,22 +37,25 @@ const setup = {
 };
 const boxes = [{ id: 'bx-1', name: 'shed-pi', revokedAt: null }, { id: 'bx-0', name: 'old-pi', revokedAt: at }];
 const programs = { owner: 'sam', catalogue: { records: ['tasks', 'projects'], operations: ['tasks.command'] }, tokens: [] };
-let world: { setup: object | null; owner: string };
+/** `programs: false`: the program setup's feed has no answer just now. */
+let world: { setup: object | null; owner: string; programs?: false };
 beforeEach(() => {
-  feed.mockReset(); reported.mockReset(); raised.mockReset(); written.mockReset(); requests.length = 0; logged.length = 0; world = { setup, owner: 'sam' }; hold = null;
+  feed.mockReset(); reported.mockReset(); raised.mockReset(); written.mockReset(); requests.length = 0; logged.length = 0; world = { setup, owner: 'sam' }; hold = null; forgetTokenNotices();
   reply = () => ({ status: 200, body: { ok: true, value: { token: BEARER, fingerprint: 'f'.repeat(64) } } });
   feed.mockImplementation((query: string, _v?: object, options?: { pause?: boolean }) => {
     if (options?.pause) return { status: 'loading' };
     if (query.includes('householdSetup')) return { status: 'live', data: { householdSetup: world.setup, boxes, boxAlertSettings: [] } };
-    if (query.includes('programSetup')) return { status: 'live', data: { programSetup: world.setup ? { ...programs, owner: world.owner } : null } };
+    if (query.includes('programSetup')) return world.programs === false ? { status: 'loading' } : { status: 'live', data: { programSetup: world.setup ? { ...programs, owner: world.owner } : null } };
     throw new Error('A read the household brick should not make: ' + query);
   });
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: { body: string; method: string; credentials: string }) => {
     requests.push({ url, body: JSON.parse(init.body) });
     if (hold) await hold;
     expect([init.method, init.credentials]).toEqual(['POST', 'same-origin']);
-    const { status, body } = reply();
-    return { ok: status < 400, status, json: async () => body };
+    const answer = reply();
+    if (answer === 'no reply') throw new TypeError('Failed to fetch');
+    const { status, body } = answer;
+    return { ok: status >= 200 && status < 300, status, json: async () => { if (body === NOT_JSON) throw new SyntaxError('Unexpected token <'); return body; } };
   }));
   vi.stubGlobal('navigator', { clipboard: { writeText: written.mockImplementation(async () => {}) } });
   vi.stubGlobal('location', { href: ADDRESS, search: '', hash: '' });
@@ -158,7 +166,11 @@ it('forgets the value when the brick is drawn again, leaves its big form, or sto
   nowhere();
 });
 
-it('is refused for a member loom does not let make one, and for a browser that signed in too long ago, telling the board nothing', async () => {
+const MAYBE = (label: string) => `Token creation for “${label}” (Household member) may have completed. Check its label in the token list and revoke it before trying again.`;
+const MADE = (label: string) => `Token “${label}” (Household member) was made after its form went away, so its value cannot be shown.`;
+const notices = () => tree!.root.findAll((n) => n.type === 'p' && n.props.role === 'alert').map(said).filter((w) => w.startsWith('Token creation for') || w.startsWith('Token “'));
+
+it('reads the answer by its status first: any 4xx is a refusal and tells the board nothing, whatever its body', async () => {
   await draw('primary');
   reply = () => ({ status: 403, body: { error: 'Household owner required' } });
   await make();
@@ -166,14 +178,12 @@ it('is refused for a member loom does not let make one, and for a browser that s
   reply = () => ({ status: 403, body: { error: 'Sign in again before making a token' } });
   await submit();
   expect(shown()).toContain('Sign in again to make a token.');
-  reply = () => ({ status: 409, body: { error: 'A live token already has that label' } });
-  await submit();
-  expect(shown()).toContain('Token creation refused.');
-  // A reply that is not a token, or no reply at all: it may have been made, so the member is told to check.
-  for (const next of [() => ({ status: 200, body: { ok: true, value: { token: 'not-a-token' } } }), () => ({ status: 500, body: {} })]) {
-    reply = next;
+  // A proxy's 403 page, and every other 4xx: refused, never "may have completed".
+  for (const status of [400, 401, 403, 404, 405, 409, 413, 415, 422, 429]) for (const body of [{ error: 'No' }, NOT_JSON]) {
+    reply = () => ({ status, body });
     await submit();
-    expect(shown()).toContain('Token creation may have completed. Check its label and revoke it before trying again.');
+    expect(shown(), String(status)).toContain('Token creation refused. Check its label and identity.');
+    expect(notices(), String(status)).toEqual([]);
   }
   expect(reported).not.toHaveBeenCalled();
   expect(json()).not.toContain('loom_');
@@ -181,6 +191,30 @@ it('is refused for a member loom does not let make one, and for a browser that s
   world = { setup: null, owner: 'sam' };
   await draw('primary');
   expect(button('Make a token…')).toBeUndefined();
+});
+
+it('says it may have been made only when truly unknown: no reply, a 5xx, or a 2xx whose body is not a token', async () => {
+  await draw('primary');
+  const unknown: (typeof reply)[] = [() => 'no reply', () => ({ status: 500, body: {} }), () => ({ status: 502, body: NOT_JSON }), () => ({ status: 503, body: { error: 'busy' } }),
+    () => ({ status: 200, body: NOT_JSON }), () => ({ status: 200, body: { ok: true, value: { token: 'not-a-token' } } }), () => ({ status: 201, body: { ok: false } })];
+  await press('Make a token…');
+  for (const [i, next] of unknown.entries()) {
+    reply = next;
+    await type('Token label', 'pump-' + i);
+    await submit();
+    expect(notices().at(-1), String(i)).toBe(MAYBE('pump-' + i));
+    expect(shown(), String(i)).not.toContain('Token creation refused');
+  }
+  // Kept outside the form: each one stays until it is dismissed or its label is seen in the token list.
+  expect(notices()).toHaveLength(unknown.length);
+  await press('Dismiss the notice for pump-0');
+  expect(notices()).toHaveLength(unknown.length - 1);
+  world = { setup: { ...setup, tokens: [{ fingerprint: 'f1', label: 'pump-1', kind: 'owner', expired: false, identity: 'sam', createdAt: at, expiresAt: null, revokedAt: null, lastUsedAt: null }] }, owner: 'sam' };
+  await redraw('primary');
+  expect(notices().some((w) => w.includes('pump-1'))).toBe(false);
+  expect(notices()).toHaveLength(unknown.length - 2);
+  expect(reported).not.toHaveBeenCalled();
+  nowhere();
 });
 
 it('sends nothing for a label the board could not be told, and says why', async () => {
@@ -194,63 +228,100 @@ it('sends nothing for a label the board could not be told, and says why', async 
 });
 
 const SAME = 'That looks like a secret value, not a name.';
-it('sends nothing for a label that has the shape of a secret value, says so, and takes an ordinary label', async () => {
+it('sends nothing for a label that has the shape of a secret value, says so, and takes every name the one fixture list takes', async () => {
   await draw('primary');
-  for (const label of [BEARER, 'ghp_' + 'A1b2'.repeat(6), 'ci/sk-ant-' + 'k'.repeat(24), 'Zx9' + 'q8W7e6R5t4Y3u2I1'.repeat(2)]) {
+  // Every made-up credential of ../../../src/core/boards/value-shape.fixture.ts that a label's shape would take.
+  const refused = REFUSED_NAMES.filter(isRef);
+  expect(refused.length).toBeGreaterThanOrEqual(20);
+  for (const label of refused) {
     await tryLabel(label);
     expect(shown(), label).toContain(SAME);
   }
   expect(requests).toEqual([]);
   expect(reported).not.toHaveBeenCalled();
-  for (const label of ['PUMP_TOKEN', 'github-deploy-key', 'ci:runner']) {
+  for (const label of ACCEPTED_NAMES) {
     await tryLabel(label);
     expect(shown(), label).not.toContain(SAME);
     await press('Hide token');
   }
-  expect(requests.map((r) => r.body.label)).toEqual(['PUMP_TOKEN', 'github-deploy-key', 'ci:runner']);
+  expect(requests.map((r) => r.body.label)).toEqual(ACCEPTED_NAMES);
 });
 
-it('says the token may have been made when the form goes away while loom is asked, as the desktop does, and draws no value later', async () => {
-  let answer!: () => void;
-  hold = new Promise((resolve) => { answer = resolve; });
-  await draw('primary');
-  await make();
-  expect(requests).toHaveLength(1);
-  // The agent puts another brick in the big place: this one is drawn small, and the form is gone.
-  await redraw('side');
-  expect(shown()).toContain('Token creation for “pump-laptop” may have completed. Check its label before trying again.');
-  await act(async () => { answer(); await Promise.resolve(); });
-  await redraw('primary');
-  // loom made it, so the board is told it exists; its value is lost and drawn nowhere.
-  expect(reported.mock.calls).toEqual([['token', { label: 'pump-laptop', kind: 'member' }]]);
-  expect(json()).not.toContain(BEARER);
-  expect(shown()).toContain('may have completed');
-  // Asking again clears the warning.
-  hold = null;
-  await make('second');
-  expect(shown()).not.toContain('may have completed');
+/** Hold loom's answer: the next request waits until `answer()` is called. */
+function holding() { let answer!: () => void; hold = new Promise((resolve) => { answer = resolve; }); return async () => { await act(async () => { answer(); await new Promise((done) => setTimeout(done, 0)); }); }; }
+
+it('the form going away while loom is asked (drawn small or compact): it may have been made; made, the board is told and the brick says the value is lost', async () => {
+  for (const form of ['side', 'compact'] as const) {
+    forgetTokenNotices(); reported.mockReset();
+    const answer = holding();
+    await draw('primary');
+    await make();
+    // The agent puts another brick in the big place: this one is drawn small, and the form is gone.
+    await redraw(form);
+    expect(notices(), form).toEqual([MAYBE('pump-laptop')]);
+    await answer();
+    expect(reported.mock.calls, form).toEqual([['token', { label: 'pump-laptop', kind: 'member' }]]);
+    expect(notices(), form).toEqual([expect.stringContaining(MADE('pump-laptop'))]);
+    await redraw('primary');
+    expect(json(), form).not.toContain(BEARER);
+    expect(notices(), form).toEqual([expect.stringContaining(MADE('pump-laptop'))]);
+    // A new request does not end it: it is about another token.
+    hold = null;
+    await make('second');
+    expect(notices(), form).toHaveLength(1);
+    await press('Hide token');
+    await press('Dismiss the notice for pump-laptop');
+    expect(notices(), form).toEqual([]);
+  }
   nowhere();
 });
 
-it('drops a value shown, or asked for, when the signed-in owner changes, as the desktop does', async () => {
+it('a late refusal ends the notice; a late 5xx or no reply keeps it; the body unmounted outright keeps it too', async () => {
+  for (const [late, kept] of [[() => ({ status: 409, body: { error: 'A live token already has that label' } }), false], [() => ({ status: 403, body: NOT_JSON }), false], [() => ({ status: 503, body: {} }), true], [() => 'no reply', true]] as const) {
+    forgetTokenNotices();
+    const answer = holding();
+    reply = late as typeof reply;
+    await draw('primary');
+    await make();
+    // The whole body goes, as when the placement is folded or removed or another board is shown (page.test.tsx).
+    await act(async () => { tree!.unmount(); });
+    tree = undefined;
+    await answer();
+    await draw('compact');
+    expect(notices(), JSON.stringify(late())).toEqual(kept ? [MAYBE('pump-laptop')] : []);
+    expect(shown()).not.toContain('Token creation refused');
+  }
+  expect(reported).not.toHaveBeenCalled();
+});
+
+it('drops a value shown, or asked for, when loom reports another signed-in owner, and still tells the board of a token loom made', async () => {
   await draw('primary');
   await make();
+  expect(json()).toContain(BEARER);
+  // A moment with no program setup answer is not an owner change: the value stays.
+  world = { setup, owner: 'sam', programs: false };
+  await redraw('primary');
+  expect(json()).toContain(BEARER);
+  world = { setup, owner: 'sam' };
+  await redraw('primary');
   expect(json()).toContain(BEARER);
   // Another owner signs in on this browser: the setup is still answered, but not for the owner who made it.
   world = { setup, owner: 'lee' };
   await redraw('primary');
   expect(json()).not.toContain(BEARER);
   expect(button('Make a token…')).toBeDefined();
-  // In flight when the owner changes: the member is told it may have been made, and the late answer is not drawn.
-  let answer!: () => void;
-  hold = new Promise((resolve) => { answer = resolve; });
+  // In flight when the owner changes: the member is told it may have been made; loom makes it, so the board is told
+  // and the brick says its value is lost, never drawing it.
+  const answer = holding();
   await make('second');
   world = { setup, owner: 'sam' };
   await redraw('primary');
-  expect(shown()).toContain('Token creation for “second” may have completed.');
-  await act(async () => { answer(); await Promise.resolve(); });
+  expect(notices()).toEqual([MAYBE('second')]);
+  expect(button('Make token')!.props.disabled).toBe(false); // the form is free again
+  await answer();
   expect(json()).not.toContain(BEARER);
-  expect(reported.mock.calls).toEqual([['token', { label: 'pump-laptop', kind: 'member' }]]);
+  expect(notices()).toEqual([expect.stringContaining(MADE('second'))]);
+  expect(reported.mock.calls).toEqual([['token', { label: 'pump-laptop', kind: 'member' }], ['token', { label: 'second', kind: 'member' }]]);
   nowhere();
 });
 
