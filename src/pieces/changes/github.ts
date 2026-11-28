@@ -104,3 +104,37 @@ export function githubReader(secrets:Secrets, request:typeof fetch=fetch) {
   });} catch {throw new Error('GitHub read unavailable');} // Never persist/log an upstream exception or credential.
  };
 }
+
+/** One file of a pull request as GitHub's REST files list gives it: its path and, where GitHub has one, its patch.
+ * Other fields are ignored; a malformed entry fails the read. */
+const fileEntry = z.object({ filename: z.string(), patch: z.string().optional() });
+/** Pages of GitHub's files list asked for at most, a hundred files each, before a file is taken as not listed.
+ * `change_files` holds the first hundred files of the same pull request, in GitHub's order, so it is on the first. */
+export const PATCH_PAGES_MAX = 3;
+/** What GitHub says of one file of a pull request: not listed at all, or listed with its patch, or with none
+ * (a binary file, or a diff too large for GitHub to give). */
+export type FilePatchAnswer = { listed: false } | { listed: true; patch: string | null };
+export type FilePatchReader = (repo: string, number: number, path: string) => Promise<FilePatchAnswer>;
+/** The patch of one file of one pull request, from GitHub's REST files list (GET /repos/{owner}/{repo}/pulls/{number}/files),
+ * read with the same credential, the same request function and the same rules as `githubReader`: a fixed address made
+ * from the stored repository and number only (the path is never sent), no redirect, a time limit, the token redacted
+ * from everything read. It reads the same pull request GitHub's GraphQL read does and needs no other permission. */
+export function githubPatchReader(secrets:Secrets, request:typeof fetch=fetch): FilePatchReader {
+ return async(repo,number,path)=>{
+  repo=repoId(repo);const [owner,name]=repo.slice(7).split('/');
+  if(!Number.isSafeInteger(number)||number<=0)throw new Error('GitHub read unavailable');
+  try {return await withGitHub(secrets,owner,async token=>{
+   if(!token) throw new Error('Missing credential');
+   for(let page=1;page<=PATCH_PAGES_MAX;page++){
+    const response=await request(`https://api.github.com/repos/${owner}/${name}/pulls/${number}/files?per_page=100&page=${page}`,{method:'GET',redirect:'error',
+     headers:{authorization:'Bearer '+token,accept:'application/vnd.github+json','x-github-api-version':'2022-11-28'},signal:AbortSignal.timeout(20000)});
+    if(!response.ok)throw new Error('GitHub read failed');
+    const files=z.array(fileEntry).max(100).parse(parseRedactedJSON(await response.text(),token!));
+    const found=files.find(f=>f.filename===path);
+    if(found)return {listed:true,patch:found.patch??null};
+    if(files.length<100)break;
+   }
+   return {listed:false};
+  });} catch {throw new Error('GitHub read unavailable');} // Never persist/log an upstream exception or credential.
+ };
+}
