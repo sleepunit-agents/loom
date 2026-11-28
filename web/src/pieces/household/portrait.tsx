@@ -6,10 +6,12 @@ import {SPRITE_MAX_BYTES} from '../../../../src/desk-sprite-layout';
 import {Button,Field,Fields,Input} from '../../kit';
 import {MemberOperationError,memberOperation} from '../../data/operation';
 
-async function readPortrait(form:HTMLFormElement){
-  const files=new FormData(form),sheet=files.get('png'),metadata=files.get('metadata');
-  if(!(sheet instanceof File)||!sheet.size||sheet.size>SPRITE_MAX_BYTES)throw Error('Choose a PNG sheet up to 4 MB.');
-  if(!(metadata instanceof File)||!metadata.size||metadata.size>DOOR_REQUEST_BYTES)throw Error('Choose PixelLab animation JSON up to 1 MB.');
+export const SHEET_LIMIT_WORDS='Choose a PNG sheet up to 4 MB.',METADATA_LIMIT_WORDS='Choose PixelLab animation JSON up to 1 MB.';
+/** A portrait as household.setPortrait takes it, from the two chosen files, each checked against loom's limits
+ * before anything is sent. Shared with the boards' household brick (web/src/boards/bricks-household-portrait.tsx). */
+export async function readPortraitFiles(sheet:unknown,metadata:unknown){
+  if(!(sheet instanceof File)||!sheet.size||sheet.size>SPRITE_MAX_BYTES)throw Error(SHEET_LIMIT_WORDS);
+  if(!(metadata instanceof File)||!metadata.size||metadata.size>DOOR_REQUEST_BYTES)throw Error(METADATA_LIMIT_WORDS);
   const layout=manifestFromPixelLab(JSON.parse(await metadata.text()));
   const png=await new Promise<string>((resolve,reject)=>{
     const reader=new FileReader();
@@ -19,7 +21,16 @@ async function readPortrait(form:HTMLFormElement){
   });
   return {layout,png};
 }
-type Request={id:string;input:{agent:string;version:string|null;portrait:Awaited<ReturnType<typeof readPortrait>>|null}};
+async function readPortrait(form:HTMLFormElement){
+  const files=new FormData(form);
+  return readPortraitFiles(files.get('png'),files.get('metadata'));
+}
+/** What loom's refusal (a 4xx) of a portrait change means, in the desktop's words. */
+export const portraitRefusal=(status:number)=>status===409?'The portrait changed. Review the current face and choose the files again.':
+  (status===401||status===403)?'Sign in as a household owner to change a portrait.':
+  'Choose a valid PNG sheet up to 16 megapixels and its matching PixelLab animation JSON.';
+export type PortraitInput={agent:string;version:string|null;portrait:Awaited<ReturnType<typeof readPortraitFiles>>|null};
+type Request={id:string;input:PortraitInput};
 
 export function Portrait({agent,version,enabled}:{agent:string;version:string|null;enabled:boolean}){
   const [busy,setBusy]=useState(false),[message,setMessage]=useState('');
@@ -48,9 +59,7 @@ export function Portrait({agent,version,enabled}:{agent:string;version:string|nu
     }catch(error){
       if(error instanceof MemberOperationError&&error.status>=400&&error.status<500){
         reset();
-        setMessage(error.status===409?'The portrait changed. Review the current face and choose the files again.':
-          (error.status===401||error.status===403)?'Sign in as a household owner to change a portrait.':
-          'Choose a valid PNG sheet up to 16 megapixels and its matching PixelLab animation JSON.');
+        setMessage(portraitRefusal(error.status));
       }else if(request){
         setRetry(request);setMessage('Could not confirm the change. Retry to check or finish it.');
       }else setMessage(error instanceof Error?error.message:'Could not read this portrait.');

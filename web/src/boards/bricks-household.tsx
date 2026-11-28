@@ -4,8 +4,13 @@
  * no token's value, and none is shown. Revoking a token and signing a browser out are the desktop's own calls
  * (signin/session-change.ts over `token.revoke` and `sessions.revoke`), asked first. An outside program's grants are
  * saved by `program.setGrants`. What the desktop changes by a message to the agent (a member, an agent's appearance
- * and accounts, a restore) is said so here: the conversation is beside the board. A portrait is two chosen files read
- * in the browser and is left to the desktop.
+ * and accounts, a restore) is said so here: the conversation is beside the board. An agent's animated portrait is
+ * changed on its row from two files chosen in the brick and sent straight to `household.setPortrait`
+ * (./bricks-household-portrait.tsx); the board is told the agent and whether it was uploaded or restored.
+ *
+ * THE LISTS. Tokens and browsers are drawn live first; the revoked, expired and signed-out ones are folded behind one
+ * heading with their count, thirty at a time once opened. A search over label, kind and owner filters the rows loom
+ * already sent, on Enter or Search: its words are this page's state and are never sent, stored or told (`Listed`).
  *
  * MAKING A TOKEN. By the desktop's own door, `POST /api/signin/token` (`/api/signin/program` for an outside program;
  * src/core/signin/shared-links.ts), which answers a current household owner whose browser signed in within the last
@@ -29,6 +34,7 @@ import { memberOperation } from '../data/operation';
 import { agentOwnership, householdSetupQuery, programLine, programNote, programQuery, sessionLine, setupWords, tokenState, type HouseholdSetup, type ProgramSetupData } from '../pieces/household/model';
 import { sessionChange } from '../signin/session-change';
 import { isMember, isRef } from './admin-data';
+import { PortraitRow } from './bricks-household-portrait';
 import { Action, Actions, AskRow, Chip, Fact, Facts, Field, Lead, Loading, Menu, Note, Opened, Opens, Problem, Row, Rows, Section, Segmented, State, Time, Unavailable, count, type Act, type BodyProps, type Tone } from './brick-kit';
 
 const agentChip = (id: string) => (isRef(id) ? <Chip key={id} place={{ brick: 'agent', params: { agent: id } }}>{id}</Chip> : <span key={id}>{id}</span>);
@@ -115,10 +121,13 @@ export function Household({ form, act }: BodyProps) {
       </Section>
       <Section title="Agents" count={agents.length}>
         <Rows>
-          {agents.map((agent) => (
-            <Row key={agent.id} title={agentChip(agent.id)} end={<span>{agentOwnership(setup.members, agent.id)}</span>}
-              meta={primary ? <>{agent.about || 'No description'} · GitHub accounts: {agent.github.join(', ') || 'none'} · {agent.spriteVersion ? 'Animated portrait' : 'Generated face'}</> : undefined} />
-          ))}
+          {agents.map((agent) => {
+            const end = <span>{agentOwnership(setup.members, agent.id)}</span>;
+            const meta = <>{agent.about || 'No description'} · GitHub accounts: {agent.github.join(', ') || 'none'} · {agent.spriteVersion ? 'Animated portrait' : 'Generated face'}</>;
+            // An agent whose id a board cannot hold is not offered the change: the board could not be told of it.
+            return isRef(agent.id) ? <PortraitRow key={agent.id} agent={agent.id} version={agent.spriteVersion ?? null} title={agentChip(agent.id)} meta={meta} end={end} act={act} />
+              : <Row key={agent.id} title={agentChip(agent.id)} end={end} meta={meta} />;
+          })}
         </Rows>
         <Note>Default agent: {setup.defaultAgent ?? 'None'}{primary && !!removed.length && <> · Removed: {removed.map((agent) => agent.id).join(', ')}</>}</Note>
       </Section>
@@ -154,7 +163,6 @@ export function Household({ form, act }: BodyProps) {
       {primary && (
         <>
           <Note>To add or change a member, an agent’s description, badge, face or GitHub accounts, or to restore a removed agent, ask the agent in the conversation: it proposes the change and you answer it in the Inbox.</Note>
-          <Note>An agent’s animated portrait is changed on the desktop.</Note>
         </>
       )}
     </>
