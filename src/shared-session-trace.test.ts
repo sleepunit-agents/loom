@@ -238,6 +238,22 @@ it('reads only the steps after one the reader already has, earliest first, a bou
   expect((await f.query(`{sessionTrace(conversation:${JSON.stringify(f.child)},after:0){seq}}`, bobToken)).data).toEqual({ sessionTrace: [] });
 });
 
+it('reads the latest steps before one the reader already has, oldest first, and counts every step', async () => {
+  const f = await fixture();
+  for (let n = 1; n <= 5; n++) expect((await f.report({ ...step, clientId: 'step-' + n, words: 'Step ' + n }, 'r' + n)).status).toBe(200);
+  const before = (seq: number, limit?: number) => f.query(`{sessionTrace(conversation:${JSON.stringify(f.child)},before:${seq}${limit ? ',limit:' + limit : ''}){seq words}}`, bodyCredentials.member);
+  expect((await before(4, 2)).data).toEqual({ sessionTrace: [{ seq: 2, words: 'Step 2' }, { seq: 3, words: 'Step 3' }] });
+  expect((await before(2, 2)).data).toEqual({ sessionTrace: [{ seq: 1, words: 'Step 1' }] });
+  expect((await before(1)).data).toEqual({ sessionTrace: [] });
+  expect((await before(0)).errors).toBeDefined();
+  expect((await f.query(`{sessionTrace(conversation:${JSON.stringify(f.child)},before:3,after:1){seq}}`, bodyCredentials.member)).errors).toBeDefined();
+  const total = (token: string) => f.query(`{n:sessionTraceCount(conversation:${JSON.stringify(f.child)})}`, token);
+  expect((await total(bodyCredentials.member)).data).toEqual({ n: 5 });
+  // Nobody else reads anything this way, nor learns how many there are.
+  expect((await f.query(`{sessionTrace(conversation:${JSON.stringify(f.child)},before:5){seq}}`, bobToken)).data).toEqual({ sessionTrace: [] });
+  expect((await total(bobToken)).data).toEqual({ n: 0 });
+});
+
 it('keeps no step for a job on anybody else\'s word, whatever its body sends', async () => {
   const f = await fixture(), at = new Date(f.clock.now()).toISOString();
   const job = f.db.select().from(s.jobs).where(eq(s.jobs.id, 'child-job')).get()!;

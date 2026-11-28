@@ -9,7 +9,7 @@
  * erases expired message words deletes an expired step's whole row, so nothing a body reported outlives its keep
  * time, and deleting the originating thread removes the rows. They are read by the member the child conversation
  * belongs to, who is the member of the originating thread, and by nobody else. */
-import { and, asc, count, desc, eq, getTableColumns, gt, inArray, like, max, min, or, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, getTableColumns, gt, inArray, like, lt, max, min, or, sql } from 'drizzle-orm';
 import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
@@ -111,18 +111,28 @@ export class JobTraceQueries {
     return and(eq(conversations.id, conversation), eq(conversations.venue, 'handoff'), eq(conversations.member, viewer.id), this.policy(viewer, getTableColumns(conversations)));
   }
   /** The latest steps, oldest first; or, with `after`, the earliest steps after that one, so a reader that has a
-   * page asks only for what is newer and opens no step twice (a stored step never changes). The viewer must be the
+   * page asks only for what is newer and opens no step twice (a stored step never changes); or, with `before`, the
+   * latest steps before that one, oldest first, so a reader can page back to earlier steps. The viewer must be the
    * member the handoff conversation belongs to, under the same conversation rule every Comms read uses; anybody
    * else, and any other venue, reads nothing. */
-  steps(viewer: Viewer, input: { conversation: string; job?: string | null; limit?: number | null; after?: number | null }): Step[] {
-    const page = input.limit ?? TRACE_PAGE_DEFAULT, after = input.after ?? null;
+  steps(viewer: Viewer, input: { conversation: string; job?: string | null; limit?: number | null; after?: number | null; before?: number | null }): Step[] {
+    const page = input.limit ?? TRACE_PAGE_DEFAULT, after = input.after ?? null, before = input.before ?? null;
     if (!Number.isInteger(page) || page < 1 || page > TRACE_PAGE_MAX) throw new Error('Invalid trace page size');
     if (after !== null && (!Number.isInteger(after) || after < 0)) throw new Error('Invalid trace position');
+    if (before !== null && (!Number.isInteger(before) || before < 1)) throw new Error('Invalid trace position');
+    if (after !== null && before !== null) throw new Error('Ask for steps after one or before one, not both');
     if (viewer.kind !== 'member') return [];
     const found = this.db.select(getTableColumns(jobTrace)).from(jobTrace).innerJoin(conversations, eq(conversations.id, jobTrace.conversation))
       .where(and(eq(jobTrace.conversation, input.conversation), input.job ? eq(jobTrace.job, input.job) : undefined,
-        after === null ? undefined : gt(jobTrace.seq, after), this.mine(viewer, input.conversation)));
+        after === null ? undefined : gt(jobTrace.seq, after), before === null ? undefined : lt(jobTrace.seq, before), this.mine(viewer, input.conversation)));
     return after === null ? found.orderBy(desc(jobTrace.seq)).limit(page).all().reverse() : found.orderBy(asc(jobTrace.seq)).limit(page).all();
+  }
+
+  /** How many steps the trace holds in all, under the same rule as `steps`: nought for anybody who may not read it. */
+  total(viewer: Viewer, input: { conversation: string; job?: string | null }): number {
+    if (viewer.kind !== 'member') return 0;
+    return this.db.select({ n: count() }).from(jobTrace).innerJoin(conversations, eq(conversations.id, jobTrace.conversation))
+      .where(and(eq(jobTrace.conversation, input.conversation), input.job ? eq(jobTrace.job, input.job) : undefined, this.mine(viewer, input.conversation))).get()?.n ?? 0;
   }
 
   /** Whether a job's steps are past their keep time: it has none, and it was queued longer ago than a step is kept.
@@ -167,9 +177,13 @@ export function jobTraceFields(service: JobTraceQueries): GraphQLFieldConfigMap<
   return {
     sessionTrace: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(step))),
       args: { conversation: text, job: { type: GraphQLString }, limit: { type: GraphQLInt, defaultValue: TRACE_PAGE_DEFAULT },
-        after: { type: GraphQLInt, description: 'Only steps after this seq, earliest first. A stored step never changes, so a reader that has some asks only for newer ones.' } },
-      resolve: (_row, args: { conversation: string; job?: string | null; limit?: number | null; after?: number | null }, context, info) =>
+        after: { type: GraphQLInt, description: 'Only steps after this seq, earliest first. A stored step never changes, so a reader that has some asks only for newer ones.' },
+        before: { type: GraphQLInt, description: 'Only steps before this seq: the latest page of them, oldest first. How a reader loads earlier steps.' } },
+      resolve: (_row, args: { conversation: string; job?: string | null; limit?: number | null; after?: number | null; before?: number | null }, context, info) =>
         selectedQueryFields(info).has('words') ? service.opened(context.viewer, args, until => keepReadUntil(context, until)) : service.steps(context.viewer, args) },
+    sessionTraceCount: { type: new GraphQLNonNull(GraphQLInt), args: { conversation: text, job: { type: GraphQLString } },
+      description: 'How many steps the trace holds in all; nought for anybody who may not read it.',
+      resolve: (_row, args: { conversation: string; job?: string | null }, context) => service.total(context.viewer, args) },
     sessionTraceExpired: { type: new GraphQLNonNull(GraphQLBoolean), args: { conversation: text, job: text },
       description: 'The job has no steps and is older than a step is kept: any it reported are no longer kept.',
       resolve: (_row, args: { conversation: string; job: string }, context) => service.expired(context.viewer, args) },
