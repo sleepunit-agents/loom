@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { existsSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -8,6 +8,30 @@ import { expect, it } from 'vitest';
 import { ownHome } from '../core/daemon-home.js';
 import { exampleHome } from '../example-home.js';
 import { migrateComms } from './migrate-questions.js';
+
+/** How long the real command may take before it counts as hung. It finishes in about a second, and in seconds on a
+ * loaded machine. */
+const COMMAND_LIMIT_MS = 25_000;
+
+/** Run the real `loom` command line in a child process. Not spawnSync: it blocks this worker, so a child that never
+ * exits held the whole unit run, with vitest's hang detector unable to fire (t-2436: a child sat at 0% CPU for 22
+ * minutes). A Node process that cannot start all its platform threads (a machine at its task limit) waits for them
+ * forever (node v24's node_platform.cc, WorkerThreadsTaskRunner). So the child is killed after COMMAND_LIMIT_MS and
+ * the test says so. */
+function loomCommand(args: string[]): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  const entry = fileURLToPath(new URL('../index.ts', import.meta.url));
+  return new Promise((resolve, reject) => {
+    const child = execFile(process.execPath, ['--import', 'tsx', entry, ...args], { encoding: 'utf8', timeout: COMMAND_LIMIT_MS, killSignal: 'SIGKILL' },
+      (error, stdout, stderr) => {
+        if (error && error.killed) {
+          reject(Error(`loom ${args.slice(0, 2).join(' ')} (pid ${child.pid}) did not exit within ${COMMAND_LIMIT_MS / 1000} s and was killed. stderr: ${stderr || '(none)'}`));
+          return;
+        }
+        if (error && typeof error.code !== 'number') { reject(error); return; }
+        resolve({ status: error ? error.code as number : 0, stdout, stderr });
+      });
+  });
+}
 
 it('opens completed archive backups only while the destination is stopped', async () => {
   const temp = mkdtempSync(join(tmpdir(), 'loom-question-command-'));
@@ -67,8 +91,7 @@ it('opens completed archive backups only while the destination is stopped', asyn
       words.exec('CREATE TABLE comms_messages(thread,seq,kind,sender,id,at,run,text,delivered)');
     } finally {metadata.close();words.close();}
     for (const [phase,report] of [['comms-threads','Comms threads'],['comms-text','Comms text messages']]) {
-      const entry=fileURLToPath(new URL('../index.ts',import.meta.url));
-      const result=spawnSync(process.execPath,['--import','tsx',entry,'migrate',phase,'--home',home,'--source',source],{encoding:'utf8'});
+      const result=await loomCommand(['migrate',phase,'--home',home,'--source',source]);
       expect(result.status,result.stderr).toBe(0);
       expect(result.stdout).toContain('Imported 0 of 0 '+report);
     }
@@ -106,4 +129,4 @@ it('opens completed archive backups only while the destination is stopped', asyn
       expect(existsSync(join(source,'household.db-wal'))).toBe(false);
     } finally {inspect.close();}
   } finally { rmSync(temp, { recursive: true, force: true }); }
-}, 30_000);
+});

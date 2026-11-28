@@ -276,6 +276,19 @@ it('keeps equivalent role selectors stable and supports registered native harnes
  expect(eligibleModels(role,[native,{...native,harness:'custom'}],new Set(Object.keys(harnesses)))).toEqual([native]);
 });
 
+/** The handed-off job's result, once it has reached its parent thread. A job that ends with no result is reported to
+ * that thread by work the ending only starts (shared-root.ts, `deliverReview`): it seals the words and commits the
+ * message later, on its own. `vi.waitFor` gave that one second of real time (its default), which a loaded machine
+ * passed: the event loop was held 0.7-2.7 s after the poll that ended the job. So this waits for the commit itself,
+ * and fails with what it was waiting for if none brings the message. */
+function delivered<T>(f:{root:{writes:{observe(committed:()=>void):()=>void}}},find:()=>T|undefined,what:string):Promise<T>{
+ return new Promise<T>((resolve,reject)=>{
+  const check=()=>{const found=find();if(found===undefined)return;stop();clearTimeout(timer);resolve(found);};
+  const stop=f.root.writes.observe(check);
+  const timer=setTimeout(()=>{stop();reject(Error('No commit delivered '+what+' within 30 s'));},30_000);
+  check();
+ });
+}
 it.each(['success','failure','archive','transient','occupied','work-role','mixed-native','role-changed','assignment-removed','agent-removed','scope-changed','origin-changed','worker-loss','parent-retry','expired-brief'] as const)('delivers an owner-requested Codex handoff through its originating thread (%s)',async(mode)=>{
  const mixed=mode==='mixed-native';
  const roleMode=mode==='parent-retry'||mixed||mode==='work-role'||mode==='role-changed'||mode==='agent-removed'||mode==='worker-loss';
@@ -368,10 +381,7 @@ it.each(['success','failure','archive','transient','occupied','work-role','mixed
   expect((await polled.json()).value).toBeNull();
   const stopped=db.select().from(s.jobs).where(eq(s.jobs.conversation,child)).get();
   expect(stopped).toMatchObject({state:'failed',claimedAt:null,box:null});
-  const result=await vi.waitFor(()=>{
-   const message=db.select().from(s.messages).where(eq(s.messages.clientId,'review:'+child)).get();
-   expect(message).toBeDefined();return message!;
-  });
+  const result=await delivered(f,()=>db.select().from(s.messages).where(eq(s.messages.clientId,'review:'+child)).get(),'the expired brief\'s result to its parent thread');
   expect(result.thread).toBe(f.thread.id);
   expect(await f.key.open(result.words!)).toContain('The handoff brief expired.');
   return;
@@ -419,10 +429,7 @@ it.each(['success','failure','archive','transient','occupied','work-role','mixed
  if(mode==='role-changed'){
   db.update(s.conversations).set({place:reviewPlace('job','review-one',{id:'research',revision:'0'.repeat(64)})}).where(eq(s.conversations.id,child)).run();
   await next('changed-role',true);
-  const failure = await vi.waitFor(()=>{
-   const result=db.select().from(s.messages).where(eq(s.messages.clientId,'review:'+child)).get();
-   expect(result).toBeDefined();return result!;
-  });
+  const failure=await delivered(f,()=>db.select().from(s.messages).where(eq(s.messages.clientId,'review:'+child)).get(),'the changed role\'s result to its parent thread');
   expect(failure.thread).toBe(f.thread.id);
   expect(await f.key.open(failure.words!)).toContain('The requested work role changed or was removed.');
   expect(db.select().from(s.jobs).where(eq(s.jobs.conversation,child)).get()).toMatchObject({state:'failed'});
@@ -472,16 +479,18 @@ it.each(['success','failure','archive','transient','occupied','work-role','mixed
   return;
  }
  if(mode==='failure'||mode==='transient'){
-  let refused=false;
-  if(mode==='transient')f.gate(async()=>{if(!refused){refused=true;throw Error('Temporary key unavailability');}});
+  let refused=false,sealRefused!:()=>void;const refusal=new Promise<void>(resolve=>{sealRefused=resolve;});
+  if(mode==='transient')f.gate(async()=>{if(!refused){refused=true;sealRefused();throw Error('Temporary key unavailability');}});
   root.services.runtime.stop(assignment.id,'alice','write-off');
   if(mode==='transient'){
-   await vi.waitFor(()=>expect(refused).toBe(true));
+   // The refusal's retry is set when the rejection reaches deliverReview, all in microtasks: one macrotask later it is.
+   await refusal;
    await new Promise(resolve=>setImmediate(resolve));
    f.clock.advance(30_001);
   }
-  await vi.waitFor(()=>expect(db.select().from(s.messages).where(eq(s.messages.kind,'reply')).all()).toHaveLength(1));
-  const failure=db.select().from(s.messages).where(eq(s.messages.kind,'reply')).get()!;
+  const replies=await delivered(f,()=>{const rows=db.select().from(s.messages).where(eq(s.messages.kind,'reply')).all();return rows.length?rows:undefined;},'the stopped job\'s result to its parent thread');
+  expect(replies).toHaveLength(1);
+  const failure=replies[0]!;
   expect(await f.key.open(failure.words!)).toContain('the job was stopped');return;
  }
  // The original requester is finished. A different body can already be holding its thread when the child replies.
