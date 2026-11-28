@@ -652,6 +652,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `sharing` | none | none: a project's sharing is changed by asking the agent | none |
 | `tickets` | `state`: `ready`, `in-progress`, `shelved` or `all`, default `ready` (what the desktop's Tasks opens on). No record reference, and no parameter holds words to search for | none: a ticket is acted on in its `ticket` brick | none |
 | `projects` | none: the words searched for are typed inside the brick and are no parameter | none | none |
+| `catchup` | `since`: `today`, `3-days` or `7-days`, default `today`. No record reference | none: a ticket is acted on in its `ticket` brick | none |
 
 | Brick | Can be big | Flags itself when |
 | --- | --- | --- |
@@ -759,6 +760,38 @@ member, a household owner and a member on no project); `web/src/boards/bricks-ti
 asked for each state, rows as `ticket` chips, empty, loading, unavailable, paging to the cap, and the search (once
 on submit, results, nothing matches, unavailable, back to the list, nothing to the board).
 | `projects` | yes: up to 200 projects by name, each with its goal and where it stands, and a search box. Small: the first six. Folded: the counts | never |
+| `catchup` | yes: every project with something since `since`, by name, its three newest moved tickets, each a `ticket` chip with what moved it (an agent's update with the agent's chip, a comment, closed, started, opened) and when, the project's chip, and chips for the other two times. Small: as many moved tickets as fit across projects, newest first, with their project. Folded: how many tickets moved in how many projects | never |
+| `trend`, added later on 2026-11-27 | yes: also "Backlog history", opened on a press: what was open at the start and the end of the chart's window, and the desktop's groups with their counts, a picked group's tickets as `ticket` chips with their titles, fifty at most | as above |
+
+**The catch-up and the backlog history, 2026-11-27 (t-2428).** `catchup` is the desktop's Work catch-up
+(`pieces/work/catch-up.tsx`) across every project the member may read, through the desktop's two reads, by the brick's
+own names: the projects with their tickets changed since a time, four a project, each with its latest comment
+(`projects { tasksByProject }`, the generated schema, so by the tasks and projects rules alone), and the agents'
+latest updates on tickets, four a project (`projectActivityHighlights` with no project: only tickets the member may
+read, in projects they may read, from sources they may read, `core/conversations/project-posts.ts`). They are put
+together as the desktop puts them: a ticket says the newest of its update, its comment or what happened to it, a
+ticket only an update names is listed too, and a removed project is left out. The desktop's time is "since your last
+visit on this desktop", kept in the browser's storage; a board keeps nothing there (rule 3), so the time is the
+parameter, and `today` is the default because it is the nearest fixed choice to a daily visit and the smallest read.
+`today` is from the start of the member's day in the device's zone, and `3-days` and `7-days` from the start of the
+day two and six days before it, as `trend` counts its days; the time is worked out when the brick is drawn and when
+its parameter changes, not again at midnight. **Reads:** both are live, relaxed; if the updates fail the changed
+tickets are still shown, with a line saying the updates are unavailable. The project names are links on the desktop
+and `project` chips here; an update's agent is an `agent` chip; a comment's author is its id, in words.
+
+`trend`'s backlog history is the desktop's `projectBacklogWindow` (`core/data/backlog-window.ts`, the desktop's
+`pieces/work/backlog-window.tsx`) for the project and the window the chart shows: from the start of the first of its
+`days` to the moment it is opened. It is drawn in the big form only and is closed until the member opens it. **Reads:**
+none live. Each opening is one read of the counts (`useDataOnce`), and each group picked one read of that group's
+first fifty tickets, by title; past fifty it says how many there are and that the desktop lists the rest. Hiding it,
+the brick leaving its big form, or its project or `days` changing forgets what was read. Who may read it is the
+server's rule: a project the member may read, and in it only the tickets the member may open today; any other project
+is no answer, and the section says the history is unavailable. Before loom kept the history (migration 44) it says
+where history starts. Checked: `web/src/boards/bricks-catchup-queries.test.ts` runs the catch-up's two reads and the
+backlog history against loom's generated schema and the server's own fields under the real rules (a member, a
+household owner and a member on no project); `bricks-catchup.test.tsx` and `bricks-trend-backlog.test.tsx` check
+each time's variables, each form, empty, loading, unavailable, the updates failing alone, opening and closing, a
+picked group, and forgetting on a change.
 
 **The conversations and agents bricks, 2026-11-27.** Each reads what the desktop's Comms, Home and Agents apps read.
 

@@ -60,7 +60,7 @@ function History({ project, from, until }: { project: string; from: string; unti
       {!counts.size ? <Note>Nothing was in this project's backlog in this time.</Note> : (
         <>
           <Lead>{n('start')} open at the start · {n('end')} open at the end</Lead>
-          <Menu label="Tickets" value={group ?? ('' as Group)} onChange={pick}
+          <Menu<Group | ''> label="Tickets" value={group ?? ''} onChange={(g) => pick(g || null)}
             options={(Object.keys(backlogGroups) as Group[]).map((key) => ({ value: key, label: `${backlogGroups[key]} · ${n(key)}` }))} />
           {group && <Section title={backlogGroups[group]} count={n(group)}><Tickets key={group} project={project} from={from} until={until} group={group} total={n(group)} /></Section>}
         </>

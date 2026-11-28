@@ -132,7 +132,7 @@ describe('lanes', () => {
     data();
     const { root } = await draw('lanes', { project: 'garden' }, 'primary');
     expect(root.findAllByType('section').map((s) => [s.props['aria-label'], s.props['data-empty']])).toEqual([['Working', false], ['Verifying', false], ['Waiting', true]]);
-    expect(root.findAllByType('button').map((b) => JSON.parse(b.props['data-place']))).toEqual(['t-1', 't-2', 't-3'].map((ticket) => ({ brick: 'ticket', params: { ticket } })));
+    expect(root.findAllByType('button').filter((b) => b.props['data-place']).map((b) => JSON.parse(b.props['data-place']))).toEqual(['t-1', 't-2', 't-3'].map((ticket) => ({ brick: 'ticket', params: { ticket } })));
   });
   it('shows three tickets a lane in the side form and says how many more', async () => {
     data({ BrickLanes: live({ projectBoardTickets: Array.from({ length: 5 }, (_, i) => ({ id: 't-' + i, title: 'T' + i, lane: 'Working', reason: null, assignee: null })) }) });
@@ -389,7 +389,7 @@ describe('trend', () => {
     const hits = root.findAll((n) => n.type === 'rect' && n.props.className === 'board-trend-hit');
     expect(hits).toHaveLength(7);
     await act(async () => hits[6].props.onClick());
-    expect(root.findAllByType('button').map((b) => JSON.parse(b.props['data-place']))).toEqual([{ brick: 'ticket', params: { ticket: 't-1' } }, { brick: 'ticket', params: { ticket: 't-1' } }]);
+    expect(root.findAllByType('button').filter((b) => b.props['data-place']).map((b) => JSON.parse(b.props['data-place']))).toEqual([{ brick: 'ticket', params: { ticket: 't-1' } }, { brick: 'ticket', params: { ticket: 't-1' } }]);
     expect((await draw('trend', { project: 'garden', days: 7 }, 'side')).root.findAll((n) => n.type === 'rect' && n.props.className === 'board-trend-hit')).toHaveLength(0);
   });
 });
