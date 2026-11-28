@@ -10,7 +10,7 @@
 import { Suspense, useEffect, useRef, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { bricks, brickView } from '../bricks';
-import { Loading } from '../brick-kit';
+import { Here, Loading } from '../brick-kit';
 import type { Form } from '../layout';
 import { PlacementFrame } from '../placement';
 import { SceneContext } from './fake-graphql';
@@ -67,7 +67,7 @@ function Shot({ brick, scene, form }: { brick: string; scene: Scene; form: Drawn
         <Pressed labels={scene.press}>
           <PlacementFrame title={view.title(scene.params)} sub={view.sub(scene.params)} form={drawnForm} flag={scene.flag} canMaximize={drawnForm !== 'primary'}
             style={{ width: size.w, height: size.h }}>
-            <Suspense fallback={<Loading />}><Body params={scene.params} form={drawnForm} act={() => {}} raise={() => {}} /></Suspense>
+            <Here.Provider value={{ thread: scene.here }}><Suspense fallback={<Loading />}><Body params={scene.params} form={drawnForm} act={() => {}} raise={() => {}} /></Suspense></Here.Provider>
           </PlacementFrame>
         </Pressed>
       </SceneContext.Provider>

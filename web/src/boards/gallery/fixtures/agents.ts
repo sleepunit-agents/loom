@@ -90,7 +90,24 @@ const fernTickets = tickets([
   ['t-3', 'Fence the north bed before the first frost', 'in_progress'], ['t-7', 'Order mulch for the south beds', 'in_progress'],
   ['t-11', 'Label every row in the kitchen garden', 'open'], ['t-12', 'Find out why the water butt overflows', 'open'],
 ]);
+// Fern's activity posts: five threads, newest first, and the fence thread's posts 25 a page (the desktop's reads).
+const post = (id: string, minutes: number, words: string, sourceTask: string | null = null) => ({ id, at: ago(minutes), words, source: 'agent', sourceTask, work: [] });
+const postThreads = [
+  { thread: 'ap-fence', title: 'The fence along the north bed', latest: post('p-0140', 14, 'Posts are priced: Ashby is **£437** delivered Thursday, Brook Yard £402 collect only. I would choose Ashby.'), parent: null },
+  { thread: 'ap-mulch', title: 'Mulch for the south beds', latest: post('p-0131', 190, 'Ordered 12 bags of bark mulch; they come on Saturday morning.'), parent: null },
+  { thread: 'ap-rows', title: 'Labelling the kitchen garden', latest: post('p-0120', 1500, 'Half the rows have labels now. The rest wait on the slate tags.'), parent: null },
+  { thread: 'ap-butt', title: 'Why the water butt overflows', latest: post('p-0102', 3100, 'The downpipe diverter is set to fill and never to overflow back. Turned it.'), parent: null },
+  { thread: 'ap-frost', title: 'Frost watch', latest: post('p-0090', 5000, 'Covered the seedlings: 1.2 °C forecast at four.'), parent: null },
+  { thread: 'ap-older', title: 'Older', latest: post('p-0010', 9000, 'Older words'), parent: null },
+];
+const fenceWords = ['Surveyed the north bed against Sam’s plan of the second.', 'At 1.8 m spacing the bed needs 23 posts.', 'Asked two suppliers for larch posts, 100 mm square.', 'Ashby answered first.', 'Brook Yard is cheaper but collect only.'];
+const fencePosts = Array.from({ length: 31 }, (_, n) => post('p-' + String(140 - n).padStart(4, '0'), 14 + n * 47, fenceWords[n % fenceWords.length], n % 6 === 0 ? 't-3' : null));
+const postHistory: Answer = (v: Record<string, unknown>) => {
+  const from = v.after === '0' ? 0 : fencePosts.findIndex((p) => p.id === v.after) + 1;
+  return { selected: [{ title: postThreads[0].title }], agentActivityHistory: v.thread === 'ap-fence' ? fencePosts.slice(from, from + Number(v.limit)) : [] };
+};
 const agentData = (over: Data = {}): Data => ({
+  AgentActivityFeed: { agentActivityFeed: postThreads }, AgentActivityHistory: postHistory,
   DeskAgentProfiles: profiles, DeskAgentStatus: statuses(), DeskWaitingCounts: waiting(), DeskHomeComms: homeComms, DeskAgentDirectory: directory, DeskAgentDisplays: displays,
   DeskDoing: doing(fernDoing.slice(0, 4), 1), DeskDoingAll: doing(fernDoing, 0, 2),
   BrickAgentJobs: (v: Record<string, unknown>) => ({ jobs: fernJobs.slice(0, Number(v.first)) }),
@@ -247,7 +264,12 @@ export const scenes: BrickScenes[] = [
       DeskDoing: doing([]), DeskDoingAll: doing([]), BrickAgentJobs: { jobs: [] }, BrickAssigned: tickets([]),
       DeskHomeComms: { homeComms: { member: 'alex', agents: owned, summaries: [] } },
     }) },
-    { name: 'partly-unavailable', params: { agent: 'fern' }, only: ['primary', 'side'], data: agentData({ DeskDoing: 'offline', DeskDoingAll: 'offline', BrickAgentJobs: 'offline', BrickAssigned: 'offline' }) },
+    { name: 'partly-unavailable', params: { agent: 'fern' }, only: ['primary', 'side'], data: agentData({ DeskDoing: 'offline', DeskDoingAll: 'offline', BrickAgentJobs: 'offline', BrickAssigned: 'offline', AgentActivityFeed: 'offline' }) },
+    // A thread of its posts opened, then its second page.
+    { name: 'posts-opened', params: { agent: 'fern' }, only: ['primary'], data: agentData(), press: ['The fence along the north bed'] },
+    { name: 'posts-earlier', params: { agent: 'fern' }, only: ['primary'], data: agentData(), press: ['The fence along the north bed', 'Earlier posts'] },
+    { name: 'no-posts', params: { agent: 'moss' }, only: ['primary'], data: agentData({ AgentActivityFeed: { agentActivityFeed: [] } }) },
+    { name: 'posts-unavailable', params: { agent: 'fern' }, only: ['primary'], data: agentData({ AgentActivityHistory: 'offline' }), press: ['The fence along the north bed'] },
     { name: 'loading', params: { agent: 'fern' }, only: ['side'], data: agentData({ DeskAgentProfiles: 'loading' }) },
     { name: 'unavailable', params: { agent: 'heron' }, data: agentData() },
   ] },

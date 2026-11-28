@@ -500,7 +500,25 @@ ids, making it with `comms.open` if it does not exist.
   name the thread's title as plain words before how the agent stands. One unobtrusive control beside it (three
   dots; the desktop launcher's keys open it too) opens one panel that holds everything else: the list of
   conversations, its search and a new one with each agent, this conversation's rename, pin, archive and delete, and
-  notifications on this device (a line that opens its state, its on and off, and its two choices). Nothing else is in the header.
+  notifications on this device (a line that opens its state, its on and off, and its two choices). Nothing else is in the header,
+  but for Stop while the agent is working (below).
+- **Stop, and the bridge receipt (built 2026-11-27, t-2428).** While the agent is working in the conversation, and
+  for the member whose conversation it is (never a terminal's), the header has "Stop…" beside the presence. It asks
+  first, naming the conversation and its agent ("Stop Art in “…”? What it is doing in this conversation ends now;
+  what it already did stays."), sends nothing on "Keep it going", and on "Stop the conversation" sends Comms' own
+  thread stop, `comms.change {stop}`, as the desktop's Comms header does: the permission is the one `comms.change`
+  holds, the thread's member and nobody else. It is not a job's stop (`runtime.jobStop`, which the `session` and
+  `agent` bricks send): loom marks the thread, and the job working in it notices (the worker before the body runs,
+  the body on its next report), stops, and ends as stopped by the member with the reason `stop`; a job that finishes
+  first keeps its work and the mark is dropped, so it never stops whatever is asked next. Once loom has the mark the
+  header says "Stopping…" and offers nothing more. A refusal says "You can’t stop this conversation."; any other
+  failure "That did not stop it. Try again.", and the question stays open. It reads nothing of its own: whether the
+  agent is working and whether a Stop is asked are the open thread's selection, the one the panel reads. A
+  conversation that came in by Discord or Slack has, under the header, the line the desktop's conversation activity
+  draws for it: when the member's latest message there arrived, whether the agent took it up and when, and whether a
+  reply went back ("Your message by Discord 5 min ago · Art took it up 4 min ago · Reply sent"). It is the desktop's
+  `latestBridgeReceipt` (the member's own messages only), read only for such a conversation, at the relaxed pace;
+  nothing of the bridge is named but which one, and nothing is linked.
 - **Threads (built 2026-11-27).** A control beside the presence, and the desktop launcher's keys (Ctrl+Space, a
   double tap of Shift), open a list of the member's open threads: Comms' own rows in Comms' order (pinned, then most
   recent; its first fifty), each with its title, its agent, "Working" and "Unread". Arrow keys move, Enter chooses,
@@ -641,7 +659,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `ticket` | yes: also why and done when, and "Sessions", the sessions handed off for it, newest first, each a `session` chip with its title, state and when; small, a line counting them when there are any; folded, unchanged | it is closed or reopened by someone else |
 | `comments` | yes | a comment arrives from someone else |
 | `person` (a member or a contact) | yes: what People's reader shows (see below) | never |
-| `agent` | yes: everything it is doing and its last thirty jobs | it starts waiting on the member (a question of its own joins the Inbox's "needs you" when none was there) |
+| `agent` | yes: everything it is doing, its last thirty jobs, and its activity posts (its five latest threads of posts, each opening to its posts 25 a page) | it starts waiting on the member (a question of its own joins the Inbox's "needs you" when none was there) |
 | `pull` | yes: also its branch and author, its failing and running checks by name, the people on it, whether it can be merged, its tickets with their titles, the files it changed with their added and removed lines, each opening in place to its patch (`changeFilePatch`, asked once each time it is opened, not live); when loom last read GitHub and whether that read failed, for a household owner; "Cold reviews", whose "Review history" opens in place to each round with its tier, verdict, commit and findings (`changeReviewHistory`, asked only while it is open); and Refresh from GitHub, for the member loom says may use it | its checks go to failing, it is merged, it is closed |
 | `repository` | yes: each open pull request with its title and where it stands | never |
 | `question` | no | never: being on the board is the flag |
@@ -660,7 +678,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `knowledge` | yes: up to 40 pages, the search box, the topics, "Add a fact" | never |
 | `people` | yes: up to 60 cards with who knows each, the search box, "Add a person" | never |
 | `activity` | yes: the range by day, and an entry opened in place | never |
-| `threads` | yes: every row of Comms' first page, with when each was last used, Pin or Unpin and Delete… on each, and Comms' search | never |
+| `threads` | yes: every row of Comms' first page, with when each was last used, Pin or Unpin and Delete… on each (no Delete on the conversation the page is open on), and Comms' search | never |
 | `agents` | no | never |
 | `tempo` | yes: every trigger of the agent, the day's recorded firings, and New trigger…, which opens the desktop's Create trigger form in their place; small, the first six | a firing of one of the agent's triggers fails (more of them have a failed last firing than before) |
 | `trigger` | yes: also its project, machine needs, requested model, program, lessons and saved state where the member may read them, every recent run and its recent history; small, its source, target, words, three runs and its buttons | it fails, or its newest run fails |
@@ -730,15 +748,26 @@ calls through modules both sides import.
   brick's own folder, once (`useDataOnce`, never a live selection), and asked once more after a pin or delete
   among its results, since its answer does not follow changes. The list itself is the brick's one live read, as
   before; search adds none. What was typed is never a parameter or a detail (rule 1). Comms' later pages are not on
-  it. Delete is Comms' delete: what it removes and keeps is under "What ends a trace before 90 days".
+  it. Delete is Comms' delete: what it removes and keeps is under "What ends a trace before 90 days". The
+  conversation the page is open on (`Here` in `brick-kit.tsx`, which the page provides) has no Delete in the brick,
+  in the list or among search results: deleting it from there left the page on a thread that was gone. The header's
+  panel still deletes it, and then goes to `/app/boards`.
 - `agent`: Home's card for one agent. Its directory name; its state line in Home's words (Working, Waiting, Quiet,
   Unavailable, and how many of its questions need the member); its own report (`agentStatus.work`); its description
   (`agents.about`); what it is doing now (`agentDoing`, in Home's sentences; the desktop's addresses for those are
   not drawn); its jobs (`jobHistory`: side, up to three running and the two latest ended; big, the last thirty), each
   a `session` chip where the job has a conversation, a running one with Stop (asked first, `runtime.jobStop` with
   `write-off`, as the `session` brick); its open tickets as `ticket` chips; and a link to its conversation with an
-  unread reply, else its latest (`homeComms.summaries`), for an agent the member may give work to. Not drawn: an
-  agent's private-machine jobs, its posts, its last steps, and the machine a job ran on. `currentJobs` is not read:
+  unread reply, else its latest (`homeComms.summaries`), for an agent the member may give work to. Big
+  (2026-11-27, t-2428): its activity posts, as the desktop's Agents app reads them: `agentActivityFeed` (its five
+  latest threads of posts, each with its latest post as plain words; one live read, relaxed, drawn and read in the
+  big form only), and a thread's posts, `agentActivityHistory`, read only once its row is opened, one thread at a
+  time, 25 a page with Earlier posts and Newer posts; a post made for a ticket is that ticket's chip. Opening is the
+  drawn brick's own, never a parameter or a detail, and an opened thread is dropped when the brick is no longer the
+  big one. The desktop's work links on a post are not drawn, and earlier threads than the five are "in the Agents
+  app". The two selections are the desktop's, written out in the brick (so its chunk does not take the desktop's kit)
+  and pinned to the desktop's text by the suite. Not drawn: an agent's private-machine jobs, its last steps, and the
+  machine a job ran on. `currentJobs` is not read:
   `jobHistory` holds the running jobs too, with their conversations.
 - `agents`: Home's roster (the member's own agents, in its order), one line each: the name as an `agent` chip, the
   state line, the first thing it is doing and how many more. Compact: how many agents, how many have work in hand

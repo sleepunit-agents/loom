@@ -70,6 +70,7 @@ const world = (over: Data = {}): Data => ({
   BrickAgentJobs: { jobs },
   BrickAssigned: { rows: [{ id: 't-7', title: 'Mend the gate', status: 'open' }] },
   BrickAgentsAtWork: { agentsAtWork: ['art'] },
+  AgentActivityFeed: { agentActivityFeed: [] },
   ...over,
 });
 
@@ -193,6 +194,110 @@ describe('agent', () => {
   it('is headed by its name and shows the reference only in the small line', () => {
     expect(brickView('agent').title({ agent: 'art' })).toBe('Agent');
     expect(brickView('agent').sub({ agent: 'art' })).toBe('art');
+  });
+});
+
+describe('agent: its activity posts', () => {
+  const post = (id: string, over: object = {}) => ({ id, at, words: 'Post **' + id + '**', source: 'agent', sourceTask: null, work: [], ...over });
+  const threads = [
+    { thread: 'ap-fence', title: 'The fence', latest: post('p-9', { words: 'Fence is *mended*' }), parent: null },
+    { thread: 'ap-hens', title: 'The hens', latest: post('p-8'), parent: null },
+  ];
+  const opens = () => tree!.root.findAll((n) => n.type === 'button' && n.props.className === 'board-opens');
+  const history = (pages: Record<string, unknown[]>) => (variables: { after: string }) => ({ agentActivityHistory: pages[variables.after] ?? [] });
+  const answerWith = (over: Data) => {
+    answer(world(over));
+    const plainFeed = feed.getMockImplementation()!;
+    // A read that answers from its variables (the history's cursor).
+    feed.mockImplementation((query: string, variables: Record<string, unknown>, options?: { pause?: boolean }) => {
+      const name = /^query (\w+)/.exec(query)![1], answerOf = over[name];
+      if (typeof answerOf !== 'function') return plainFeed(query, variables, options);
+      asked.push({ name, variables, options });
+      return options?.pause ? { status: 'loading' } : { status: 'live', data: (answerOf as (v: unknown) => unknown)(variables) };
+    });
+  };
+  it('reads the desktop\'s own selections, word for word', async () => {
+    const desktop = await import('../pieces/attention/live-agent-posts');
+    const brick = await import('./bricks-agent');
+    expect(brick.agentFeedQuery).toBe(desktop.agentFeedQuery);
+    expect(brick.agentHistoryQuery).toBe(desktop.agentHistoryQuery);
+  });
+  it('the big form lists its threads of posts, newest first, each with its latest post as plain words; the small forms read none', async () => {
+    answer(world({ AgentActivityFeed: { agentActivityFeed: threads } }));
+    await draw('agent', { agent: 'art' }, 'side');
+    expect(asked.some((q) => q.name === 'AgentActivityFeed')).toBe(false);
+    await draw('agent', { agent: 'art' }, 'compact');
+    expect(asked.some((q) => q.name === 'AgentActivityFeed')).toBe(false);
+    await draw('agent', { agent: 'art' }, 'primary');
+    expect(asked.find((q) => q.name === 'AgentActivityFeed')!.variables).toEqual({ agent: 'art', limit: 6, compact: false, before: '0' });
+    expect(opens().map((b) => [said(b), b.props['aria-expanded']])).toEqual([['The fence', false], ['The hens', false]]);
+    expect(all()).toContain('Fence is mended');
+    expect(all()).toContain('Post p-8');
+    // Its history is not read until a thread is opened.
+    expect(asked.some((q) => q.name === 'AgentActivityHistory')).toBe(false);
+  });
+  it('says when it has posted nothing, when its posts cannot be read, and that earlier threads are in the Agents app', async () => {
+    answer(world());
+    await draw('agent', { agent: 'art' }, 'primary');
+    expect(all()).toContain('No updates yet.');
+    answer(world({ AgentActivityFeed: null }));
+    await draw('agent', { agent: 'art' }, 'primary');
+    expect(all()).toContain('Can’t read its activity right now.');
+    const six = Array.from({ length: 6 }, (_, n) => ({ thread: 'ap-' + n, title: 'Thread ' + n, latest: post('p-' + n), parent: null }));
+    answer(world({ AgentActivityFeed: { agentActivityFeed: six } }));
+    await draw('agent', { agent: 'art' }, 'primary');
+    expect(opens()).toHaveLength(5);
+    expect(all()).toContain('Earlier activity is in the Agents app.');
+  });
+  it('opens one thread\'s history on demand, a page at a time, with Earlier and Newer posts; closing it drops the read', async () => {
+    const first = Array.from({ length: 26 }, (_, n) => post('p-' + (100 - n)));
+    answerWith({ AgentActivityFeed: { agentActivityFeed: threads }, AgentActivityHistory: history({ '0': first, 'p-76': [post('p-75', { sourceTask: 't-7' })] }) });
+    await draw('agent', { agent: 'art' }, 'primary');
+    await act(async () => { opens()[0].props.onClick(); });
+    expect(opens()[0].props['aria-expanded']).toBe(true);
+    expect(asked.filter((q) => q.name === 'AgentActivityHistory').map((q) => q.variables)).toEqual([{ agent: 'art', thread: 'ap-fence', after: '0', limit: 26 }]);
+    const posts = () => tree!.root.findAll((n) => n.props['aria-label'] === 'Posts' && n.type === 'ul')[0]?.findAll((n) => n.props.className === 'board-row') ?? [];
+    expect(posts()).toHaveLength(25);
+    expect(said(posts()[0])).toContain('Post p-100');
+    expect(buttons().map(said)).toContain('Earlier posts');
+    expect(buttons().map(said)).not.toContain('Newer posts');
+    await press('Earlier posts');
+    expect(asked.filter((q) => q.name === 'AgentActivityHistory').at(-1)!.variables).toEqual({ agent: 'art', thread: 'ap-fence', after: 'p-76', limit: 26 });
+    expect(posts().map(said)).toEqual([expect.stringContaining('Post p-75')]);
+    // A post made for a ticket is that ticket's chip.
+    expect(placed()).toContainEqual({ brick: 'ticket', params: { ticket: 't-7' } });
+    expect(buttons().map(said)).not.toContain('Earlier posts');
+    await press('Newer posts');
+    expect(posts()).toHaveLength(25);
+    // Opening the other thread closes the first; closing it reads nothing more.
+    await act(async () => { opens()[1].props.onClick(); });
+    expect(opens().map((b) => b.props['aria-expanded'])).toEqual([false, true]);
+    expect(asked.filter((q) => q.name === 'AgentActivityHistory').at(-1)!.variables).toMatchObject({ thread: 'ap-hens', after: '0' });
+    await act(async () => { opens()[1].props.onClick(); });
+    expect(opens().map((b) => b.props['aria-expanded'])).toEqual([false, false]);
+    expect(posts()).toEqual([]);
+  });
+  it('drops an opened history when the brick leaves its big form, and starts closed when it is big again', async () => {
+    answerWith({ AgentActivityFeed: { agentActivityFeed: threads }, AgentActivityHistory: history({ '0': [post('p-1')] }) });
+    await draw('agent', { agent: 'art' }, 'primary');
+    await act(async () => { opens()[0].props.onClick(); });
+    asked.length = 0;
+    await act(async () => tree!.update(element('agent', { agent: 'art' }, 'side')));
+    expect(asked.some((q) => q.name === 'AgentActivityHistory' || q.name === 'AgentActivityFeed')).toBe(false);
+    expect(opens()).toEqual([]);
+    await act(async () => tree!.update(element('agent', { agent: 'art' }, 'primary')));
+    expect(opens().map((b) => b.props['aria-expanded'])).toEqual([false, false]);
+    expect(asked.some((q) => q.name === 'AgentActivityHistory')).toBe(false);
+  });
+  it('says when a thread\'s posts cannot be read, and draws no address of the desktop\'s', async () => {
+    answerWith({ AgentActivityFeed: { agentActivityFeed: threads }, AgentActivityHistory: () => ({ agentActivityHistory: [post('p-1', { work: [{ id: 'w', title: 'Fence', state: 'done', href: '/p/desktop/work' }] })] }) });
+    await draw('agent', { agent: 'art' }, 'primary');
+    await act(async () => { opens()[0].props.onClick(); });
+    expect(JSON.stringify(tree!.toJSON())).not.toContain('/p/');
+    answer(world({ AgentActivityFeed: { agentActivityFeed: threads }, AgentActivityHistory: null }));
+    await draw('agent', { agent: 'art' }, 'primary');
+    await act(async () => { opens()[0].props.onClick(); });
+    expect(all()).toContain('Can’t read these posts right now.');
   });
 });
 
