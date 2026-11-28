@@ -93,6 +93,7 @@ export function Ticket({ params, form, act, raise }: BodyProps) {
       {more.forms}
       <Problem>{error}</Problem>
       {big && <TicketSessions ticket={id} form={form} />}
+      {more.history}
     </>
   );
 }
