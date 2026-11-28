@@ -45,6 +45,22 @@ loom mcp --url http://127.0.0.1:8787 --token-file <file>
 
 The other installed commands (`loom-household`, `loom-token`, `loom-account`, `loom-sessions`, `loom-taskstore`) are thin clients of the same API.
 
+### Run a local preview in a container
+
+Build from a clean checkout of the revision you want to preview. Each preview needs its own volume. These commands create a fictional household on first use and make the preview available on this machine’s port 8787.
+
+```sh
+podman build -f Containerfile -t localhost/loom-preview .
+podman volume create loom-preview-data
+podman run --rm -v loom-preview-data:/var/lib/loom localhost/loom-preview \
+  node scripts/example-home.mjs /var/lib/loom/household
+podman run -d --name loom-preview -v loom-preview-data:/var/lib/loom \
+  -e LOOM_PUBLIC_URL=http://localhost:8787 -p 127.0.0.1:8787:8787 localhost/loom-preview
+podman exec loom-preview node dist/index.js signin --member alex
+```
+
+On subsequent starts, run `podman start loom-preview`. The shared image includes the compiled app, its tests and Chromium. Run `scripts/check-container-image.sh localhost/loom-preview` to save and reopen an example task in a separate temporary volume.
+
 ## The older program
 
 Until November 2026 this repository also held loom's first form: a stdio MCP server over one agent's memory files, with its own command line and web pages. It was removed once the rebuilt program covered it. It is in git history; the last commit that has it is the parent of the one that added this section.
