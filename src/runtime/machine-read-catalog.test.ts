@@ -1,5 +1,12 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { machineReadCommand, parseMachineRead, runMachineRead } from './machine-read-catalog.js';
+import { machineReadCommand, parseMachineRead, runMachineRead, unprivilegedWorker } from './machine-read-catalog.js';
+
+// runMachineRead refuses before it runs anything unless this process is an unprivileged Linux worker: a uid
+// other than 0 and no effective, permitted or ambient capabilities (the guard itself, unprivilegedWorker). The
+// tests below that reach past that guard to the executor need such a process, so they skip where the suite
+// runs as root or with capabilities (a container build running as root, for one) and say why. CI's runner is
+// an ordinary user, so they run there.
+const asWorker = it.skipIf(!unprivilegedWorker());
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -19,7 +26,7 @@ it('binds a journal request to one unit, scope, time window and line budget', ()
 
 const token = 'opaque-worker-credential';
 
-it('runs a fixed catalog command and preserves ordinary journal lines', async () => {
+asWorker('runs a fixed catalog command and preserves ordinary journal lines', async () => {
   const execute = vi.fn(async () => ({stdout:'disk check completed'}));
   const result = await runMachineRead({kind:'unit-journal',scope:'system',unit:'disk.service'}, token, execute,[{scope:'system',unit:'disk.service'}]);
   expect(result).toEqual({ok:true,output:'disk check completed'});
@@ -28,7 +35,7 @@ it('runs a fixed catalog command and preserves ordinary journal lines', async ()
   ],expect.objectContaining({shell:false,signal:expect.any(AbortSignal)}));
 });
 
-it('refuses the entire answer for a worker credential, recognizable secret, or oversized output', async () => {
+asWorker('refuses the entire answer for a worker credential, recognizable secret, or oversized output', async () => {
   for (const value of [token, Buffer.from(token).toString('base64'), 'Authorization: Bearer opaque', 'password=private', 'xoxb-examplevalue', 'AGE-SECRET-KEY-example', JSON.stringify(token).replace('opaque', String.raw`\u006fpaque`)]) {
     const result = await runMachineRead({kind:'worker-log'}, token, async () => ({stdout:'line with ' + value}),[{scope:'user',unit:'loom-worker.service'},{scope:'user',unit:'loom-new-worker.service'}]);
     expect(result).toEqual({ok:false, output:'Machine read contains a credential'});
@@ -42,7 +49,7 @@ it('pins ZFS and running container lists to immutable argv', () => {
   expect(machineReadCommand(parseMachineRead({kind:'containers'}))).not.toContain('--all');
 });
 
-it.skipIf(process.platform !== 'linux' || process.getuid?.() === 0)('reads real host memory as the worker user', async () => {
+asWorker('reads real host memory as the worker user', async () => {
   const result = await runMachineRead({kind:'memory'}, token);
   expect(result.ok).toBe(true);
   expect(result.output).toContain('Mem:');
@@ -53,7 +60,7 @@ it('refuses execution with effective uid zero', async () => {
   expect((await runMachineRead({kind:'uptime'}, token)).ok).toBe(false);
 });
 
-it.each([
+asWorker.each([
  [{kind:'unit-state',scope:'system',unit:'example.service'},'/usr/bin/systemctl',['--system','--no-pager','show','--property=Id,LoadState,ActiveState,SubState,Result,NRestarts,ExecMainCode,ExecMainStatus','--','example.service']],
  [{kind:'proxmox-containers'},'/usr/sbin/pct',['list']],
  [{kind:'proxmox-vms'},'/usr/sbin/qm',['list']],
@@ -65,7 +72,7 @@ it.each([
  expect(fake).toHaveBeenCalledWith(file,argv,expect.objectContaining({shell:false,cwd:'/'}));
 });
 
-it('projects only timestamps and severity unless the operator lists the exact journal',async()=>{
+asWorker('projects only timestamps and severity unless the operator lists the exact journal',async()=>{
  const execute=vi.fn(async()=>({stdout:JSON.stringify({__REALTIME_TIMESTAMP:'1700000000000000',PRIORITY:'3',MESSAGE:'an unlabelled private value'})}));
  const got=await runMachineRead({kind:'unit-journal',unit:'other.service',scope:'system'},token,execute,[{scope:'user',unit:'other.service'}]);
  expect(got).toEqual({ok:true,output:'2023-11-14T22:13:20.000Z priority 3'});
@@ -78,7 +85,7 @@ it('reads only the fixed operator-published cleanup journal summary', () => {
   ]);
 });
 
-it('releases only current fixed-shape operator projections', async () => {
+asWorker('releases only current fixed-shape operator projections', async () => {
   const observedAt = Math.floor(Date.now()/1000);
   const fact = {observedAt, since:observedAt-604800, started:1, finished:0, kept:3, removed:0, wouldRemove:0, reasons:{dirty:3}, runs:[{at:observedAt,event:"start",count:2,apply:false}],removedHeads:[]};
   const read = (row: object) => runMachineRead({kind:'cleanup-receipt'},token,async()=>({stdout:JSON.stringify(row)}));
