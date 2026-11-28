@@ -47,6 +47,9 @@
   background: color-mix(in srgb, var(--card) 92%, transparent); border: 1px solid var(--surface-edge); border-radius: var(--radius);
   box-shadow: var(--shadow-card); }
 .board-placement[data-entering='true'] { opacity: 0; scale: .97; translate: 0 10px; }
+/* A placement takes the keyboard only from an attention chip of the header row (./board-head.tsx): where that was by keyboard, a ring says where it went. */
+.board-placement:focus { outline: 0; }
+.board-placement:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 @media (prefers-reduced-motion: no-preference) {
   .boards-page { transition: grid-template-columns .55s var(--ease-settle); }
   .boards-trail { transition: transform .6s var(--ease-settle); }
