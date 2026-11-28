@@ -5,6 +5,8 @@ import { conversations, jobs, messages } from '../data/schema.js';
 import type { CommsMessages } from './messages.js';
 import { jobMatchesConversation,reviewRequest,reviewThread,reviewBriefExpired,REVIEW_ROLE_CHANGED } from './review-place.js';
 import { exitStage, LOOM_EXIT } from '../../runtime/job-exit.js';
+import { failureOf, failureWords } from '../../runtime/job-failure.js';
+import { householdTimezone } from '../data/household-settings.js';
 
 /** Seal the thread reply before entering the operation transaction. Retries and concurrent
  * attempts use one result per child. Only the originating private thread can receive it. */
@@ -35,6 +37,14 @@ export function recentReviewEnds(service: CommsMessages) {
       inArray(jobs.state, ['done','failed','lost','stopped']), gte(jobs.endedAt, cutoff))).all();
 }
 
+/** Why a handed-off job returned nothing, for the line its parent thread is told: how it ended, the stage its exit
+ * code names, and, where the job's row says why it failed (runtime/job-failure.ts), that in plain words. Those words
+ * are built from a fixed reason and its numbers, never from anything the harness printed. Times are said in `zone`. */
+export function reviewEndReason(job:Pick<typeof jobs.$inferSelect,'state'|'exitCode'|'exitBy'|'failedReason'|'failedDetail'>,zone:string):string{
+  const stage=exitStage(job.exitCode,job.exitBy),failure=failureOf(job),why=failure?failureWords(failure,zone):undefined;
+  return job.state==='lost'?'worker contact was lost':job.state==='stopped'?'the job was stopped':stage?(why?stage+': '+why:stage):why??'the job ended without returning findings';
+}
+
 export async function reportReviewEnd(service:CommsMessages, id:string, allowed:(member:string,agent:string,project:string|null)=>boolean,
   commit:(write:()=>void)=>void) {
   const db=service.db;
@@ -45,8 +55,7 @@ export async function reportReviewEnd(service:CommsMessages, id:string, allowed:
   const pending=()=>db.select({id:jobs.id}).from(jobs).where(eq(jobs.retryOf,id)).get();
   const thread=reviewThread(db,cv)!;
   if(pending() || !allowed(cv.member!,cv.agent,cv.project) || db.select({seq:messages.seq}).from(messages).where(and(eq(messages.thread,thread.id),eq(messages.sender,cv.agent),eq(messages.clientId,'review:'+cv.id))).get())return;
-  const stage=exitStage(job.exitCode,job.exitBy);
-  const reason=job.state==='lost'?'worker contact was lost':job.state==='stopped'?'the job was stopped':stage??'the job ended without returning findings';
+  const reason=reviewEndReason(job,householdTimezone(db));
   const worker=reviewRequest(cv)?.role?.id??'Codex';
   const placementReason = job.exitBy === 'loom' && job.exitCode === LOOM_EXIT.unplaced &&
     (job.endedNote === REVIEW_ROLE_CHANGED || job.endedNote === reviewBriefExpired(cv)) ? job.endedNote : undefined;

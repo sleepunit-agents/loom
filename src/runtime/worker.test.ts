@@ -70,6 +70,21 @@ describe('worker work plane', () => {
     f.exited.resolve({ exitCode: WORKER_EXIT.killed, logTail: '', ...how });
     expect(await run).toBe('finished'); expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT.killed, '', by);
   });
+  it('reports why a body failed only for loom\'s own body program, or as its own word for a body a signal ended', async () => {
+    const failure = { reason: 'usage-limit', resetsAt: '2026-11-28T01:00:00.000Z' } as const;
+    const ended = async (bootstrap: boolean, result: { exitCode: number; signalled?: boolean }) => {
+      const f = fixture();
+      if (bootstrap) { f.body.acceptsBootstrap = true; f.control.enrollBody = vi.fn(async () => ({ origin: 'https://loom.example', job: 'j', token: Buffer.from('body_' + 'a'.repeat(64)) })); }
+      const run = f.run(); await flush(); f.built.resolve('image'); await flush(); f.spawned.resolve(); await flush();
+      (f.exited as { resolve(value: unknown): void }).resolve({ logTail: '', failure, ...result });
+      expect(await run).toBe('finished'); return vi.mocked(f.control.finish).mock.calls[0];
+    };
+    expect(await ended(true, { exitCode: 14 })).toEqual(['j', 14, '', 'body', undefined, undefined, failure]);
+    expect(await ended(true, { exitCode: WORKER_EXIT.killed, signalled: true })).toEqual(['j', WORKER_EXIT.killed, '', 'worker', undefined, undefined, failure]);
+    // A machine's own runner has no say, and neither has a body that reported success.
+    expect(await ended(false, { exitCode: 14 })).toEqual(['j', 14, '', 'runner']);
+    expect(await ended(true, { exitCode: 0 })).toEqual(['j', 0, '', 'body']);
+  });
   it('leaves retries to the server when a start fails, and says which stage failed', async () => {
     for (const phase of ['input', 'build', 'launch', 'enroll'] as const) {
       const f = fixture();

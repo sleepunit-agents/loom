@@ -20,6 +20,7 @@ import { Machines } from './machines.js';
 import { decidePlacement, type ModelRole } from './placement.js';
 import type { WorkerRunPolicy } from './worker.js';
 import type { WorkerExitBy } from './job-exit.js';
+import type { JobFailure } from './job-failure.js';
 import { SILENCE_MS } from './silence.js';
 import { rowsWritten } from '../core/data/rows-written.js';
 /** What loom records on a job on anybody else's word that no harness the agent has can run. */
@@ -234,11 +235,11 @@ export class Dispatcher {
   }
   /** Root reports job/retry source changes to Tempo after this transaction
    * commits. The HTTP adapter returns only {ok:true} to the worker. */
-  finish(box: string, job: string, exitCode: number, logTail: string, exitBy?: WorkerExitBy) {
+  finish(box: string, job: string, exitCode: number, logTail: string, exitBy?: WorkerExitBy, failure?: JobFailure) {
     this.machines.heartbeat(box);
     return this.db.transaction(() => {
       this.liveMachine(box);
-      return this.jobs.finish(job, box, exitCode, logTail, exitBy);
+      return this.jobs.finish(job, box, exitCode, logTail, exitBy, failure);
     }, { behavior: 'immediate' });
   }
 }

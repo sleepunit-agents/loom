@@ -490,6 +490,10 @@ const upgrades: readonly (readonly string[])[] = [
   // 53: the files a pull request touches, with their added and removed lines, for the pull brick (docs/specs/boards.md,
   // "The first bricks"). It starts empty; the next read of GitHub fills it.
   ["CREATE TABLE `change_files` (\n\t`change` text NOT NULL,\n\t`path` text NOT NULL,\n\t`additions` integer NOT NULL,\n\t`deletions` integer NOT NULL,\n\tPRIMARY KEY(`change`, `path`),\n\tFOREIGN KEY (`change`) REFERENCES `changes`(`id`) ON UPDATE no action ON DELETE no action,\n\tCONSTRAINT \"change_files_counts\" CHECK(\"change_files\".\"additions\" >= 0 and \"change_files\".\"deletions\" >= 0)\n);"],
+  // 54: why a failed job failed, as one of a fixed set of reasons and a few numbers (runtime/job-failure.ts).
+  // Jobs ended before have neither: nothing recorded why they failed.
+  ["ALTER TABLE jobs ADD COLUMN failed_reason text",
+   "ALTER TABLE jobs ADD COLUMN failed_detail text"],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

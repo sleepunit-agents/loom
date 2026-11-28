@@ -1000,6 +1000,8 @@ CREATE TABLE `jobs` (
 	`prefers` text,
 	`placement_decision` text,
 	`sign_in_blocked` integer DEFAULT false NOT NULL,
+	`failed_reason` text,
+	`failed_detail` text,
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,

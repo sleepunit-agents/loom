@@ -16,7 +16,9 @@ import { bodyInput, eraseBootstrap, type BodyBootstrap } from './body-bootstrap.
 import { bodyConversationClient,bodyMailContext } from './conversation-client.js';
 import { omittedWakeTools, type OmittedWakeTools } from './wake-tool-profiles.js';
 import { bodyHarness, harnessCannotRun, harnesses } from './body-harnesses.js';
-import { BODY_OWN_HARNESS, BODY_SCRATCH, harnessTools, HarnessResumeUnavailable, type HarnessRun } from './body-harness.js';
+import { BODY_OWN_HARNESS, BODY_SCRATCH, harnessTools, HarnessFailed, HarnessResumeUnavailable, type HarnessRun } from './body-harness.js';
+import { failureLine, failureWords, type JobFailure } from './job-failure.js';
+import { readFileSync } from 'node:fs';
 import {kitReasons,kitUnavailableList,type KitUnavailable} from './kit-availability.js';
 import {bodyKitTools,KIT_SOCKET} from './body-kit-tools.js';
 import {KitCapacity} from './kit-refused.js';
@@ -70,6 +72,8 @@ export async function bodyProgram(input: {
   showAttachments?: typeof showBodyAttachments;
   /** The same seam for a bridge channel's brief. */
   loadBrief?: typeof bodyChannelBrief;
+  /** How many processes the system's memory killer has ended in this body's container so far; a test names its own. */
+  memoryKills?: () => number | undefined;
   error: (text: string) => void;
 }): Promise<number> {
   let bytes: Uint8Array | undefined, bootstrap: BodyBootstrap | undefined;
@@ -81,6 +85,8 @@ export async function bodyProgram(input: {
   let client: ReturnType<typeof bodyConversationClient> | undefined;
   let memoryClient:ReturnType<typeof bodyCommandClient>|undefined,sessionClient:ReturnType<typeof bodyCommandClient>|undefined;
   let keeper:BodySessions|undefined,saved=false;
+  // Why the harness failed, as one of the fixed reasons (job-failure.ts): handed to the worker with the exit code.
+  let failed:JobFailure|undefined;
   const context: string[] = [], incoming:string[]=[],discordAttachments=new Map<string,string>();
   let pending: Promise<void> | undefined, cancel: (()=>void) | undefined, stopped=false, unavailable=false;
   // Every report to loom goes through here. One that fails after the first exchange is the stage that failed
@@ -385,10 +391,11 @@ export async function bodyProgram(input: {
     const privateValues = [parsed.bootstrap.token, harnessTools(tools?.config)?.authorization.slice(7), tools?.houseSend, tools?.houseNote,...Object.entries(shellEnv)
       .filter(([key])=>/token|secret|password|api.?key|authorization/i.test(key))
       .map(([,value])=>value)].filter((v):v is string=>typeof v==='string'&&v.length>=8);
+    // The one disclosure check for anything this body shows of its harness's work: a step, and the harness's last error.
+    const sensitive=(value:string)=>!(tools??secrets).allowsReply(value)||privateValues.some(v=>value.includes(v))||
+      /(?:Bearer\s+[A-Za-z0-9_.+/=-]{12,}|-----BEGIN [^\n]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{16,})/i.test(value);
     const pairOutput = traced
       ? pairEvents(step=>{
-          const sensitive=(value:string)=>!(tools??secrets).allowsReply(value)||privateValues.some(v=>value.includes(v))||
-            /(?:Bearer\s+[A-Za-z0-9_.+/=-]{12,}|-----BEGIN [^\n]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{16,})/i.test(value);
           // One clean line, as loom takes a step's tool (core/line-name.ts): a refused step would be lost.
           const tool=sensitive(step.tool)?'Tool':cleanLineOf(step.tool).slice(0,180)||'Tool';
           const words=sensitive(step.words)?'Output withheld.':step.words.length>16000?step.words.slice(0,16000)+'\n[Output truncated]':step.words;
@@ -403,6 +410,8 @@ export async function bodyProgram(input: {
     let refusedReply=false;
     const room=policy&&job.run&&policy!==job.run.policy?{...job,run:{...job.run,policy}}:job;
     const harnessStarted=performance.now();
+    const memoryKills=input.memoryKills??cgroupMemoryKills,killsBefore=memoryKills();
+    let failure:HarnessFailed|undefined;
     try {
       if(!keeper)answer = await native(room, context.join('\n\n'), signal);
       else try { answer = await native(room, (resume?continued:context).join('\n\n'), signal, resume?{resume}:{}); }
@@ -416,9 +425,24 @@ export async function bodyProgram(input: {
       // One check (body-secrets.ts, saysNoSecret): the tools know the startup values too, and with no tools there are only those.
       refusedReply=!(tools??secrets).allowsReply(answer.text);
     }
-    catch { if(!stopped) throw new Error(); }
+    // A harness's diagnostics never leave the body as its error. What the adapter could tell of the failure is
+    // kept apart: the fixed reason for the job's record, and the harness's own words for the conversation's readers.
+    catch (error) { if(error instanceof HarnessFailed)failure=error; if(!stopped) throw new Error(); }
     finally {
       await posted;
+      if(failure&&!answer&&!stopped&&!unavailable&&!jobSignal.aborted){
+        // A signal that ended the harness while the memory killer was at work in this container was that killer's.
+        const killsAfter=memoryKills(),why=failure.why;
+        failed=(why.reason==='killed'||why.reason==='harness-crashed'&&why.exitCode===137)&&killsBefore!==undefined&&killsAfter!==undefined&&killsAfter>killsBefore?{reason:'out-of-memory'}:why;
+        // The last step of the work, for those who may read the conversation and nobody else: a sealed step of a
+        // session that keeps its steps, or a card in the member's own thread. The reason in loom's words, then what
+        // the harness itself said, through the same check as every step. Never a reason to fail differently.
+        if(!guest&&(traced||job.venue==='loom'&&!!job.thread)){
+          const said=failure.said?.trim();
+          const words='Stopped: '+failureWords(failed)+'.'+(said?'\n\n'+(sensitive(said)?'Output withheld.':said):'');
+          try{await client.card({tool:'Harness',words,cardState:'failed',clientId:'harness-failed'});}catch{/* the failure is reported either way */}
+        }
+      }
       const report = {...(answer?.usage ?? failureReport ?? {source:'none' as const}), harness:job.harness,
         model:answer?.model ?? job.model, wallMs:Math.round(performance.now()-harnessStarted)};
       // Keep a valid measurement in flight during retirement and reply settlement.
@@ -477,7 +501,15 @@ export async function bodyProgram(input: {
       try{await tell(left);return BODY_EXIT.stopped;}catch{}
     }
     // A report that failed is why the work was dropped, whichever stage was dropped.
-    input.error(contactExpired?BODY_CONTACT_MESSAGE+'\n':'Body stopped: invalid input or unavailable execution\n'); return unavailable?BODY_EXIT.contact:exit;
+    // The harness's reason goes with the harness's exit code, as one line that holds no words (job-failure.ts, failureLine).
+    const why=failed&&!unavailable&&exit===BODY_EXIT.harness?failureLine(failed):'';
+    input.error((contactExpired?BODY_CONTACT_MESSAGE+'\n':'Body stopped: invalid input or unavailable execution\n')+why); return unavailable?BODY_EXIT.contact:exit;
   }
   finally { await retire(); await measuredDelivery; if(!saved){try{keeper?.discard();}catch{}} sessionClient?.close(); client?.close(); input.signal.removeEventListener('abort', erase); }
+}
+/** How many processes the memory killer has ended in this body's own container (cgroup v2, `memory.events`).
+ * Undefined where that cannot be read: a body that is not in a container, or an older kernel. */
+function cgroupMemoryKills():number|undefined{
+  try{const found=/^oom_kill (\d+)$/m.exec(readFileSync('/sys/fs/cgroup/memory.events','utf8'));return found?Number(found[1]):undefined;}
+  catch{return undefined;}
 }

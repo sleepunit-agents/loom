@@ -1355,3 +1355,21 @@ it.each(['repository','commit','image'] as const)('refuses a scheduled %s mismat
   expect(control.started).not.toHaveBeenCalled();
   expect(f.writes).toEqual([]);
 });
+it('reads why its body failed from the one line the body writes for it, and nothing else of what the body prints', async () => {
+  const f = fixture(), raw = 'body_' + 'a'.repeat(64), token = Buffer.from(raw);
+  const body = f.start(); await body.spawned; await body.release({ origin: 'https://loom.example', job: job.id, token });
+  // On its error output, split across frames; a line that is not exactly a failure is no failure.
+  f.socket.push(frame('loom-job-failure {"reason":"max-turns"}\n', 1));
+  f.socket.push(frame('Body stopped: invalid input or unavailable execution\nloom-job-failure {"reason":"usage-limit","resets', 2));
+  f.socket.push(frame('At":"2026-11-28T01:00:00.000Z"}\nloom-job-failure {"reason":"usage-limit","note":"PRIVATE"}\nloom-job-failure {"reason":"PRIVATE"}\n', 2));
+  f.socket.push(null); f.wait.resolve({ StatusCode: 14 });
+  expect(await body.exited).toEqual({ exitCode: 14, logTail: '', signalled: false, failure: { reason: 'usage-limit', resetsAt: '2026-11-28T01:00:00.000Z' } });
+  await body.stop(); token.fill(0);
+});
+it.each([[true, { reason: 'out-of-memory' }], [false, { reason: 'killed', signal: 'SIGKILL' }]] as const)('says for a body a signal ended whether the engine saw the memory killer (%s)', async (OOMKilled, failure) => {
+  const f = fixture(), base = f.engine.json.getMockImplementation()!;
+  const body = f.start(); await body.spawned;
+  f.engine.json.mockImplementation(async (method, path, sent, signal) => inspecting(path) ? { State: { OOMKilled } } : base(method, path, sent, signal));
+  f.socket.push(null); f.wait.resolve({ StatusCode: 137 });
+  expect(await body.exited).toEqual({ exitCode: 29, logTail: '', signalled: true, failure }); await body.stop();
+});

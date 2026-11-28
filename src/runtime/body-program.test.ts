@@ -8,7 +8,8 @@ import { bodyProgram } from './body-program.js';
 import { BODY_EXIT, LOOM_EXIT, WORKER_EXIT, exitStage } from './job-exit.js';
 import type { WorkerAssignment } from './worker.js';
 import { createHash } from 'node:crypto';
-import { HarnessResumeUnavailable } from './body-harness.js';
+import { HarnessFailed, HarnessResumeUnavailable } from './body-harness.js';
+import { failureLine, readFailureLine, type JobFailure } from './job-failure.js';
 import type { BodySessions } from './body-session.js';
 // With the room loom's dispatcher hands a job on its owners' word: an assignment with none is held to loom's tools.
 const job: WorkerAssignment = { id: 'job', box: 'box', agent: 'art', conversation: 'cv', thread: 'thread', model: 'requested', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
@@ -776,4 +777,58 @@ it('never fails a thread\'s job over its session: one the harness cannot continu
   expect(broken.cards().map(card => [card.clientId, card.words.split(':')[0]])).toEqual([['session-fresh', 'Started fresh'], ['session-unkept', 'This job\'s session was not kept for the next one']]);
   expect(broken.cards()[1].words).toContain('700 KB');
   expect(broken.calls.filter(row => row.path === 'message' && (row.body.input as { kind?: string }).kind === 'reply')).toHaveLength(1); expect(broken.error).not.toHaveBeenCalled();
+});
+
+// Why a harness failed (job-failure.ts): the fixed reason goes with the body's error, the harness's words to the conversation only.
+const failedWith=async(why:JobFailure,said:string|undefined,over:Record<string,unknown>={},more:Partial<Parameters<typeof bodyProgram>[0]>={})=>{
+ const f=fixture(),value=JSON.parse(f.input.toString());Object.assign(value.job,over);
+ if(over.word)value.job.run.policy.word=over.word,delete value.job.word;
+ const code=await bodyProgram({...f.options,...more,stdin:async()=>Buffer.from(JSON.stringify(value)),native:async()=>{throw new HarnessFailed(why,said);}});
+ const cards=f.calls.filter(row=>row.path==='message').map(row=>row.body.input as Record<string,string>).filter(input=>input.kind==='card');
+ return {f,code,cards,said:f.error.mock.calls.map(call=>call[0] as string).join('')};
+};
+it('hands the worker the harness\'s fixed reason with its exit code, and none of what the harness said',async()=>{
+ const why={reason:'usage-limit',resetsAt:'2026-11-28T01:00:00.000Z'} as const;
+ const {f,code,said}=await failedWith(why,'API Error: 429 PRIVATE '+raw,{venue:'handoff',thread:null,review:true});
+ expect(code).toBe(BODY_EXIT.harness);
+ // One write: the same plain line as ever, then the one line that is exactly a failure.
+ expect(f.error).toHaveBeenCalledExactlyOnceWith('Body stopped: invalid input or unavailable execution\n'+failureLine(why));
+ expect(readFailureLine(said.split('\n')[1])).toEqual(why);
+ expect(said).not.toContain('PRIVATE');expect(said).not.toContain('API Error');expect(said).not.toContain(raw);
+});
+it('writes what the harness last said as the final sealed step of a session that keeps its steps',async()=>{
+ const {cards}=await failedWith({reason:'overloaded',status:529},'API Error: 529 PRIVATE DETAIL',{venue:'handoff',thread:null,review:true});
+ expect(cards).toEqual([{kind:'card',tool:'Harness',cardState:'failed',clientId:'harness-failed',words:'Stopped: the model\'s provider was overloaded (529).\n\nAPI Error: 529 PRIVATE DETAIL'}]);
+});
+it('writes it as a card in a member\'s own thread, and withholds text that holds a credential',async()=>{
+ const plain=await failedWith({reason:'max-turns'},undefined,{venue:'loom'});
+ expect(plain.cards.map(card=>[card.tool,card.cardState,card.words])).toEqual([['Harness','failed','Stopped: the harness reached its limit of turns.']]);
+ const secret=await failedWith({reason:'api-error',status:500},'request failed with Bearer '+raw,{venue:'loom'});
+ expect(secret.cards[0].words).toBe('Stopped: the harness stopped with an API error (500).\n\nOutput withheld.');
+ expect(JSON.stringify(secret.f.calls)).not.toContain(raw);
+});
+it.each([['a handoff that keeps no steps',{venue:'handoff',thread:null}],['a wake',{venue:'wake',thread:null}],['a job on anybody else\'s word',{venue:'loom',word:'others'}]] as const)('shows the harness\'s words to nobody for %s, and still reports the reason',async(_name,over)=>{
+ const {cards,code,said,f}=await failedWith({reason:'sign-in-needed',status:401},'PRIVATE DETAIL',over);
+ expect(code).toBe(BODY_EXIT.harness);expect(cards).toEqual([]);
+ expect(said).toContain(failureLine({reason:'sign-in-needed',status:401}));expect(JSON.stringify(f.calls)+said).not.toContain('PRIVATE DETAIL');
+});
+it('says the memory killer ended a harness a signal ended while that killer was at work in the container',async()=>{
+ let kills=2;
+ const oom=await failedWith({reason:'killed',signal:'SIGKILL'},undefined,{venue:'loom'},{memoryKills:()=>kills++});
+ expect(oom.said).toContain(failureLine({reason:'out-of-memory'}));expect(oom.cards[0].words).toBe('Stopped: the session ran out of memory.');
+ const plain=await failedWith({reason:'killed',signal:'SIGKILL'},undefined,{venue:'loom'},{memoryKills:()=>2});
+ expect(plain.said).toContain(failureLine({reason:'killed',signal:'SIGKILL'}));
+ const other=await failedWith({reason:'overloaded',status:529},undefined,{venue:'loom'},{memoryKills:()=>kills++});
+ expect(other.said).toContain(failureLine({reason:'overloaded',status:529}));
+});
+it('reports the failure though loom refuses the step, and gives no reason for a job that was stopped',async()=>{
+ const f=fixture(),answer=f.options.fetch;
+ const fetcher=vi.fn<typeof fetch>(async(url,init)=>String(url).endsWith('/message')?Response.json({ok:false,code:'invalid',message:'refused'},{status:400}):answer(url,init));
+ expect(await bodyProgram({...f.options,fetch:fetcher,native:async()=>{throw new HarnessFailed({reason:'max-turns'});}})).toBe(BODY_EXIT.harness);
+ expect(f.error).toHaveBeenCalledExactlyOnceWith('Body stopped: invalid input or unavailable execution\n'+failureLine({reason:'max-turns'}));
+ const g=fixture();
+ let tick!:()=>void;
+ expect(await bodyProgram({...g.options,schedule:{every:(_ms,callback)=>{tick=callback;return()=>{};}},
+  native:async(_job,_words,signal)=>{g.stop();tick();await new Promise<void>(resolve=>signal.addEventListener('abort',()=>resolve(),{once:true}));throw new HarnessFailed({reason:'killed',signal:'SIGKILL'},'PRIVATE');}})).toBe(BODY_EXIT.stopped);
+ expect(g.error).not.toHaveBeenCalled();expect(g.calls.some(row=>row.path==='message')).toBe(false);
 });

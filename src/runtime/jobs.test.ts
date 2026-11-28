@@ -581,3 +581,44 @@ it('uses agent defaults for a task answer in the conversation of an earlier firi
   expect(job.prefers).toEqual(['house']);
   expect(f.db.select().from(jobNeeds).where(eq(jobNeeds.job, job.id)).all()).toEqual([{ job: job.id, need: 'gpu' }]);
 });
+const failedRun = (f: ReturnType<typeof fixture>, failure: unknown, by: 'body' | 'worker' | 'runner' | null = 'body', exitCode: number = BODY_EXIT.harness) => {
+  f.send(); const job = f.runtime.admit(f.conversation.id)!;
+  f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image'); f.comms.take(f.conversation.id, job.id);
+  return f.runtime.finish(job.id, 'worker', exitCode, 'PRIVATE OUTPUT', by ?? undefined, failure as never);
+};
+it('keeps why a job failed on its row, for a private conversation too, and only one of the fixed reasons', () => {
+  const kept = failedRun(fixture('handoff'), { reason: 'overloaded', status: 529 });
+  // A handoff's conversation is private: its output is dropped, its reason is not.
+  expect(kept.job).toMatchObject({ state: 'failed', exitCode: BODY_EXIT.harness, exitBy: 'body', logTail: null, failedReason: 'overloaded', failedDetail: { status: 529 } });
+  // The next attempt starts with none of it.
+  expect(kept.retry).toMatchObject({ failedReason: null, failedDetail: null, exitCode: null });
+  expect(failedRun(fixture(), { reason: 'max-turns' }).job).toMatchObject({ failedReason: 'max-turns', failedDetail: null });
+  expect(failedRun(fixture(), { reason: 'out-of-memory' }, 'worker', 29).job).toMatchObject({ exitBy: 'worker', failedReason: 'out-of-memory' });
+  // Anything else is not kept: free text, an unknown field, a machine's own runner's word, nobody's word, or a job that did not fail.
+  for (const [failure, by, code] of [[{ reason: 'PRIVATE WORDS' }, 'body', 14], [{ reason: 'unknown', words: 'PRIVATE' }, 'body', 14], [{ reason: 'overloaded' }, 'runner', 14], [{ reason: 'overloaded' }, null, 14]] as const)
+    expect(failedRun(fixture(), failure, by, code).job).toMatchObject({ state: 'failed', failedReason: null, failedDetail: null });
+  const f = fixture(), mail = f.send(), job = f.runtime.admit(f.conversation.id)!;
+  f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image'); f.comms.take(f.conversation.id, job.id); f.comms.confirm(mail.id, job.id);
+  expect(f.runtime.finish(job.id, 'worker', 0, '', 'body', { reason: 'overloaded' }).job).toMatchObject({ state: 'done', failedReason: null });
+});
+it.each(['context-too-large', 'max-turns', 'sign-in-needed', 'output-limit'] as const)('does not try again a job that would fail the same way (%s)', reason => {
+  const f = fixture(), result = failedRun(f, { reason });
+  expect(result.job).toMatchObject({ state: 'failed', failedReason: reason }); expect(result.retry).toBeUndefined();
+  // Its mail stays with it, as when a chain runs out of attempts, until fresh mail arrives.
+  expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: result.job.id }); expect(working(f)).toEqual([]);
+  expect(f.runtime.admit(f.conversation.id)).toBeUndefined();
+  f.send(); expect(f.runtime.admit(f.conversation.id)).toMatchObject({ state: 'queued', retryOf: null });
+});
+it('waits for a limit\'s known reset time before the next attempt, never past the queue deadline, and otherwise retries as before', () => {
+  const start = Date.parse('2026-11-14T20:00:00.000Z'), iso = (ms: number) => new Date(start + ms).toISOString();
+  const f = fixture(), limited = failedRun(f, { reason: 'usage-limit', resetsAt: iso(3 * 3_600_000) });
+  expect(limited.retry).toMatchObject({ state: 'queued', retryOf: limited.job.id, retryAt: iso(3 * 3_600_000) });
+  // Not claimable before then, and not swept as unplaced while it waits.
+  f.tick(3_600_000); expect(f.runtime.claim(limited.retry!.id, 'worker')).toBeUndefined(); expect(f.runtime.sweep()).toEqual([]);
+  f.tick(2 * 3_600_000 + 1); expect(f.runtime.claim(limited.retry!.id, 'worker')?.state).toBe('starting');
+  expect(failedRun(fixture(), { reason: 'rate-limited', status: 429, resetsAt: iso(60_000) }).retry?.retryAt).toBe(iso(60_000));
+  expect(failedRun(fixture(), { reason: 'usage-limit', resetsAt: iso(30 * 24 * 3_600_000) }).retry?.retryAt).toBe(iso(QUEUE_DEADLINE_MS));
+  // A reset time already past, a limit with none, and every other reason: the usual first wait.
+  for (const failure of [{ reason: 'usage-limit', resetsAt: iso(-60_000) }, { reason: 'usage-limit' }, { reason: 'overloaded', status: 529 }, { reason: 'killed', signal: 'SIGKILL' }, { reason: 'unknown' }, undefined])
+    expect(failedRun(fixture(), failure).retry?.retryAt).toBe(iso(5_000));
+});

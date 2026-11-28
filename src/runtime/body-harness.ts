@@ -18,6 +18,7 @@ import type { HarnessTraits } from './harness-traits.js';
 import { BODY_EXTENSION_TOOLS_MAX, TOOL_NAME } from './body-model-tools.js';
 
 import type { UsageReport } from './usage-report.js';
+import type { JobFailure } from './job-failure.js';
 
 export interface HarnessReply { usage?: UsageReport; text: string; model: string; actions: { model: string }[];
   /** The id of the session the harness kept for this run, when it was asked to keep one and did. */
@@ -68,6 +69,25 @@ export interface Harness extends HarnessTraits {
 }
 
 export const harnessUnavailable = () => new Error('Native execution unavailable');
+/** A run that failed, with what the adapter could tell of it (harness-failure.ts). Its message is the same one
+ * plain line as every other failure. `why` is one of the fixed reasons and holds no words: the body may hand it
+ * on with its exit code. `said` is the harness's own last error text, which may hold the conversation's words:
+ * it stays in the body, which shows it only to the conversation's own readers (body-program.ts). */
+export class HarnessFailed extends Error { constructor(readonly why: JobFailure, readonly said?: string) { super('Native execution unavailable'); } }
+/** How a harness's process ended, when it did not end well. For the adapter that started it, and no further. */
+export interface HarnessEnd {
+  exitCode: number | null; signal: string | null;
+  /** The body ended it: it printed more than `outputLimit`, or it had ended and its output stayed open. */
+  cut?: 'output' | 'pipes';
+  /** The body was told to stop: no failure of the harness's. */
+  aborted: boolean;
+  /** The end of what it wrote as diagnostics, bounded. May hold the conversation's words. */
+  stderr: string;
+}
+/** What runHarnessChild rejects with once the process was started: the one plain line, and how it ended. */
+export class HarnessExit extends Error { constructor(readonly end: HarnessEnd) { super('Native execution unavailable'); } }
+/** How much of a harness's diagnostics is held, from their end, while it runs. */
+const STDERR_TAIL = 4_096;
 export const harnessModel = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$/;
 const outputLimit = 1_048_576;
 /** Names the body's scratch directory in its environment; set by the worker, removed by it after the body. */
@@ -134,6 +154,7 @@ export async function runHarnessChild(input: {
   const pipe = control ? child.stdio?.[3] as Writable | undefined : undefined;
   const chunks: Buffer[] = [];
   let bytes = 0, failed = false, drain: ReturnType<typeof setTimeout> | undefined;
+  let exitCode: number | null = null, exitSignal: string | null = null, cut: HarnessEnd['cut'], diagnostics: Buffer = Buffer.alloc(0);
   const reportFailure = () => {
     if (!input.onFailedOutput || !chunks.length || bytes > outputLimit) return;
     const output = Buffer.concat(chunks);
@@ -159,8 +180,12 @@ export async function runHarnessChild(input: {
     await new Promise<void>((resolve, reject) => {
       child.once('error', () => { stop(); reject(harnessUnavailable()); });
       // A leader may leave a descendant holding the pipes; end it so the worker can reap the group.
-      child.once('exit', () => { drain = setTimeout(stop, 1_000); });
-      child.once('close', code => {
+      child.once('exit', (code: number | null, signal: string | null) => {
+        if (typeof code === 'number') exitCode = code; if (typeof signal === 'string') exitSignal = signal;
+        drain = setTimeout(() => { if (!failed && code === 0) cut = 'pipes'; stop(); }, 1_000);
+      });
+      child.once('close', (code: number | null, signal: string | null) => {
+        if (exitCode === null && typeof code === 'number') exitCode = code; if (exitSignal === null && typeof signal === 'string') exitSignal = signal;
         if (code === 0 && !failed && !input.signal.aborted) resolve();
         else reject(harnessUnavailable());
       });
@@ -170,15 +195,24 @@ export async function runHarnessChild(input: {
         if (Buffer.isBuffer(data)) data.fill(0);
         if (failed) { chunk.fill(0); return; }
         bytes += chunk.length;
-        if (bytes > outputLimit) { chunk.fill(0); stop(); } else { chunks.push(chunk); try { input.onOutput?.(chunk); } catch { stop(); } }
+        if (bytes > outputLimit) { chunk.fill(0); cut = 'output'; stop(); } else { chunks.push(chunk); try { input.onOutput?.(chunk); } catch { stop(); } }
       });
-      // Drain diagnostics; never keep or forward them.
-      child.stderr.on('data', (data: Buffer | string) => { bytes += Buffer.byteLength(data); if (Buffer.isBuffer(data)) data.fill(0); if (bytes > outputLimit && !failed) stop(); });
+      // Drain diagnostics; never forward them. Their end is held, bounded, for the adapter to read if the run
+      // fails (HarnessEnd.stderr), and erased either way.
+      child.stderr.on('data', (data: Buffer | string) => {
+        bytes += Buffer.byteLength(data);
+        if (!failed) { const kept = Buffer.concat([diagnostics, Buffer.from(data)]); diagnostics.fill(0); diagnostics = Buffer.from(kept.subarray(-STDERR_TAIL)); kept.fill(0); }
+        if (Buffer.isBuffer(data)) data.fill(0);
+        if (bytes > outputLimit && !failed) { cut = 'output'; stop(); }
+      });
       if (control) { if (!pipe || typeof pipe.end !== 'function') { stop(); reject(harnessUnavailable()); return; } pipe.end(control, () => control.fill(0)); }
       if (!failed) child.stdin.end(input.words);
     });
     if (input.signal.aborted || failed) throw harnessUnavailable();
     return Buffer.concat(chunks);
-  } catch { if (!failed) reportFailure(); throw harnessUnavailable(); }
-  finally { control?.fill(0); pipe?.destroy(); if (drain) clearTimeout(drain); input.signal.removeEventListener('abort', stop); for (const chunk of chunks) chunk.fill(0); }
+  } catch {
+    if (!failed) reportFailure();
+    throw new HarnessExit({ exitCode, signal: exitSignal, ...(cut ? { cut } : {}), aborted: input.signal.aborted, stderr: diagnostics.toString('utf8') });
+  }
+  finally { diagnostics.fill(0); control?.fill(0); pipe?.destroy(); if (drain) clearTimeout(drain); input.signal.removeEventListener('abort', stop); for (const chunk of chunks) chunk.fill(0); }
 }

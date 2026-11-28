@@ -21,6 +21,7 @@ import { machineFacts } from './runtime/machine-facts.js';
 import { workerAssignment } from './runtime/worker-http.js';
 import { claimedJobStates, jobClaimed } from './core/data/job-states.js';
 import { LOG_TAIL_MAX } from './runtime/log-tail.js';
+import { jobFailure } from './runtime/job-failure.js';
 
 import { changeReviewStore } from './apps/change-reviews.js';
 import { coldReviewReport, reviewOutcome } from './runtime/cold-review-report.js';
@@ -116,7 +117,9 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
   });
   operations.register({ name: 'runtime.finish', write: true, recheckPolicy: true, doors: ['http'],
     // exitBy: whose code it is, as the worker says. A worker from before it was asked leaves it out, and the row then says nobody's.
-    input: jobInput.extend({ exitCode: z.number().int(), logTail: z.string().max(LOG_TAIL_MAX), exitBy: z.enum(WORKER_EXIT_BY).optional(), programResult: z.json().optional(), coldReview: coldReviewReport.optional() }).strict(), output: ack,
+    // failed: why it failed, as one of the fixed reasons with bounded detail and no text (runtime/job-failure.ts). Kept
+    // for a private conversation's job too, where the log tail is dropped: it holds none of the conversation's words.
+    input: jobInput.extend({ exitCode: z.number().int(), logTail: z.string().max(LOG_TAIL_MAX), exitBy: z.enum(WORKER_EXIT_BY).optional(), failed: jobFailure.optional(), programResult: z.json().optional(), coldReview: coldReviewReport.optional() }).strict(), output: ack,
     may: (viewer, input) => assigned(viewer, input.job),
     inputHash(canonical, { input }) {
       if (input.coldReview || roundFor(input.job)) {
@@ -134,7 +137,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
       const privateOutput = job?.conversation !== null && job?.conversation !== undefined
         && !keepJobText(conversation);
       return createHash('sha256').update(privateOutput
-        ? JSON.stringify({ job: input.job, exitCode: input.exitCode, logTail: '', exitBy: input.exitBy ?? null }) : canonical).digest('hex');
+        ? JSON.stringify({ job: input.job, exitCode: input.exitCode, logTail: '', exitBy: input.exitBy ?? null, ...(input.failed ? { failed: canonicalJson(input.failed) } : {}) }) : canonical).digest('hex');
     },
     validateReplay(_viewer, input) {
       if (!input.coldReview) {
@@ -181,7 +184,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
           }
         }
       } else if (input.programResult !== undefined) throw new OperationError('invalid', 'Program result requires a program job');
-      dispatcher.finish(box, input.job, exitCode, round || job.startedByKind === 'program' ? '' : input.logTail, input.exitBy);
+      dispatcher.finish(box, input.job, exitCode, round || job.startedByKind === 'program' ? '' : input.logTail, input.exitBy, round || job.startedByKind === 'program' ? undefined : input.failed);
       ctx.changed('job', input.job); ctx.changed('box', ctx.viewer.id); return { ok: true as const };
     },
     after: input => options.jobEnded(input.job),

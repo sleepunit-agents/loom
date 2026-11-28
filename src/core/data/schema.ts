@@ -1126,6 +1126,12 @@ export const jobs = sqliteTable('jobs', {
   prefers: text('prefers', { mode: 'json' }).$type<string[]>(),
   placementDecision: text('placement_decision', { mode: 'json' }).$type<{ box: string; outcome: 'taken' | 'passed'; reason: string }[]>(),
   signInBlocked: integer('sign_in_blocked', {mode:'boolean'}).notNull().default(false),
+  // Why a failed job failed, where one of loom's programs could tell: one of a small fixed set of reasons that
+  // carry no words, and its few bounded numbers (runtime/job-failure.ts, the one home of both). Kept for a
+  // private conversation's job too, where log_tail is dropped. The list is not a constraint here: a later
+  // program may know a reason this one does not, and a reason this program does not know reads as none.
+  failedReason: text('failed_reason'),
+  failedDetail: text('failed_detail', { mode: 'json' }).$type<Record<string, string | number>>(),
 }, t => [
   check('jobs_retry_at_utc', utc(t.retryAt)),
   check('jobs_queued_at_utc', utc(t.queuedAt)),
