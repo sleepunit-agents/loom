@@ -71,6 +71,7 @@ describe('the catalogue and the registry are the same bricks', () => {
  * told, so each one is a decision, made here. */
 const detailIds: Record<string, Record<string, z.ZodString>> = {
   'household.token': { label: ref }, // a token's label (the owner's ruling, 2026-11-27)
+  'household.setPortrait': { agent: ref }, // the agent whose portrait changed, an id loom sent and nobody typed (t-2428's brief, 2026-11-28)
   'secrets.setValue': { secret: secretName }, // a secret's name (the owner's ruling, 2026-11-27)
   'secrets.remove': { secret: secretName },
 };

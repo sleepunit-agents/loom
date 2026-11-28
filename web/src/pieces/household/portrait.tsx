@@ -1,25 +1,14 @@
 import { newId } from '../../data/id';
 import {useState,useRef,type FormEvent} from 'react';
-import {DOOR_REQUEST_BYTES} from '../../../../src/core/data/door-limit';
-import {manifestFromPixelLab} from '../../../../src/pixellab-manifest';
-import {SPRITE_MAX_BYTES} from '../../../../src/desk-sprite-layout';
+import {portraitRefusal,readPortraitFiles,type PortraitInput} from './portrait-request';
 import {Button,Field,Fields,Input} from '../../kit';
 import {MemberOperationError,memberOperation} from '../../data/operation';
 
 async function readPortrait(form:HTMLFormElement){
-  const files=new FormData(form),sheet=files.get('png'),metadata=files.get('metadata');
-  if(!(sheet instanceof File)||!sheet.size||sheet.size>SPRITE_MAX_BYTES)throw Error('Choose a PNG sheet up to 4 MB.');
-  if(!(metadata instanceof File)||!metadata.size||metadata.size>DOOR_REQUEST_BYTES)throw Error('Choose PixelLab animation JSON up to 1 MB.');
-  const layout=manifestFromPixelLab(JSON.parse(await metadata.text()));
-  const png=await new Promise<string>((resolve,reject)=>{
-    const reader=new FileReader();
-    reader.onload=()=>resolve(String(reader.result).split(',')[1]);
-    reader.onerror=()=>reject(Error('Could not read the sheet.'));
-    reader.readAsDataURL(sheet);
-  });
-  return {layout,png};
+  const files=new FormData(form);
+  return readPortraitFiles(files.get('png'),files.get('metadata'));
 }
-type Request={id:string;input:{agent:string;version:string|null;portrait:Awaited<ReturnType<typeof readPortrait>>|null}};
+type Request={id:string;input:PortraitInput};
 
 export function Portrait({agent,version,enabled}:{agent:string;version:string|null;enabled:boolean}){
   const [busy,setBusy]=useState(false),[message,setMessage]=useState('');
@@ -48,9 +37,7 @@ export function Portrait({agent,version,enabled}:{agent:string;version:string|nu
     }catch(error){
       if(error instanceof MemberOperationError&&error.status>=400&&error.status<500){
         reset();
-        setMessage(error.status===409?'The portrait changed. Review the current face and choose the files again.':
-          (error.status===401||error.status===403)?'Sign in as a household owner to change a portrait.':
-          'Choose a valid PNG sheet up to 16 megapixels and its matching PixelLab animation JSON.');
+        setMessage(portraitRefusal(error.status));
       }else if(request){
         setRetry(request);setMessage('Could not confirm the change. Retry to check or finish it.');
       }else setMessage(error instanceof Error?error.message:'Could not read this portrait.');
