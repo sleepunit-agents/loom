@@ -104,3 +104,65 @@ export function githubReader(secrets:Secrets, request:typeof fetch=fetch) {
   });} catch {throw new Error('GitHub read unavailable');} // Never persist/log an upstream exception or credential.
  };
 }
+
+/** One file of a pull request as GitHub's REST files list gives it: its path and, where GitHub has one, its patch.
+ * GitHub's schema has `patch` optional; null is taken the same as left out. Other fields are ignored; a malformed
+ * entry fails the page. */
+const fileEntry = z.object({ filename: z.string(), patch: z.string().nullish() });
+/** The most read from GitHub for one page of the files list (8 MiB). A longer body fails the page, unread past it. */
+export const LISTING_BYTES_MAX = 8 * 1024 * 1024;
+/** How long one page may take, from its request to the last byte of its body: 20 s. */
+export const LISTING_PAGE_MS = 20_000;
+/** One page of GitHub's files list of a pull request, a hundred files at most, each with its patch or none. */
+export type ListingEntries = { filename: string; patch: string | null }[];
+export type ListingReader = (repo: string, number: number, page: number) => Promise<ListingEntries>;
+const listingPath = (number: number) => new RegExp(`^/repositories/[1-9][0-9]{0,15}/pulls/${number}/files$`);
+/** The body, read only as far as `LISTING_BYTES_MAX`. */
+async function boundedText(response: Response): Promise<string> {
+ const declared = Number(response.headers.get('content-length'));
+ if (declared > LISTING_BYTES_MAX) { await response.body?.cancel(); throw new Error('GitHub listing too large'); }
+ if (!response.body) return '';
+ const reader = response.body.getReader(), parts: Uint8Array[] = [];
+ let size = 0;
+ for (;;) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  size += value.byteLength;
+  if (size > LISTING_BYTES_MAX) { await reader.cancel(); throw new Error('GitHub listing too large'); }
+  parts.push(value);
+ }
+ return new TextDecoder().decode(Buffer.concat(parts));
+}
+/** One page of the files list of one pull request (GET /repos/{owner}/{repo}/pulls/{number}/files), read with the
+ * same credential and request function as `githubReader`: a fixed host, an address made from the stored repository
+ * and number only (the path is never sent), at most `LISTING_BYTES_MAX` read, `LISTING_PAGE_MS` for all of it.
+ *
+ * A renamed or moved repository: GitHub's REST API answers 301 to the stored name, and asks that a redirect be
+ * followed (docs.github.com, "Best practices for using the REST API"). One is followed, only to the same host and only
+ * to the same list by the repository's id (/repositories/{id}/pulls/{number}/files); any other is a failed read.
+ *
+ * The token goes only into the authorization header of these requests. It is never put in an address, a body, an
+ * error or an answer. A pull request can itself hold that token (a committed .env, a pasted log), so its exact value
+ * is replaced in what GitHub answers before anything is parsed. Nothing is replaced by shape: a patch is source code,
+ * and the poll's shape pattern would turn `weighs_in` into `wei[redacted]`. Every failure is the same bare error. */
+export function githubListingReader(secrets:Secrets, request:typeof fetch=fetch): ListingReader {
+ return async(repo,number,page)=>{
+  repo=repoId(repo);const [owner,name]=repo.slice(7).split('/');
+  // A name of dots alone would make the address another path of api.github.com.
+  if(/^\.+$/.test(owner)||/^\.+$/.test(name)||!Number.isSafeInteger(number)||number<=0||!Number.isSafeInteger(page)||page<=0)throw new Error('GitHub read unavailable');
+  try {return await withGitHub(secrets,owner,async token=>{
+   if(!token) throw new Error('Missing credential');
+   const signal=AbortSignal.timeout(LISTING_PAGE_MS),search=`?per_page=100&page=${page}`;
+   const init={method:'GET',redirect:'manual',signal,headers:{authorization:'Bearer '+token,accept:'application/vnd.github+json','x-github-api-version':'2022-11-28'}} as const;
+   let response=await request(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${number}/files${search}`,init);
+   if([301,302,307,308].includes(response.status)){
+    await response.body?.cancel();
+    const to=new URL(response.headers.get('location')??'','https://api.github.com');
+    if(to.origin!=='https://api.github.com'||!listingPath(number).test(to.pathname)||to.search!==search||to.username||to.password)throw new Error('GitHub redirect refused');
+    response=await request(to.href,init);
+   }
+   if(!response.ok){await response.body?.cancel();throw new Error('GitHub read failed');}
+   return z.array(fileEntry).max(100).parse(JSON.parse((await boundedText(response)).split(token).join('[redacted]'))).map(f=>({filename:f.filename,patch:f.patch??null}));
+  });} catch {throw new Error('GitHub read unavailable');} // Never persist/log an upstream exception or credential.
+ };
+}

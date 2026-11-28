@@ -84,6 +84,8 @@ import { registerConversationSessions } from './shared-conversation-sessions.js'
 import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
 import {pullCheckReader} from './pieces/changes/check-runs.js';
 import { sharedChangesReader,sharedForgeSecrets } from './shared-changes-reader.js';
+import { githubListingReader, type ListingReader } from './pieces/changes/github.js';
+import { changeFilePatches, changeFilePatchFields } from './pieces/changes/file-patch.js';
 import { pollChanges } from './apps/changes-polling.js';
 import { registerWorkRefresh,registerPullChecks } from './shared-work-refresh.js';
 import { inboxProposalTitles, workQueryFields } from './shared-work-queries.js';
@@ -150,7 +152,7 @@ export function sharedRoot(options: {
   memoryEmbedding?:()=>EmbeddingProvider;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
-  changes?: {rule?:MergeRuleReader} & ({read:PullRequestReader} | {github:Parameters<typeof sharedChangesReader>[0]});
+  changes?: {rule?:MergeRuleReader} & ({read:PullRequestReader;patch?:ListingReader} | {github:Parameters<typeof sharedChangesReader>[0]});
   tempo?: SharedTempoOptions;
   /** Explicit authenticated private holder and stable private retry key. */
   secretWrites?: {holder:RecoverableSecretMutations;fingerprintKey:Uint8Array};
@@ -255,7 +257,10 @@ export function sharedRoot(options: {
     const current=bodyScope(viewer);
     return current?.cv.venue==='loom' && (!current.cv.project || current.cv.project===project) ? current.cv.member ?? undefined : undefined;
   });
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...claimControls.fields,subscriptionSetup:subscriptionSetupField(db,roles), ...memory.fields, ...kitQueries.fields, ...programQueries.fields, ...householdQueries.fields, ...projectQueries.fields, ...sharedAccountFields(db, clock, member=>pushes?.read(member)??{publicKey:null,devices:[]}), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes,readInboxTitles)}, () => !closing, authenticateOutside, work => meter?.enabled()
+  // A changed file's patch is read from GitHub when a member opens it, with the changes poll's own credential.
+  const filePatches = changeFilePatchFields(changeFilePatches(db, !options.changes ? undefined : 'read' in options.changes ? options.changes.patch
+    : githubListingReader(sharedForgeSecrets(options.changes.github), options.changes.github.request), () => clock.now()));
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...claimControls.fields,subscriptionSetup:subscriptionSetupField(db,roles), ...memory.fields, ...kitQueries.fields, ...programQueries.fields, ...householdQueries.fields, ...projectQueries.fields, ...sharedAccountFields(db, clock, member=>pushes?.read(member)??{publicKey:null,devices:[]}), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes,readInboxTitles), ...filePatches}, () => !closing, authenticateOutside, work => meter?.enabled()
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work(),viewer=>credentials.program(viewer)?.records,viewer=>{const work=bodyJob(viewer);return !work || !jobHeld(db,work.job);}, viewer => mayReadProgramWork(db, viewer, bodyJob(viewer)?.job));
   credentialWrite=action=>{if(db.$client.inTransaction)throw Error('Credential usage must own its transaction');if(db.transaction(action))data.credentialUsageChanged();};
   startupCleanups.push(()=>{void data.close().catch(()=>report(new Error('Data startup cleanup failed')));});

@@ -188,7 +188,7 @@ const unfiledData = (unfiled: unknown[], over: Record<string, Answer> = {}): Rec
 // ── pull, repository ───────────────────────────────────────────────────────────────────────────────────────────
 const change = { id: 'github:hollow-lane/irrigation-controller#39', repository: 'hollow-lane/irrigation-controller', number: 39, url: 'https://github.com/hollow-lane/irrigation-controller/pull/39',
   title: 'Read line pressure at both ends and warn when the far end falls below the head by more than a tenth', state: 'open', draft: false, authorLogin: 'moss-bot',
-  project: 'garden', agent: 'moss', branch: 'moss/pressure-both-ends', baseBranch: 'main', checks: 'failing', review: 'required', mergeable: 'unknown', waitingOn: 'author' };
+  project: 'garden', agent: 'moss', branch: 'moss/pressure-both-ends', headCommit: '4f9c2e1a7b3d5f60819a2b3c4d5e6f708192a3b4', baseBranch: 'main', checks: 'failing', review: 'required', mergeable: 'unknown', waitingOn: 'author' };
 const pullData = (over: object = {}, parts: { checks?: unknown[]; people?: unknown[]; tasks?: unknown[]; files?: unknown[] } = {}): Record<string, Answer> => ({
   ...shared,
   BrickPull: {
@@ -207,6 +207,14 @@ const pullData = (over: object = {}, parts: { checks?: unknown[]; people?: unkno
       { change: change.id, task: 't-99', taskRow: null },
     ],
   },
+});
+/** A changed file's patch as the one-shot read answers it, for the scene that opens a file. */
+const farEndPatch = ['@@ -1,9 +1,28 @@', " import { readings } from '../pressure/read';", '-const LIMIT = 0.2;', '+/** Warn when the far end falls below the head by more than a tenth. */',
+  '+const LIMIT = 0.1;', ' ', '-export function farEnd(head: number, far: number) {', '-  return head - far > LIMIT;', '+export function farEnd(line: string) {', '+  const { head, far } = readings(line);',
+  '+  if (head === null || far === null) return false;', '+  return (head - far) / head > LIMIT;', ' }', '@@ -40,4 +59,8 @@ export function alertFor(line: string) {', '   const low = farEnd(line);',
+  "+  // A line with <no far sensor> never warns: see docs/valves/where-each-pressure-sensor-sits-along-the-north-and-south-lines.md", '+  if (!low) return null;', '   return { line, words: `Far end of ${line} is low` };', ' }'].join('\n');
+const pullPatch = (state: 'patch' | 'none', cut = false): Record<string, Answer> => ({
+  BrickPullFilePatch: () => ({ patch: state === 'patch' ? { state, patch: farEndPatch, cut } : { state, patch: null, cut: false } }),
 });
 const openPulls = [
   { number: 39, title: change.title, draft: false, checks: 'passing', review: 'approved', waitingOn: 'you', agent: 'moss' },
@@ -279,6 +287,8 @@ export const scenes: BrickScenes[] = [
     { name: 'draft', params: { change: change.id }, only: ['side', 'compact'], data: pullData({ draft: true, checks: 'none', title: 'Sowing calendar: frost dates per bed', project: null, agent: null }, { checks: [], people: [], tasks: [] }) },
     { name: 'merged', params: { change: change.id }, data: pullData({ state: 'merged', checks: 'passing', review: 'approved', mergeable: 'unknown', waitingOn: 'done' }, { checks: [] }) },
     { name: 'flagged', params: { change: change.id }, flag: 'Checks failing', only: ['side', 'compact'], data: pullData() },
+    { name: 'file-opened', params: { change: change.id }, only: ['primary'], press: ['src/alerts/far-end.ts'], data: { ...pullData(), ...pullPatch('patch', true) } },
+    { name: 'file-no-patch', params: { change: change.id }, only: ['primary'], press: ['src/pressure/read.ts'], data: { ...pullData(), ...pullPatch('none') } },
     { name: 'unavailable', params: { change: change.id }, only: ['side'], data: { ...shared, BrickPull: 'offline' } },
   ] },
   { brick: 'repository', scenes: [

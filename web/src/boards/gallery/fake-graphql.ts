@@ -31,3 +31,6 @@ export function useDataQuery<T>(document: unknown, variables?: Record<string, un
   }
   return snapshot;
 }
+
+/** The one-shot read (web/src/data/graphql's `useDataOnce`), answered from the scene by its query's name, as above. */
+export const useDataOnce = <T,>(document: string, variables: Record<string, unknown>, options?: { pause?: boolean }): DataQuerySnapshot<T> => useDataQuery<T>(document, variables, options);

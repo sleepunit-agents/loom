@@ -634,7 +634,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `comments` | yes | a comment arrives from someone else |
 | `person` (a member or a contact) | yes: what People's reader shows (see below) | never |
 | `agent` | yes: everything it is doing and its last thirty jobs | it starts waiting on the member (a question of its own joins the Inbox's "needs you" when none was there) |
-| `pull` | yes: also its branch and author, its failing and running checks by name, the people on it, whether it can be merged, its tickets with their titles, the files it changed with their added and removed lines | its checks go to failing, it is merged, it is closed |
+| `pull` | yes: also its branch and author, its failing and running checks by name, the people on it, whether it can be merged, its tickets with their titles, the files it changed with their added and removed lines, each opening in place to its patch (`changeFilePatch`, asked once each time it is opened, not live) | its checks go to failing, it is merged, it is closed |
 | `repository` | yes: each open pull request with its title and where it stands | never |
 | `question` | no | never: being on the board is the flag |
 | `approval` | no: the page has a primary form for it, with the record's history, but the catalogue does not let it be big, so a board draws it side or compact | never: being on the board is the flag |
@@ -759,7 +759,8 @@ it in the desktop's words.
   `ticket` chips; a link that opens the pull request on GitHub in a new tab, drawn only for a `https://github.com/`
   address; and, big, the files it changed, each with its added and removed lines, or a note that they are not known
   yet. `change_files` is kept from the same read of GitHub as the checks (at most the first 100 files GitHub lists)
-  and is read with the same rule: seen with its change. A ticket the member may not read is left out. It has no action. `changes.answer` exists and a
+  and is read with the same rule: seen with its change. Each file's name opens its row in place to that file's patch
+  ("The pull brick's file patches", below). A ticket the member may not read is left out. It has no action. `changes.answer` exists and a
   member the household lets answer may call it, but it is a merge approval's answer and needs the approval that is
   waiting for that commit; it stays on the desktop with the approval.
 - `repository`: the open `changes` rows of that repository, in one project when `project` is given, latest first, at
@@ -1116,6 +1117,86 @@ Two things loom does not have today, found 2026-11-27, each its own change if wa
   the agent in the conversation.
 - **It does not flag itself for "waiting on the member".** A question or an approval from a session arrives in the
   inbox as it does today; it is its own brick.
+
+### The pull brick's file patches
+
+Added 2026-11-27 (t-2428). In the `pull` brick's big form each changed file's name (`Opens`) opens its row in place
+(`Opened`) to that file's patch. Nothing of a patch is stored: no table, no schema step.
+
+| Read | Who gets an answer | Cost | Live |
+|---|---|---|---|
+| `changeFilePatch(change, path)` (`src/pieces/changes/file-patch.ts`): `{ state, patch, cut }`, `state` one of `patch`; `none` (GitHub lists the file with no patch: a binary file, a diff too large for GitHub to give, a rename with no change in it, an empty file); `unlisted` (GitHub's list does not have the file just now, as after a push the poll has not stored yet); and `unavailable` (GitHub could not be read: no credential for the owner, a failed, malformed or too large answer, too slow, or too many reads waiting) | exactly whoever may read the change's `change_files` rows (seen with its change, as #2356 set it), and only for a `path` that is one of them. Anybody else, a path that is not one of the change's files and a change that does not exist all get the same null; anybody not signed in is refused by the door (401, no data) | one keyed statement (the `change_files` row joined to its change, under the viewer's rule), then, unless the page is kept, one GitHub request a page of the files list (`GET /repos/{owner}/{repo}/pulls/{number}/files`, a hundred files a page, stopping at the file, at most three pages; `change_files` holds the first hundred, so it is nearly always on the first). A page is shared by every path and viewer of that pull request at that head | no: asked once each time a row is opened, by one POST (`useDataOnce`, `web/src/data/graphql/index.ts`). The server refuses it as a live selection: the field is marked as read from outside the database (`outsideRead`, `src/core/data/outside-read.ts`) and `observe` refuses any selection that names one, fragments included, so no write reads it again |
+
+- **GitHub.** The same credential and request function as the changes poll that fills `change_files`
+  (`githubListingReader` beside `githubReader` in `src/pieces/changes/github.ts`, given `sharedForgeSecrets` of the
+  same `changes.github` options in `src/shared-root.ts`): the owner's bound token, a fixed host and an address made
+  from the stored repository and number only (the path is never sent; a name of dots alone is refused, names are
+  encoded). GitHub's REST files list reads the same pull request the GraphQL read does, under the same permission;
+  no scope or token was added. A renamed or moved repository: GitHub's REST API answers a redirect to the stored
+  name and asks that it be followed ("Best practices for using the REST API"); one is followed, only to
+  `https://api.github.com/repositories/{id}/pulls/{number}/files` with the same page, anything else is a failed read.
+- **Token.** It goes only into the authorization header of these requests: never into an address, a body, an error,
+  a log or an answer. A pull request can itself hold that token (a committed `.env`, a pasted log), so its exact
+  value is replaced by `[redacted]` in what GitHub answers before anything is parsed. Nothing is replaced by shape:
+  searching source code for token shapes would turn `weighs_in` into `wei[redacted]`. Every failure is one bare
+  error. The poll's own reads (`githubReader`) still redact by value and by shape as before.
+- **Bounds.** At most 2 GitHub requests from this read at once, across every change and viewer; at most 8 pages wait
+  for one, and past that an ask is `unavailable` at once, with nothing sent and nothing kept. A page's body is read
+  only to 8 MiB (more fails the page, unread past it); each page has 20 s from its request to its last byte. One
+  answer takes at most 20 s, waiting included: past that it is `unavailable`, and a page still being read finishes
+  on its own limit and is kept for the next ask. One page's read holds its place at most 25 s, the read of the
+  credential included; past that the place is given up and the page is a failed read. The two places and eight
+  waiting are shared by everybody: one member opening many pull requests at once can make another's open
+  `unavailable` until those reads end (not divided by member; a household is a few people).
+- **Over the socket.** A one-shot read over the socket is answered, but the socket closes a client whose answer a
+  commit landed during ("Data changed; reconnect"), and this read waits on GitHub, so that is likely. The page asks
+  over POST and retries once instead.
+- **Cap.** At most 200 KB (204,800 UTF-8 bytes) of patch text an answer. A longer patch is cut at its last whole line
+  within that, or inside a line where cutting at a line end would keep less than half of it (a minified file: a hunk
+  header, then one very long line), a character the cut splits left out whole, and `cut` is true; the page says "This patch is longer than 200 KB: only its first part is shown.
+  The whole of it is on GitHub."
+- **Kept.** In memory, one page of the files list keyed by repository, number, the change's stored head commit and
+  page number, so a new push (a new `head_commit` from the poll) is read afresh. Patches are kept already cut. At
+  most 32 MiB, counted as JavaScript holds text (two bytes a character), the oldest page dropped first; a page kept 5
+  minutes. A failed read is kept 30 s, and so is a page that does not list an asked-for file, so a push not polled
+  yet is not pinned. Asks for the same page at once share one request. The kept pages are checked only after the
+  viewer's rule has been. Between a push and the poll storing its head (at most a poll's interval) the patch read is
+  GitHub's newer one, kept under the older head; once the poll stores the new head it is read again.
+- **A commit during the read.** The door answers one version of the data an answer, and says "Data changed; retry the
+  query" (503) when a commit landed while a read ran (`src/core/data/http.ts`); this read waits on GitHub, so that is
+  common. `useDataOnce` asks again once, at once, on exactly that answer; the page read is kept by then, so the
+  second ask does not go to GitHub. The door's rule is not loosened for it.
+- **Drawn.** Plain monospaced text in a `pre`, one line to a span, never markup: no `dangerouslySetInnerHTML`, no
+  markdown, no links. Added and removed lines keep their `+` and `-` and are marked `board-patch-add` and
+  `board-patch-remove`, hunk headers `board-patch-hunk` (`board-kit.css`); long lines wrap. Loading says
+  "Loading…"; `none` says "GitHub shows no patch for this file: it may be binary, a change too large for GitHub to
+  show, a rename with no change in it, or an empty file."; `unlisted` says "GitHub's list of this pull request's
+  files does not have this file just now: it may have changed since. Close it and open it again in a moment.";
+  `unavailable` says "GitHub could not be read for this file just now. Close it and open it again in a moment to try
+  again."; a failed request or a null answer says "This file's patch could not be read. Close it and open it again
+  to try again." Closing the row drops the answer; opening it again asks again (answered from the kept page while it
+  is kept). The opened files belong to one change at one head commit in the big form: leaving the big form, or a
+  new change or head commit, forgets them before anything is drawn, so coming back asks nothing and no patch stays
+  open on an older head than the rows beside it.
+- **Checked.** `src/shared-change-file-patch.test.ts` (the real root, door and credential path, GitHub faked):
+  the member who can see the change gets the patch; another member and another agent get null and GitHub is not
+  asked; nobody signed in gets 401 and no data; a path not among the change's files gives null; the cap cuts at a
+  whole line, inside a line longer than the cap, and leaves a split character out; patch text that looks like a
+  token is given unchanged; `none` for a file listed with no patch (left out or null), `unlisted` for one not
+  listed and kept 30 s; the same head is answered from the kept page, a new head and an expired page are not; a
+  failed read is `unavailable` and kept 30 s; a hundred aliased paths of one pull request in one POST are one
+  request; paging past page 1 and the stop at three; two requests at once and an immediate `unavailable` past eight
+  waiting; the 20 s answer bound; the oldest pages dropped past the bound on what is kept; a commit during the read
+  answered 503 and the next ask kept; `observe` refuses the field, alone and in a fragment, over the real socket,
+  while an ordinary selection opens and a direct read is answered; the redirect followed only to the same list on
+  the same host; the 8 MiB read bound, declared or streamed; a repository name of dots refused.
+  `src/core/data/outside-read.test.ts`: a marked field is found anywhere in a document and `observe` refuses it
+  reading nothing. `web/src/boards/bricks-pull.test.tsx`: a row opens and draws added, removed and hunk lines with
+  their class and sign; a patch holding markup is drawn as its text; the cut, none, unlisted, unavailable, failed
+  and loading states; leaving the big form, a new head and a new change forget the opened files and ask nothing.
+  `web/src/data/graphql/once.test.tsx`: one POST, again only for new variables, no socket; one more ask on "Data
+  changed", and only one. The gallery has the scenes `file-opened` and `file-no-patch`. Not checked: a browser, and
+  a real GitHub (its redirect for a renamed repository is taken from its documentation).
 
 ### Adding a brick
 
