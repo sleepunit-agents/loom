@@ -634,7 +634,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `comments` | yes | a comment arrives from someone else |
 | `person` (a member or a contact) | yes: what People's reader shows (see below) | never |
 | `agent` | yes: everything it is doing and its last thirty jobs | it starts waiting on the member (a question of its own joins the Inbox's "needs you" when none was there) |
-| `pull` | yes: also its branch and author, its failing and running checks by name, the people on it, whether it can be merged, its tickets with their titles | its checks go to failing, it is merged, it is closed |
+| `pull` | yes: also its branch and author, its failing and running checks by name, the people on it, whether it can be merged, its tickets with their titles, the files it changed with their added and removed lines | its checks go to failing, it is merged, it is closed |
 | `repository` | yes: each open pull request with its title and where it stands | never |
 | `question` | no | never: being on the board is the flag |
 | `approval` | no: the page has a primary form for it, with the record's history, but the catalogue does not let it be big, so a board draws it side or compact | never: being on the board is the flag |
@@ -754,9 +754,12 @@ neither.
 **What the five bricks drawn on 2026-11-27 show.** Each reads what the desktop reads for the same record, and says
 it in the desktop's words.
 
-- `pull`: the `changes` row and its `change_checks`, `change_people` and `change_tasks` rows. Title, number,
+- `pull`: the `changes` row and its `change_checks`, `change_people`, `change_files` and `change_tasks` rows. Title, number,
   repository (a `repository` chip), open, draft, merged or closed, checks, review, who it waits on, and its tickets as
-  `ticket` chips. A ticket the member may not read is left out. It has no action. `changes.answer` exists and a
+  `ticket` chips; a link that opens the pull request on GitHub in a new tab, drawn only for a `https://github.com/`
+  address; and, big, the files it changed, each with its added and removed lines, or a note that they are not known
+  yet. `change_files` is kept from the same read of GitHub as the checks (at most the first 100 files GitHub lists)
+  and is read with the same rule: seen with its change. A ticket the member may not read is left out. It has no action. `changes.answer` exists and a
   member the household lets answer may call it, but it is a merge approval's answer and needs the approval that is
   waiting for that commit; it stays on the desktop with the approval.
 - `repository`: the open `changes` rows of that repository, in one project when `project` is given, latest first, at
