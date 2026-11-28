@@ -227,6 +227,15 @@ it('reviews a commit against its parent, filing the round on the pull request it
  expect(frozenReview(f.root.services.conversations.conversation(described.conversation))?.tier).toBe('high');
 });
 
+it('says in handoff discovery whether a frozen review can run, so the delegation text is acted on only when it can',async()=>{
+ const f=await fixture();
+ const options=async()=>(await (await f.call('handoffOptions',{},'options-'+Math.random())).json()).value.frozenReviews;
+ expect(await options()).toEqual({available:true});
+ // No worker that gives the copy is current: not available, with the reason.
+ f.db.update(s.boxes).set({lastSeenAt:'2000-01-01T00:00:00.000Z'}).run();
+ expect((await options()).available).toBe(false);
+});
+
 it('refuses a review it cannot pin, and anyone but the private owner body',async()=>{
  const f=await fixture('codex',async()=>{throw Error('GitHub down');});
  expect((await f.call('review',request,'down')).status).toBe(503);

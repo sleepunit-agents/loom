@@ -1379,7 +1379,7 @@ it.each([[true, { reason: 'out-of-memory' }], [false, { reason: 'killed', signal
 
 /** A frozen review (conversation.review): its copy, written by `build`, mounted read-only by `start`. */
 const reviewHead = '1'.repeat(40), reviewBase = '2'.repeat(40);
-const frozenJob: WorkerAssignment = { ...job, review: true, frozenReview: { repository: 'acme/app', head: reviewHead, base: reviewBase } };
+const frozenJob: WorkerAssignment = { ...job, review: true, frozenReview: { repository: 'acme/app', head: reviewHead, base: reviewBase }, run: { gpu: false, nestedContainers: false, ports: [{ address: '127.0.0.1', port: 8080 }] } };
 function frozenFixture(engineSaysWritable = false) {
   const f = fixture(), state = mkdtempSync(join(houseRoot, 'frozen-state-')), copy = join(state, 'reviews', frozenJob.id);
   const source = { ...f.source,
@@ -1421,6 +1421,8 @@ it('gives a frozen review its exact commit read-only at /review, none of its age
     expect(mounts).toContainEqual({ Type: 'bind', Source: f.copy, Target: '/review', ReadOnly: true });
     // Nothing of the agent's own: neither of its fixed mounts, nor a kit socket. Its sign-in, as every body has.
     expect(mounts.map(m => m.Target)).toEqual(['/opt/loom', '/usr/local/bin/loom', '/run/loom/login/harness', '/review']);
+    // Nor its agent's published ports.
+    expect(spec.HostConfig.PortBindings).toEqual({});
     expect(spec.Env.some(entry => /SECRET|TOKEN|GH_|GITHUB/.test(entry))).toBe(false);
     expect(JSON.stringify(f.engine.json.mock.calls)).not.toMatch(/house-fetch-secret|acme-forge-secret|machine-only/);
     await body.release(bootstrap());

@@ -479,7 +479,9 @@ export function containerWorkerExecutor(config: {
         const copy = assignment.frozenReview ? snapshots.get(assignment.id) : undefined;
         if (assignment.frozenReview && (!copy || copy.head !== assignment.frozenReview.head)) throw new Error('Review copy unavailable');
         mounts = engineMounts([...mountsFor(assignment, { agentMounts: !assignment.frozenReview }),
-          ...(copy ? [{ source: copy.path, target: REVIEW_MOUNT, readOnly: true }] : [])]); bindings = portBindings(assignment);
+          ...(copy ? [{ source: copy.path, target: REVIEW_MOUNT, readOnly: true }] : [])]);
+        // Nor its agent's published ports: a reviewer serves nothing.
+        bindings = assignment.frozenReview ? {} : portBindings(assignment);
         name = `loom-${(dependencies.name ?? randomUUID)()}`;
         if (!/^loom-[A-Za-z0-9_-]+$/.test(name)) throw new Error('Invalid container name');
       } catch (error) { letGo(); throw error; }

@@ -99,7 +99,10 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
  };
  operations.register(operation({name:'conversation.handoffOptions',write:false,doors:['http'],
   input:z.object({}).strict().describe('List assigned peers, enabled work roles and current worker availability.'),
-  output:z.object({agents:z.array(z.string()),codexAvailable:z.boolean(),codexUnavailableReason:z.string().optional(),roles:z.array(z.object({id:z.string(),description:z.string(),available:z.boolean(),reason:z.string().optional()})).optional()}).strict(),
+  output:z.object({agents:z.array(z.string()),codexAvailable:z.boolean(),codexUnavailableReason:z.string().optional(),roles:z.array(z.object({id:z.string(),description:z.string(),available:z.boolean(),reason:z.string().optional()})).optional(),
+   /** Whether conversation.review can run here now: this loom reads the forge, the agent has the review role, and a
+    * worker that gives a frozen review its copy can take it. */
+   frozenReviews:z.object({available:z.boolean(),reason:z.string().optional()}).strict()}).strict(),
   may(viewer){const work=current(viewer);return !!work && ownerThread(work);},
   run(ctx){
    const work=requireCurrent(ctx.viewer);
@@ -108,7 +111,11 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    const agents=assigned.map(row=>row.agent).filter(agent=>peerAllowed(work,agent)).sort();
    const roles=self?.workRoles?.(work.cv.agent).map(({id,description,available,reason})=>({id,description,available,...(reason?{reason}:{})}))??[];
    const codex=self?.codexAvailability?.(work.cv.agent);
-   return {agents,...(roles.length?{roles}:{}),codexAvailable:codex?.available===true,...(codex?.reason?{codexUnavailableReason:codex.reason}:{})};
+   const reviewer=self?.reviewBase?self.workRoles?.(work.cv.agent,REVIEW_ROLE,true)[0]:undefined;
+   const frozenReviews=!self?.reviewBase?{available:false,reason:'This loom cannot read the forge, so it runs no frozen review.'}
+    :!reviewer?{available:false,reason:'This agent has no review work role.'}
+    :{available:reviewer.available,...(!reviewer.available&&reviewer.reason?{reason:reviewer.reason}:{})};
+   return {agents,...(roles.length?{roles}:{}),codexAvailable:codex?.available===true,...(codex?.reason?{codexUnavailableReason:codex.reason}:{}),frozenReviews};
   },
  }));
  const reviewInThread=(work:Work,id:string)=>{
