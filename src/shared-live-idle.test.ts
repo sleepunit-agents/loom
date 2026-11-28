@@ -72,14 +72,26 @@ async function fixture() {
         { kind: 'memory', sizeBytes: 16 * 1024 ** 3, freeBytes: freeMemoryMib * 1024 ** 2 }, { kind: 'containers', engineStatus: answers ? 200 : 503 }] }, id: `reading-${clock.now()}-${Math.random()}` }) });
     expect(await response.json()).toEqual({ ok: true, value: { ok: true } });
   };
-  // Long enough for a selection that was woken to have been read again.
+  // Long enough for a selection that was woken to have been read again, once nothing makes it wait its settle time:
+  // see `followClock`.
   const settle = async () => { for (let i = 0; i < 30; i++) await new Promise(resolve => setImmediate(resolve)); };
+  /** A woken selection waits until LIVE_SETTLE_MS (next-data.ts) after its last reading began. It measures that on the
+   * monotonic clock with a real timer (core/data/live.ts, `wait`), while this file moves only the fake one. A wake
+   * that came within that time of a reading was read only when the timer fired: on a busy machine after `settle`
+   * had returned, after the next poll had written, and so counted against it. Here the monotonic clock moves with
+   * the fake one, so a selection woken after the fake clock has moved past its settle time is read at once. */
+  const followClock = () => {
+    const elapsed = performance.now.bind(performance), start = clock.now();
+    const monotonic = vi.spyOn(performance, 'now').mockImplementation(() => elapsed() + clock.now() - start);
+    cleanup.push(() => monotonic.mockRestore());
+  };
   const seen = () => db.select().from(boxes).where(eq(boxes.id, 'worker')).get()!.lastSeenAt;
-  return { root, db, clock, now, watch, poll, reading, settle, seen, reads: () => reads };
+  return { root, db, clock, now, watch, poll, reading, settle, followClock, seen, reads: () => reads };
 }
 
 it('does not read an open selection again for a poll that found no work, and shows the last-seen time within a minute', async () => {
-  const f = await fixture(), window = await f.watch('owner', '{ probe boxes { id lastSeenAt } boxFacts { fact } }');
+  const f = await fixture(); f.followClock();
+  const window = await f.watch('owner', '{ probe boxes { id lastSeenAt } boxFacts { fact } }');
   expect(f.reads()).toBe(1);
   // The first poll reports the machine's facts and room: a change, shown at once.
   f.clock.advance(1000); await f.poll();
@@ -194,7 +206,8 @@ it('reads an open selection again at once for a machine reading that changes a s
 });
 
 it('does not read an open selection again for a machine reading that raises and clears nothing, and shows a condition at once', async () => {
-  const f = await fixture(), window = await f.watch('sam', '{ probe boxReadings(where: {kind: {eq: disk}}) { thing usedPercent level } }');
+  const f = await fixture(); f.followClock();
+  const window = await f.watch('sam', '{ probe boxReadings(where: {kind: {eq: disk}}) { thing usedPercent level } }');
   // The first reading is a thing watched for the first time: a change, shown at once.
   f.clock.advance(1000); await f.reading(71);
   await vi.waitFor(() => expect(window.data()).toEqual({ probe: 0, boxReadings: [{ thing: '/', usedPercent: 71, level: 'ok' }] }));
