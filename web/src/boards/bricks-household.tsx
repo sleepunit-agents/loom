@@ -20,7 +20,7 @@
  * for the page's life, by label and kind (./token-notices.ts), and every household brick drawn afterwards shows it.
  * A label here is one word in the shape of a reference (rule 1: a detail holds no sentence), and not one in
  * the shape of a credential (`looksLikeSecretValue`, which `boards.act` refuses by too). */
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Fragment, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { addTokenNotice, dismissTokenNotice, seenTokenLabels, settleTokenNotice, useTokenNotices, type TokenNotice } from './token-notices';
 import { SECRET_VALUE_WORDS, loomBearer, looksLikeSecretValue } from '../../../src/core/boards/value-shape';
 import { useDataQuery } from '../data/graphql';
@@ -123,34 +123,26 @@ export function Household({ form, act }: BodyProps) {
         <Note>Default agent: {setup.defaultAgent ?? 'None'}{primary && !!removed.length && <> · Removed: {removed.map((agent) => agent.id).join(', ')}</>}</Note>
       </Section>
       {primary && (
-        <Section title="Tokens" count={setup.tokens.length || undefined}>
-          {!setup.tokens.length ? <Note>No tokens</Note> : (
-            <Rows>
-              {setup.tokens.map((token) => {
-                const line = <>{token.kind} · {token.identity}<br />Created <Time at={token.createdAt} /> · Last used {token.lastUsedAt ? <Time at={token.lastUsedAt} /> : 'Never'}{token.expiresAt && <> · Expires <Time at={token.expiresAt} /></>}</>;
-                const state = <State tone={tokenTone(tokenState(token))}>{tokenState(token)}</State>;
-                return token.revokedAt ? <Row key={token.fingerprint} title={token.label} meta={line} end={state} />
-                  : <AskRow key={token.fingerprint} title={token.label} meta={line} end={state}
-                      asks={{ busy, label: `Revoke token ${token.label}`, ask: 'Revoke token…', yes: 'Revoke it', no: 'Keep it', act: () => change('token.revoke', { fingerprint: token.fingerprint }, 'revokeToken'),
-                        children: 'Revoke this token? Whatever uses it stops working, and it cannot be restored.' }} />;
-              })}
-            </Rows>
-          )}
-          <TokenMaker setup={setup} boxes={feed.status === 'live' ? feed.data?.boxes ?? [] : []} programs={programs} act={act} />
-        </Section>
+        <Listed title="Tokens" what="token" rows={setup.tokens} live={(token) => tokenState(token) === 'Active'} id={(token) => token.fingerprint}
+          fields={(token) => [token.label, token.kind, token.identity]} fieldWords="label, kind or owner" folded="Revoked or expired" none="No tokens"
+          top={<TokenMaker setup={setup} boxes={feed.status === 'live' ? feed.data?.boxes ?? [] : []} programs={programs} act={act} />}
+          draw={(token) => {
+            const line = <>{token.kind} · {token.identity}<br />Created <Time at={token.createdAt} /> · Last used {token.lastUsedAt ? <Time at={token.lastUsedAt} /> : 'Never'}{token.expiresAt && <> · Expires <Time at={token.expiresAt} /></>}</>;
+            const state = <State tone={tokenTone(tokenState(token))}>{tokenState(token)}</State>;
+            return token.revokedAt ? <Row key={token.fingerprint} title={token.label} meta={line} end={state} />
+              : <AskRow key={token.fingerprint} title={token.label} meta={line} end={state}
+                  asks={{ busy, label: `Revoke token ${token.label}`, ask: 'Revoke token…', yes: 'Revoke it', no: 'Keep it', act: () => change('token.revoke', { fingerprint: token.fingerprint }, 'revokeToken'),
+                    children: 'Revoke this token? Whatever uses it stops working, and it cannot be restored.' }} />;
+          }} />
       )}
       {primary && (
-        <Section title="Signed-in browsers" count={setup.sessions.length || undefined}>
-          {!setup.sessions.length ? <Note>No browsers</Note> : (
-            <Rows>
-              {setup.sessions.map((session) => (
-                <AskRow key={session.ref} title={session.device} meta={<>{sessionLine(session)} · Last used <Time at={session.seenAt} /></>}
-                  asks={{ busy, label: `Sign out ${session.device}`, ask: 'Sign out browser…', yes: 'Sign it out', no: 'Keep it', act: () => change('sessions.revoke', { ref: session.ref }, 'revokeSession'),
-                    children: 'Sign this browser out? It must sign in again.' }} />
-              ))}
-            </Rows>
-          )}
-        </Section>
+        <Listed title="Signed-in browsers" what="browser" rows={setup.sessions} live={(session) => !session.ended} id={(session) => session.ref}
+          fields={(session) => [session.device, session.isAgent ? 'Agent browser' : 'Browser', session.tokenLabel, session.member]} fieldWords="name, kind or owner" folded="Signed out" none="No browsers"
+          draw={(session) => (
+            <AskRow key={session.ref} title={session.device} meta={<>{sessionLine(session)} · Last used <Time at={session.seenAt} /></>}
+              asks={{ busy, label: `Sign out ${session.device}`, ask: 'Sign out browser…', yes: 'Sign it out', no: 'Keep it', act: () => change('sessions.revoke', { ref: session.ref }, 'revokeSession'),
+                children: 'Sign this browser out? It must sign in again.' }} />
+          )} />
       )}
       {programs && (
         <Section title="Outside program grants">
@@ -166,6 +158,57 @@ export function Household({ form, act }: BodyProps) {
         </>
       )}
     </>
+  );
+}
+
+/** How many of a folded list are drawn at a time. */
+export const FOLD_PAGE = 30;
+/** The words searched for: every one must be in one of the row's fields, in any case. */
+const terms = (typed: string) => typed.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 20);
+const matches = (fields: readonly (string | null)[], words: string[]) => {
+  const text = fields.filter(Boolean).join(' ').toLowerCase();
+  return words.every((word) => text.includes(word));
+};
+/** A list of tokens or browsers as loom sent it: the live ones first, every one drawn; the rest (revoked, expired,
+ * signed out) folded behind one heading, drawn thirty at a time once it is opened. Above them, a search over what
+ * is already here: what is typed is this component's state, applied on Enter or Search to the rows loom sent, and is
+ * never a parameter, never sent, never stored, never in the address and never told to the board (rule 1). */
+function Listed<T>({ title, what, rows, live, id, fields, fieldWords, folded, none, top, draw }: { title: string; what: string; rows: readonly T[]; live(row: T): boolean; id(row: T): string;
+  fields(row: T): readonly (string | null)[]; /** What is searched, said when nothing matches: "label, kind or owner". */ fieldWords: string; folded: string; none: string; top?: ReactNode; draw(row: T): ReactNode }) {
+  const [typed, setTyped] = useState(''), [asked, setAsked] = useState(''), [open, setOpen] = useState(false), [shown, setShown] = useState(FOLD_PAGE);
+  const words = asked ? terms(asked) : [];
+  const found = words.length ? rows.filter((row) => matches(fields(row), words)) : rows;
+  const current = found.filter(live), past = found.filter((row) => !live(row));
+  const name = `Search ${what}s`;
+  const submit = (event: FormEvent) => { event.preventDefault(); setAsked(typed.trim()); setShown(FOLD_PAGE); };
+  return (
+    <Section title={title} count={rows.length ? `${current.length} live` : undefined}>
+      {top}
+      {!rows.length ? <Note>{none}</Note> : (
+        <>
+          <form className="board-search" role="search" aria-label={name} onSubmit={submit}>
+            <input className="board-input" type="search" aria-label={name} placeholder={`${name}…`} maxLength={400} autoComplete="off" value={typed}
+              onChange={(event) => { setTyped(event.target.value); if (!event.target.value.trim()) setAsked(''); }} />
+            <Action submit disabled={!typed.trim()}>Search</Action>
+            {asked && <Action kind="quiet" onClick={() => { setTyped(''); setAsked(''); setShown(FOLD_PAGE); }}>{`Show every ${what}`}</Action>}
+          </form>
+          {current.length ? <Rows label={`Live ${what}s`}>{current.map(draw)}</Rows>
+            : <Note>{words.length ? `No live ${what} matches.` : `No live ${what}s`}</Note>}
+          {!!past.length && (
+            <div data-folded={what}>
+              <Opens open={open} onToggle={() => setOpen(!open)}>{`${folded} · ${past.length}`}</Opens>
+              {open && (
+                <Opened>
+                  <Rows label={`${folded} ${what}s`}>{past.slice(0, shown).map((row) => <Fragment key={id(row)}>{draw(row)}</Fragment>)}</Rows>
+                  {past.length > shown && <Actions><Action kind="quiet" onClick={() => setShown(shown + FOLD_PAGE)}>{`Show ${FOLD_PAGE} more`}</Action></Actions>}
+                </Opened>
+              )}
+            </div>
+          )}
+          {words.length > 0 && !found.length && <Note>{`No ${what} matches. Every word must be in its ${fieldWords}.`}</Note>}
+        </>
+      )}
+    </Section>
   );
 }
 
