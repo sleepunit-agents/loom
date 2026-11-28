@@ -1400,11 +1400,18 @@ function frozenFixture(engineSaysWritable = false) {
   return { ...f, state, copy, source, executor, created };
 }
 it('gives a frozen review its exact commit read-only at /review, none of its agent\'s mounts and no kit, and the copy\'s fingerprint before and after', async () => {
-  const f = frozenFixture(), credential = new TextEncoder().encode('house-fetch-secret');
-  const image = await f.executor.build(frozenJob, f.abort.signal, credential);
-  // Both pinned commits by their full ids, with the house's own fetch credential, which goes to git and nowhere else.
-  expect(f.source.fetch).toHaveBeenCalledWith({ repository: 'https://github.com/acme/app.git', file: '', branch: 'main' }, credential, expect.any(AbortSignal), reviewBase);
-  expect(f.source.fetch).toHaveBeenCalledWith({ repository: 'https://github.com/acme/app.git', file: '', branch: 'main' }, credential, expect.any(AbortSignal), reviewHead);
+  const f = frozenFixture(), credential = new TextEncoder().encode('house-fetch-secret'), forge = new TextEncoder().encode('acme-forge-secret');
+  // Without the forge credential for the reviewed repository's owner there is no copy, and so no review.
+  await expect(f.executor.build(frozenJob, f.abort.signal, credential)).rejects.toThrow('Worker build failed');
+  expect(f.source.fetch.mock.calls.some(call => call[0].repository.includes('acme/app'))).toBe(false);
+  // Only a frozen review is given one.
+  expect(() => f.executor.build(job, f.abort.signal, credential, forge)).toThrow('Only a frozen review');
+  const image = await f.executor.build(frozenJob, f.abort.signal, credential, forge);
+  // Both pinned commits by their full ids, from GitHub, with the forge credential bound to the reviewed repository's
+  // owner: never the house's, which fetches the house's own image and nothing else.
+  expect(f.source.fetch).toHaveBeenCalledWith({ repository: 'https://github.com/acme/app.git', file: '', branch: 'main' }, forge, expect.any(AbortSignal), reviewBase);
+  expect(f.source.fetch).toHaveBeenCalledWith({ repository: 'https://github.com/acme/app.git', file: '', branch: 'main' }, forge, expect.any(AbortSignal), reviewHead);
+  for (const call of f.source.fetch.mock.calls) expect(call[1] === credential ? call[0].repository : 'none').not.toContain('acme/app');
   expect(readFileSync(join(f.copy, 'tree/src/pump.ts'), 'utf8')).toBe('export const rate = 2;\n');
   expect(readFileSync(join(f.copy, 'change.diff'), 'utf8')).toContain('+export const rate = 2;');
   const body = f.executor.start(frozenJob, image, f.abort.signal);
@@ -1415,7 +1422,7 @@ it('gives a frozen review its exact commit read-only at /review, none of its age
     // Nothing of the agent's own: neither of its fixed mounts, nor a kit socket. Its sign-in, as every body has.
     expect(mounts.map(m => m.Target)).toEqual(['/opt/loom', '/usr/local/bin/loom', '/run/loom/login/harness', '/review']);
     expect(spec.Env.some(entry => /SECRET|TOKEN|GH_|GITHUB/.test(entry))).toBe(false);
-    expect(JSON.stringify(f.engine.json.mock.calls)).not.toMatch(/house-fetch-secret|machine-only/);
+    expect(JSON.stringify(f.engine.json.mock.calls)).not.toMatch(/house-fetch-secret|acme-forge-secret|machine-only/);
     await body.release(bootstrap());
     // No kit was offered or reported for it.
     expect(JSON.parse(f.writes[0])).toEqual({ job: frozenJob, build: image, bootstrap: handed });
@@ -1428,12 +1435,13 @@ it('gives a frozen review its exact commit read-only at /review, none of its age
   expect(existsSync(f.copy)).toBe(false);
 });
 it('does not start a frozen review whose copy the engine reports writable, and reports a copy changed under it', async () => {
-  const writable = frozenFixture(true), image = await writable.executor.build(frozenJob, writable.abort.signal);
+  const forge = new TextEncoder().encode('acme-forge-secret');
+  const writable = frozenFixture(true), image = await writable.executor.build(frozenJob, writable.abort.signal, undefined, forge);
   const refused = writable.executor.start(frozenJob, image, writable.abort.signal);
   await expect(refused.spawned).rejects.toThrow('Unexpected container storage'); await refused.stop();
   expect(writable.engine.json.mock.calls.some(call => String(call[1]).endsWith('/start'))).toBe(false);
   // Read-only in the container, but not to this machine's own user: a change made beside the body is seen.
-  const f = frozenFixture(), built2 = await f.executor.build(frozenJob, f.abort.signal), body = f.executor.start(frozenJob, built2, f.abort.signal);
+  const f = frozenFixture(), built2 = await f.executor.build(frozenJob, f.abort.signal, undefined, forge), body = f.executor.start(frozenJob, built2, f.abort.signal);
   try {
     await body.spawned; await body.release(bootstrap());
     chmodSync(join(f.copy, 'tree/src/pump.ts'), 0o644); writeFileSync(join(f.copy, 'tree/src/pump.ts'), 'export const rate = 3;\n');

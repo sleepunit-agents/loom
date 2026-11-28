@@ -2,7 +2,7 @@
  * from the authenticated runner; installed callers use this directly. Nothing
  * here executes a process, opens credentials or invents another transport. */
 import { PAIR_THREAD } from './pair-thread.js';
-import { frozenReview, jobMatchesConversation, reviewThread, reviewRequest, reviewBriefExpired, REVIEW_ROLE_CHANGED } from '../core/conversations/review-place.js';
+import { frozenReview, jobMatchesConversation, reviewThread, reviewRequest, reviewBriefExpired, REVIEW_ROLE_CHANGED, REVIEW_PLACE_UNREADABLE, unrunnableReview } from '../core/conversations/review-place.js';
 import { handoffDeadline } from '../core/conversations/handoff-words.js';
 import { commsKeepDays } from '../core/data/comms-days.js';
 import {eligibleModels,roleRevision,type WorkRole} from './work-roles.js';
@@ -94,7 +94,12 @@ export class Dispatcher {
       for (const { job, round: filed, source } of queued) {
         // A frozen review's round (conversation.review): its body is an ordinary handed-off body, placed below. Any
         // other round is a cold review, for a worker's own review executor.
-        const filedIn = filed && job.conversation ? this.db.select({ venue: conversations.venue, place: conversations.place }).from(conversations).where(eq(conversations.id, job.conversation)).get() : undefined;
+        const filedIn = job.conversation ? this.db.select({ venue: conversations.venue, place: conversations.place }).from(conversations).where(eq(conversations.id, job.conversation)).get() : undefined;
+        // A review's place loom cannot read is never run: not as a cold review, not as an ordinary job (review-place.ts).
+        if (filedIn && unrunnableReview(filedIn)) {
+          if (this.jobs.unplaceable(job.id, REVIEW_PLACE_UNREADABLE)) ended?.push(job.id);
+          continue;
+        }
         const round = filed && !(filedIn && frozenReview(filedIn)) ? filed : null;
         if (round && (!source || !this.coldReviewBoxes.has(box) || job.startedByKind === 'program')) continue;
         if (job.retryAt && job.retryAt > at) continue;

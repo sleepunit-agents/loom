@@ -30,6 +30,8 @@ export class SecretPrivateInputs {
  /** The worker's grant to fetch the house's repository with this secret, asking for it when it has not been asked. */
  programGrant(job:string,secret:string){if(this.closed)throw failed();return this.commit(()=>this.requests.grantAtStart(job,[secret],true));}
  repositoryGrant(job:string,secret:string){if(this.closed)throw failed();return this.commit(()=>this.requests.grantAtStart(job,[secret],true,'repository'));}
+ /** The worker's grant to fetch a frozen review's repository with the forge credential bound to its owner. */
+ reviewGrant(job:string,secret:string){if(this.closed)throw failed();return this.commit(()=>this.requests.grantAtStart(job,[secret],true,'review'));}
  /** `standing`: may a standing answer serve this job's work (policy.ts, standingSecretAnswerServes)? The door says. */
  startup(job:string,standing:boolean):{aliases:{alias:string}[];pending?:true}{
   if(this.closed)throw failed();

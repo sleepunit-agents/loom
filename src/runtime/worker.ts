@@ -74,7 +74,9 @@ export interface WorkerBody {
   stop(): Promise<void>;
 }
 export interface WorkerExecutor {
-  build(job: WorkerAssignment, signal: AbortSignal, repositoryInput?: Uint8Array): Promise<string>;
+  /** `reviewInput`: for a frozen review, the forge credential bound to the reviewed repository's owner, which the
+   * executor gives to the fetch of the reviewed commits and nothing else (never `repositoryInput`, the house's). */
+  build(job: WorkerAssignment, signal: AbortSignal, repositoryInput?: Uint8Array, reviewInput?: Uint8Array): Promise<string>;
   start(job: WorkerAssignment, build: string, signal: AbortSignal): WorkerBody;
   /** Told of a build this job was given and will never start a body from: the job was stopped, cancelled
    * or abandoned after `build` and before `start`. An executor that keeps something for a built job (an
@@ -95,6 +97,8 @@ export interface WorkerControl {
   next(coldReviews?: true): Promise<WorkerAssignment | undefined>;
   /** Private one-attempt input, never part of the assignment/receipt. */
   repositoryInput?(id:string,signal:AbortSignal):Promise<Uint8Array|undefined>;
+  /** A frozen review's fetch credential: the one loom's forge bindings hold for the reviewed repository's owner. */
+  reviewInput?(id:string,signal:AbortSignal):Promise<Uint8Array|undefined>;
   /** Parent generates raw bytes locally; the server receives only a fingerprint. */
   programInputs?(id: string, aliases: readonly string[], signal: AbortSignal): Promise<Map<string, Buffer>>;
   enrollBody?(id: string, signal: AbortSignal): Promise<BodyBootstrap>;
@@ -251,11 +255,18 @@ export async function workOnce(input: {
     try {
       if (abort.signal.aborted) return 'abandoned';
       const repositoryInput=assignment.coldReview ? undefined : await control.repositoryInput?.(assignment.id,abort.signal);
+      // A frozen review's copy is fetched with the credential bound to its repository's owner, never the house's.
+      // None: no copy, so no review (the build is not tried).
+      let reviewInput: Uint8Array | undefined;
+      try { reviewInput = assignment.frozenReview ? await control.reviewInput?.(assignment.id,abort.signal) : undefined; }
+      catch (error) { repositoryInput?.fill(0); throw error; }
       stage = 'build';
       try {
         if(abort.signal.aborted)return 'abandoned';
-        build = repositoryInput?await executor.build(assignment,abort.signal,repositoryInput):await executor.build(assignment,abort.signal);
-      } finally { repositoryInput?.fill(0); }
+        if(assignment.frozenReview && !reviewInput?.length)throw new Error('Review fetch credential unavailable');
+        build = reviewInput?await executor.build(assignment,abort.signal,repositoryInput,reviewInput)
+          :repositoryInput?await executor.build(assignment,abort.signal,repositoryInput):await executor.build(assignment,abort.signal);
+      } finally { repositoryInput?.fill(0); reviewInput?.fill(0); }
       // The executor's to hear of from here, whatever comes next: a cancel can land as the build is handed over.
       unused = build.trim() ? build : undefined;
       if (abort.signal.aborted) return 'abandoned';

@@ -32,12 +32,12 @@ export function reviewJob(db: DataDatabase, job: string): boolean {
   return hasChangeReview(db, job) || !!frozenReviewOf(db, job);
 }
 
-/** The reviewer's verdict, by one rule for every harness: the reply's last line, trimmed of trailing space, is exactly
- * `VERDICT: CLEAR` or `VERDICT: BLOCKING`. A CRITICAL or MAJOR bullet makes a CLEAR blocking. No such line: no verdict. */
+/** The reviewer's verdict, by one rule for every harness and from the last line alone: trimmed of trailing space, it is
+ * exactly `VERDICT: CLEAR` or `VERDICT: BLOCKING`. Nothing above it is read for a verdict, so a line the reviewer
+ * quotes (a `- MAJOR version bump`) cannot change one. No such line: no verdict. */
 export function replyVerdict(reply: string): 'CLEAR' | 'BLOCKING' | undefined {
   const last = reply.trimEnd().split('\n').at(-1)?.trimEnd();
-  if (last !== 'VERDICT: CLEAR' && last !== 'VERDICT: BLOCKING') return;
-  return last === 'VERDICT: BLOCKING' || /^[ \t]*[-*+][ \t]+(?:CRITICAL|MAJOR)\b/m.test(reply) ? 'BLOCKING' : 'CLEAR';
+  return last === 'VERDICT: CLEAR' ? 'CLEAR' : last === 'VERDICT: BLOCKING' ? 'BLOCKING' : undefined;
 }
 /** What a round records of a reply that gave no verdict. */
 export const NO_VERDICT = 'The reviewer did not return a final verdict.';

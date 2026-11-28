@@ -47,7 +47,7 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
   signal.addEventListener('abort',cleanup,{once:true});
   try{
    if(path==='startup'&&current()&&!response.redirected&&temporaryStatus(response.status))throw new BodyTransportFailure();
-   if(current()&&!response.redirected&&response.status===423&&path==='read'&&(input as {kind?:string}).kind==='repository')throw new PendingRepository();
+   if(current()&&!response.redirected&&response.status===423&&path==='read'&&((input as {kind?:string}).kind==='repository'||(input as {kind?:string}).kind==='review'))throw new PendingRepository();
    const checkDenial=!!options.onJobEnded&&(response.status===401||response.status===403)&&/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??'');
    if(!current()||response.redirected||(!response.ok&&!checkDenial))throw unavailable();
    if(response.status===204)return {bytes:Buffer.alloc(0),response};
@@ -89,6 +89,15 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
 
  }
 
+ /** A worker's fetch credential: the house's (`repository`) or a frozen review's (`review`), asked until answered. */
+ async function fetchInput(job:string,kind:'repository'|'review'):Promise<Buffer|undefined>{
+  for(;;){try{return await read({kind,job},job,true);}catch(error){
+   if(!(error instanceof PendingRepository))throw error;
+   // Authenticated consent polling has its own lifetime.
+   await waitForConsent();
+  }}
+ }
+
  return {
   async program(job:string, selected:readonly string[]):Promise<Map<string,Buffer>>{
    const result=new Map<string,Buffer>();let total=0;
@@ -103,13 +112,9 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
    }catch(error){for(const bytes of result.values())bytes.fill(0);throw error;}
   },
   granted(secret:string,id:string=randomUUID()){return read({kind:'request',secret,id}) as Promise<Buffer>;},
-  async repository(job:string):Promise<Buffer|undefined>{
-   for(;;){try{return await read({kind:'repository',job},job,true);}catch(error){
-    if(!(error instanceof PendingRepository))throw error;
-    // Authenticated consent polling has its own lifetime.
-    await waitForConsent();
-   }}
-  },
+  /** The forge credential a frozen review's worker fetches the reviewed commit with (shared-secret-inputs.ts, `review`). */
+  review(job:string):Promise<Buffer|undefined>{return fetchInput(job,'review');},
+  repository(job:string):Promise<Buffer|undefined>{return fetchInput(job,'repository');},
   async startup():Promise<Map<string,Buffer>>{
    const result=new Map<string,Buffer>();batches.add(result);let total=0;
    try{

@@ -1,6 +1,6 @@
 import {slug} from '../../slug.js';
-import {reviewRequest,reviewPlace,reviewThread,type ReviewTarget} from './review-place.js';
-import {changes,conversations,jobs,memberAgents,tasks,threads} from '../data/schema.js';
+import {reviewRequest,reviewPlace,reviewRepository,reviewTarget,reviewThread,type ReviewTarget} from './review-place.js';
+import {agentRunSettings,changes,conversations,jobs,memberAgents,tasks,threads} from '../data/schema.js';
 import {reviewBrief} from './review-brief.js';
 import {COMMIT} from '../../apps/merge-target.js';
 import {sqlVisibility} from '../../policy-sql.js';
@@ -49,6 +49,10 @@ export interface HandoffToSelf{
  /** The commit a frozen review's diff is taken against, read from the forge: with `branch`, the merge base of `head`
   * with that branch; without, `head`'s first parent. Left out, conversation.review is unavailable. */
  reviewBase?(repository:string,head:string,branch?:string):Promise<string>;
+ /** Whether the household's forge bindings (the owner-to-credential bindings the changes poll uses) name a
+  * credential for this owner on GitHub. A frozen review's copy is fetched with that credential and no other
+  * (shared-secret-inputs.ts, `review`), so an owner with none has no review. Left out, none is bound. */
+ reviewBinding?(owner:string):boolean;
 }
 /** The work role conversation.review runs in unless it names another. */
 export const REVIEW_ROLE='review';
@@ -57,8 +61,8 @@ const reviewInput=z.object({
  role:slug(64).optional().describe('The work role the reviewer runs in; "review" when left out.'),
  clientId:z.string().min(1).max(200),label:threadTitle,
  target:z.union([
-  z.object({change:z.string().regex(/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+#[1-9][0-9]{0,9}$/).describe('A pull request loom follows, as owner/repo#number.')}).strict(),
-  z.object({repository:z.string().regex(/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/),commit:z.string().regex(COMMIT_SHA).describe('A full 40-character commit id.')}).strict(),
+  z.object({change:z.string().regex(/^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}#[1-9][0-9]{0,9}$/).refine(value=>reviewRepository(value.split('#')[0]),'Not a repository').describe('A pull request loom follows, as owner/repo#number.')}).strict(),
+  z.object({repository:z.string().refine(reviewRepository,'Not a repository').describe('owner/repo on GitHub.'),commit:z.string().regex(COMMIT_SHA).describe('A full 40-character commit id.')}).strict(),
  ]),
  contract:z.string().trim().min(1).max(Math.floor(MESSAGE_WORDS_MAX/2)).describe('What to review against, in your words: the ticket, the spec section or the acceptance criteria. Nothing of your own reasoning about the change.'),
  includeDescription:z.literal(true).optional().describe('Give the reviewer the pull request description too. Left out, it is not given.'),
@@ -256,7 +260,16 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
  /** A frozen review (docs/runtime/worker.md, "Frozen reviews"): a handed-off session in a work role, on one exact commit
   * and its diff, which the worker gives the body as a read-only copy, with no credential that can push, and a brief loom
   * writes itself (review-brief.ts). Its answer is relayed like any handoff's, and its verdict filed on the round. */
- const reviewTargetFor=(viewer:Parameters<typeof current>[0],input:ReviewInput)=>{
+ /** The one answer for a commit loom will not look at: one in a repository that does not exist, or one the asker has
+  * no right to read. They are told apart by nothing, and GitHub is not asked about the second. */
+ const unreadable=()=>new OperationError('unavailable','Loom could not read the commit to review against from GitHub.');
+ /** The GitHub repository (`owner/name`, lower case) an agent's house is fetched from, when it is one on GitHub. */
+ const houseOnGitHub=(agent:string)=>{
+  const house=db.select({repository:agentRunSettings.houseRepository}).from(agentRunSettings).where(eq(agentRunSettings.agent,agent)).get()?.repository;
+  const found=house && /^https:\/\/github\.com\/([A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}?)(?:\.git)?\/?$/i.exec(house);
+  return found && reviewRepository(found[1]) ? found[1].toLowerCase() : undefined;
+ };
+ const reviewTargetFor=(viewer:Parameters<typeof current>[0],agent:string,input:ReviewInput)=>{
   const visible=sqlVisibility(viewer,['changes']).changes(getTableColumns(changes));
   if('change' in input.target){
    const [repository,number]=input.target.change.split('#');
@@ -266,8 +279,14 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    if(!COMMIT_SHA.test(row.headCommit))throw new OperationError('conflict','The pull request has no head commit loom has read');
    return {repository:row.repository.replace(/^github:/,''),head:row.headCommit,change:row.id,pull:{number:row.number,baseBranch:row.baseBranch},body:row.body};
   }
-  const repository=input.target.repository.toLowerCase(),head=input.target.commit;
-  // The pull request whose head this commit is, when loom follows one: the round is filed on it.
+  const repository=input.target.repository.toLowerCase(),head=input.target.commit,owner=repository.split('/')[0];
+  // A commit is reviewed only in a repository the asker may already read: one a pull request it may read is in, the
+  // agent's own house, or one whose owner the household's forge bindings name. Anything else is refused as a
+  // repository that does not exist is, before GitHub is asked anything (docs/runtime/worker.md, "Frozen reviews").
+  const readable=!!db.select({id:changes.id}).from(changes).where(and(eq(changes.repository,repository),visible)).limit(1).get()
+   || houseOnGitHub(agent)===repository || self?.reviewBinding?.(owner)===true;
+  if(!readable)throw unreadable();
+  // The pull request whose head this commit is, when loom follows one the asker may read: the round is filed on it.
   const row=db.select().from(changes).where(and(eq(changes.repository,repository),eq(changes.headCommit,head),visible)).orderBy(desc(changes.updatedAt)).limit(1).get();
   return {repository,head,change:row?.id??null,pull:undefined,body:undefined};
  };
@@ -281,12 +300,18 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    if(!self?.reviewBase)throw new OperationError('unavailable','This loom cannot read the forge, so it runs no frozen review.');
    const role=self.workRoles?.(work.cv.agent,input.role??REVIEW_ROLE)[0];
    if(!role)throw new OperationError('invalid','Unknown work role for this agent');
-   const found=reviewTargetFor(context.viewer,input);
+   const found=reviewTargetFor(context.viewer,work.cv.agent,input);
+   // Asked before the forge is: a job that may hand nothing on spends no request of GitHub's.
+   const hop=self.hop({job:work.job});if(hop)throw new OperationError('denied',hop);
+   // The copy is fetched with the credential the forge bindings hold for this owner, and no other: none, no review.
+   if(self.reviewBinding?.(found.repository.split('/')[0])!==true)
+    throw new OperationError('unavailable','Loom holds no forge credential for this repository\'s owner, so it runs no review of it.');
    let base:string;
    try{base=await self.reviewBase(found.repository,found.head,found.pull?.baseBranch);}
-   catch{throw new OperationError('unavailable','Loom could not read the commit to review against from GitHub.');}
-   if(!COMMIT_SHA.test(base))throw new OperationError('unavailable','Loom could not read the commit to review against from GitHub.');
-   const target:ReviewTarget={repository:found.repository,head:found.head,base,change:found.change,tier:input.tier??'medium'};
+   catch{throw unreadable();}
+   if(!COMMIT_SHA.test(base))throw unreadable();
+   const target=reviewTarget({repository:found.repository,head:found.head,base,change:found.change,tier:input.tier??'medium'});
+   if(!target)throw unreadable();
    const words=reviewBrief({role,target,...(found.pull?{pull:found.pull}:{}),contract:input.contract,
     ...(input.includeDescription && found.body!==undefined?{description:found.body}:{})});
    return {sealed:await sealHandoff(service.key,words,service.now(),commsKeepDays(db)),target,role};
@@ -309,7 +334,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    const role=self?.workRoles?.(cv.agent,asked.id,true)[0];
    if(!role || role.revision!==asked.revision)throw new OperationError('conflict','The work role changed; ask again');
    if(!role.available)throw new OperationError('unavailable',role.reason??'No worker that gives a frozen review its read-only copy is available for this work role');
-   const again=reviewTargetFor(ctx.viewer,input);
+   const again=reviewTargetFor(ctx.viewer,cv.agent,input);
    if(again.head!==target.head || again.change!==target.change)throw new OperationError('conflict','The pull request moved while the review was prepared; ask again');
    const tickets=[...new Set(input.tickets??[])];
    if(tickets.length){

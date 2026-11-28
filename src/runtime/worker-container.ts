@@ -396,8 +396,9 @@ export function containerWorkerExecutor(config: {
      * nowhere else. Nothing here blocks: the worker goes on reporting on the job while it waits. A job
      * that has waited the build limit fails with BuildTimeError; whatever else goes wrong fails it as a
      * failed build, in one sentence, because git's and the engine's own words may name the repository. */
-    build(job, signal, repositoryInput) {
+    build(job, signal, repositoryInput, reviewInput) {
       const reviewCommit = job.coldReview?.headCommit;
+      if (reviewInput && !job.frozenReview) throw new UnservedJobError('Only a frozen review is given a review fetch credential');
       if (job.coldReview) {
         if (!reviewCommit || job.house.file !== '' || job.program || repositoryInput)
           throw new UnservedJobError('Cold reviews require a pinned, copy-only house without an agent credential');
@@ -431,15 +432,17 @@ export function containerWorkerExecutor(config: {
           if (removal) await Promise.race([removal.over, ended]);
           shared = built(house, commit, image);
           await Promise.race([shared.done, ended]);
-          // A frozen review's copy: the reviewed commit and its diff, fetched with the house's own fetch credential,
-          // which goes to git and nowhere else. A job id is loom's, checked here before it names a directory.
+          // A frozen review's copy: the reviewed commit and its diff, fetched from GitHub with the credential loom's
+          // forge bindings hold for the reviewed repository's owner (never the house's), which goes to git and nowhere
+          // else. None, no copy. A job id is loom's, checked here before it names a directory.
           const frozen = job.frozenReview;
           if (frozen) {
+            if (!reviewInput?.length) throw new Error('Review fetch credential unavailable');
             if (!/^[A-Za-z0-9_-]{1,200}$/.test(job.id)) throw new Error('Invalid job identity');
             await forget(job.id);
             const path = join(reviews, job.id);
             await removeReviewSnapshot(path); await mkdir(reviews, { recursive: true, mode: 0o700 });
-            const before = await Promise.race([writeReviewSnapshot({ source, directory: path, review: frozen, credential: repositoryInput, signal: limit.signal }), ended]);
+            const before = await Promise.race([writeReviewSnapshot({ source, directory: path, review: frozen, credential: reviewInput, signal: limit.signal }), ended]);
             snapshots.set(job.id, { path, before, head: frozen.head });
           }
           held = undefined;

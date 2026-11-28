@@ -6,7 +6,7 @@ import {bodyFixture,bodyCredentials,credentialHash} from '../test/fixtures/conve
 import * as s from './core/data/schema.js';
 import {bodyProgram} from './runtime/body-program.js';
 import type {HarnessRun} from './runtime/body-harness.js';
-import {frozenReview} from './core/conversations/review-place.js';
+import {frozenReview,reviewPlace,REVIEW_PLACE_UNREADABLE} from './core/conversations/review-place.js';
 import {handoffEnvelope} from './core/conversations/handoff-words.js';
 import {change as fixtureChange} from './pieces/changes/change.fixture.js';
 import {changeReviewStore,NO_VERDICT,TREE_CHANGED} from './apps/change-reviews.js';
@@ -24,7 +24,7 @@ const role={agent:'art',id:'review',description:'Review the supplied change for 
 async function fixture(harness:'claude'|'codex'='codex',readBase:(repository:string,head:string,branch?:string)=>Promise<string>=async()=>base){
  const asked:(string|undefined)[][]=[];
  const f=await bodyFixture(clean,{workRoles:[role],modelRoles:()=>[{model:'first',provider:'openai',harness:'claude',series:'first'},{model:'reviewer',provider:'openai',harness,series:'reviewer'}],
-  changes:{read:async()=>[fixtureChange({body:AUTHOR_DESCRIPTION})],reviewBase:async(...args)=>{asked.push(args);return readBase(...args);}}});
+  changes:{read:async()=>[fixtureChange({body:AUTHOR_DESCRIPTION})],reviewBindings:{acme:'github-acme'},reviewBase:async(...args)=>{asked.push(args);return readBase(...args);}}});
  const {db,root}=f,now=()=>new Date(f.clock.now()).toISOString();
  db.insert(s.agentModels).values([{agent:'art',model:'first',position:0},{agent:'art',model:'reviewer',position:1}]).run();
  db.insert(s.agentRunSettings).values({agent:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',nestedContainers:false,gpu:false}).run();
@@ -165,4 +165,55 @@ it('refuses a review it cannot pin, and anyone but the private owner body',async
  expect((await f.call('review',{...request,role:'missing'},'role')).status).toBe(400);
  for(const token of [bodyCredentials.agent,bodyCredentials.member])expect((await f.call('review',request,'ordinary',token)).status).toBe(403);
  expect(f.db.select().from(s.conversations).where(eq(s.conversations.venue,'handoff')).all()).toEqual([]);
+});
+
+it('reviews a commit only in a repository the asker may read, refusing any other as one that does not exist, before GitHub is asked',async()=>{
+ const f=await fixture();
+ const commit=(repository:string,clientId:string)=>f.call('review',{clientId,label:'Review a commit',target:{repository,commit:head},contract:CONTRACT},clientId);
+ const refusal=async(response:Response)=>({status:response.status,body:await response.json()});
+ // In a repository a pull request it may read is in (acme/app, the project's): allowed.
+ expect((await commit('acme/app','readable')).status).toBe(200);
+ // The agent's own house, on GitHub: allowed. And one whose owner the forge bindings name: allowed (Jonathan's ruling).
+ f.db.update(s.agentRunSettings).set({houseRepository:'https://github.com/acme/house.git'}).run();
+ expect((await commit('acme/house','house')).status).toBe(200);
+ expect((await commit('acme/payroll','bound-owner')).status).toBe(200);
+ expect(f.asked.map(([repository])=>repository)).toEqual(['acme/app','acme/house','acme/payroll']);
+ // Any other repository: the same refusal, word for word, as a repository GitHub says does not exist, and GitHub is
+ // never asked about it, so the refusal tells nothing of whether it exists.
+ const hidden=await refusal(await commit('other/secret','hidden'));
+ expect(f.asked).toHaveLength(3);
+ const g=await fixture('codex',async()=>{throw Error('Not Found');});
+ const missing=await refusal(await g.call('review',{clientId:'missing',label:'Review a commit',target:{repository:'acme/gone',commit:head},contract:CONTRACT},'missing'));
+ expect(g.asked).toHaveLength(1);
+ expect(hidden).toEqual(missing);expect(hidden.status).toBe(503);
+ expect(f.db.select().from(s.conversations).where(eq(s.conversations.place,'')).all()).toEqual([]);
+});
+
+it('runs no review of a repository whose owner no forge binding names, not even one the asker may read, and asks GitHub nothing',async()=>{
+ const f=await fixture();
+ f.db.insert(s.projectRepositories).values({project:'pond',repository:'other/app'}).run();
+ f.root.services.changes.put(fixtureChange({id:'github:other/app#4',repo:'github:other/app',number:4,url:'https://github.com/other/app/pull/4'}));
+ const response=await f.call('review',{...request,clientId:'unbound',target:{change:'other/app#4'}},'unbound');
+ expect(response.status).toBe(503);
+ expect((await response.json()).message).toContain('no forge credential');
+ expect(f.asked).toEqual([]);
+});
+
+it('never runs a frozen review whose pinned target does not parse, and never as an ordinary job',async()=>{
+ const f=await fixture();
+ const created=await launch(f);
+ settleOrigin(f);
+ const child=f.root.services.conversations.conversation(created.conversation);
+ const parts=JSON.parse(child.place) as string[];
+ // A sixth part loom did not write: a repository name longer than GitHub allows.
+ const target=JSON.parse(parts[5]) as Record<string,unknown>;
+ f.db.update(s.conversations).set({place:JSON.stringify([...parts.slice(0,5),JSON.stringify({...target,repository:'acme/'+'a'.repeat(101)})])}).where(eq(s.conversations.id,child.id)).run();
+ expect(frozenReview(f.root.services.conversations.conversation(child.id))).toBeUndefined();
+ // Offered neither to a worker without the copy (as an ordinary handoff would be) nor to one with it.
+ expect(await f.next('ordinary',false)).toBeNull();
+ const job=f.db.select().from(s.jobs).where(eq(s.jobs.conversation,child.id)).get()!;
+ expect(job).toMatchObject({state:'failed',box:null,endedNote:REVIEW_PLACE_UNREADABLE});
+ expect(await f.next('copy',true)).toBeNull();
+ // And loom never makes such a place: the strict shape is checked before one is written.
+ expect(()=>reviewPlace('parent','id',{id:'review',revision:'r'},{repository:'acme/'+'a'.repeat(101),head,base,change:null,tier:'medium'})).toThrow('Invalid frozen review target');
 });

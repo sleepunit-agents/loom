@@ -253,6 +253,14 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
       try { return await client.repository(job); }
       finally { client.close(); }
     },
+    reviewInput: async (job, signal) => {
+      const client = privateSecretClient({
+        ...input, signal: AbortSignal.any([input.signal, signal]),
+        timeoutMs: Math.min(input.timeoutMs ?? PRIVATE_SECRET_TIMEOUT_MS, PRIVATE_SECRET_TIMEOUT_MS),
+      });
+      try { return await client.review(job); }
+      finally { client.close(); }
+    },
     next: async coldReviews => {
       const poll = {execution:'container',facts,slots:input.slots,programs:input.programs || undefined};
       const base: Record<string, true>[] = coldReviews ? [{ reviewResults: true, coldReviews: true }, { reviewResults: true }] : [{ reviewResults: true }];
