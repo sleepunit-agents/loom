@@ -14,7 +14,7 @@ import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } fro
 import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerProvider, MessageScrollerViewport } from '../pair/ui/message-scroller';
 import { emptyTail, threadId, TranscriptPage, type ThreadTail } from '../pair/transcript';
 import { brickView, type Params, type Place } from './bricks';
-import { Here, Loading } from './brick-kit';
+import { Fetching, Here, Loading, Lost } from './brick-kit';
 import { layout, type Slot } from './layout';
 import { PlacementFrame } from './placement';
 import { buildChanged } from './build';
@@ -82,16 +82,8 @@ class BodyBoundary extends Component<{ children: ReactNode; stale: boolean; onLo
   componentWillUnmount() { clearTimeout(this.timer); }
   render() {
     if (!this.state.failed) return this.props.children;
-    if (this.state.tries < brickRetryMs.length) return <p role="status" className="board-note">Getting this brick again…</p>;
-    return (
-      <div role="alert" className="board-lost">
-        <p>{this.props.stale ? 'Sorry, this brick didn’t load: loom was updated while this page was open. The page reloads by itself once your message is sent or cleared.' : 'Sorry, this brick didn’t load.'}</p>
-        <div className="board-lost-actions">
-          <button type="button" className="board-action" onClick={() => { this.props.again?.(); this.setState({ failed: false, tries: brickRetryMs.length }); }}>Try again</button>
-          {this.props.stale && <button type="button" className="board-action" onClick={() => location.reload()}>Reload now</button>}
-        </div>
-      </div>
-    );
+    if (this.state.tries < brickRetryMs.length) return <Fetching />;
+    return <Lost again={() => { this.props.again?.(); this.setState({ failed: false, tries: brickRetryMs.length }); }} reload={this.props.stale ? () => location.reload() : undefined} />;
   }
 }
 
