@@ -71,6 +71,7 @@ export const shared: ReadonlySet<string> = new Set([
   'pieces/usage/model.ts', // Job usage's two selections, its order, the names of a job's measurements and its range of local days (no imports)
   'pieces/bridges/command.ts', // the Bridges door: one command, true only when loom saved it (imports data/id.ts)
   'pieces/bridges/data.ts', // the Bridges app's one selection, its snapshot, which replies wait and their words (its imports are types)
+  'pieces/household/portrait-request.ts', // Household setup's portrait change without its form: the two files read and checked against loom's limits, and a refusal's words (imports two plain files under src/ and desk-sprite-layout.ts)
   'pieces/household/model.ts', // Household setup's two selections, the shapes loom answers, who owns an agent and the words of a change (no imports)
   'pieces/sharing/model.ts', // the Sharing app's one selection and the shape loom answers (no imports)
   'pieces/comms/drafts.ts', // the Comms composer's draft for a member and a conversation, in this browser's storage only, and its retry id (imports react and comms-id.ts)
@@ -98,7 +99,9 @@ export const outside: ReadonlyMap<string, { plain?: true; why: string }> = new M
   ['src/core/signin/browser-device.ts', { why: 'a browser\'s device name' }],
   ['src/core/tempo/calendar.ts', { why: 'Tempo\'s calendar (day.ts)' }],
   ['src/core/tempo/lane-file.ts', { why: 'one constant of a Tempo lane file' }],
+  ['src/core/data/door-limit.ts', { plain: true, why: 'the largest request body loom takes, which bounds a portrait\'s JSON' }],
   ['src/desk-sprite-layout.ts', { why: 'an agent sprite\'s layout' }],
+  ['src/pixellab-manifest.ts', { why: 'a PixelLab sheet\'s JSON read as a sprite layout (desk-sprite-layout.ts)' }],
   ['src/pieces/bridges/keys.ts', { why: 'the Bridges keys' }],
   ['src/policy.ts', { why: 'policy words (internal.ts)' }],
   ['src/proposal-words.ts', { why: 'a proposal\'s words' }],
