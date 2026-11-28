@@ -206,7 +206,8 @@ it('reads an open selection again at once for a machine reading that changes a s
 });
 
 it('does not read an open selection again for a machine reading that raises and clears nothing, and shows a condition at once', async () => {
-  const f = await fixture(), window = await f.watch('sam', '{ probe boxReadings(where: {kind: {eq: disk}}) { thing usedPercent level } }');
+  const f = await fixture(); f.followClock();
+  const window = await f.watch('sam', '{ probe boxReadings(where: {kind: {eq: disk}}) { thing usedPercent level } }');
   // The first reading is a thing watched for the first time: a change, shown at once.
   f.clock.advance(1000); await f.reading(71);
   await vi.waitFor(() => expect(window.data()).toEqual({ probe: 0, boxReadings: [{ thing: '/', usedPercent: 71, level: 'ok' }] }));
