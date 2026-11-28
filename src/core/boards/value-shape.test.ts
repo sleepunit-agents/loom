@@ -4,12 +4,15 @@ import { readFileSync } from 'node:fs';
 import { expect, it } from 'vitest';
 import { ACCEPTED_NAMES, REFUSED_BY_KIND, REFUSED_NAMES, SYNTHETIC_BEARER } from './value-shape.fixture.js';
 import { KNOWN, loomBearer, looksLikeSecretValue } from './value-shape.js';
+import { mintBodyToken } from '../../runtime/body-token.js';
 
 it('refuses a synthetic credential of every kind it knows, bare and after a separator, and a long random run', () => {
   // The fixture has one of each kind, so a kind added to KNOWN without a fixture fails here.
   expect(Object.keys(REFUSED_BY_KIND).sort()).toEqual([...KNOWN.map((k) => k.kind), 'long run, no known prefix'].sort());
   for (const name of REFUSED_NAMES) expect(looksLikeSecretValue(name), name).toBe(true);
   expect(loomBearer.test(SYNTHETIC_BEARER)).toBe(true);
+  // The body token's shape is stated in src/runtime/body-token.ts, which this module cannot import: held to it here.
+  for (let i = 0; i < 20; i++) expect(looksLikeSecretValue(mintBodyToken().toString('ascii'))).toBe(true);
 });
 
 it('takes every name the fixture lists as a name', () => {

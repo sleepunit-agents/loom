@@ -218,8 +218,10 @@ it('names the door\'s request limit once', () => {
 
 it('states the shape of a body\'s token once, where it is made', () => {
   // The worker makes it and the body checks what it was handed; both read the one pattern and length.
+  // The one other: the boards page's check of a typed name, which may import nothing (web/boards-guard.ts) and so
+  // cannot read body-token.ts (node:crypto); value-shape.test.ts holds it to a token body-token.ts mints.
   const shapes = sources('src').filter(file => /body_\[a-f0-9\]|'body_'/.test(text(file)));
-  expect(shapes).toEqual(['src/runtime/body-token.ts']);
+  expect(shapes).toEqual(['src/core/boards/value-shape.ts', 'src/runtime/body-token.ts']);
   for (const file of ['src/runtime/worker-http.ts', 'src/runtime/body-bootstrap.ts', 'src/runtime/body-program.ts']) expect(text(file), file).toContain("from './body-token.js'");
 });
 
