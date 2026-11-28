@@ -2,12 +2,17 @@
  * (web/src/data/work-query.ts) and said in the same words (pieces/change-view/model.ts), with
  * a link to its page on GitHub and, big, the files it touches (`change_files`, kept from the same read of GitHub),
  * each opening in place to its patch (the server's changeFilePatch read, asked once each time a file is opened; the
- * opened files are forgotten when the brick leaves its big form, or its change or head commit changes). It
- * has no action: a merge is answered through its approval, on the desktop. */
-import { useState } from 'react';
+ * opened files are forgotten when the brick leaves its big form, or its change or head commit changes). Big, it
+ * also says when loom last read GitHub (`changeSync`, a household owner's read, as on the desktop), opens on demand
+ * the pull request's cold review history (the desktop's `changeReviewHistory`), and offers the desktop's Refresh
+ * (`/api/changes/refresh`, `changes.refresh`) to the member loom says may use it (`workChangesRefresh`). A merge is
+ * answered through its approval, on the desktop. */
+import { useRef, useState } from 'react';
 import { useDataOnce, useDataQuery } from '../data/graphql';
-import { checksWord, checkWord, mergeableWord, reviewWord, roleWord, stateWord, summary, waitingWord, type Change, type ChangeSnapshot } from '../pieces/change-view/model';
-import { Chip, Fact, Facts, Lead, Loading, Note, Opened, Opens, Row, Rows, Section, State, Unavailable, ticketChip, useOwnFlag, words, type Params, type Raise, type Tone } from './brick-kit';
+import { useWorkAccess } from '../data/work-approvals';
+import { refreshChanges, RefreshError } from '../data/work-refresh';
+import { checksWord, checkWord, mergeableWord, reviewWord, roleWord, stateWord, summary, waitingWord, type Change, type ChangeSnapshot, type ReviewRound } from '../pieces/change-view/model';
+import { Action, Actions, Chip, Fact, Facts, Lead, Loading, Note, Opened, Opens, Problem, Row, Rows, Section, State, Time, Unavailable, ticketChip, useOwnFlag, words, type Act, type Params, type Raise, type Tone } from './brick-kit';
 import type { Form } from './layout';
 
 type Row = Pick<Change, 'id' | 'repository' | 'number' | 'url' | 'title' | 'state' | 'draft' | 'authorLogin' | 'project' | 'agent' | 'branch' | 'headCommit' | 'baseBranch' | 'checks' | 'review' | 'mergeable' | 'waitingOn'>;
@@ -17,6 +22,8 @@ type Read = {
   changePeople: ChangeSnapshot['people'][number][];
   changeFiles: { change: string; path: string; additions: number; deletions: number }[];
   changeTasks: { change: string; task: string; taskRow: { id: string; title: string; status: string } | null }[];
+  /** When loom last read GitHub: a household owner's read (one row), empty for anyone else. */
+  changeSync?: NonNullable<ChangeSnapshot['sync']>[];
 };
 /** The fields of the desktop's ChangesView selection, for one change. */
 export const pullQuery = `query BrickPull($id:String!){
@@ -25,6 +32,7 @@ export const pullQuery = `query BrickPull($id:String!){
   changePeople(where:{change:{eq:$id}}){change login role}
   changeTasks(where:{change:{eq:$id}}){change task taskRow{id title status}}
   changeFiles(where:{change:{eq:$id}}){change path additions deletions}
+  changeSync{readAt failed nextAt}
 }`;
 
 /** Open, draft, merged or closed: the stored state, with a draft said as one. */
@@ -67,7 +75,59 @@ function FilePatch({ change, path }: { change: string; path: string }) {
   );
 }
 
-export function Pull({ params, form, raise }: { params: Params; form: Form; raise: Raise }) {
+/** The desktop's read of a pull request's cold reviews (web/src/data/work-views.tsx). Asked only while the brick's
+ * "Cold reviews" is opened, and live while it is. */
+export const reviewHistoryQuery = 'query ChangeReviewHistory($change: String!) { changeReviewHistory(change: $change) { change job headCommit tier round verdict findings } }';
+/** A round's verdict in the desktop's words. */
+export const verdictWord = (v: ReviewRound['verdict']) => (v === null ? 'Pending' : v === 'NONE' ? 'No verdict' : v === 'CLEAR' ? 'Clear' : 'Blocking');
+const verdictTone = (v: ReviewRound['verdict']): Tone => (v === null ? 'working' : v === 'CLEAR' ? 'good' : v === 'BLOCKING' ? 'bad' : 'muted');
+function ReviewHistory({ change, head }: { change: string; head: string }) {
+  const read = useDataQuery<{ changeReviewHistory: ReviewRound[] }>(reviewHistoryQuery, { change });
+  if (read.status === 'loading') return <Loading />;
+  if (read.status !== 'live') return <Note>Its review history is unavailable.</Note>;
+  const rounds = (read.data?.changeReviewHistory ?? []).filter((r) => r.change === change);
+  if (!rounds.length) return <Note>Loom has not reviewed it.</Note>;
+  return (
+    <Rows label="Cold reviews">{rounds.map((r) => (
+      <Row key={r.job} title={`Round ${r.round} · ${r.tier}`} end={<State tone={verdictTone(r.verdict)}>{verdictWord(r.verdict)}</State>}
+        meta={<>{r.headCommit === head ? 'Current commit' : 'Earlier commit'} <span className="font-mono">{r.headCommit.slice(0, 7)}</span></>}>
+        {r.findings ? <Facts><Fact wide label="Findings"><pre className="board-tail">{r.findings}</pre></Fact></Facts> : undefined}
+      </Row>
+    ))}</Rows>
+  );
+}
+
+/** What the brick says after a press of Refresh from GitHub, by how it ended. */
+export const refreshWords = {
+  done: 'Loom has read GitHub again.',
+  refused: 'Loom refused: only a household owner may have it read GitHub again.',
+  failed: 'GitHub could not be read just now. Try again in a moment.',
+} as const;
+type Refreshing = 'idle' | 'pending' | keyof typeof refreshWords;
+/** The desktop's Refresh, for the member loom says may use it (the desktop's own rule, `useWorkAccess`). One press is
+ * one request; a second press while it runs is dropped. */
+function Refresh({ act }: { act: Act }) {
+  const access = useWorkAccess();
+  const [state, setState] = useState<Refreshing>('idle');
+  const lock = useRef(false);
+  if (!access.refresh && state === 'idle') return null;
+  async function press() {
+    if (lock.current) return;
+    lock.current = true; setState('pending');
+    try { await refreshChanges(); setState('done'); act('refresh', {}); }
+    catch (error) { setState(error instanceof RefreshError && error.status === 403 ? 'refused' : 'failed'); }
+    finally { lock.current = false; }
+  }
+  return (
+    <>
+      {state === 'done' && <Note data-refresh="done">{refreshWords.done}</Note>}
+      {(state === 'refused' || state === 'failed') && <Problem>{refreshWords[state]}</Problem>}
+      {access.refresh && <Actions><Action disabled={state === 'pending'} onClick={() => void press()}>{state === 'pending' ? 'Refreshing…' : 'Refresh from GitHub'}</Action></Actions>}
+    </>
+  );
+}
+
+export function Pull({ params, form, act, raise }: { params: Params; form: Form; act: Act; raise: Raise }) {
   const id = words(params.change);
   const read = useDataQuery<Read>(pullQuery, { id }, { keep: true });
   const c = read.data?.changes[0];
@@ -75,10 +135,12 @@ export function Pull({ params, form, raise }: { params: Params; form: Form; rais
   // or head, forgets them before anything is drawn, so nothing is asked again without being opened, and no patch
   // stays open on an older head than the files listed beside it.
   const scope = form === 'primary' && c ? JSON.stringify([c.id, c.headCommit]) : null;
-  const [opened, setOpened] = useState<{ scope: string | null; paths: readonly string[] }>({ scope, paths: [] });
+  const [opened, setOpened] = useState<{ scope: string | null; paths: readonly string[]; review?: boolean }>({ scope, paths: [] });
   if (opened.scope !== scope) setOpened({ scope, paths: [] });
   const paths = opened.scope === scope ? opened.paths : [];
-  const toggle = (path: string) => setOpened((now) => ({ scope, paths: now.scope !== scope ? [path] : now.paths.includes(path) ? now.paths.filter((p) => p !== path) : [...now.paths, path] }));
+  const reviewOpen = opened.scope === scope && !!opened.review;
+  const toggle = (path: string) => setOpened((now) => ({ scope, paths: now.scope !== scope ? [path] : now.paths.includes(path) ? now.paths.filter((p) => p !== path) : [...now.paths, path], review: now.scope === scope && now.review }));
+  const toggleReview = () => setOpened((now) => (now.scope !== scope ? { scope, paths: [], review: true } : { ...now, review: !now.review }));
   useOwnFlag(c && `${c.state}|${c.checks}`, raise, pullFlag);
   if (read.status === 'loading') return <Loading />;
   if (read.status !== 'live' || !c) return <Unavailable what="pull request" />;
@@ -88,6 +150,7 @@ export function Pull({ params, form, raise }: { params: Params; form: Form; rais
   const checks = [...(read.data?.changeChecks ?? [])].sort((a, b) => a.state.localeCompare(b.state));
   const people = read.data?.changePeople ?? [];
   const files = [...(read.data?.changeFiles ?? [])].sort((a, b) => a.path.localeCompare(b.path));
+  const sync = read.data?.changeSync?.[0];
   return (
     <>
       <Lead>{c.title}</Lead>
@@ -110,7 +173,9 @@ export function Pull({ params, form, raise }: { params: Params; form: Form; rais
             <Fact label="Can be merged">{mergeableWord[c.mergeable] ?? c.mergeable}</Fact>
             {people.length > 0 && <Fact label="People on it"><span className="board-pull-list">{people.map((p) => <span key={p.login + ':' + p.role}>{roleWord[p.role] ?? p.role}: {p.login}</span>)}</span></Fact>}
             {c.state === 'open' && c.waitingOn === 'you' && <Fact label="Merge"><span className="board-note">The merge is answered in Changes on the desktop.</span></Fact>}
+            {sync?.readAt && <Fact label="Last read from GitHub"><Time at={sync.readAt} /></Fact>}
           </Facts>
+          {sync?.failed && <Note>GitHub's last read failed: this is the last copy that was read.</Note>}
           <Section title="Files changed" count={files.length || undefined}>
             {files.length > 0
               ? <Rows label="Files changed" beside>{files.map((f) => (
@@ -125,6 +190,11 @@ export function Pull({ params, form, raise }: { params: Params; form: Form; rais
               <Rows>{tickets.map((t) => <Row key={t.id} place={{ brick: 'ticket', params: { ticket: t.id } }} title={<>{t.title} <span className="font-mono board-row-ref">{t.id}</span></>} />)}</Rows>
             </Section>
           )}
+          <Section title="Cold reviews">
+            <Opens open={reviewOpen} onToggle={toggleReview}>Review history</Opens>
+            {reviewOpen && <Opened><ReviewHistory change={c.id} head={c.headCommit} /></Opened>}
+          </Section>
+          <Refresh act={act} />
         </>
       )}
     </>
