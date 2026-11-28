@@ -12,14 +12,16 @@ import { Action, Actions, Excerpt, Fact, Facts, Problem, Segmented, Time, ticket
 import { Words, priorityWord, ticketChoicesQuery, useSummary, useTaskChoices, useTaskCommand, type Summary } from './bricks-work';
 import type { Form } from './layout';
 import { TicketPicker } from './ticket-picker';
+import { TicketPulls, TicketReviews, TicketSource, TicketStory, ticketHistoryFields, type TicketChange } from './bricks-ticket-history';
 
 type Relation = 'blocks' | 'parent-child';
 type Near = { id: string; title: string } | null;
 type More = Summary & { id: string; status: string; type: string | null; ask: string | null; ifYes: string | null; ifNo: string | null; createdAt: string | null; createdBy: string | null; closedAt: string | null; closeReason: string | null;
+  sourceKind: string | null; sourceId: string | null; changeTasksByTask: TicketChange[] | null;
   taskLinksByTask: { dependsOn: string; type: Relation; dependsOnRow: Near }[]; taskLinksByDependsOn: { task: string; type: Relation; taskRow: Near }[] };
 export const ticketMoreQuery = `query BrickTicketMore($id:String!){
   ticket:tasksSingle(where:{id:{eq:$id}}){id status type title goal why doneWhen description priority project ask ifYes ifNo createdAt createdBy closedAt closeReason
-    taskLinksByTask{dependsOn type dependsOnRow{id title}} taskLinksByDependsOn{task type taskRow{id title}}}
+    taskLinksByTask{dependsOn type dependsOnRow{id title}} taskLinksByDependsOn{task type taskRow{id title}} ${ticketHistoryFields}}
 }`;
 export { ticketChoicesQuery };
 
@@ -141,11 +143,14 @@ export function useTicketMore(id: string, form: Form, act: Act) {
   const read = useDataQuery<{ ticket: More | null }>(ticketMoreQuery, { id }, { keep: true });
   const [open, setOpen] = useState<'edit' | 'links' | 'ask' | 'promote'>();
   const t = read.status === 'live' ? read.data?.ticket : undefined;
-  if (!t || form === 'compact') return { priority: null, meta: null, facts: null, controls: null, forms: null, open: false };
+  if (!t || form === 'compact') return { priority: null, meta: null, facts: null, controls: null, forms: null, history: null, open: false };
   const big = form === 'primary', done = () => setOpen(undefined);
   const up = (t.taskLinksByTask ?? []).map((l) => ({ type: l.type, id: l.dependsOn, row: l.dependsOnRow }));
   const down = (t.taskLinksByDependsOn ?? []).map((l) => ({ type: l.type, id: l.task, row: l.taskRow }));
   const linked = up.length + down.length > 0;
+  const pulls = (t.changeTasksByTask ?? []).some((l) => l.changeRow);
+  // Its source is asked for only where the ticket names a conversation it was filed from.
+  const source = t.sourceKind === 'conversation' && !!t.sourceId;
   return {
     open: big && !!open,
     priority: <span className="board-priority">{priorityWord(t.priority)}</span>,
@@ -158,16 +163,19 @@ export function useTicketMore(id: string, form: Form, act: Act) {
             {t.status === 'closed' && t.closeReason && <Fact wide label="Closed">{t.closedAt && <Time at={t.closedAt} />}{big ? <Reply words={t.closeReason} /> : <Excerpt lines={2}><Reply words={t.closeReason} /></Excerpt>}</Fact>}
           </Facts>
         )}
-        {linked && !big && (
+        {(linked || pulls) && !big && (
           <div className="board-meta">
+            <TicketPulls links={t.changeTasksByTask ?? undefined} big={false} />
             <Linked label="Parent" titles={false} rows={up.filter((l) => l.type === 'parent-child')} />
             <Linked label="Children" titles={false} rows={down.filter((l) => l.type === 'parent-child')} />
             <Linked label="Blocked by" titles={false} rows={up.filter((l) => l.type === 'blocks')} />
             <Linked label="Blocks" titles={false} rows={down.filter((l) => l.type === 'blocks')} />
           </div>
         )}
-        {linked && big && (
+        {big && (linked || pulls || source) && (
           <Facts>
+            <TicketPulls links={t.changeTasksByTask ?? undefined} big />
+            {source && <TicketSource id={t.sourceId!} />}
             <Linked label="Parent" titles={big} rows={up.filter((l) => l.type === 'parent-child')} />
             <Linked label="Children" titles={big} rows={down.filter((l) => l.type === 'parent-child')} />
             <Linked label="Blocked by" titles={big} rows={up.filter((l) => l.type === 'blocks')} />
@@ -176,6 +184,8 @@ export function useTicketMore(id: string, form: Form, act: Act) {
         )}
       </>
     ),
+    // The reviews and the story are read only once the member opens them.
+    history: big ? <><TicketReviews ticket={t.id} links={t.changeTasksByTask ?? undefined} /><TicketStory ticket={t.id} /></> : null,
     controls: big && !open ? (
       <>
         <Action kind="quiet" onClick={() => setOpen('edit')}>Edit…</Action>
