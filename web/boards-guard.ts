@@ -1,15 +1,17 @@
 /** The boards page's bundle guard (vite.boards.config.ts runs it over the whole module graph of the build, lazy chunks
- * included; boards-guard.test.ts holds it to what it refuses). The boards page is not the desktop: what it may load
- * is named here, file by file, and anything else fails the build.
+ * included; boards-guard.test.ts holds it to what it refuses). What the boards page may load is named here, file by
+ * file, and anything else fails the build. The page was kept apart from the desktop's kit and sheets this way while
+ * there was a desktop (removed 2026-11-28, t-2428); the files it names under web/src outside its own folders are
+ * the plain modules it took from the desktop's apps.
  *
- * - Under web/src: the page's own folders, and what the drawn bricks share with the desktop (`shared`).
+ * - Under web/src: the page's own folders, and the plain modules the drawn bricks read (`shared`).
  * - Under the repository's src/ (the server's code): only the files in `outside`. A file marked `plain` there must
  *   have no import at all, so that the page and the server load that one file and nothing with it; anything it
  *   starts to import fails the build, not only when the import is itself refused.
  * - node_modules, and the few modules vite itself adds. Anything else (a `node:` module, which vite would replace
  *   with an empty stand-in, a virtual module) fails the build. */
 
-// What the drawn bricks share with the desktop, each named whole: words for stored states, selections and the
+// The plain modules the drawn bricks read, each named whole: words for stored states, selections and the
 // calls that send an answer. Each is plain TypeScript with no component and no stylesheet, and so is everything it
 // imports. Never `kit/index`, a component or a sheet: a brick that needs one of those needs a pure module instead.
 export const shared: ReadonlySet<string> = new Set([
@@ -41,7 +43,7 @@ export const shared: ReadonlySet<string> = new Set([
   'pieces/attention/agent-directory.ts', // the shared directory's agent names, as Comms and Home say them (imports data/ only)
   'pieces/attention/agent-displays.ts', // an agent's mark colours, face shape and eyes (imports data/ only)
   'face-data.json', // the shapes of an agent's face, as data
-  'pixel-face.tsx', // an agent's stored pixel sprite, drawn on a canvas by the desktop's own renderer (imports data/, access.ts, contexts/portrait-player.ts and one plain file under src/; no kit, no sheet)
+  'pixel-face.tsx', // an agent's stored pixel sprite, drawn on a canvas (imports data/, access.ts, contexts/portrait-player.ts and one plain file under src/; no kit, no sheet)
   'shell/shortcuts.ts', // the declared shortcuts and the engine that reads their keys (imports react only)
   'pieces/attention/home-model.ts', // an agent's state word and line, the roster's order (types and functions)
   'pieces/attention/roster.ts', // Home's roster: the member's own agents (imports data/ only)
@@ -55,7 +57,6 @@ export const shared: ReadonlySet<string> = new Set([
   'pieces/account/query.ts', // Account's one selection of the member's own passkeys, browsers and devices (a string and a type)
   'pieces/account/passkey.ts', // adding a passkey through the sign-in door, as Account does (imports encoding.ts)
   'signin/device-link.ts', // the one-time sign-in link for another device: its request and words (no imports)
-  'pieces/attention/desk-time.ts', // the household's time zone selection, which data/zone.ts reads (a string and a type)
   'pieces/appearance/choices.ts', // Appearance's choices as words: follow/on/off, the grounds, the switches (no imports)
   'look.ts', // the looks' names and how a saved look is read (imports react's createContext; its other imports are types)
   'shell/member-preferences.ts', // the shell's selection of the member's own preferences and its rule for whose row counts (imports data/ and attention/home-comms-data.ts)
@@ -65,7 +66,7 @@ export const shared: ReadonlySet<string> = new Set([
   'signin/session-change.ts', // signing a browser out and then checking this one is still signed in (imports data/)
   'pieces/runtime/machine-hosting-model.ts', // what a machine hosts, as fields and words (no imports)
   'pieces/runtime/machines-query.ts', // the Machines app's two reads and the shapes its operations answer (strings and types)
-  'pieces/runtime/machine-readings.ts', // a machine's readings and open conditions as the desktop says them (imports kit/time.ts and one plain file under src/)
+  'pieces/runtime/machine-readings.ts', // a machine's readings and open conditions in loom's words (imports kit/time.ts and one plain file under src/)
   'pieces/household/alert-lines-model.ts', // the machine alert lines: labels, bounds and the check of a typed change (no imports)
   'pieces/runtime/model-query.ts', // the Subscriptions app's selections, its account and service lines, weekly usage and the words of adding one and asking for a sign-in (imports data/ only)
   'pieces/usage/model.ts', // Job usage's two selections, its order, the names of a job's measurements and its range of local days (no imports)
@@ -125,7 +126,7 @@ export function boardsGuard(modules: Iterable<Seen>, root: string): string[] {
     if (path === 'web/board.html') continue;
     if (path.startsWith('web/src/')) {
       const file = path.slice('web/src/'.length);
-      if (!own.test(file) && !shared.has(file)) problems.push('Desktop dependency in boards page: ' + file);
+      if (!own.test(file) && !shared.has(file)) problems.push('Unlisted web file in boards page: ' + file);
     } else if (path.startsWith('src/')) {
       const entry = outside.get(path);
       if (!entry) problems.push('Server file in boards page: ' + path);
