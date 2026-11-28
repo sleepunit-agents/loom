@@ -6,6 +6,7 @@ import { catalogue } from '../bricks.js';
 import { live, Refused } from '../model.js';
 import { agent, empty, pins } from './bench.test.helper.js';
 import { household } from '../house.fixture.js';
+import { ACCEPTED_NAMES, REFUSED_NAMES } from '../value-shape.fixture.js';
 import { secretName } from './kit.js';
 import definition from './secrets.js';
 
@@ -77,7 +78,8 @@ it('through the real operations, the name and outcome reach the board and the ag
 
 // What the detail cannot know: a name-shaped value typed into Name is told as the name. A value with a credential's
 // shape is refused, by the same function the page uses (../value-shape.ts); anything else name-shaped is a name.
-const PASTED = ['loom_' + 'S'.repeat(43), 'ghp_' + 'A1b2'.repeat(6), 'github_pat_' + 'Ab3'.repeat(8), 'xoxb-' + '12ab'.repeat(4), 'sk-ant-api03-' + 'k'.repeat(24), 'AGE-SECRET-KEY-' + '1Q'.repeat(12), 'deploy.ghp_' + 'A1b2'.repeat(6), 'Zx9q8W7e6R5t4Y3u2I1o0P9a8S7d6F5g4'];
+// Every synthetic credential of the one fixture list that the store's name shape takes (../value-shape.fixture.ts).
+const PASTED = REFUSED_NAMES.filter((name) => secretName.safeParse(name).success);
 it('a name in the shape of a secret value is refused with the page\'s words and stored nowhere; a name-shaped value of no known shape is told as a name', async () => {
   const house = await household('secrets');
   try {
@@ -86,7 +88,8 @@ it('a name in the shape of a secret value is refused with the page\'s words and 
       expect(answer, `${action} ${secret}`).toMatchObject({ ok: false });
       expect(JSON.stringify(answer), secret).toContain('That looks like a secret value, not a name.');
     }
-    for (const secret of ['PUMP_TOKEN', 'github-deploy-key', 'ci.runner', 'task-runner-pump-station-north', 'x'.repeat(64), VALUE])
+    expect(PASTED.length).toBeGreaterThanOrEqual(10);
+    for (const secret of [...ACCEPTED_NAMES.filter((name) => secretName.safeParse(name).success), 'x'.repeat(64), VALUE])
       expect(await house.act('setValue', { secret, outcome: 'added' }), secret).toMatchObject({ ok: true });
     const stored = house.stored(), read = JSON.stringify(await house.read()), brief = house.brief();
     for (const [where, text] of [['stored rows', stored], ['boards.read', read], ['brief', brief]]) for (const secret of PASTED) expect(text, `${where} ${secret}`).not.toContain(secret);

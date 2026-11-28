@@ -4,6 +4,8 @@ import { catalogue } from '../bricks.js';
 import { actRow, Refused } from '../model.js';
 import { agent, empty, pins } from './bench.test.helper.js';
 import { household } from '../house.fixture.js';
+import { ACCEPTED_NAMES, REFUSED_BY_KIND, REFUSED_NAMES, SYNTHETIC_BEARER } from '../value-shape.fixture.js';
+import { ref } from './kit.js';
 import definition, { tokenKinds } from './household.js';
 
 it('household: whether it can be big, what it flags itself for, how it is named, and each action with its operation', () => {
@@ -30,7 +32,7 @@ it('takes no parameter, and tells the board that something was revoked or allowe
   expect(() => actRow(board, 'p1', 'token', {}), 'token').toThrow(Refused);
 });
 
-const BEARER = 'loom_' + 'S'.repeat(43), FINGERPRINT = 'f'.repeat(64);
+const BEARER = SYNTHETIC_BEARER, FINGERPRINT = 'f'.repeat(64);
 it('a token made is told by its label and kind, and by nothing else', () => {
   const board = agent(empty(), [{ change: 'place', brick: 'household', params: {} }]).board;
   const ok = (detail: Record<string, unknown>) => { try { actRow(board, 'p1', 'token', detail); return true; } catch (e) { if (e instanceof Refused) return false; throw e; } };
@@ -43,9 +45,14 @@ it('a token made is told by its label and kind, and by nothing else', () => {
     expect(ok({ label: 'pump-laptop', kind: 'agent', ...extra }), JSON.stringify(extra)).toBe(false);
   // A label is told as a reference: no sentence, no blank, no line break, nothing past 120.
   for (const label of ['Pump laptop', 'two words', 'line\nbreak', '', '-dash', 'x'.repeat(121), BEARER + ' ']) expect(ok({ label, kind: 'agent' }), JSON.stringify(label)).toBe(false);
-  // A label in the shape of a secret value: a bare bearer pasted into Label, or a provider's key (../value-shape.ts).
-  for (const label of [BEARER, 'ci/' + BEARER, 'ghp_' + 'A1b2'.repeat(6), 'sk-ant-api03-' + 'k'.repeat(24), 'Zx9q8W7e6R5t4Y3u2I1o0P9a8S7d6F5g4']) expect(ok({ label, kind: 'agent' }), label).toBe(false);
-  for (const label of ['pump-laptop', 'shed.pi', 'art@one', 'ci/runner:2', 'ci:runner', 'github-deploy-key', 'PUMP_TOKEN', 'x'.repeat(120)]) expect(ok({ label, kind: 'machine' }), label).toBe(true);
+  // A label in the shape of a secret value: every synthetic credential the one fixture list holds that a reference's
+  // shape would take (../value-shape.fixture.ts), one of each kind among them; and every name it lists is taken.
+  const refused = REFUSED_NAMES.filter((label) => ref.safeParse(label).success);
+  for (const value of Object.values(REFUSED_BY_KIND)) expect(refused, value).toContain(value);
+  for (const label of refused) expect(ok({ label, kind: 'agent' }), label).toBe(false);
+  const accepted = ACCEPTED_NAMES.filter((label) => ref.safeParse(label).success);
+  expect(accepted).toEqual(ACCEPTED_NAMES);
+  for (const label of [...accepted, 'pump-laptop', 'x'.repeat(120)]) expect(ok({ label, kind: 'machine' }), label).toBe(true);
   const entry = catalogue().find((b) => b.name === 'household')!.actions.token as { properties: object; additionalProperties: boolean; required: string[] };
   expect(Object.keys(entry.properties).sort()).toEqual(['kind', 'label']);
   expect([entry.additionalProperties, [...entry.required].sort()]).toEqual([false, ['kind', 'label']]);
@@ -62,7 +69,7 @@ it('through the real operations, a token made reaches the board and the agent\'s
     const stored = house.stored(), read = JSON.stringify(await house.read()), brief = house.brief();
     for (const [where, text] of [['stored rows', stored], ['boards.read', read], ['brief', brief]]) {
       expect(text, where).not.toContain(BEARER);
-      expect(text, where).not.toContain('S'.repeat(43));
+      expect(text, where).not.toContain(BEARER.slice(5));
       expect(text, where).not.toContain(FINGERPRINT);
     }
     expect(brief).toContain('used token on household() on board');

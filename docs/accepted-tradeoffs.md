@@ -382,17 +382,43 @@ Entries are grouped by the part of the program they belong to.
 - **Where.** `src/core/boards/bricks/secrets.ts`, `src/core/boards/bricks/household.ts`,
   `web/src/boards/bricks-secrets.tsx`, `web/src/boards/bricks-household.tsx`; the check is
   `src/core/boards/value-shape.ts`.
-- **What is enforced.** One function, `looksLikeSecretValue`, used by both forms before anything is sent and by
-  `boards.act` in those two details, refuses with "That looks like a secret value, not a name.": loom's own
-  bearer (`loom_` and 43 more); any credential loom's output check already knows (`looksLikeCredential` in
-  `src/runtime/fixed-program.ts`: GitHub, Slack, `sk-`/`sk-ant-`, age, `body_`, `loom_ui=`, a private key's
-  header), when it starts the name or follows a separator; and a run of 32 or more characters with no separator
-  that mixes letters and digits. A stored secret whose name already has that shape (made on the desktop) can
-  still be replaced or removed from the brick, and the board is not told of it.
-- **What still passes.** A value of no known prefix shorter than 32 characters (`hunter2`), and a longer one
-  broken up by `-`, `_`, `.`, `:`, `/` or `@` into runs under 32, as a base64url key often is. Such a name is
-  told. Before boards it stayed in the secrets store's metadata and the tokens table, which only owners see.
-  `src/core/boards/value-shape.test.ts` pins what passes.
+- **What is enforced.** One function, `looksLikeSecretValue`, in a module with no imports that the page and the
+  server both load, used by both forms before anything is sent and by `boards.act` in those two details, refuses
+  with "That looks like a secret value, not a name." a name that holds either:
+  - a **known prefix** at its start or just after a character that is not a letter or digit, matched case by case
+    as real credentials are written: loom's bearer (`loom_` and 43), loom's `body_` and 32 hex; GitHub `ghp_`,
+    `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`; Slack `xoxb-`, `xoxa-`, `xoxp-`, `xoxr-`, `xoxs-`; `sk-`
+    (Anthropic, OpenAI); Stripe `sk_live_`, `sk_test_`, `rk_live_`, `rk_test_`; AWS `AKIA` and 16; GitLab `glpat-`;
+    Google `AIza` and 35; `AGE-SECRET-KEY-`; each followed by its body, and only when the body looks random: cut
+    at each character that is not a letter or digit, one piece of at least 8 characters holds letters and digits
+    that change from one to the other at least twice;
+  - a **long run**: a piece between characters that are not letters or digits of 32 or more characters, with at
+    least four digits, in at least two groups, and either both letter cases or digits making a fifth of it.
+
+  A stored secret whose name already has that shape (made on the desktop) can still be replaced or removed from
+  the brick, and the board is not told of it.
+- **What still passes** (told as a name):
+  - a value of no known prefix shorter than 32 characters (`hunter2`), and a longer one broken up by `-`, `_`,
+    `.`, `:`, `/`, `@`, `+` or `=` into pieces under 32, as a base64url or base64 key often is; an AWS secret key
+    (`/` cuts it into short pieces) and any UUID;
+  - a run of letters only or digits only, of any length; a random run with fewer than four digits, or its digits
+    in one group, or one letter case and digits under a fifth of it (a random 40-character key draws few digits
+    now and then);
+  - a known prefix in the other case (`GHP_…`, `aiza…`), whose body is then only caught by the long-run rule;
+  - a known prefix whose body is short of its kind's length (a bearer with a character missing), or does not
+    look random (no digits, or digits only at one end of every piece);
+  - kinds not in the list: AWS `ASIA` temporary keys, npm, PyPI, Twilio, SendGrid and every other provider's
+    own prefix; `Bearer …`, a private key's header and loom's sign-in cookie cannot be a name at all (a blank, `=`).
+
+  Such a name is told. Before boards it stayed in the secrets store's metadata and the tokens table, which only
+  owners see.
+- **What is refused that is a name.** A known prefix followed by a mixed piece, such as `ghp_build2go4ci_for_the_pump`, and a
+  long run like `production2026PostgresReplica2027Password`. The member renames it.
+- **Pinned by** `src/core/boards/value-shape.fixture.ts`, the one list of names that must be taken
+  (`GITHUB_PAT_READ_PACKAGES_ORG_ACME`, `AGE-SECRET-KEY-BACKUP`, `sk-region-postgres-backup-bucket`,
+  `loom_staging_environment_database_password_for_ci`, `productionPostgresReplicaPassword2026`, …) and of
+  made-up credentials of each kind that must be refused. Its own test, the server's two details and the page's
+  two forms all read it.
 - **Why accepted.** The owner, 2026-11-27: the agent should learn "we saved a new key in this-key-place but
   never saw the key itself", and a name that is really a pasted value is the residual risk, to be stated and
   reduced, not a reason to tell the agent nothing. The desktop takes the same name without any check.
