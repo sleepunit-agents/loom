@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { submittedReviewSchema, type SubmittedReview, changeSchema, repoId, active, week, type Change } from './model.js';
 import { parseRedactedJSON } from './redact.js';
 import { withGitHub, type Secrets } from './roles.js';
+import { COMMIT } from '../../apps/merge-target.js';
 const reviewFields = 'id url submittedAt state bodyText author{login} commit{oid}';
 const reviewConnection = 'nodes{'+reviewFields+'} pageInfo{hasNextPage endCursor}';
 const reviewPageQuery = 'query($owner:String!,$name:String!,$number:Int!,$after:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviews(first:50,after:$after){'+reviewConnection+'}}}}';
@@ -164,5 +165,28 @@ export function githubListingReader(secrets:Secrets, request:typeof fetch=fetch)
    if(!response.ok){await response.body?.cancel();throw new Error('GitHub read failed');}
    return z.array(fileEntry).max(100).parse(JSON.parse((await boundedText(response)).split(token).join('[redacted]'))).map(f=>({filename:f.filename,patch:f.patch??null}));
   });} catch {throw new Error('GitHub read unavailable');} // Never persist/log an upstream exception or credential.
+ };
+}
+
+/** The commit a frozen review's diff is taken against (conversation.review): with `branch`, the merge base of `head` and
+ * that branch (GET /repos/{owner}/{repo}/compare/{branch}...{head}, its `merge_base_commit`); without, `head`'s first
+ * parent (GET /repos/{owner}/{repo}/commits/{head}). The same credential, host and bounds as `githubListingReader`, no
+ * redirect followed, the token's exact value replaced in the answer before it is parsed, and every failure one bare error. */
+export function githubReviewBase(secrets:Secrets, request:typeof fetch=fetch) {
+ return async(repo:string,head:string,branch?:string):Promise<string>=>{
+  repo=repoId(repo);const [owner,name]=repo.slice(7).split('/');
+  if(/^\.+$/.test(owner)||/^\.+$/.test(name)||!COMMIT.test(head)||branch!==undefined&&(!branch||branch.length>255||/[\s~^:?*[\\\0-\x1f\x7f]|\.\./.test(branch)||branch.split('/').some(part=>!part||/^\.+$/.test(part))))
+   throw new Error('GitHub read unavailable');
+  try {return await withGitHub(secrets,owner,async token=>{
+   if(!token) throw new Error('Missing credential');
+   const at=`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
+   const address=branch!==undefined?`${at}/compare/${branch.split('/').map(encodeURIComponent).join('/')}...${head}?per_page=1`:`${at}/commits/${head}`;
+   const response=await request(address,{method:'GET',redirect:'error',signal:AbortSignal.timeout(LISTING_PAGE_MS),headers:{authorization:'Bearer '+token,accept:'application/vnd.github+json','x-github-api-version':'2022-11-28'}});
+   if(!response.ok){await response.body?.cancel();throw new Error('GitHub read failed');}
+   const body=JSON.parse((await boundedText(response)).split(token).join('[redacted]')) as {merge_base_commit?:{sha?:unknown};parents?:{sha?:unknown}[]};
+   const sha=branch!==undefined?body.merge_base_commit?.sha:body.parents?.[0]?.sha;
+   if(typeof sha!=='string'||!COMMIT.test(sha))throw new Error('GitHub read failed');
+   return sha;
+  });} catch {throw new Error('GitHub read unavailable');}
  };
 }

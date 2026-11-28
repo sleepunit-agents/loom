@@ -1,4 +1,5 @@
 import {testProgramPin} from './runtime/pinned-program.fixture.js';
+import {reviewPlace} from './core/conversations/review-place.js';
 import {DataLive} from './core/data/live.js';
 import {httpWorkerControl} from './runtime/worker-http.js';
 import {SecretPrivateInputs} from './pieces/secrets/private-inputs.js';
@@ -14,12 +15,12 @@ import {sharedRoot} from './shared-root.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const raw={body:'a'.repeat(64),other:'b'.repeat(64),owner:'c'.repeat(64),runner:'d'.repeat(64),foreign:'e'.repeat(64),agent:'f'.repeat(64),cookie:'g'.repeat(64)};
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
-function fixture(){
+function fixture(reviewBindings?:Record<string,string>){
  const client=new Database(':memory:');clean.push(()=>{if(client.open)client.close();});const db=createDataSchema(client),clock=new FakeClock(),at=new Date(clock.now()).toISOString();
  db.insert(members).values({id:'owner',role:'owner',joinedAt:at}).run();db.insert(agents).values({id:'art',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
  for(const id of ['box','foreign'])db.insert(boxes).values({id,name:id,owner:'owner',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:at}).run();
  for(const id of ['body','other','build'])db.insert(jobs).values({id,agent:'art',box:'box',title:'',brief:'',model:'test',state:id==='build'?'starting':'running',startedByKind:'agent',startedBy:'art',houseRepository:'repo',houseFile:'house',houseBranch:'next',queuedAt:at}).run();
- for(const name of ['TOKEN','REPO']){db.insert(secrets).values({name,description:'Synthetic',changedAt:at,changedBy:'owner'}).run();db.insert(secretChanges).values({id:name,secret:name,action:'add',by:'owner',at}).run();}
+ for(const name of ['TOKEN','REPO','FORGE']){db.insert(secrets).values({name,description:'Synthetic',changedAt:at,changedBy:'owner'}).run();db.insert(secretChanges).values({id:name,secret:name,action:'add',by:'owner',at}).run();}
  db.insert(agentRunSettings).values({agent:'art',houseRepository:'repo',houseFile:'house',houseBranch:'next',repositorySecret:'REPO',nestedContainers:false,gpu:false}).run();db.insert(agentHouseSecrets).values({agent:'art',alias:'API_TOKEN',secret:'TOKEN'}).run();
  db.insert(tokens).values([
   {fingerprint:hash(raw.owner),label:'Owner',kind:'owner',member:'owner',createdAt:at},
@@ -30,7 +31,7 @@ function fixture(){
   {fingerprint:hash(raw.foreign),label:'Foreign',kind:'runner',box:'foreign',createdAt:at},
  ]).run();db.insert(sessions).values({id:hash(raw.cookie),token:hash(raw.body),device:'Browser',via:'token',isAgent:true,issuedAt:at,seenAt:at,provedAt:at}).run();
  const buffers:Buffer[]=[];const source={read:vi.fn(async(_name:string)=>{expect(client.inTransaction).toBe(false);expect(db.select().from(secretUses).all().some(row=>row.state==='started')).toBe(true);const bytes=Buffer.from('PRIVATE_SOURCE_VALUE');buffers.push(bytes);return bytes;})};
- const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{},secretInputs:{source}});clean.push(()=>root.close());
+ const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{},secretInputs:{source},...(reviewBindings?{changes:{read:async()=>[],reviewBindings}}:{})});clean.push(()=>root.close());
  const post=(path:string,input:unknown,credential=raw.body,cookie=false)=>root.http.request('http://loom/api/secrets/private/'+path,{method:'POST',headers:{'content-type':'application/json',...(cookie?{cookie:'loom_ui='+credential}:{authorization:'Bearer '+credential})},body:JSON.stringify(input)});
  const grant=(secret='TOKEN',job='body')=>root.writes.run(()=>{const id=randomUUID();root.services.secrets.requests.request({id,secret,agent:'art',job,why:'Synthetic use',minutes:5});root.services.secrets.requests.answer(id,'owner',true);return id;}).value;
  const rule=(secret='TOKEN')=>root.writes.run(()=>root.services.secrets.requests.setRule({secret,answer:'auto',minutes:5,agents:[{agent:'art',when:'at_start'}]}));
@@ -305,4 +306,45 @@ it('hands the assigned worker only the frozen program alias with its current sta
  for(const bytes of values.values())bytes.fill(0);
  expect((await read('KIT_TOKEN')).status).toBe(409);
  expect(f.client.serialize().includes(Buffer.from('PRIVATE_SOURCE_VALUE'))).toBe(false);
+});
+it('hands a frozen review no secret at start or on request, whatever is granted or its brief asks, and only its house fetch credential to its worker',async()=>{
+ const f=fixture();f.rule();f.rule('REPO');f.grant();
+ // A GitHub token the agent's house would read at start (Art's bin/git-credential-art reads such an alias).
+ f.db.insert(agentHouseSecrets).values({agent:'art',alias:'LOOM_SECRET_GITHUB_ART_E_FISH_TOKEN',secret:'TOKEN'}).run();
+ const target={repository:'acme/app',head:'1'.repeat(40),base:'2'.repeat(40),change:null,tier:'medium' as const};
+ const review=(id:string)=>f.root.services.conversations.open({agent:'art',venue:'handoff',place:reviewPlace('parent',id,{id:'review',revision:'r'.repeat(64)},target),label:'Frozen review'}).id;
+ // The same jobs as the other tests, now each a frozen review's: the running body and the starting build.
+ f.db.update(jobs).set({conversation:review('one')}).where(eq(jobs.id,'body')).run();
+ f.db.update(jobs).set({conversation:review('two')}).where(eq(jobs.id,'build')).run();
+ expect((await f.post('startup',{})).status).toBe(403);
+ for(const alias of ['API_TOKEN','LOOM_SECRET_GITHUB_ART_E_FISH_TOKEN'])expect((await f.post('read',{kind:'startup',alias})).status).toBe(403);
+ expect((await f.post('read',{kind:'request',id:randomUUID(),secret:'TOKEN'})).status).toBe(403);
+ // The house is still fetched: the worker is given its fetch credential, for git and nothing else (house-source.ts).
+ const fetch=await f.post('read',{kind:'repository',job:'build'},raw.runner);expect(fetch.status).toBe(200);
+ expect(f.source.read).toHaveBeenCalledExactlyOnceWith('REPO');
+ // An ordinary job of the same agent is served as before: the refusal is the review's, not the agent's.
+ expect((await f.post('startup',{},raw.other)).status).toBe(200);
+});
+it('hands a frozen review\'s worker the forge credential bound to the reviewed repository\'s owner, never the house\'s, and none without a binding',async()=>{
+ const f=fixture({acme:'FORGE'});f.rule('REPO');f.rule('FORGE');
+ const review=(id:string,repository:string)=>f.root.services.conversations.open({agent:'art',venue:'handoff',place:reviewPlace('parent',id,{id:'review',revision:'r'.repeat(64)},{repository,head:'1'.repeat(40),base:'2'.repeat(40),change:null,tier:'medium'}),label:'Frozen review'}).id;
+ // An ordinary job's worker is never given it.
+ expect((await f.post('read',{kind:'reviewFetch',job:'build'},raw.runner)).status).toBe(403);
+ f.db.update(jobs).set({conversation:review('one','acme/app')}).where(eq(jobs.id,'build')).run();
+ // Only the job's own worker asks: not its body, not another machine.
+ for(const credential of [raw.body,raw.foreign,raw.owner])expect((await f.post('read',{kind:'reviewFetch',job:'build'},credential)).status).toBe(403);
+ expect(f.source.read).not.toHaveBeenCalled();
+ const given=await f.post('read',{kind:'reviewFetch',job:'build'},raw.runner);expect(given.status).toBe(200);
+ expect(f.source.read).toHaveBeenCalledExactlyOnceWith('FORGE');
+ expect(f.db.select().from(secretUses).all()).toMatchObject([{secret:'FORGE',job:'build'}]);
+ // A repository whose owner no binding names: no credential at all, the house's included, so no copy and no review.
+ const g=fixture({acme:'FORGE'});g.rule('REPO');g.rule('FORGE');
+ g.db.update(jobs).set({conversation:g.root.services.conversations.open({agent:'art',venue:'handoff',place:reviewPlace('parent','two',{id:'review',revision:'r'.repeat(64)},{repository:'other/app',head:'1'.repeat(40),base:'2'.repeat(40),change:null,tier:'medium'}),label:'Frozen review'}).id}).where(eq(jobs.id,'build')).run();
+ expect((await g.post('read',{kind:'reviewFetch',job:'build'},raw.runner)).status).toBe(403);
+ expect(g.source.read).not.toHaveBeenCalled();
+ // A binding the household has given no rule for: asked of an owner like the house's, never handed unasked.
+ const h=fixture({acme:'FORGE'});
+ h.db.update(jobs).set({conversation:h.root.services.conversations.open({agent:'art',venue:'handoff',place:reviewPlace('parent','three',{id:'review',revision:'r'.repeat(64)},{repository:'acme/app',head:'1'.repeat(40),base:'2'.repeat(40),change:null,tier:'medium'}),label:'Frozen review'}).id}).where(eq(jobs.id,'build')).run();
+ expect((await h.post('read',{kind:'reviewFetch',job:'build'},raw.runner)).status).toBe(403);
+ expect(h.source.read).not.toHaveBeenCalled();
 });

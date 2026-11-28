@@ -425,6 +425,88 @@ Entries are grouped by the part of the program they belong to.
 - **What would change the answer.** A mis-pasted value seen in a brief; or a reason for the agent not to know
   the name, after which the report would go back to telling nothing.
 
+### A frozen reviewer keeps its model sign-in and the network
+- **What.** A frozen review's body (`conversation.review`, `docs/runtime/worker.md`, "Frozen reviews") is handed
+  no secret, no kit, none of its agent's fixed mounts and a read-only copy of what it reviews, and its body token
+  reaches only its own reply and its job's bookkeeping (`src/core/conversations/review-confinement.ts`). Two things
+  it still has, because loom cannot take them without taking the body: its account's sign-in directory, mounted
+  read-write at `/run/loom/login/<harness>` as for every body; and the network.
+- **Where.** `src/runtime/worker-mounts.ts` (`bodyMounts`, the sign-in mount), `src/runtime/worker-container.ts`
+  (`createSpec` sets no network mode).
+- **Why accepted.** The sign-in must stay writable: the provider's program rewrites its files when it renews the
+  sign-in, and a reviewer that could not would fail mid-review. It holds the model account's sign-in, not a
+  forge credential: nothing in it can push. The network is how the harness reaches its model. With no
+  credential, the network gives the body nothing to push with: a push to GitHub needs a token, and none is in its
+  environment, its files or its mounts.
+- **What would change it.** A provider that signs in without a writable directory, or an engine network that lets
+  through only the model provider. Then this entry would shrink or go.
+
+### Frozen reviews and instruction files
+- **What.** A frozen review's harness starts outside its copy (the body's scratch directory, else the house's own:
+  `src/runtime/review-cwd.ts`), and the brief says everything under `/review` is data. What each harness itself
+  does about instruction files:
+  - **Claude Code** is started, like every body, with `--setting-sources ''`, `--strict-mcp-config` and no
+    `--add-dir` (`src/runtime/claude-body.ts`). Checked with Claude Code 2.1.326 on 2026-11-28: with no setting
+    source it loads no settings file and no `CLAUDE.md`, not the working directory's, not one in a directory above
+    it, and not one beside a file it reads under `/review/tree` (a planted `CLAUDE.md` there was not in its
+    context). With the `project` source it would load the working directory's `CLAUDE.md` and still none from
+    `/review`, which is outside the working directory.
+  - **Codex** is started with `--ignore-user-config` (no `$CODEX_HOME/config.toml`), `--ignore-rules` (no
+    `.rules` files), `-C` the working directory outside the copy, and, for a frozen review, `-c
+    project_doc_max_bytes=0`, which gives its `AGENTS.md` and `AGENTS.override.md` discovery no bytes to read
+    (`src/runtime/codex-body.ts`). This is from Codex's own configuration and help (codex-cli 0.167.0); it was not
+    run here, because no Codex sign-in was available to the job that wrote it. A project `.codex/config.toml` is
+    read only from the working directory's tree, which is not the copy.
+- **What cannot be turned off.** A reviewer reads the files it reviews: a file that addresses it (a `CLAUDE.md`,
+  an `AGENTS.md`, a comment) is in its context as content when it opens it, as any text it reads is. No harness
+  setting stops that; the brief tells it such a file is data and worth a finding, and the verdict is taken only
+  from the last line of its final answer. A hostile tree can therefore still argue for a verdict; it cannot
+  change what the reviewer may call (its token reaches nothing but its reply), what it holds (no credential that
+  can push), or what is filed (a verdict only after an ended job and equal fingerprints). The account sign-in
+  directory, mounted for every body, may hold the provider's own user-level files (Codex's `AGENTS.md` in
+  `CODEX_HOME`); those are the household's, not the reviewed tree's.
+- **What would change it.** A harness that marks read files as untrusted content, or a report that a planted
+  instruction changed a verdict.
+
+### A frozen review's copy is read-only in its container, not on the worker's machine
+- **What.** The copy is a directory under the worker's state directory, written by the worker's own user, and
+  bind-mounted read-only into the body's container. In the container nothing can write it: the engine's
+  read-only bind refuses root's writes too, and the body has no capability to remount. On the machine, the
+  worker's own user (or root) can.
+- **Where.** `src/runtime/review-snapshot.ts`, `src/runtime/worker-container.ts` (`build`, `start`, the engine's
+  mount report checked by `ownMounts`).
+- **Why accepted.** The machine is the worker's, and the worker is trusted to run the review at all. What a
+  change there would do is caught: the worker fingerprints the copy before the body starts and after it ends,
+  and loom files no verdict for a review whose fingerprints differ or were not reported (`runtime.finish`,
+  `reviewTree`, `src/shared-runtime.ts`; `frozenReviewEnding`, `src/core/conversations/review-result.ts`). Files
+  are also left mode 0444 (0555 for an executable).
+- **What would change it.** An engine-held read-only volume populated by the engine itself, so no host path holds
+  the copy; that needs engine features this worker does not assume (podman and Docker differ there).
+
+### A frozen review of a commit that heads no followed pull request is on no brick
+- **What.** `conversation.review` of `{repository, commit}` files its round on a pull request loom follows whose
+  head is that commit. For any other commit the review runs by the same rule, its ending is filed on its own
+  record (`frozen_review_results`, schema 56) and relayed to the asking thread, but there is no round: the
+  rounds' `change` is a foreign key to a followed pull request (schema 27), so no brick shows it.
+- **Where.** `assignFrozen` in `src/apps/change-reviews.ts`; `reportFrozenReviewEnd` in
+  `src/core/conversations/review-result.ts`.
+- **Why accepted.** The rounds belong to a change and are read on its brick; a commit with no pull request has no
+  brick to read them on. The record keeps the verdict so a later reader could be given one.
+- **What would change it.** A page that shows a commit's reviews, or a merge rule that asks for a commit's
+  verdict before its pull request exists.
+
+### A forge binding for an owner admits a commit review in any of that owner's repositories
+- **What.** A commit target is allowed in a repository of a pull request the asker may read, in the agent's own
+  house repository, or in one whose owner the household's forge bindings name (Jonathan's ruling on #2388). A
+  binding names an owner, not a repository, so for a bound owner every repository its credential can read is
+  allowed, including one no project of the asker's lists.
+- **Where.** `reviewTargetFor`, `src/core/conversations/handoff.ts`.
+- **Why accepted.** The bindings are the household's statement of whose repositories loom reads, and the copy is
+  fetched with that owner's own credential: a repository it cannot read is not reviewed. The refusal for anything
+  else is the same as for a repository that does not exist, and GitHub is not asked.
+- **What would change it.** A binding that lists repositories, or a rule that the repository be one a project of
+  the asker's lists.
+
 ## Running work
 
 ### A job can finish before its usage report arrives

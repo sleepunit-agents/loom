@@ -99,6 +99,9 @@ export interface HouseSource {
   /** Whether this source fetches from such an address. One that it does holds no credential. A source
    * that does not say is taken to fetch what a worker does (houseRepository). */
   fetches?(repository: string): boolean;
+  /** The diff from `base` to `head`, both already fetched, as git writes it: no external diff program, no text
+   * conversion, no colour, no configuration but the worker's. Cut at `limit` bytes, and then says so (`cut`). */
+  diff?(house: House, base: string, head: string, signal: AbortSignal, limit: number): Promise<{ bytes: Buffer; cut: boolean }>;
 }
 export function houseSource(options: {
   /** The worker's own directory for mirrors: under its state directory, which is private to its user. */
@@ -190,6 +193,41 @@ export function houseSource(options: {
       return next;
     },
     fetches: repository => houseAddress(repository, protocols) !== undefined,
+    async diff(house, base, head, signal, limit) {
+      if (!houseAddress(house.repository, protocols) || !COMMIT.test(base) || !COMMIT.test(head) || !Number.isSafeInteger(limit) || limit < 1)
+        throw new HouseSourceError('House is not one this worker fetches');
+      const mirror = mirrorOf(house.repository);
+      await gone(mirror);
+      reading.set(mirror, (reading.get(mirror) ?? 0) + 1);
+      try {
+        return await new Promise<{ bytes: Buffer; cut: boolean }>((resolve, reject) => {
+          if (signal.aborted) { reject(new HouseSourceError('House fetch cancelled')); return; }
+          let child: ChildProcess;
+          // `--` ends the options: both ids were checked as full commit ids, so neither is read as one.
+          try { child = start(['--git-dir', mirror, 'diff', '--no-ext-diff', '--no-textconv', '--no-color', '--full-index', base, head, '--'], environment(options.directory, protocols), 'pipe'); }
+          catch { reject(new HouseSourceError('git could not be run')); return; }
+          const forget = child.pid ? options.started?.(child.pid) : undefined;
+          const kill = () => endGit(child);
+          signal.addEventListener('abort', kill, { once: true });
+          const parts: Buffer[] = []; let size = 0, cut = false;
+          child.stdout?.on('data', (chunk: Buffer) => {
+            if (cut) return;
+            const room = limit - size;
+            if (chunk.length > room) { parts.push(chunk.subarray(0, room)); size = limit; cut = true; kill(); return; }
+            parts.push(chunk); size += chunk.length;
+          });
+          child.once('error', () => { signal.removeEventListener('abort', kill); forget?.(); reject(new HouseSourceError('git could not be run')); });
+          child.once('close', code => {
+            signal.removeEventListener('abort', kill); forget?.();
+            if (signal.aborted) reject(new HouseSourceError('House fetch cancelled'));
+            else if (code === 0 || cut) resolve({ bytes: Buffer.concat(parts), cut });
+            else reject(new HouseSourceError('git failed'));
+          });
+        });
+      } finally {
+        const left = (reading.get(mirror) ?? 1) - 1; if (left > 0) reading.set(mirror, left); else reading.delete(mirror);
+      }
+    },
     context(house, commit, signal, apart) {
       if (!houseAddress(house.repository, protocols) || !COMMIT.test(commit)) return Readable.from((async function* (): AsyncGenerator<Buffer> { throw new HouseSourceError('House is not one this worker fetches'); })());
       const mirror = mirrorOf(house.repository), env = environment(options.directory, protocols);

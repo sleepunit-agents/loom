@@ -76,7 +76,7 @@ export class SecretRequests {
         const answer = allow ? 'auto' : 'never';
         const old = this.db.select().from(secretRules).where(eq(secretRules.secret, row.secret)).get();
         const agents = old?.answer === answer ? this.db.select().from(secretRuleAgents).where(eq(secretRuleAgents.secret, row.secret)).all().map(a => ({ agent: a.agent, when: a.when })) : [];
-        const when = row.job && (row.id === startupRequestId(row.job, row.secret) || row.id === repositoryRequestId(row.job, row.secret)) ? 'at_start' : 'on_request';
+        const when = row.job && (row.id === startupRequestId(row.job, row.secret) || row.id === repositoryRequestId(row.job, row.secret) || row.id === reviewRequestId(row.job, row.secret)) ? 'at_start' : 'on_request';
         if (!agents.some(a => a.agent === row.agent && a.when === when)) agents.push({ agent: row.agent, when });
         this.setRule({ secret: row.secret, answer, minutes: row.minutes, agents });
       }
@@ -150,7 +150,7 @@ export class SecretRequests {
     if (!secretHasValue(this.db, secret) || !standing && !job) return;
     const at = this.now();
     return this.db.select().from(secretGrants).where(and(eq(secretGrants.secret, secret), eq(secretGrants.agent, agent),
-      request ? eq(secretGrants.request, request) : job ? or(isNull(secretGrants.request), ne(secretGrants.request, repositoryRequestId(job, secret))) : undefined,
+      request ? eq(secretGrants.request, request) : job ? or(isNull(secretGrants.request), and(ne(secretGrants.request, repositoryRequestId(job, secret)), ne(secretGrants.request, reviewRequestId(job, secret)))) : undefined,
       standing ? undefined : and(eq(secretGrants.job, job!), ne(secretGrants.grantedBy, BY_RULE)), sql`julianday(${secretGrants.expiresAt}) > julianday(${at})`, sql`julianday(${secretGrants.grantedAt}) <= julianday(${at})`, or(isNull(secretGrants.job), job ? eq(secretGrants.job, job) : isNull(secretGrants.job)))).get();
   }
 
@@ -161,8 +161,8 @@ export class SecretRequests {
    * `to` says whose hand-off it is: the secrets a body gives its house, or the one secret a worker fetches
    * the house's repository with. Each has its own request, so an answer to one is never an answer to the
    * other, even for the same secret and job. */
-  grantAtStart(jobId: string, selected?: readonly string[], standing = true, to: 'house' | 'repository' = 'house'): (typeof secretGrants.$inferSelect)[] {
-    const requestId = to === 'repository' ? repositoryRequestId : startupRequestId;
+  grantAtStart(jobId: string, selected?: readonly string[], standing = true, to: 'house' | 'repository' | 'review' = 'house'): (typeof secretGrants.$inferSelect)[] {
+    const requestId = to === 'repository' ? repositoryRequestId : to === 'review' ? reviewRequestId : startupRequestId;
     z.string().min(1).max(200).parse(jobId);
     return this.db.transaction(() => {
       const job = this.db.select().from(jobs).where(eq(jobs.id, jobId)).get();
@@ -176,7 +176,7 @@ export class SecretRequests {
         if (this.db.select().from(secretRequests).where(eq(secretRequests.id, id)).get()) continue;
         this.request({ id, secret: rule.secret, agent: job.agent, job: jobId,
           ...(job.conversation ? { conversation: job.conversation } : {}),
-          why: to === 'repository' ? 'The worker fetches the house\'s repository with this secret before the job starts.' : 'The house needs this secret when its job starts.', minutes: grantMinutes.parse(rule.minutes) }, 'at_start', standing);
+          why: to === 'repository' ? 'The worker fetches the house\'s repository with this secret before the job starts.' : to === 'review' ? 'The worker fetches the commit a frozen review reviews with this secret, the forge credential bound to its repository\'s owner, before the job starts.' : 'The house needs this secret when its job starts.', minutes: grantMinutes.parse(rule.minutes) }, 'at_start', standing);
       }
       const at = Date.parse(this.now());
       return this.db.select().from(secretGrants).where(and(eq(secretGrants.job, jobId), eq(secretGrants.agent, job.agent))).all()
@@ -211,4 +211,9 @@ export function startupRequestId(job: string, secret: string): string {
  * the same secret, so the two are asked and answered apart. */
 export function repositoryRequestId(job: string, secret: string): string {
   return `q-repo-${createHash('sha256').update(JSON.stringify([job, secret])).digest('hex')}`;
+}
+/** The request a worker's fetch of a frozen review's repository files for the forge credential bound to that
+ * repository's owner (shared-secret-inputs.ts, `review`): asked and answered apart from every other. */
+export function reviewRequestId(job: string, secret: string): string {
+  return `q-review-${createHash('sha256').update(JSON.stringify([job, secret])).digest('hex')}`;
 }

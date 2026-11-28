@@ -51,9 +51,9 @@ it('limits handoff discovery to the private owner body and its currently assigne
  await f.send('Please delegate this work','owner-request');
  const options=()=>f.call('handoffOptions',{},'read');
  const value=async()=>{const response=await options();expect(response.status).toBe(200);return (await response.json()).value;};
- expect(await value()).toEqual({agents:['mark'],codexAvailable:false});
+ expect(await value()).toEqual({agents:['mark'],codexAvailable:false,frozenReviews:{available:false,reason:'This loom cannot read the forge, so it runs no frozen review.'}});
  f.db.delete(s.projectAgents).where(eq(s.projectAgents.agent,'mark')).run();
- expect(await value()).toEqual({agents:[],codexAvailable:false});
+ expect(await value()).toEqual({agents:[],codexAvailable:false,frozenReviews:{available:false,reason:'This loom cannot read the forge, so it runs no frozen review.'}});
  for(const token of [bodyCredentials.member,bodyCredentials.agent])expect((await f.call('handoffOptions',{},'ordinary',token)).status).toBe(403);
  f.db.update(s.threads).set({archivedAt:new Date(f.clock.now()).toISOString()}).where(eq(s.threads.id,f.thread.id)).run();
  expect((await options()).status).toBe(403);

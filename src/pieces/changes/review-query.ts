@@ -12,6 +12,8 @@ export function changeReviewFields(db: DataDatabase): GraphQLFieldConfigMap<unkn
     change: { type: text }, job: { type: text }, headCommit: { type: text }, tier: { type: text },
     round: { type: new GraphQLNonNull(GraphQLInt) }, requestedAt: { type: text },
     completedAt: { type: GraphQLString }, verdict: { type: GraphQLString }, findings: { type: GraphQLString },
+    // The session that reviewed it: a frozen review's handoff conversation (conversation.review). Null for a cold review.
+    conversation: { type: GraphQLString },
   } });
   const store = changeReviewStore(db);
   const submitted = new GraphQLObjectType({name:'SubmittedGithubReview',fields:{
@@ -44,7 +46,7 @@ export function changeReviewFields(db: DataDatabase): GraphQLFieldConfigMap<unkn
     resolve: (_source, args, { viewer }) => {
       const scope = sqlVisibility(viewer, ['changeTasks', 'jobs']);
       // The link policy checks both endpoints; review findings also belong to the review job.
-      return db.select(getTableColumns(rounds)).from(changeTasks)
+      return db.select({ ...getTableColumns(rounds), conversation: jobs.conversation }).from(changeTasks)
         .innerJoin(rounds, eq(rounds.change, changeTasks.change))
         .innerJoin(jobs, eq(jobs.id, rounds.job))
         .where(and(eq(changeTasks.task, args.task), scope.changeTasks(getTableColumns(changeTasks)), scope.jobs(getTableColumns(jobs))))

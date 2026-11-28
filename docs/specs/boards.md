@@ -705,7 +705,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `comments` | yes | a comment arrives from someone else |
 | `person` (a member or a contact) | yes: what People's reader shows (see below) | never |
 | `agent` | yes: everything it is doing, its last thirty jobs, and its activity posts (its five latest threads of posts, each opening to its posts 25 a page) | it starts waiting on the member (a question of its own joins the Inbox's "needs you" when none was there) |
-| `pull` | yes: also its branch and author, its failing and running checks by name, the people on it, whether it can be merged, its tickets with their titles, the files it changed with their added and removed lines, each opening in place to its patch (`changeFilePatch`, asked once each time it is opened, not live); when loom last read GitHub and whether that read failed, for a household owner; "Loom's reviews", a heading that opens in place to each round with its tier, verdict, commit and findings (`changeReviewHistory`, asked only while it is open); and "Read GitHub again", for the member loom says may use it | its checks go to failing, it is merged, it is closed |
+| `pull` | yes: also its branch and author, its failing and running checks by name, the people on it, whether it can be merged, its tickets with their titles, the files it changed with their added and removed lines, each opening in place to its patch (`changeFilePatch`, asked once each time it is opened, not live); when loom last read GitHub and whether that read failed, for a household owner; "Loom's reviews", a heading that opens in place to each round with its tier, verdict, commit and findings, and a `session` chip for a frozen review's round (`changeReviewHistory`, asked only while it is open); and "Read GitHub again", for the member loom says may use it | its checks go to failing, it is merged, it is closed |
 | `repository` | yes: each open pull request with its title and where it stands | never |
 | `question` | no | never: being on the board is the flag |
 | `approval` | no: the page has a primary form for it, with the record's history, but the catalogue does not let it be big, so a board draws it side or compact | never: being on the board is the flag |
@@ -953,7 +953,16 @@ it in the desktop's words.
     heading "Loom's reviews" (`Fold`), asked only while that is open and live while it is (relaxed, like every brick read), and
     forgotten, with the opened files, when the brick leaves its big form or its change or head commit moves. Each round:
     "Round N · tier", the verdict in the desktop's words (Pending, Clear, Blocking, No verdict), "Current commit" or
-    "Earlier commit" with the commit's first seven characters, and its findings as plain text. None: "Loom has not
+    "Earlier commit" with the commit's first seven characters, and its findings as plain text. A frozen review's
+    round (`conversation.review`, `docs/runtime/worker.md`, "Frozen reviews") also has a `session` chip, "Session",
+    beside its commit, opening the session that reviewed it: the round's `conversation`, the child conversation id the
+    review's receipt returned, read in the same query. A cold review's round has none. A round with no verdict line
+    reads "No verdict", never "Clear". Who sees a frozen review's round: a round is read with its job, and a frozen
+    review's job is in the asking member's private conversation, so the round is that member's alone. Any other
+    reader of the same pull request sees the change's other rounds and not that one, and the round numbers it sees
+    skip it. Until the review's job has ended the round reads "Pending" (its verdict is filed only then), and its
+    findings are loom's own line (the verdict and where the findings are kept, or why there is no verdict): the
+    reviewer's words are in the sealed reply to the asking thread. None: "Loom has not
     reviewed it."; a read that fails: "Loom's reviews are unavailable. Close them and open them again to try again."
   - **Read GitHub again.** The desktop's Refresh of Changes (`refreshChanges`, `web/src/data/work-refresh.ts`: one
     POST to `/api/changes/refresh`, operation `changes.refresh`, `src/shared-work-refresh.ts`), which reads every pull

@@ -113,7 +113,7 @@ export function bodyMounts(config: {
   /** The worker's own files, never mounted: the state directory (its records of what it started, by which
    * the next worker ends what this one left) and the file holding its token for loom. */
   state?: string; tokenFile?: string; configFile?: string; protectedPaths?: readonly string[];
-}, user: { uid?: () => number | undefined } = {}): (job: Pick<WorkerAssignment, 'agent' | 'account' | 'harness' | 'run'>) => BodyMount[] {
+}, user: { uid?: () => number | undefined } = {}): (job: Pick<WorkerAssignment, 'agent' | 'account' | 'harness' | 'run'>, options?: { agentMounts?: boolean }) => BodyMount[] {
   const uid = (user.uid ?? (() => process.getuid?.()))();
   /** Stop the worker, naming the configuration key at fault and nothing written under it. */
   const stop = (key: string): never => { throw new WorkerStop('mounts', key); };
@@ -211,7 +211,7 @@ export function bodyMounts(config: {
     if (directories.some((other, at) => at < index && overlap(mount.source, other.mount.source)) || kept.some(path => overlap(mount.source, path)))
       stop(key === PROGRAM_KEY ? key : `${key}.source`);
   const present = config.accountLogins !== undefined;
-  return job => {
+  return (job, options) => {
     const own: BodyMount[] = [];
     if (job.run?.nestedContainers) throw new Error('Nested containers unavailable');
     if (program) {
@@ -225,7 +225,7 @@ export function bodyMounts(config: {
       if (!login) throw new UnservedJobError('Worker has no configured sign-in directory for account');
       own.push(login);
     }
-    // Its own agent's and nobody else's; an agent with no list gets none.
-    return [...own, ...fixed.get(job.agent) ?? []];
+    // Its own agent's and nobody else's; an agent with no list gets none. A frozen review gets none of them.
+    return [...own, ...(options?.agentMounts === false ? [] : fixed.get(job.agent) ?? [])];
   };
 }

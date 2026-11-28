@@ -8,6 +8,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
 import { jobs, conversations, changeReviewRounds } from './core/data/schema.js';
+import { recordFrozenReviewTree } from './core/conversations/review-result.js';
 import { canonical as canonicalJson, OperationError, type Operations } from './core/operations/index.js';
 import type { Viewer } from './policy.js';
 import type { WorkRole } from './runtime/work-roles.js';
@@ -23,7 +24,8 @@ import { claimedJobStates, jobClaimed } from './core/data/job-states.js';
 import { LOG_TAIL_MAX } from './runtime/log-tail.js';
 import { jobFailure } from './runtime/job-failure.js';
 
-import { changeReviewStore } from './apps/change-reviews.js';
+import { changeReviewStore, frozenReviewOf } from './apps/change-reviews.js';
+import { reviewTreeReport } from './runtime/review-snapshot-report.js';
 import { coldReviewReport, reviewOutcome } from './runtime/cold-review-report.js';
 
 const jobInput = z.object({ job: z.string().min(1) });
@@ -38,6 +40,8 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
   const dispatcher = new Dispatcher(db, options.now, options.roles, harnessCannotRun, options.workRoles, new Set(Object.keys(harnesses)));
   const reviewStore = changeReviewStore(db, options.now);
   const roundFor = (job: string) => db.select().from(changeReviewRounds).where(eq(changeReviewRounds.job, job)).get();
+  /** A cold review's round: any round but a frozen review's. A frozen review's round is filed from its reply. */
+  const coldRoundFor = (job: string) => { const round = roundFor(job); return round && !frozenReviewOf(db, job) ? round : undefined; };
   const stopped=new WeakSet<object>();
   /** The jobs a poll ended as ones no harness can hold, by the poll's input: told of once the write is committed. */
   const unplaced=new WeakMap<object,string[]>();
@@ -64,7 +68,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     },
   });
   operations.register({ name: 'runtime.next', write: true, recheckPolicy: true, doors: ['http'],
-    input: z.object({ execution: z.enum(['container', 'host']).optional(), reviewResults:z.literal(true).optional(), coldReviews:z.literal(true).optional(), pairEvents:z.literal(true).optional(), programs: z.literal(true).optional(), facts: machineFacts.optional(), slots: z.number().int().min(1).max(SLOTS_MAX).optional() }).strict(), output: workerAssignment.nullable(), may: machine,
+    input: z.object({ execution: z.enum(['container', 'host']).optional(), reviewResults:z.literal(true).optional(), coldReviews:z.literal(true).optional(), frozenReviews:z.literal(true).optional(), pairEvents:z.literal(true).optional(), programs: z.literal(true).optional(), facts: machineFacts.optional(), slots: z.number().int().min(1).max(SLOTS_MAX).optional() }).strict(), output: workerAssignment.nullable(), may: machine,
     // The client never retries an uncertain claim. Replaying an old assignment
     // could launch work that is already terminal, so it never releases a body.
     validateReplay() { throw new OperationError('conflict', 'Poll with a new operation id'); },
@@ -74,7 +78,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
       if (input.execution !== 'container') throw new OperationError('denied',
         'This server gives jobs only to container workers. Update the worker and configure container.socket.');
       const ended: string[] = [], poll: { stampOnly?: boolean } = {};
-      const box = runner(ctx.viewer), assignment = dispatcher.next(box, input.facts, ended, input.slots, input.programs, poll, input.reviewResults, input.coldReviews, input.pairEvents);
+      const box = runner(ctx.viewer), assignment = dispatcher.next(box, input.facts, ended, input.slots, input.programs, poll, input.reviewResults, input.coldReviews, input.pairEvents, input.frozenReviews);
       // An idle worker asks about once a second. A poll that gave no work and moved only the machine's
       // last-seen time is not a change to tell every open window of.
       if (poll.stampOnly && !ended.length) ctx.stampOnly?.();
@@ -119,10 +123,12 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     // exitBy: whose code it is, as the worker says. A worker from before it was asked leaves it out, and the row then says nobody's.
     // failed: why it failed, as one of the fixed reasons with bounded detail and no text (runtime/job-failure.ts). Kept
     // for a private conversation's job too, where the log tail is dropped: it holds none of the conversation's words.
-    input: jobInput.extend({ exitCode: z.number().int(), logTail: z.string().max(LOG_TAIL_MAX), exitBy: z.enum(WORKER_EXIT_BY).optional(), failed: jobFailure.optional(), programResult: z.json().optional(), coldReview: coldReviewReport.optional() }).strict(), output: ack,
+    input: jobInput.extend({ exitCode: z.number().int(), logTail: z.string().max(LOG_TAIL_MAX), exitBy: z.enum(WORKER_EXIT_BY).optional(), failed: jobFailure.optional(), programResult: z.json().optional(), coldReview: coldReviewReport.optional(),
+      /** A frozen review's copy, fingerprinted by the worker before the body started and after it ended. */
+      reviewTree: reviewTreeReport.optional() }).strict(), output: ack,
     may: (viewer, input) => assigned(viewer, input.job),
     inputHash(canonical, { input }) {
-      if (input.coldReview || roundFor(input.job)) {
+      if (input.coldReview || coldRoundFor(input.job)) {
         // The findings belong only to the protected round. Check their stored value on replay.
         const report = input.coldReview;
         const evidence = report && [report.change, report.headCommit, report.before, report.after];
@@ -144,7 +150,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
         if (input.programResult !== undefined && roundFor(input.job)) throw new OperationError('invalid', 'Incompatible job result');
         return;
       }
-      const round = roundFor(input.job), result = reviewOutcome(input.exitCode, input.coldReview, input.exitBy);
+      const round = coldRoundFor(input.job), result = reviewOutcome(input.exitCode, input.coldReview, input.exitBy);
       if (input.programResult !== undefined || !round || round.verdict !== result.verdict || round.findings !== result.findings)
         throw new OperationError('conflict', 'Review report differs from the filed result');
     },
@@ -153,7 +159,16 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
       // A committed finish replays from its receipt. A new finish needs a live claim.
       if (!jobClaimed(job.state)) throw new OperationError('denied', 'Job has ended');
       let exitCode = input.exitCode;
-      const round = roundFor(input.job);
+      const round = coldRoundFor(input.job);
+      // A frozen review's copy is read-only, so its two fingerprints are the same. What the worker reported is kept for
+      // the review's ending, decided once the job has ended (core/conversations/review-result.ts): not the same, or not
+      // reported, is no verdict, whatever the reviewer answered.
+      const frozen = frozenReviewOf(db, input.job);
+      if (input.reviewTree && (!frozen || input.reviewTree.head !== frozen.head)) throw new OperationError('invalid', 'Report does not match a frozen review');
+      if (frozen) {
+        const tree = !input.reviewTree ? 'unreported' as const : input.reviewTree.before === input.reviewTree.after ? 'same' as const : 'changed' as const;
+        recordFrozenReviewTree(db, input.job, tree);
+      }
       if (input.coldReview && (!round || job.state !== 'running' || input.coldReview.change !== round.change ||
           input.coldReview.headCommit !== round.headCommit))
         throw new OperationError('invalid', 'Report does not match a running review assignment');

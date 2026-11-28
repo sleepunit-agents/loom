@@ -24,6 +24,7 @@ import {bodyKitTools,KIT_SOCKET} from './body-kit-tools.js';
 import {KitCapacity} from './kit-refused.js';
 import { mayAttachNoteFile,mayReadNoteFile } from './house-note-request.js';
 import { bodyProgramTools } from './body-program-tools.js';
+import { frozenReviewCwd } from './review-cwd.js';
 import { bodySecretTools } from './body-secret-tools.js';
 import { bodyStartupSecrets } from './body-secrets.js';
 import {BodyJobEnded} from './body-job-ended.js';
@@ -148,7 +149,10 @@ export async function bodyProgram(input: {
     // A job on anybody else's word runs with loom's tools only (policy.ts, loomToolsOnly): no secret is asked
     // for and none enters its environment. The word is the one loom read at claim; loom's door refuses such a
     // job the same secrets, so a body program that asked anyway would get nothing.
-    if(!hasGuest(job.run?.policy)) await (input.startup ?? secrets.startup)(job, bootstrap, signal);
+    // A frozen review (conversation.review) asks for none either: it is handed no secret, and loom's door refuses one
+    // (shared-secret-inputs.ts), so the reviewer's environment holds no credential that could push.
+    const frozen=!!job.frozenReview;
+    if(!hasGuest(job.run?.policy)&&!frozen) await (input.startup ?? secrets.startup)(job, bootstrap, signal);
     if (signal.aborted) throw new Error();
     work='Working on accepted mail';
     exit=BODY_EXIT.mail;
@@ -239,7 +243,9 @@ export async function bodyProgram(input: {
       const lessons = result.ok ? z.string().nullable().parse(result.value) : null;
       if (lessons) context.push('Lessons recorded by earlier runs of this trigger:\n' + lessons);
     }
-    const memory=await (input.loadMemory?input.loadMemory(job.agent,signal):bodyMemoryIdentity(memoryClient,job.agent,job.venue));
+    // A frozen reviewer starts with no memory or identity: what it reviews against is the brief loom wrote, and the
+    // agent's memory may hold the author's own reasoning about the change (core/conversations/review-brief.ts).
+    const memory=frozen?null:await (input.loadMemory?input.loadMemory(job.agent,signal):bodyMemoryIdentity(memoryClient,job.agent,job.venue));
     if(signal.aborted)throw new Error();
     // A bridge channel's rule may name a brief: one more of the agent's role pages, for conversations there.
     // A brief that cannot be found is never a reason to fail: the work goes on and loom tells the owners.
@@ -313,6 +319,7 @@ export async function bodyProgram(input: {
         'Submit conversation.handoff through the same tool. Give the command a stable id. In input, include exactly one of role (a listed role), agent (a listed peer), or harness "codex", plus label, words and a clientId unique to the brief. Reuse both IDs and the same input when retrying that brief.',
         'When the work is for one or more tickets, also give tickets, a list of their ids such as ["t-17"]: loom records the session against each so the ticket can show the work done for it later. An id you cannot read refuses the handoff. Loom never reads ticket ids out of words.',
         'Make words self-contained. Include the repository and commit for repository work. To schedule a role or Codex job, supply notBefore as a UTC timestamp within the private brief retention period.',
+        'When conversation.handoffOptions reports frozenReviews.available, have a pull request or a commit reviewed with conversation.review, not a role handoff: input {"clientId":"…","label":"…","target":{"change":"owner/repo#7"} or {"repository":"owner/repo","commit":"<full 40-character id>"},"contract":"…"}. Loom pins the exact commit and its diff, gives the reviewer a read-only copy and no credential that can push, and returns its answer here with the verdict it filed. In contract give only what to review against (the ticket, the spec section, the acceptance criteria), never your own reasoning about the change.',
         'Role and Codex results return to this thread. Check progress with conversation.handoffStatus, passing value.conversation from the receipt as input.conversation. To cancel a scheduled handoff before it gets a job, call conversation.handoffCancel with the same child conversation. For help inside this job, use native subagents when your harness provides them.',
       ].join(' ');
       context.unshift(delegation);continued.unshift(delegation);
@@ -333,7 +340,7 @@ export async function bodyProgram(input: {
       // body is served the named tools a terminal has, and `identity` there knows what was handed over above (body-named-tools.ts).
       const rootAccess={url:bootstrap.origin,token:parsed.bootstrap.token,signal,onJobEnded,clock:input.clock,fetch:input.fetch,agent:job.agent,identityHanded:!!memory};
       const houseShell=reach==='all'&&Object.hasOwn(input.env,BODY_OWN_HARNESS);
-      programTools=bodyProgramTools({...rootAccess,
+      programTools=bodyProgramTools({...rootAccess,...(frozen?{frozen:true}:{}),
         ...(houseShell&&hasFileTools(reach,policy)&&mayAttachNoteFile(deniedTools(policy))?{
           noteUpload:{read:bodyNoteFileReader(plan.cwd,[plan.cwd,input.env[BODY_SCRATCH]]),allows:(bytes:Buffer)=>tools?.allowsBytes(bytes)===true}
         }:{}),
@@ -425,7 +432,7 @@ export async function bodyProgram(input: {
           const callId=step.call ? 'pair.'+keyOf(step.call).slice(0,24)+'.'+(step.parent?keyOf(step.parent).slice(0,24):'-')+'.'+randomUUID() : randomUUID();
           posted=posted.then(async()=>{if(!signal.aborted)await client!.card({tool,words,cardState:step.cardState,clientId:callId})}).catch(()=>{});
         }) : undefined;
-    const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, reach, omitClaudeTools, pairOutput, env: shellEnv, failedUsage:usage=>{failureReport=usage;}, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
+    const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, ...(frozen?{cwd:frozenReviewCwd(plan.cwd,input.env[BODY_SCRATCH])}:{}), reach, omitClaudeTools, pairOutput, env: shellEnv, failedUsage:usage=>{failureReport=usage;}, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
     // A second one for the case the session cannot be continued: each takes its own copy of the tools file.
     const native = harness(), afresh = resume ? harness() : undefined;
     tools?.config.fill(0);
@@ -513,7 +520,9 @@ export async function bodyProgram(input: {
     // Reply words have their own storage and retention. Completion metadata must
     // not make a second durable copy, and must preserve any model-authored digest.
     if(jobSignal.aborted)throw new Error();
-    await client.digest({summary:'Completed this stretch of work.',ifAbsent:true});
+    // Not a frozen reviewer's: a digest can carry a question to an owner, and such a body may call nothing but its
+    // reply and its own job's bookkeeping (core/conversations/review-confinement.ts). Its answer is its record.
+    if(!frozen)await client.digest({summary:'Completed this stretch of work.',ifAbsent:true});
     await tell({ state: 'idle', work: '' });
     return 0;
   } catch (error) {

@@ -176,7 +176,7 @@ before it runs any step, and refuses one it does not recognise without writing t
 | Project backlog history | `task_backlog_events` |
 | Project claim directions | `project_claim_directions` |
 | Tempo | `triggers`, `trigger_log`, `trigger_journals`, `trigger_acceptances`, `program_firings`, `trigger_edits`, `agent_pauses`, `tempo_settings` |
-| Changes | `changes`, `change_checks`, `change_people`, `change_files`, `change_tasks`, `change_sync`, `change_review_rounds`, `github_reviews` |
+| Changes | `changes`, `change_checks`, `change_people`, `change_files`, `change_tasks`, `change_sync`, `change_review_rounds`, `frozen_review_results`, `github_reviews` |
 | Agent activity feed | `agent_post_sources`, `agent_post_threads`, `agent_posts`, `agent_post_names`, `agent_post_work_refs`, `agent_post_work_pending` |
 | Observed terminals | `terminal_credentials`, `terminal_sessions`, `terminal_runs` |
 | Kits | `agent_kits`, `agent_kit_projects`, `agent_kit_members`, `agent_kit_outside_people`, `project_outside_people`, `kit_uses` |

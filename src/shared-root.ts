@@ -84,7 +84,8 @@ import { registerConversationSessions } from './shared-conversation-sessions.js'
 import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
 import {pullCheckReader} from './pieces/changes/check-runs.js';
 import { sharedChangesReader,sharedForgeSecrets } from './shared-changes-reader.js';
-import { githubListingReader, type ListingReader } from './pieces/changes/github.js';
+import { githubBindingNames } from './pieces/changes/secrets.js';
+import { githubListingReader, githubReviewBase, type ListingReader } from './pieces/changes/github.js';
 import { changeFilePatches, changeFilePatchFields } from './pieces/changes/file-patch.js';
 import { pollChanges } from './apps/changes-polling.js';
 import { registerWorkRefresh,registerPullChecks } from './shared-work-refresh.js';
@@ -152,7 +153,11 @@ export function sharedRoot(options: {
   memoryEmbedding?:()=>EmbeddingProvider;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
-  changes?: {rule?:MergeRuleReader} & ({read:PullRequestReader;patch?:ListingReader} | {github:Parameters<typeof sharedChangesReader>[0]});
+  changes?: {rule?:MergeRuleReader} & ({read:PullRequestReader;patch?:ListingReader;
+    /** A frozen review's base commit (conversation.review); left out with `read`, no frozen review runs. */
+    reviewBase?:(repository:string,head:string,branch?:string)=>Promise<string>;
+    /** Owner-to-secret bindings for a frozen review's fetch, as `github.bindings` are for the poll; with `read`, none. */
+    reviewBindings?:Readonly<Record<string,string>>} | {github:Parameters<typeof sharedChangesReader>[0]});
   tempo?: SharedTempoOptions;
   /** Explicit authenticated private holder and stable private retry key. */
   secretWrites?: {holder:RecoverableSecretMutations;fingerprintKey:Uint8Array};
@@ -398,12 +403,16 @@ export function sharedRoot(options: {
   });
   startupCleanups.push(()=>{unobserveBridges?.();void bridgeDaemon?.close().catch(()=>report(new Error('Bridge startup cleanup failed')));});
   comms?.install(operations);
+  /** The household's forge bindings, owner to secret name (the ones the changes poll reads GitHub with). A frozen
+   * review's copy is fetched with the one for its repository's owner, and a review of an owner with none is refused. */
+  const forgeBindings:ReadonlyMap<string,string>=!options.changes?new Map():'github' in options.changes?githubBindingNames(options.changes.github.bindings)
+    :options.changes.reviewBindings?githubBindingNames(options.changes.reviewBindings):new Map();
   // A conversation's harness session, kept sealed between bodies: needs the words key, as Comms does.
   const sessions=options.commsKey?new ConversationSessions(db,now,options.commsKey):undefined;
   if (options.commsKey) registerTerminalSession(operations, db, options.commsKey, credentials.terminalMachine, now);
   registerJobUsage(operations, db, credentials.body, now);
   if(sessions)registerConversationSessions(operations,db,sessions,bodyScope,words=>options.commsKey!.hash(words));
-  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,{...selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),ownerWork:work=>jobWord(db,work.job).woke==='owners',codexAvailability:agent=>dispatcher.reviewAvailability(agent),workRoles:(agent,id)=>dispatcher.availableWorkRoles(agent,id)},{privateDecision:(work,q)=>privateDecisionAccount(db,work,q),question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job),maySendProgress},reply=>{pushes?.reply(reply);});
+  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,{...selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),ownerWork:work=>jobWord(db,work.job).woke==='owners',codexAvailability:agent=>dispatcher.reviewAvailability(agent),workRoles:(agent,id,frozen)=>dispatcher.availableWorkRoles(agent,id,frozen),...(options.changes && 'github' in options.changes?{reviewBase:githubReviewBase(sharedForgeSecrets(options.changes.github),options.changes.github.request)}:options.changes && 'read' in options.changes && options.changes.reviewBase?{reviewBase:options.changes.reviewBase}:{}),reviewBinding:owner=>forgeBindings.has(owner.toLowerCase())},{privateDecision:(work,q)=>privateDecisionAccount(db,work,q),question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job),maySendProgress},reply=>{pushes?.reply(reply);});
   // How machines and agents are set up. Installed code calls these directly, inside a write;
   // anything outside goes through household.propose and a household owner's Allow.
   const recount = () => queueMicrotask(() => { try { tempo?.capacityChanged(); } catch (error) { report(error); } });
@@ -570,7 +579,7 @@ export function sharedRoot(options: {
   http.onError(() => Response.json(failure('unavailable', 'Request could not complete'), { status: 503, headers: { 'cache-control': 'no-store' } }));
   http.post('/api/conversation/take', async c => comms ? takeBodyInput({request:bodyRequest(c.req.raw,c.get('shutdown'),true),service:comms.service,scope:bodyScope,currentGuest:(agent,key)=>currentDecisionGuest(db,agent,key),authenticate,admitted:()=>!closing,version:data.readVersion,writes:data.writes,now:()=>clock.now(),publicOrigin:options.publicOrigin,reportError:options.reportError}) : c.json(failure('unavailable','Conversation input unavailable'),503));
   http.route('/api/kits/private',kitBroker({db,credentials,source:options.secretInputs?.source,now,write:secretCommit,readJson:(request,abort)=>bodyRequest(request,abort,true).json()}));
-  http.route('/api/secrets/private',sharedSecretInputRoutes({db,inputs:privateInputs,credentials,available:()=>!closing,readJson:(request,abort)=>bodyRequest(request,abort,true).json()}));
+  http.route('/api/secrets/private',sharedSecretInputRoutes({db,inputs:privateInputs,credentials,reviewCredential:owner=>forgeBindings.get(owner.toLowerCase()),available:()=>!closing,readJson:(request,abort)=>bodyRequest(request,abort,true).json()}));
   http.post('/api/:piece/:operation', async c => {
     const request = c.req.raw;
     if (!sameRequestOrigin(request,options.publicOrigin))

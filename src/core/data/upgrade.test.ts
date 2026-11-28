@@ -101,6 +101,24 @@ describe('upgrading a household database', () => {
     expect(old.pragma('foreign_key_check')).toEqual([]);
   });
 
+  it('adds an empty frozen review record at schema 56 that holds a filed verdict only with its answer erased', () => {
+    const old = household(55);
+    old.function('loom_now', () => at);
+    applyUpgrades(old, 55, () => at, 56);
+    expect(old.prepare('SELECT * FROM frozen_review_results').all()).toEqual([]);
+    old.exec(`INSERT INTO agents(id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('art','','#000','#fff','pebble','dot');
+      INSERT INTO jobs(id,agent,title,state,brief,model,started_by_kind,started_by,house_repository,house_file,house_branch,queued_at)
+        VALUES ('job-review','art','Review','running','','m','agent','art','r','Housefile','next','${at}');
+      INSERT INTO frozen_review_results(job,answer,answered_at,tree) VALUES ('job-review',x'00','${at}','same')`);
+    // Filed while its answer is still held: refused. Filed with the answer erased: kept.
+    expect(() => old.exec(`UPDATE frozen_review_results SET verdict='CLEAR',filed_at='${at}'`)).toThrow(/CHECK/);
+    old.exec(`UPDATE frozen_review_results SET verdict='CLEAR',filed_at='${at}',answer=NULL`);
+    expect(() => old.exec(`UPDATE frozen_review_results SET tree='other'`)).toThrow(/CHECK/);
+    const pinned = open(); pinned.exec(shipped(56));
+    expect(dataSchemaShape(old)).toEqual(dataSchemaShape(pinned));
+    expect(old.pragma('foreign_key_check')).toEqual([]);
+  });
+
   it('reads every step kept before schema 55 as a tool step, and keeps the rest of its row', () => {
     const old = household(54);
     old.function('loom_now', () => at);

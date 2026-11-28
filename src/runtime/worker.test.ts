@@ -43,6 +43,29 @@ describe('worker work plane', () => {
     else { f.built.resolve('image'); f.spawned.resolve(); await flush(); f.exited.resolve({ exitCode: 0, logTail: '' }); }
     expect(await run).toBe('finished'); expect(bytes.every(byte => byte === 0)).toBe(true);
   });
+  it('hands a frozen review the forge credential for its repository apart from the house\'s, and builds nothing without one', async () => {
+    const frozen: WorkerAssignment = { ...job, review: true, frozenReview: { repository: 'acme/app', head: '1'.repeat(40), base: '2'.repeat(40) } };
+    const f = fixture(undefined, frozen), house = Buffer.from('HOUSE_FETCH'), forge = Buffer.from('ACME_FORGE');
+    f.control.repositoryInput = vi.fn(async () => house);
+    f.control.reviewInput = vi.fn(async () => forge);
+    const run = f.run(); await flush();
+    expect(f.control.reviewInput).toHaveBeenCalledWith('j', expect.any(AbortSignal));
+    expect(f.executor.build).toHaveBeenCalledWith(frozen, expect.any(AbortSignal), house, forge);
+    f.built.resolve('image'); f.spawned.resolve(); await flush(); f.exited.resolve({ exitCode: 0, logTail: '' });
+    expect(await run).toBe('finished');
+    expect(house.every(byte => byte === 0)).toBe(true); expect(forge.every(byte => byte === 0)).toBe(true);
+    // No binding for the owner, so loom gives none: the job fails at build and nothing is fetched.
+    const none = fixture(undefined, frozen), houseAgain = Buffer.from('HOUSE_FETCH');
+    none.control.repositoryInput = vi.fn(async () => houseAgain);
+    none.control.reviewInput = vi.fn(async () => undefined);
+    expect(await none.run()).toBe('finished');
+    expect(none.executor.build).not.toHaveBeenCalled();
+    expect(houseAgain.every(byte => byte === 0)).toBe(true);
+    expect(none.control.finish).toHaveBeenCalledWith('j', WORKER_EXIT.build, expect.any(String), 'worker');
+    // An ordinary job is never asked for one.
+    const plain = fixture(); plain.control.reviewInput = vi.fn(async () => forge);
+    void plain.run(); await flush(); expect(plain.control.reviewInput).not.toHaveBeenCalled(); plain.abort.abort();
+  });
   it('erases late repository input after cancellation without building', async () => {
     const f = fixture(), input = deferred<Uint8Array | undefined>(), bytes = Buffer.from('PRIVATE');
     f.control.repositoryInput = vi.fn(() => input.promise);

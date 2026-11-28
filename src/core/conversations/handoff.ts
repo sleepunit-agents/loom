@@ -1,6 +1,9 @@
 import {slug} from '../../slug.js';
-import {reviewRequest,reviewPlace,reviewThread} from './review-place.js';
-import {conversations,jobs,memberAgents,tasks,threads} from '../data/schema.js';
+import {reviewRequest,reviewPlace,reviewRepository,reviewTarget,reviewThread,type ReviewTarget} from './review-place.js';
+import {agentRunSettings,changes,conversations,jobs,memberAgents,tasks,threads} from '../data/schema.js';
+import {reviewBrief} from './review-brief.js';
+import {COMMIT} from '../../apps/merge-target.js';
+import {sqlVisibility} from '../../policy-sql.js';
 import {linkHandoffTickets} from './handoff-tickets.js';
 import {taskVisibility} from '../data/visibility.js';
 import {handoffPeersAssigned,handoffTarget} from './handoff-access.js';
@@ -35,7 +38,7 @@ export interface HandoffToSelf{
   * carries it, so the job it starts counts that person as in the room and is never the agent's own work. */
  ownerWork?(work:{job:{id:string;agent:string;conversation:string|null}}):boolean;
  codexAvailability?(agent:string):{available:boolean;reason?:string};
- workRoles?(agent:string,id?:string):readonly {id:string;description:string;revision:string;available:boolean;reason?:string}[];
+ workRoles?(agent:string,id?:string,frozen?:boolean):readonly {id:string;description:string;revision:string;available:boolean;reason?:string}[];
  word(work:{job:{id:string;agent:string;conversation:string|null}}):OnWord|undefined;
  /** Why this job hands nothing on at all, to its own body elsewhere or to a peer agent, or nothing. */
  hop(work:{job:{id:string;agent:string;conversation:string|null}}):string|undefined;
@@ -43,7 +46,30 @@ export interface HandoffToSelf{
  handed(work:{job:{id:string;agent:string;conversation:string|null}}):void;
  /** Told after a note is written, for the notice a long chain raises. */
  sent(note:{chain:string[];startedAt:string;to:string;agent:string}):void;
+ /** The commit a frozen review's diff is taken against, read from the forge: with `branch`, the merge base of `head`
+  * with that branch; without, `head`'s first parent. Left out, conversation.review is unavailable. */
+ reviewBase?(repository:string,head:string,branch?:string):Promise<string>;
+ /** Whether the household's forge bindings (the owner-to-credential bindings the changes poll uses) name a
+  * credential for this owner on GitHub. A frozen review's copy is fetched with that credential and no other
+  * (shared-secret-inputs.ts, `review`), so an owner with none has no review. Left out, none is bound. */
+ reviewBinding?(owner:string):boolean;
 }
+/** The work role conversation.review runs in unless it names another. */
+export const REVIEW_ROLE='review';
+const COMMIT_SHA=COMMIT;
+const reviewInput=z.object({
+ role:slug(64).optional().describe('The work role the reviewer runs in; "review" when left out.'),
+ clientId:z.string().min(1).max(200),label:threadTitle,
+ target:z.union([
+  z.object({change:z.string().regex(/^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}#[1-9][0-9]{0,9}$/).refine(value=>reviewRepository(value.split('#')[0]),'Not a repository').describe('A pull request loom follows, as owner/repo#number.')}).strict(),
+  z.object({repository:z.string().refine(reviewRepository,'Not a repository').describe('owner/repo on GitHub.'),commit:z.string().regex(COMMIT_SHA).describe('A full 40-character commit id.')}).strict(),
+ ]),
+ contract:z.string().trim().min(1).max(Math.floor(MESSAGE_WORDS_MAX/2)).describe('What to review against, in your words: the ticket, the spec section or the acceptance criteria. Nothing of your own reasoning about the change.'),
+ includeDescription:z.literal(true).optional().describe('Give the reviewer the pull request description too. Left out, it is not given.'),
+ tier:z.enum(['medium','high']).optional(),
+ tickets:z.array(z.string().min(1).max(200)).min(1).max(20).optional(),
+}).strict();
+export type ReviewInput=z.infer<typeof reviewInput>;
 export function registerConversationHandoff(operations:Operations,service:CommsMessages,proof:BodyProof,privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,self?:HandoffToSelf){
  const db=service.db,cvs=service.threads.conversations,current=conversationBodyScope(db,proof,privateAssignment),requireCurrent=requireBodyScope(current);
  const common=bodyOperationDefaults(current,value=>service.key.hash(value),'body-handoff');
@@ -73,7 +99,10 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
  };
  operations.register(operation({name:'conversation.handoffOptions',write:false,doors:['http'],
   input:z.object({}).strict().describe('List assigned peers, enabled work roles and current worker availability.'),
-  output:z.object({agents:z.array(z.string()),codexAvailable:z.boolean(),codexUnavailableReason:z.string().optional(),roles:z.array(z.object({id:z.string(),description:z.string(),available:z.boolean(),reason:z.string().optional()})).optional()}).strict(),
+  output:z.object({agents:z.array(z.string()),codexAvailable:z.boolean(),codexUnavailableReason:z.string().optional(),roles:z.array(z.object({id:z.string(),description:z.string(),available:z.boolean(),reason:z.string().optional()})).optional(),
+   /** Whether conversation.review can run here now: this loom reads the forge, the agent has the review role, and a
+    * worker that gives a frozen review its copy can take it. */
+   frozenReviews:z.object({available:z.boolean(),reason:z.string().optional()}).strict()}).strict(),
   may(viewer){const work=current(viewer);return !!work && ownerThread(work);},
   run(ctx){
    const work=requireCurrent(ctx.viewer);
@@ -82,7 +111,11 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    const agents=assigned.map(row=>row.agent).filter(agent=>peerAllowed(work,agent)).sort();
    const roles=self?.workRoles?.(work.cv.agent).map(({id,description,available,reason})=>({id,description,available,...(reason?{reason}:{})}))??[];
    const codex=self?.codexAvailability?.(work.cv.agent);
-   return {agents,...(roles.length?{roles}:{}),codexAvailable:codex?.available===true,...(codex?.reason?{codexUnavailableReason:codex.reason}:{})};
+   const reviewer=self?.reviewBase?self.workRoles?.(work.cv.agent,REVIEW_ROLE,true)[0]:undefined;
+   const frozenReviews=!self?.reviewBase?{available:false,reason:'This loom cannot read the forge, so it runs no frozen review.'}
+    :!reviewer?{available:false,reason:'This agent has no review work role.'}
+    :{available:reviewer.available,...(!reviewer.available&&reviewer.reason?{reason:reviewer.reason}:{})};
+   return {agents,...(roles.length?{roles}:{}),codexAvailable:codex?.available===true,...(codex?.reason?{codexUnavailableReason:codex.reason}:{}),frozenReviews};
   },
  }));
  const reviewInThread=(work:Work,id:string)=>{
@@ -229,6 +262,101 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    cvs.turn({conversation:target.id,kind:'message',fromKind:'agent',fromId:cv.agent,outcome:'progressed'});self?.handed({job});
    ctx.changed('conversations',target.id);ctx.changed('inbox',item.id);ctx.changed('turns',target.id);
    return {conversation:target.id,item:item.id};
+  },
+ }));
+ /** A frozen review (docs/runtime/worker.md, "Frozen reviews"): a handed-off session in a work role, on one exact commit
+  * and its diff, which the worker gives the body as a read-only copy, with no credential that can push, and a brief loom
+  * writes itself (review-brief.ts). Its answer is relayed like any handoff's, and its verdict filed on the round. */
+ /** The one answer for a commit loom will not look at: one in a repository that does not exist, or one the asker has
+  * no right to read. They are told apart by nothing, and GitHub is not asked about the second. */
+ const unreadable=()=>new OperationError('unavailable','Loom could not read the commit to review against from GitHub.');
+ /** The GitHub repository (`owner/name`, lower case) an agent's house is fetched from, when it is one on GitHub. */
+ const houseOnGitHub=(agent:string)=>{
+  const house=db.select({repository:agentRunSettings.houseRepository}).from(agentRunSettings).where(eq(agentRunSettings.agent,agent)).get()?.repository;
+  const found=house && /^https:\/\/github\.com\/([A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}?)(?:\.git)?\/?$/i.exec(house);
+  return found && reviewRepository(found[1]) ? found[1].toLowerCase() : undefined;
+ };
+ const reviewTargetFor=(viewer:Parameters<typeof current>[0],agent:string,input:ReviewInput)=>{
+  const visible=sqlVisibility(viewer,['changes']).changes(getTableColumns(changes));
+  if('change' in input.target){
+   const [repository,number]=input.target.change.split('#');
+   const id='github:'+repository.toLowerCase()+'#'+number;
+   const row=db.select().from(changes).where(and(eq(changes.id,id),visible)).get();
+   if(!row)throw new OperationError('invalid','Loom does not follow that pull request, or it is not one you may read');
+   if(!COMMIT_SHA.test(row.headCommit))throw new OperationError('conflict','The pull request has no head commit loom has read');
+   return {repository:row.repository.replace(/^github:/,''),head:row.headCommit,change:row.id,pull:{number:row.number,baseBranch:row.baseBranch},body:row.body};
+  }
+  const repository=input.target.repository.toLowerCase(),head=input.target.commit,owner=repository.split('/')[0];
+  // A commit is reviewed only in a repository the asker may already read: one a pull request it may read is in, the
+  // agent's own house, or one whose owner the household's forge bindings name. Anything else is refused as a
+  // repository that does not exist is, before GitHub is asked anything (docs/runtime/worker.md, "Frozen reviews").
+  const readable=!!db.select({id:changes.id}).from(changes).where(and(eq(changes.repository,repository),visible)).limit(1).get()
+   || houseOnGitHub(agent)===repository || self?.reviewBinding?.(owner)===true;
+  if(!readable)throw unreadable();
+  // The pull request whose head this commit is, when loom follows one the asker may read: the round is filed on it.
+  const row=db.select().from(changes).where(and(eq(changes.repository,repository),eq(changes.headCommit,head),visible)).orderBy(desc(changes.updatedAt)).limit(1).get();
+  return {repository,head,change:row?.id??null,pull:undefined,body:undefined};
+ };
+ operations.register(operation({...common,name:'conversation.review',
+  input:reviewInput.describe('Hand a pull request or a commit to a reviewer: loom pins the exact commit and its diff, gives the reviewer a read-only copy and no credential that can push, and relays its answer here once its job has ended. Its verdict is filed then, on the pull request\'s round, which only the member of this conversation sees.'),
+  output:z.object({conversation:z.string(),item:z.string(),commit:z.string(),base:z.string()}).strict(),
+  may(viewer){const found=current(viewer);return !!found && ownerThread(found);},
+  async prepare(input,context){
+   const work=current(context.viewer);
+   if(!work || !ownerThread(work))throw new OperationError('denied','Private owner conversation required');
+   if(!self?.reviewBase)throw new OperationError('unavailable','This loom cannot read the forge, so it runs no frozen review.');
+   const role=self.workRoles?.(work.cv.agent,input.role??REVIEW_ROLE)[0];
+   if(!role)throw new OperationError('invalid','Unknown work role for this agent');
+   const found=reviewTargetFor(context.viewer,work.cv.agent,input);
+   // Asked before the forge is: a job that may hand nothing on spends no request of GitHub's.
+   const hop=self.hop({job:work.job});if(hop)throw new OperationError('denied',hop);
+   // The copy is fetched with the credential the forge bindings hold for this owner, and no other: none, no review.
+   if(self.reviewBinding?.(found.repository.split('/')[0])!==true)
+    throw new OperationError('unavailable','Loom holds no forge credential for this repository\'s owner, so it runs no review of it.');
+   let base:string;
+   try{base=await self.reviewBase(found.repository,found.head,found.pull?.baseBranch);}
+   catch{throw unreadable();}
+   if(!COMMIT_SHA.test(base))throw unreadable();
+   const target=reviewTarget({repository:found.repository,head:found.head,base,change:found.change,tier:input.tier??'medium'});
+   if(!target)throw unreadable();
+   const words=reviewBrief({role,target,...(found.pull?{pull:found.pull}:{}),contract:input.contract,
+    ...(input.includeDescription && found.body!==undefined?{description:found.body}:{})});
+   return {sealed:await sealHandoff(service.key,words,service.now(),commsKeepDays(db)),target,role};
+  },
+  run(ctx,input,prepared){
+   const {job,cv}=requireCurrent(ctx.viewer);
+   const {sealed,target,role:asked}=prepared as {sealed:string;target:ReviewTarget;role:{id:string;revision:string}};
+   const parents=retryLineage(job),parent=job.id,sourceFor=(id:string)=>JSON.stringify([id,input.clientId]);
+   const receipts=db.select().from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,cv.agent),
+    eq(inbox.source,'handoff'),inArray(inbox.sourceId,parents.map(sourceFor)))).limit(2).all();
+   if(receipts.length>1)throw new OperationError('conflict','Multiple handoffs already exist for this request');
+   if(receipts[0]){
+    const existing=receipts[0],child=existing.conversation?cvs.conversation(existing.conversation):undefined,request=child&&reviewRequest(child);
+    if(!child||!request?.target||request.clientId!==input.clientId||request.role?.id!==asked.id||child.agent!==cv.agent||child.project!==cv.project||child.member!==cv.member||child.direct!==cv.direct)
+     throw new OperationError('conflict','Handoff scope changed');
+    return {conversation:child.id,item:existing.id,commit:request.target.head,base:request.target.base};
+   }
+   const hop=self?.hop({job});if(hop)throw new OperationError('denied',hop);
+   // Judged again inside the write: the role, its revision and the pull request's head as the brief named them.
+   const role=self?.workRoles?.(cv.agent,asked.id,true)[0];
+   if(!role || role.revision!==asked.revision)throw new OperationError('conflict','The work role changed; ask again');
+   if(!role.available)throw new OperationError('unavailable',role.reason??'No worker that gives a frozen review its read-only copy is available for this work role');
+   const again=reviewTargetFor(ctx.viewer,cv.agent,input);
+   if(again.head!==target.head || again.change!==target.change)throw new OperationError('conflict','The pull request moved while the review was prepared; ask again');
+   const tickets=[...new Set(input.tickets??[])];
+   if(tickets.length){
+    const readable=new Set(db.select({id:tasks.id}).from(tasks).where(and(inArray(tasks.id,tickets),taskVisibility(ctx.viewer).tasks!(getTableColumns(tasks)))).all().map(row=>row.id));
+    const unknown=tickets.filter(id=>!readable.has(id));
+    if(unknown.length)throw new OperationError('invalid','Unknown ticket: '+unknown.join(', '));
+   }
+   const child=cvs.open({agent:cv.agent,venue:'handoff',place:reviewPlace(parent,input.clientId,role,target),label:input.label,project:cv.project,member:cv.member,direct:cv.direct});
+   if(child.project!==cv.project||child.member!==cv.member||child.direct!==cv.direct||child.handoffNotBefore!==null)throw new OperationError('conflict','Handoff scope changed');
+   linkHandoffTickets(db,child.id,tickets);
+   const word=self?.word({job});
+   const item=cvs.send({conversation:child.id,toKind:'agent',to:cv.agent,source:'handoff',sourceId:sourceFor(parent),fromKind:'agent',fromId:cv.agent,words:sealed,...(word?{onWordKind:word.kind,onWord:word.id}:{})});
+   cvs.turn({conversation:child.id,kind:'message',fromKind:'agent',fromId:cv.agent,outcome:'progressed'});self?.handed({job});
+   ctx.changed('conversations',child.id);ctx.changed('inbox',item.id);ctx.changed('turns',child.id);
+   return {conversation:child.id,item:item.id,commit:target.head,base:target.base};
   },
  }));
 }

@@ -9,6 +9,8 @@ import { credentialFingerprint, dataAuthentication, presentedCredential } from '
 import { tokens, sessions, jobs, terminalCredentials, boxes, members } from './core/data/schema.js';
 import { jobClaimed } from './core/data/job-states.js';
 import type { Authentication } from './core/live/index.js';
+import { frozenReviewOf } from './apps/change-reviews.js';
+import { frozenReviewReaches } from './core/conversations/review-confinement.js';
 
 export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () => boolean, write: (action: () => boolean) => void, programs: ProgramGrantReader = () => undefined) {
   const resolve = dataAuthentication(db, () => clock.now(), { programs: 'admit' });
@@ -54,6 +56,10 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
       if(grants&&(options.programs==='deny'||session||token.kind!=='owner'||!token.member))return;
       const bound = token.job ? bodyJob(token) : undefined;
       if (token.job && !bound) return;
+      // A frozen review's body is authenticated only where it may reach: its own reply and its job's bookkeeping, by
+      // the one rule (core/conversations/review-confinement.ts). Everywhere else, every route and the live socket, its
+      // token is no credential at all. A job's conversation, and so whether it is one, never changes.
+      if (token.job && frozenReviewOf(db, token.job) && !frozenReviewReaches(new URL(request.url).pathname)) return;
       const valid = () => {
         // Stop before any SQL when the root has closed admission.
         if (!admitted() || !auth.valid() || !admitted()) return false;

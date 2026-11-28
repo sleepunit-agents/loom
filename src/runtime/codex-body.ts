@@ -36,6 +36,9 @@ export const codexBody: BodyHarness = input => {
     const server = `mcp_servers.${BODY_TOOLS_SERVER}.`;
     const args = ['exec', '--json', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--skip-git-repo-check',
       '--dangerously-bypass-approvals-and-sandbox', '-m', job.model, '-C', input.cwd,
+      // A frozen review reads no instruction file at all: Codex's AGENTS.md (and AGENTS.override.md) discovery is given
+      // no bytes to read. Its harness also starts outside the copy (body-program.ts, frozenReviewCwd).
+      ...(job.frozenReview ? ['-c', 'project_doc_max_bytes=0'] : []),
       ...(tools ? ['-c', `${server}url=${quote(tools.url)}`, '-c', `${server}bearer_token_env_var=${quote(tokenVariable)}`,
         '-c', `${server}default_tools_approval_mode="approve"`, '-c', `${server}enabled_tools=[${names.map(name => quote(name)).join(',')}]`,
         '-c', `${server}tool_timeout_sec=86400`, '-c', `shell_environment_policy.exclude=[${quote(tokenVariable)}]`] : []),

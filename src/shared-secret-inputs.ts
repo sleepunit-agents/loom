@@ -1,6 +1,6 @@
-import { hasChangeReview } from './apps/change-reviews.js';
+import { frozenReviewOf, hasChangeReview } from './apps/change-reviews.js';
 import {SECRET_USE_ID} from './pieces/secrets/use-id.js';
-import {startupRequestId,repositoryRequestId} from './pieces/secrets/requests.js';
+import {startupRequestId,repositoryRequestId,reviewRequestId} from './pieces/secrets/requests.js';
 /** Private effect door, separate from common operation/result serialization.
  * Owners can write values in Settings; only the actual granted job receives
  * bytes here. Runtime parent access is limited to its configured repo input.
@@ -35,10 +35,13 @@ const readInput=z.discriminatedUnion('kind',[
  z.object({kind:z.literal('startup'),alias:houseSecretAlias}).strict(),
  z.object({kind:z.literal('program'),job:z.string().min(1).max(200),alias:houseSecretAlias}).strict(),
  z.object({kind:z.literal('repository'),job:z.string().min(1).max(200)}).strict(),
+ z.object({kind:z.literal('reviewFetch'),job:z.string().min(1).max(200)}).strict(),
 ]);
 const confirmInput=z.object({use:z.string().regex(SECRET_USE_ID),job:z.string().min(1).max(200).optional()}).strict();
 const binding=(row:typeof jobs.$inferSelect)=>JSON.stringify([row.id,row.agent,row.box,row.conversation,row.member,row.project,row.houseRepository,row.houseFile,row.houseBranch]);
-export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPrivateInputs;credentials:Credentials;
+/** `reviewCredential`: the secret the household's forge bindings name for a GitHub owner, the one a frozen review's
+ * copy of that owner's repository is fetched with (the bindings the changes poll reads with). None, no review. */
+export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPrivateInputs;credentials:Credentials;reviewCredential?:(owner:string)=>string|undefined;
  readJson(request:Request,abort:AbortController):Promise<unknown>;available():boolean}){
  const {db,inputs,credentials}=options;
  const app=new Hono<{Variables:{shutdown:AbortController}}>();
@@ -53,11 +56,16 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
  // secret here, at start or on request, whatever was granted. Asked of the job, by the mail it is offered
  // (shared-place-mail.ts, jobHeld), each time, so a body program that asked anyway gets nothing.
  const standing=(caller:ReturnType<typeof actor>)=>!caller.body||standingSecretAnswerServes(caller.auth.viewer,sharedSharing(db));
- const target=(caller:ReturnType<typeof actor>,id?:string)=>{
+ const target=(caller:ReturnType<typeof actor>,id?:string,fetch?:'repository'|'reviewFetch')=>{
   if(caller.body&&id!==undefined||!caller.body&&!id)throw new PrivateInputError('denied');
   const job=db.select().from(jobs).where(eq(jobs.id,caller.body?.job??id!)).get();
   const valid=()=>!!job&&!caller.signal.aborted&&caller.auth.valid()&&options.available()&&itself(caller)&&!(caller.body&&jobHeld(db,job))&&(caller.body?job.agent===caller.body.agent&&job.state==='running':job.box===caller.runner?.box&&job.state==='starting');
-  if(!valid()||hasChangeReview(db,job!.id))throw new PrivateInputError('denied');
+  // A review is handed no secret. A cold review, none at all. A frozen review (conversation.review), none at start
+  // and none on request. Its worker gets two fetch credentials, each for one git fetch and never for the body
+  // (runtime/house-source.ts): the house's own, for the house's image as for every job, and the forge credential
+  // bound to the reviewed repository's owner, for the reviewed commit (`review`). No other job gets the second.
+  const frozen=!!job&&!!frozenReviewOf(db,job.id);
+  if(!valid()||hasChangeReview(db,job!.id)&&!frozen||frozen&&!fetch||!frozen&&fetch==='reviewFetch')throw new PrivateInputError('denied');
   const stamp=binding(job!);
   return {job:job!,current:()=>{
    if(caller.signal.aborted||!caller.auth.valid()||!options.available()||!itself(caller))return false;
@@ -79,9 +87,9 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
   const caller=actor(c.req.raw),parsed=readInput.safeParse(await json(c.req.raw,c.get('shutdown')));
   if(!parsed.success)return c.json({ok:false,message:'Private secret input unavailable'},400);
   const input=parsed.data;
-  const forWorker = input.kind==='program' || input.kind==='repository';
+  const forWorker = input.kind==='program' || input.kind==='repository' || input.kind==='reviewFetch';
   if(forWorker?!caller.runner:!caller.body)throw new PrivateInputError('denied');
-  const selected=target(caller,forWorker?input.job:undefined),job=selected.job;
+  const selected=target(caller,forWorker?input.job:undefined,input.kind==='repository'||input.kind==='reviewFetch'?input.kind:undefined),job=selected.job;
   let secret:string,attempt:string,request:string|undefined,current=selected.current;
   if(input.kind==='request'){secret=input.secret;attempt='request:'+input.id;}
   else if(input.kind==='program'){
@@ -103,6 +111,15 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
    const row=db.select().from(agentHouseSecrets).where(and(eq(agentHouseSecrets.agent,job.agent),eq(agentHouseSecrets.alias,input.alias))).get();if(!row)throw new PrivateInputError('denied');
    secret=row.secret;attempt='startup:'+input.alias;request=startupRequestId(job.id,secret);
    current=()=>selected.current()&&!!inputs.requests.grantFor(secret,job.agent,job.id,startupRequestId(job.id,secret),standing(caller))&&db.select().from(agentHouseSecrets).where(and(eq(agentHouseSecrets.agent,job.agent),eq(agentHouseSecrets.alias,input.alias))).get()?.secret===secret;
+  }else if(input.kind==='reviewFetch'){
+   // The forge credential bound to the reviewed repository's owner on GitHub, the forge a frozen review fetches
+   // from, and never the house's: no binding, no copy, so no review. Granted like the house's, by its own request.
+   const frozen=frozenReviewOf(db,job.id),owner=frozen?.repository.split('/')[0],name=owner?options.reviewCredential?.(owner):undefined;
+   if(!owner||!name)throw new PrivateInputError('denied');
+   const bound=()=>options.reviewCredential?.(owner)===name;
+   inputs.reviewGrant(job.id,name);secret=name;attempt='reviewFetch';request=reviewRequestId(job.id,secret);
+   current=()=>selected.current()&&bound()&&!!inputs.requests.grantFor(name,job.agent,job.id,reviewRequestId(job.id,name));
+   if(selected.current()&&bound()&&!current()&&db.select().from(secretRequests).where(eq(secretRequests.id,reviewRequestId(job.id,name))).get()?.state==='pending')return c.json({pending:true},423);
   }else{
    const row=db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,job.agent)).get();
    if(!row?.repositorySecret)return new Response(null,{status:204});

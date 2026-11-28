@@ -1,4 +1,7 @@
-import { closePendingReview, hasChangeReview } from '../apps/change-reviews.js';
+import { changeReviewStore, closePendingReview, reviewJob } from '../apps/change-reviews.js';
+import { frozenReview } from '../core/conversations/review-place.js';
+/** What mail that reaches a frozen review's conversation after its one job is settled with. */
+export const FROZEN_REVIEW_ONCE = 'A frozen review runs once; ask for a new review to review again.';
 import {keepJobText} from './job-text.js';
 /** Trusted job lifecycle. The worker executes; this service only changes records.
  * External machine identity is checked at the API door before calling it. */
@@ -217,6 +220,12 @@ export class Jobs {
       // Work is about to start for what waits here. First, what was sent on the word of somebody no longer known is dropped.
       const gone = this.wordUnknown(conversation.agent, conversation.member, waiting), mail = waiting.filter(item => !gone.has(item.id));
       if (!mail.some(fresh)) return gone.size ? { noticed: true } : {};
+      // A frozen review (conversation.review) runs once: its one job is the review, and what it reviewed is filed from
+      // that job alone. Mail that reaches its conversation afterwards starts nothing and is settled saying why.
+      if (frozenReview(conversation) && this.db.select({ id: jobs.id }).from(jobs).where(eq(jobs.conversation, conversationId)).get()) {
+        for (const item of mail) this.mail.resolveItem(item.id, FROZEN_REVIEW_ONCE);
+        return {};
+      }
       const settings = this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent, conversation.agent)).get();
       const model = this.db.select().from(agentModels).where(eq(agentModels.agent, conversation.agent)).orderBy(asc(agentModels.position), asc(agentModels.model)).get();
       // A removed agent keeps its history and its mail, and does not run.
@@ -260,6 +269,11 @@ export class Jobs {
         ...(resumed?.retryOf ? { retryOf: resumed.retryOf } : {}),
       }).returning().get();
       if (needs.size) this.db.insert(jobNeeds).values([...needs].map(need => ({ job: job.id, need }))).run();
+      // A frozen review (conversation.review) on a pull request loom follows: its round is filed with its job, on the
+      // commit the review was pinned to. A round's job is never tried again (retry, below), and a frozen review's
+      // conversation admits no second job (above), so this is its one job.
+      const frozen = frozenReview(conversation);
+      if (frozen) changeReviewStore(this.db, this.now).assignFrozen({ job: job.id, target: frozen });
       const waitingHere = and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'));
       this.db.update(inbox).set({ job: job.id, changedAt: at }).where(and(waitingHere, inArray(inbox.id, mine.map(item => item.id)))).run();
       this.delivery(job.id,'held');
@@ -402,7 +416,7 @@ export class Jobs {
 
   /** Queue the next attempt of work whose last attempt ended with a reason to run again, if it has any left. */
   private retry(before: Job, at: string, earliest = -Infinity): Job | undefined {
-    if (before.startedByKind === 'program' || hasChangeReview(this.db, before.id)) return undefined;
+    if (before.startedByKind === 'program' || reviewJob(this.db, before.id)) return undefined;
     const unconfirmed = and(eq(inbox.job, before.id), eq(inbox.state, 'waiting'));
     // Once a body has started, only mail it left unconfirmed is a reason to run again.
     if (before.state !== 'starting' && !this.db.select({ id: inbox.id }).from(inbox).where(unconfirmed).get()) return undefined;
