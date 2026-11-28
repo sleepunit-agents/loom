@@ -255,6 +255,8 @@ it('ends a failed session with why it failed, as its last message', async () => 
   f.steps = talked; f.state = 'failed'; f.failedWhy = 'the model\'s usage limit was reached';
   await draw('primary');
   expect(order().at(-1)).toBe('failure');
+  // Its latest run is open: what led to the failure is in view; the earlier one stays folded.
+  expect(titles()).toEqual(['Read']);
   const [failure] = marked('data-session-failure');
   expect(words(failure)).toContain('Why it failed');
   expect(words(failure)).toContain('The model\'s usage limit was reached.');

@@ -684,7 +684,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `repository` | yes: each open pull request with its title and where it stands | never |
 | `question` | no | never: being on the board is the flag |
 | `approval` | no: the page has a primary form for it, with the record's history, but the catalogue does not let it be big, so a board draws it side or compact | never: being on the board is the flag |
-| `session` | yes: what it was asked, its state, the tools it has used, how it ended, its report once a handed-off session has one, why it failed ("Why it failed": the plain words loom builds from the failed job's fixed reason, `JobRecord.failedWhy`, docs/runtime/worker.md "Why a job failed"), and its steps as they are reported, the last of which, for a failed session, is the `Harness` step holding what the harness itself last said; "Its steps are no longer kept." once they are past their keep time and deleted | it finishes, it fails, it is stopped by someone else |
+| `session` | yes: its state, the tools it has used, how it ended, and, as a conversation the member was not in (changed 2026-11-28, "A session as a conversation"): what it was asked as the asker's message; the agent's own words as its messages and its readable reasoning folded quietly, between its runs of tool steps, each run folded under one "N steps" line; its report as the last message once a handed-off session has one; and "Why it failed" (the plain words loom builds from the failed job's fixed reason, `JobRecord.failedWhy`, docs/runtime/worker.md "Why a job failed") ending a failed one, whose last run, holding the `Harness` step with what the harness itself last said, starts open; "Its steps are no longer kept." once they are past their keep time and deleted | it finishes, it fails, it is stopped by someone else |
 | `inbox` | yes: every folder's count, and up to fifty of the folder's items newest first, each with its words as a chip that places its `question` brick, who asked, when, its state, read or unread, and Mark read on an unread one; the outcomes of the member's own actions where the Inbox lists them, each with Dismiss; Newer and Older for a longer folder. Small: the folder's count and its first four items as chips. Folded: one line of counts | more waits on the member than before (the count of `needs` goes up) |
 | `approvals` | yes: every pending request oldest first, or every answered one newest first, each with its title as a chip that places its `approval` brick, its state, kind, agent, project, when it was asked, why, what it allows and, once answered, who answered; or every standing rule with what it covers, which kind of request, for whom, its answer and who set it when; or the reported steps newest first, the first fifty, each with the agent, kind, target and when. Small: the count and the first four (as chips where they are requests). Folded: one line of counts | a new request is waiting (the count of pending goes up), in every state |
 | `ticket`, added 2026-11-27 | yes: also its description, its linked tickets with their titles, and the Edit and Links forms; small, its priority, who filed it, why it closed and its links as chips | as above; an edit or a link flags nothing |
@@ -1190,14 +1190,42 @@ step as one line. Big: also what it was asked, what it runs on, how it ended, an
 own subagents inside one job are not sessions and loom keeps no record of them for an ordinary job.
 
 **A session's steps.** The body of a job handed off from a member's thread (the worker's assignment says `review`)
-on the owners' word reports each tool call and each result as a card, by the same decoding of the harness's output
+on the owners' word reports each tool call and each result as a card, and (since schema 55) the agent's own words and
+its readable reasoning between them, by the same decoding of the harness's output
 and the same disclosure check as the pairing thread's cards (`src/runtime/body-program.ts`,
 `src/runtime/pair-events.ts`): a tool name or a step's words that say a secret the body holds, one of its own credentials, or a
 token shaped like one are replaced by "Tool" and by "Output withheld."; words past 16,000 characters are cut. Loom keeps each card in `job_trace` under the child conversation (`src/core/conversations/job-trace.ts`),
 not in the thread: the thread's transcript, its turns and its unread state are untouched, and the child's final
 reply is relayed to the thread exactly as before. A retried report writes one row.
 
-The page reads them with `sessionTrace(conversation, job, limit, after, before)`: the latest `limit` steps (100 by default,
+**A step's kind** (`job_trace.kind`, schema 55): `tool` (a tool call or its result, what every step was before; every
+row kept before schema 55 reads as one), `words` (what the agent said between its tool calls, its own message text) or
+`reasoning` (its reasoning, where the harness gives it as readable text). The kind is a column because nothing else
+could carry it: `tool` is the body's name for a tool and Codex names an MCP tool by its bare name, so any value
+reserved there could be a real tool's, and an old row could not be told apart; `card_state` is a state; `client_id`
+is a retry key; and a marker inside the sealed words would have to be opened to draw even the side form, and would
+misread an old step whose output began with it. Loom writes a `words` or `reasoning` step's tool line itself (`Words`,
+`Reasoning`) and its state (`done`), whatever the body sends; a thread's card that names a kind other than `tool` is
+refused, so words and reasoning never enter a thread, a pairing room's included. What each harness gives, read
+2026-11-28 (`src/runtime/pair-events.ts`):
+
+- Claude Code (`stream-json`): each top-level `assistant` event carries one block. `{type:"text",text}` is words.
+  `{type:"thinking",thinking,signature}` is reasoning, but on Claude Code 2.1.326 with Opus 5.5 `thinking` is always
+  empty with a signature only, `--settings {"showThinkingSummaries":true}` included, so no reasoning step comes from it
+  today; `redacted_thinking` is never readable. An empty or redacted block makes no step. A subagent's own words
+  (`parent_tool_use_id` set) are not the session's: its answer is its tool result.
+- Codex (`exec --json`): `item.completed` with `{type:"agent_message",text}` is words, and `{type:"reasoning",text}` is
+  the reasoning summary Codex prints as readable text; it never prints the encrypted reasoning. Read from Codex's event
+  shape and loom's own fixtures, not from a live run.
+
+The body keeps them for a handed-off session only, through the one disclosure check every step passes ("Output
+withheld."), and bounds them (`src/runtime/body-program.ts`): one step's text is cut at 8,000 characters and says
+where it was cut; one job keeps 200,000 characters of words and reasoning in all, and then one `Session` step in
+loom's words says later words and reasoning are not recorded. Tool steps keep their own bound and still count against
+the 2,000 steps of a job. Sealing, keep time, the sweep and who reads them are exactly a tool step's.
+
+The page reads them with `sessionTrace(conversation, job, kind, limit, after, before)` (`kind`, where given, keeps only
+steps of that kind; each step says its `kind`): the latest `limit` steps (100 by default,
 200 at most), oldest first; or, with `after`, the earliest `limit` steps whose `seq` is greater, so a reader that
 has some steps asks only for newer ones and no step is opened twice (a stored step never changes); or, with `before`,
 the latest `limit` steps whose `seq` is smaller, oldest first, which is how the page loads earlier steps. `after` and
@@ -1224,7 +1252,23 @@ one thread (`threads_conversation_unique`), and the reply by `messages_client_id
 The big form draws the report's words under "Report", above "Steps", with the rendering the thread uses for a
 message's words (`web/src/pair/reply.tsx`), and draws nothing for it when there is none.
 
-The big form draws them under "Steps" with the conversation's own work-trace cards (`web/src/pair/work-trace.tsx`):
+**A session as a conversation** (Jonathan, 2026-11-28: "a session should look a lot like a conversation I just wasn't
+involved in that's 90% tool calls"). The big form draws, under "Conversation" (`web/src/boards/session-trace.tsx`),
+in one log that scrolls on its own: the brief the job was given (the job's own `brief`, read by the brick's
+`jobHistory` read as before, not copied into the trace) as the asker's message; then the steps in the order they were
+reported, each of the agent's `words` as its message, each `reasoning` as a quiet "Reasoning" line folded until
+opened, and each run of tool steps between them as one "N steps" line (with "working" and how many failed) that opens
+in place to the steps; then the report (`sessionReport`) as the agent's last message, and, where the job failed, "Why
+it failed" after it. A trailing `words` step whose words are the report is drawn once, as the report. The messages and
+folds are the chat's own parts (`web/src/pair/ui/message.tsx`, `bubble.tsx`, `trace.tsx`, and `pair/reply.tsx`,
+markdown with no raw HTML, so markup in an agent's words is shown as text), composed as the thread's transcript
+composes a message (`pair/transcript.tsx`). The latest run of a working session starts open, and so does a failed
+session's last run; any other run is folded until opened. A session recorded before schema 55 has tool steps only and
+draws as its brief, one run and its report. A session whose venue is not `handoff` reads no trace and draws its brief
+and how it ended. The side form's latest step is asked for among tool steps only (`kind: "tool"`), so it reads as it
+did; the compact form is unchanged.
+
+Inside a run, steps are drawn as the conversation's own work-trace cards read them (`web/src/pair/work-trace.tsx`):
 a call and its result are one card, a subagent's steps sit inside its card, the newest is at the bottom and stays in
 view unless the member has scrolled up. It asks for the trace only when the conversation's venue is `handoff`.
 A step's line is the first line of its command (or its tool) and its state; it opens in place to the whole command,
@@ -1521,7 +1565,7 @@ face made from the agent's colours.
 | `Segmented`, `Menu` | One of a few fixed choices, all in view; or one of many, the chosen one in view and the rest in a list that opens in place. The page has no native picker. |
 | `Meter` | How full something is: a thin bar whose tone turns as it fills. |
 | `Time`, `when` | The one way a brick writes a time: how long ago while it is recent (or how soon), the date after that, in the member's device zone; the whole date and time is its title. |
-| Steps | A session's log (`session-trace.tsx`): one line a step, a mark for where it stands, what ran, and what it said when opened. |
+| Steps | A session's log (`session-trace.tsx`): one line a step, a mark for where it stands, what ran, and what it said when opened. In the big form a run of them is folded under one "N steps" line between the agent's messages (the chat's own `Message`, `Bubble` and `Trace` parts), its reasoning a quiet folded "Reasoning" line. |
 
 The three forms are decided the same way for every brick. The primary form leads with the one thing the brick is
 about, then its meta line, facts, sections and, last, its actions; a form that opens on a press takes the place of
@@ -1663,6 +1707,16 @@ produced a reading scoping would have skipped whose answer changed (a violation 
 statements running beside it. A test that counts a connection's statements leaves those out with
 `trackerStatement` (`src/core/data/table-tracker.ts`). It passes only as far as `npm test` does: a test failing in
 both is not a shadow failure.
+
+**The session brick's reads, since it reads as a conversation (2026-11-28).** No read was added. Live, as before:
+the job and conversation (`BrickSession`), the job's detail with its brief (`BrickSessionJob`, big form), the report
+(`BrickSessionReport`, big form of a handoff) and the latest page of steps with their count (`BrickSessionTrace`,
+eager while the job runs, relaxed once it has ended); each step of that page now also carries its `kind`, a column of
+the row it already reads, and the page holds words and reasoning steps among its 100. The side form's latest step
+(`BrickSessionStep`) is asked for with `kind: "tool"`, one more condition on the same indexed read, and opens no words.
+On demand only: earlier steps (`BrickSessionEarlier`, paused until "Load earlier steps" is pressed). Opening a folded
+run or reasoning line reads nothing: their words came with the page. A session that keeps no trace leaves the trace
+read paused.
 
 ## What goes
 

@@ -102,14 +102,15 @@ function Said({ mine, head, words, tone, at, ...rest }: { mine?: boolean; head: 
 
 /** A run of tool calls between two of the agent's messages, folded the way the chat folds work: one quiet line that
  * says how many steps and opens in place to them. The latest run of a working session is open, so watching it work
- * needs no press; any other is folded until the member opens it. */
-function ToolRun({ nodes, live, latestTerminal }: { nodes: WorkNode[]; live: boolean; latestTerminal?: number }) {
+ * needs no press, and so is a failed session's, which holds what led to the failure; any other is folded until the
+ * member opens it. */
+function ToolRun({ nodes, live, open, latestTerminal }: { nodes: WorkNode[]; live: boolean; open: boolean; latestTerminal?: number }) {
   const [chosen, choose] = useState<boolean | null>(null);
   const events = nodes.map((n) => n.events[n.events.length - 1]);
   const failed = events.filter((e) => e.cardState === 'failed').length, working = events.some((e) => e.cardState === 'running');
   return (
     <Trace data-session-run="">
-      <TraceCollapsible open={chosen ?? live} onOpenChange={choose}>
+      <TraceCollapsible open={chosen ?? open} onOpenChange={choose}>
         <TraceCollapsibleTrigger>
           <TraceLine status={working && live ? 'running' : undefined}>
             <TraceTitle data-session-run-count="">{count(nodes.length, 'step')}</TraceTitle>
@@ -157,7 +158,7 @@ const traceFields = '{seq job at tool cardState clientId words kind}';
 /** The big form: the session as a conversation, newest at the bottom, kept in view while the member has not scrolled
  * away from it. It says how many steps there are in all, and where the page holds fewer than that, a control loads the
  * ones before. With `trace` false (a session that keeps none) it reads no steps and is the brief and how it ended. */
-export function SessionTrace({ conversation, job, running, trace = true, talk }: { conversation: string; job: string; running: boolean; trace?: boolean; talk: SessionTalk }) {
+export function SessionTrace({ conversation, job, running, failed = false, trace = true, talk }: { conversation: string; job: string; running: boolean; failed?: boolean; trace?: boolean; talk: SessionTalk }) {
   const read = useDataQuery<{ steps: TraceStep[]; total: number; gone: boolean }>(
     'query BrickSessionTrace($c:String!,$j:String!,$n:Int!){steps:sessionTrace(conversation:$c,job:$j,limit:$n)' + traceFields + ' total:sessionTraceCount(conversation:$c,job:$j) gone:sessionTraceExpired(conversation:$c,job:$j)}',
     // Watching a session work is what this list is for: while its job runs it keeps up with every step, as the
@@ -205,7 +206,7 @@ export function SessionTrace({ conversation, job, running, trace = true, talk }:
         {talk.brief && <Said mine head="Asked" words={talk.brief} at={talk.briefAt} data-session-brief="" />}
         {none}
         {pieces.map((piece, i) => piece.kind === 'tools'
-          ? <ToolRun key={piece.nodes[0].events[0].seq} nodes={piece.nodes} live={running && i === pieces.length - 1} latestTerminal={latestTerminal} />
+          ? <ToolRun key={piece.nodes[0].events[0].seq} nodes={piece.nodes} live={running && i === pieces.length - 1} open={(running || failed) && i === pieces.length - 1} latestTerminal={latestTerminal} />
           : piece.kind === 'reasoning' ? <Reasoning key={piece.step.seq} words={piece.step.words} />
             : <Said key={piece.step.seq} head={who} words={piece.step.words ?? 'Its words are no longer kept.'} at={piece.step.at} data-session-words="" />)}
         {talk.report && <Said head={`${who} · Report`} words={talk.report} at={talk.endedAt} data-session-report="" />}

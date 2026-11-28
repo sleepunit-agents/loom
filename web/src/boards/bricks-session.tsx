@@ -67,7 +67,7 @@ export function Session({ params, form, act, raise }: BodyProps) {
       )}
       {big && (
         <Section title="Conversation">
-          <SessionTrace key={job.id} conversation={conversation} job={job.id} running={running(job.state)} trace={handoff}
+          <SessionTrace key={job.id} conversation={conversation} job={job.id} running={running(job.state)} failed={job.state === 'failed'} trace={handoff}
             talk={{ agent, brief: detail?.brief ?? null, briefAt: detail?.claimedAt ?? job.queuedAt, report: handoff ? reported ?? null : null, endedAt: detail?.endedAt ?? null,
               failure: job.state === 'failed' && detail?.failedWhy ? detail.failedWhy.charAt(0).toUpperCase() + detail.failedWhy.slice(1) + '.' : null }} />
         </Section>
