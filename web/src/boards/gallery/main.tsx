@@ -28,7 +28,9 @@ const query = new URLSearchParams(location.search);
 const scheme = query.get('scheme');
 if (scheme === 'dark' || scheme === 'light') document.documentElement.style.colorScheme = scheme;
 // A brick's operations go nowhere: each is answered as saved, a moment later.
-window.fetch = async () => { await new Promise((done) => setTimeout(done, 400)); return new Response(JSON.stringify({ ok: true, value: {} }), { status: 200, headers: { 'content-type': 'application/json' } }); };
+// The sign-in door answers a made token with a fictitious bearer of the real shape, so its shown-once state can be seen.
+const galleryBearer = 'loom_' + 'gallery0'.repeat(5) + 'abc';
+window.fetch = async (url) => { await new Promise((done) => setTimeout(done, 400)); return new Response(JSON.stringify({ ok: true, value: String(url).startsWith('/api/signin/') ? { token: galleryBearer, fingerprint: '0'.repeat(64) } : {} }), { status: 200, headers: { 'content-type': 'application/json' } }); };
 
 type Drawn = Form | 'phone';
 /** The room the layout gives a form on an ordinary screen (../layout.ts): a 1440 px window gives the side column
@@ -41,13 +43,22 @@ function room(brick: string, form: Drawn): { w: number; h: number } {
 }
 
 /** Presses a scene's buttons, in order, once the brick has drawn them. */
-function Pressed({ labels, children }: { labels?: string[]; children: ReactNode }) {
+function Pressed({ labels, children }: { labels?: Scene['press']; children: ReactNode }) {
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!labels?.length) return;
     let stopped = false;
     void (async () => {
       for (const label of labels) {
+        if (typeof label !== 'string') {
+          // A controlled field takes words only through the setter React watches, then an input event.
+          for (let tries = 0; tries < 40 && !stopped; tries++) {
+            const field = box.current?.querySelector<HTMLInputElement>(`input[aria-label="${label.field}"]`);
+            if (field) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, label.text); field.dispatchEvent(new Event('input', { bubbles: true })); break; }
+            await new Promise((done) => setTimeout(done, 50));
+          }
+          continue;
+        }
         for (let tries = 0; tries < 40 && !stopped; tries++) {
           const button = [...(box.current?.querySelectorAll('button') ?? [])].find((b) => b.textContent?.trim() === label || b.getAttribute('aria-label') === label);
           if (button) { button.click(); break; }

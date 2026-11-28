@@ -3,6 +3,7 @@
 import { CLEAN_LINE, isCleanLine } from '../line-name.js';
 import { brickNamed, paramsKey, type Brick } from './bricks.js';
 import { PLACEMENTS_MAX } from './limits.js';
+import { SECRET_VALUE_WORDS } from './value-shape.js';
 
 export type ActorKind = 'agent' | 'member';
 export interface Placement {
@@ -168,7 +169,7 @@ export function actRow(board: Board, placement: string, action: string, detail: 
   const declared = brickNamed(p.brick)?.actions[action];
   if (!declared) throw new Refused(`${p.brick} has no action ${JSON.stringify(action)}.`);
   const parsed = declared.detail.safeParse(detail);
-  if (!parsed.success) throw new Refused(`${action}: detail does not match the action.`);
+  if (!parsed.success) throw new Refused(parsed.error.issues.some((issue) => issue.message === SECRET_VALUE_WORDS) ? `${action}: ${SECRET_VALUE_WORDS}` : `${action}: detail does not match the action.`);
   return { revision: board.revision + 1, seq: 0, actorKind: 'member', change: 'act', placement, action, detail: parsed.data };
 }
 

@@ -179,7 +179,9 @@ board.
 `placement` (for `place`, `remove`, `rank`, `act`, `maximize` and `flag`, otherwise null); `from_value` and `to_value`
 (text, read back as text: the old and new rank for `rank` and `maximize`, the old and new title for `title`, the rank
 taken in `to_value` for `place`, otherwise null); `action` (for `act`: the name of one of the brick's actions) and
-`detail` (for `act`: JSON matching that action's declared schema, which holds only choices and ids). Placements
+`detail` (for `act`: JSON matching that action's declared schema, which holds only choices and ids, and, for two
+actions alone, a name a member typed: the `secrets` brick's secret name and the `household` brick's token label,
+each refused in the shape of a credential; see "The first bricks" and docs/accepted-tradeoffs.md). Placements
 shifted by another's `place`, `remove`, `rank` or `maximize` get no rows of their own. Visibility follows the board.
 
 **`blueprints`** (schema 52 added `member`): `id`; `agent`; `member` (the member of the thread it was saved in);
@@ -214,7 +216,8 @@ or its conversation row is deleted, and when the thread the session was handed o
 deletes a conversation row today. Nothing writes a row but
 `conversation.handoff`.
 
-A board holds no record data and none of a conversation's words.
+A board holds no record data and none of a conversation's words. The one exception is the two typed names an `act`
+detail may hold (a secret's name and a token's label, above): never a value, a description or a sentence.
 
 ## Operations
 
@@ -303,7 +306,12 @@ Each is denied unless the caller is the thread's member.
 2026-11-26: "its always a two player game where one player is an agent". The only caller is the thread's own member,
 and the only reader is that member's agent, which can read the record itself. So the agent is told it as a report
 and not as a fact ("The member's page reported: used approve on …"), and its standing instructions tell it to read
-the record itself before relying on a reported action.
+the record itself before relying on a reported action. Two reports have no record the agent can read: a secret's
+value set or removed (`secrets`) and a token made (`household`). For those the reasoning is only the first half: the
+caller is the thread's own member, who could as well type "I saved PUMP_TOKEN" in the conversation, so a false report
+is no more than a false sentence from the same person, and it is still told as a report. `boards.act` checks that
+the caller is the thread's member and that the detail fits; it does not check that the member is an owner or that
+the secret or token exists.
 
 The page reads `boards` and `board_placements` through live reads: the thread's boards for the trail, and the shown
 board's live placements.
@@ -652,12 +660,12 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `trigger` | `trigger`: a Tempo trigger's id: a letter or digit, then up to 119 of letters, digits and `: . _ / @ -` | `runNow {}`, `stop {}`, `start {}`, `pause {}`, `resume {}`, each after the `tempo.` operation of that name took it; running it now and stopping it ask first; `pause` and `resume` are of the trigger's agent, as on the desktop | the trigger id |
 | `account` | none: it is the signed-in member's own | `removePasskey {}`, by `account.removePasskey`; `revokeSession {}`, by `account.revokeSession`; `removeDevice {}`, by `notifications.removeDevice`; `enableNotifications {}`, by `notifications.subscribe`. Each removal asks first. Adding a passkey, making a sign-in link and signing this device out go to the sign-in door, which is no operation, and the board is not told | none |
 | `appearance` | none: it is the signed-in member's own | `set {}`, by `household.setPreferences` with the one choice pressed; the board is not told which | none |
-| `secrets` | none: it is the household's, for an owner | `allow {}`, `deny {}`, `cancel {}`, `revoke {}`, each by `secrets.command`; `setValue {}`, by `secrets.set`; `remove {}`, by `secrets.remove`, after asking. No detail holds a secret's name, description or value | none |
+| `secrets` | none: it is the household's, for an owner | `allow {}`, `deny {}`, `cancel {}`, `revoke {}`, each by `secrets.command`; `setValue {secret, outcome}`, by `secrets.set`, `outcome` `added` or `replaced`; `remove {secret, outcome}`, by `secrets.remove`, after asking, `outcome` `removed`. `secret` is the secret's name in the secrets store's own shape (`secretName`: a letter or digit, then up to 63 of letters, digits and `. _ -`). No detail holds a description or a value | none |
 | `machines` | none: the machine opened is picked inside the brick | `proposeReader {allow}`, by `machine.proposeReader`; `allow` is `yes` or `no`. `answerReader {answer}`, by `machine.answerReader`; `answer` is `allow` or `deny`. `setAlertLines {}`, by `machine.setAlertLines` (a household owner). Enrolling or revoking a machine is not offered | none |
 | `subscriptions` | none: the account opened and what is searched for are picked inside the brick | `signIn {}`, by `runtime.accountSignIn`; `create {}`, by `runtime.accountCreate`. The label typed goes to the operation and never to the board | none |
 | `usage` | `days`: 1, 7 or 30, default 7. The conversation whose jobs are listed is picked inside the brick | none | none |
 | `bridges` | none | `release {}` and `dismiss {}`, each after `/api/bridges/command` (`bridges.command`) took the review, and each asked first. A reply's words never reach the board. A connection, a channel rule and a person link are changed by asking the agent | none |
-| `household` | none | `revokeToken {}`, by `token.revoke`, and `revokeSession {}`, by `sessions.revoke`, each asked first; `setGrants {}`, by `program.setGrants`. A member, an agent's appearance and accounts and a restore are changed by asking the agent; making a token and changing a portrait stay on the desktop | none |
+| `household` | none | `revokeToken {}`, by `token.revoke`, and `revokeSession {}`, by `sessions.revoke`, each asked first; `setGrants {}`, by `program.setGrants`; `token {label, kind}`, after the sign-in door (`signin.token`: `POST /api/signin/token`, or `/api/signin/program` for an outside program) made one, `label` the token's label in the shape of a reference and `kind` `member`, `agent`, `machine` or `program`; never its value. A member, an agent's appearance and accounts and a restore are changed by asking the agent; changing a portrait stays on the desktop | none |
 | `sharing` | none | none: a project's sharing is changed by asking the agent | none |
 | `tickets` | `state`: `ready`, `in-progress`, `shelved` or `all`, default `ready` (what the desktop's Tasks opens on). No record reference, and no parameter holds words to search for | none: a ticket is acted on in its `ticket` brick | none |
 | `projects` | none: the words searched for are typed inside the brick and are no parameter | none | none |
@@ -736,7 +744,29 @@ calls through modules both sides import.
   browser once, in the body of `POST /api/secrets/set`, through the desktop's `submitSecret`
   (`pieces/settings/commands.ts`), which empties the field before the request is made. It is never in React
   state, never in a parameter or a detail, never sent to `boards.act`, and no reply's words are shown: a change is
-  "Saved." or "Change not confirmed". A value that was not confirmed is not kept and not sent again.
+  "Saved." or "Change not confirmed". A value that was not confirmed is not kept and not sent again. **What the
+  board is told** (the owner's ruling, 2026-11-27, reversing the earlier rule that a secret's name never reached a
+  board: "return the result of that to chat. so the agent knows oh ok we saved a new key in this-key-place but
+  never saw the key itself"): once loom acknowledged it, a value set is reported as `setValue` with the secret's
+  name and `added` or `replaced`, and a removal as `remove` with the name and `removed`, so the agent reads, for
+  instance, "used setValue on secrets() on board B: outcome=added, secret=PUMP_TOKEN." The detail's schema takes
+  those two fields and nothing else, so a description or a value sent in a field of its own is refused; the name
+  must be in the store's shape. What the schema cannot tell is a value typed INTO Name: a name-shaped string is told
+  as the name. So the form refuses, before anything is sent, a Name that has the shape of a credential, with "That
+  looks like a secret value, not a name.", and `boards.act` refuses the same names in this detail on the server, by
+  the same function (`looksLikeSecretValue`, `src/core/boards/value-shape.ts`, a module with no imports: a known
+  credential prefix in its real case followed by a random-looking body, or a long random run of letters and digits;
+  the rules exactly, and what still passes, are in docs/accepted-tradeoffs.md). A value of no such shape is
+  still told; that is an accepted trade-off (docs/accepted-tradeoffs.md, "A secret value typed as a secret's name or
+  a token's label reaches the agent's brief"). A stored secret whose name already has that shape can still be
+  replaced or removed here, and the board is not told of it. A change that is refused or not confirmed tells the board
+  nothing: the member reads "Change not confirmed" in the brick, as before, and a name the store would refuse is
+  not sent at all. `src/core/boards/bricks/secrets.test.ts` holds each detail to its two fields and follows a report through
+  `boards.act` into the stored rows, `boards.read` and the agent's brief, where no value or description sent in its
+  own field is found, refuses each credential shape there with nothing stored, and shows that a name-shaped value of
+  no known shape IS told; `web/src/boards/bricks-secrets.test.tsx` checks each outcome, that a refused or unconfirmed
+  change reports nothing, that a typed value reaches no report, flag, data-hook call or drawn prop, that a
+  credential-shaped Name sends nothing, and that a stored one is replaced and removed without a report.
   **Not on the brick:** changing the household default or a secret's standing rule. No member operation does
   either, on the desktop too: Settings drafts a message asking an agent to propose the change and the owner
   answers the proposal. The brick shows both and says to ask the agent in the conversation.
@@ -744,7 +774,7 @@ calls through modules both sides import.
 | `subscriptions` | yes: the search box and "Needs attention", an account opened for its usage windows, weekly usage by agent, trigger or conversation, sign-ins with "Sign in on this machine" where loom allows it, and settings; each agent's models in order; "Add a subscription". Small: each service and account in one line with its windows. Folded: the count, how many are almost full and how many sign-ins are needed | another sign-in is needed (the count of sign-ins needing attention goes up) |
 | `usage` | yes: up to 60 conversations with reported tokens, jobs, retries and peak context, and one picked conversation's jobs, each opened for its measurements. Small: the first six. Folded: tokens, jobs and conversations in the period | never |
 | `bridges` | yes: every waiting reply with its words, thread and state, with Release (a held one) and Dismiss; for a household owner each connection with its state, activity, filters and the names of its stored secrets, the channel rules and the person links. Small: the first four waiting replies and the connections. Folded: the counts | another reply is held (the count of held replies goes up) |
-| `household` | yes: members with their roles and agents, agents with their owners, description and accounts, removed agents; every token and signed-in browser by label and state, never a value, with revoke and sign out; each outside program's grants, which can be changed. Small: members and agents. Folded: the counts. Anyone who is not a household owner is told it is unavailable | never |
+| `household` | yes: members with their roles and agents, agents with their owners, description and accounts, removed agents; every token and signed-in browser by label and state, never a value, with revoke and sign out; Make a token, for a member, an agent, a machine or an outside program, whose value is then shown once; each outside program's grants, which can be changed. Small: members and agents. Folded: the counts. Anyone who is not a household owner is told it is unavailable | never |
 | `sharing` | yes: up to 60 projects, each with its goal, its members and agents as chips and its repositories as `repository` chips. Small: the first six with who is on them. Folded: the counts. Anyone who is not a household owner is told it is unavailable | never |
 | `tickets` | yes: thirty tickets at a time, each a chip that places its `ticket` brick, with its id, title, project, state and who has it; "Show 30 more", up to 300; chips for the other three states; the search box. Small: as many of the first thirty as fit, and how many more. Folded: the count | never |
 
@@ -1419,8 +1449,11 @@ A brick has one home on each side and is listed once on each side. Adding one to
 Nothing else lists the bricks. `src/core/boards/catalogue.test.ts` holds what must be true of every brick and names
 none: the catalogue and the registry hold the same names, each once; every brick has a rectangle for each form it
 has, and one that can be big has a primary one; every parameter that is not a reference has a default; no action's
-detail takes anything but a fixed choice; every action's operation is one loom registers (found by its registration
-in the source; three whose names are put together where they are registered are listed there); every brick has the
+detail takes anything but a fixed choice or the one id shape declared for that property of that brick's action
+(`detailIds` in the suite: today a token's label, a `ref`, in `household.token`, and a secret's name, `secretName`, in
+`secrets.setValue` and `secrets.remove`; none admits a blank, and a shape the kit has but no action declared is
+refused); every action's operation is one loom registers (found by its registration in the source; those whose names
+are put together where they are registered, and the sign-in door's two token routes, are listed there); every brick has the
 four files above, with a short commented list of older bricks whose page checks are in a shared suite; and both
 tables have its row. A suite that draws every brick makes each one's parameters from its own schema
 (`web/src/boards/samples.test.helper.ts`).
@@ -1434,8 +1467,11 @@ is not kept, so each try asks for the module again. The rest of the board stays 
 placement says "Sorry, this brick didn't load." with "Try again"; the page meanwhile looks for a newer build and
 takes it as "A restart" says, once nothing typed would be lost, and until then the placement says loom was updated
 and also offers "Reload now" (the kit's `Fetching` and `Lost`: a quiet line and the kit's own actions). The
-page's first script holds no brick and nothing only a brick needs. The bundle guard (`web/vite.boards.config.ts`)
-reads every chunk, the fetched ones too.
+page's first script holds no brick and nothing only a brick needs. The bundle guard (`web/boards-guard.ts`, run by
+`web/vite.boards.config.ts`) reads the whole module graph the build loaded, the fetched chunks too: a file under
+`web/src` must be the page's own or one the bricks share with the desktop, a file of the server's `src/` must be
+named in its `outside` list, and one marked plain there (`src/core/boards/value-shape.ts`) must import nothing;
+anything else, a `node:` module included, fails the build (`web/boards-guard.test.ts`).
 
 ### The design kit
 
@@ -1780,15 +1816,68 @@ answer a household owner and say "unavailable" to anyone else; `bridges` shows a
 bridges only the replies loom sends them; `machines` shows a member their own machines and an owner every one,
 and offers the alert lines' form to a household owner alone; `subscriptions` shows an account the member may not
 read in full as a label and a level. Each has `src/core/boards/bricks/<name>.test.ts` (its pins, what its
-parameters refuse, that no detail takes an id or a word) and `web/src/boards/bricks-<name>.test.tsx` (every form
+parameters refuse, that no detail takes an id or a word, apart from the household's `token` below) and `web/src/boards/bricks-<name>.test.tsx` (every form
 from fake data, the compact form one line with no control, the loading and unavailable lines, the heading, and
 every action: the request loom receives, that it is asked first where it cannot be undone, and that `act` is told
-nothing typed and no id). `admin-queries.test.ts` runs the two selections `machines` wrote for itself against the
-fields loom serves. Not on a board: enrolling or revoking a machine, making a token (its value is shown once) and
-changing an agent's portrait (two chosen files), which stay on the desktop; and whatever the desktop itself does by
+nothing typed and no id, apart from a new token's label). `admin-queries.test.ts` runs the two selections `machines` wrote for itself against the
+fields loom serves. Not on a board: enrolling or revoking a machine and changing an agent's portrait (two chosen
+files), which stay on the desktop; and whatever the desktop itself does by
 a message to the agent, which a brick says in one line. There is no `held-work` brick: the desktop's Held work view
 reads `core.effect` records over a `/live` socket and calls `core.releaseEffect`, and this server serves none of
 the three, so there is nothing to draw or release.
+
+**A token made from the board, 2026-11-27** (the owner's ruling for the secrets brick, in the same shape: the
+brick does the work through loom's existing door and the agent is told what now exists, never the secret). The
+household brick's Make a token is Household setup's Create token: the same door, `POST /api/signin/token` for a
+member's (`owner`), an agent's or a machine's (`runner`) token and `POST /api/signin/program` for an outside
+program's, with the same body, and the same reading of the answer
+(`src/core/signin/shared-links.ts`, `issueForOwner`). The door's rule is the permission: a current household owner,
+whose browser signed in within the last ten minutes and is not an automated one (`newProof`), on a same-origin
+request; there is no new server operation. The answer is read by its status before its body. A 4xx is a refusal,
+whatever its body. A 400 or a 409 made nothing. A 401 or a 403 nearly always made nothing, but the door checks the
+sign-in once more after it has written the token (`shared-links.ts`), so it can refuse a token it did make: the
+brick adds "If a token with this label is in the list now, loom made it before it refused: revoke it, because its
+value was never shown.", a notice already left for that request stays, and the board is not told (the page cannot
+know). The refusals are Household setup's words ("Sign in again to make a token…" for the door's
+fresh-sign-in refusal, "Token creation refused…" for any other). Only no reply, a 5xx, or a 2xx whose body is not
+a token leaves it unknown, and only then does the brick say "Token creation for “…” (kind) may have completed. Check
+its label in the token list and revoke it before trying again." Neither tells the board anything. **Once loom answers that it made
+it, the board is told `token {label, kind}`** whatever changed on the page meanwhile (the form gone, an owner
+change), by one `boards.act` call that is not tried again: if that call fails the agent is not told, as with any
+brick action; `boards.act` itself still refuses it, as any action, if the placement was removed or the board
+closed meanwhile. The label is told,
+so the brick takes one only in the shape of a reference (one word of up to 120 letters, digits and `: . _ / @ -`,
+starting with a letter or digit), narrower than the desktop's, and says so; the desktop still takes any one line.
+A label in the shape of a credential (a bearer pasted into Label) is refused before anything is sent, with "That
+looks like a secret value, not a name.", and refused again by `boards.act`, by the secrets brick's function (above;
+the same accepted trade-off).
+**When the form cannot say it.** What the member must be told of a token whose fate the form could not follow is
+kept outside every brick's body, in memory for the page's life and never in storage, by label and kind and never a
+value (`web/src/boards/token-notices.ts`), and every household brick drawn afterwards, in any form, shows it with
+Dismiss. The form lets go of a request when its body goes away while loom is asked (the brick drawn small or
+compact, folded, removed, another board shown, the setup no longer answered) or loom reports another signed-in
+owner: the notice says it may have been made, and loom's late answer settles it: a refusal ends it, a token made
+turns it into "Token “…” (kind) was made after its form went away, so its value cannot be shown. Revoke it if you did
+not save it, and make another.", and no reply or a 5xx leaves it. A notice that it may have been made also ends when
+the token list holds a new token of that label; one that it was made ends only when dismissed. A reload forgets them.
+**The value** is held in one component's state inside the big form and drawn once, under "Save this token now", with
+Copy (the clipboard) and Hide. It is forgotten when the member hides it, when the body is drawn anew (the brick is
+placed again or the board redrawn), when the brick leaves its big form, when the household setup stops answering
+for the member, when loom reports a signed-in owner (`programSetup.owner`) other than the one it reported when the
+token was asked for, as on the desktop, and when the page reloads. A moment with no program setup answer is not an
+owner change; and if there was none when the token was asked for, this does not apply, but the page's own sign-in
+check reloads the page when the signed-in member changes (`web/src/signin/use-session.ts`). A fresh answer of the
+same setup keeps it, so the member can still copy
+it after the token list grows by one. It never reaches `act`, a flag, the data hook (so no remembered answer), a
+log, the address or the browser's storage. `src/core/boards/bricks/household.test.ts` (over `src/core/boards/house.fixture.ts`, a real household) holds the detail to those two
+fields and follows a report through `boards.act` into the stored rows, `boards.read` and the agent's brief;
+`web/src/boards/bricks-household-token.test.tsx` checks the requests per kind, shown once, Copy (and its words
+with no clipboard), each way it is forgotten (an owner change too, and not a gap in the program setup's answer),
+each status read (every 4xx refused, a proxy's non-JSON 403 too; no reply, 5xx and an unreadable 2xx unknown), a
+label the board could not be told, a credential-shaped label (the fixture list), and the form going away in flight
+with each late answer; `web/src/boards/page.test.tsx` draws the real page and checks the notice outlives the body
+folded, removed and behind another board, and that a token made is told to the board; the clipboard is written only
+on Copy.
 
 A session's steps have their own suites, outside the numbered checks: `src/shared-session-trace.test.ts` (kept,
 sealed, read by the thread's member alone and not by a full owner, absent from the thread, the relay unchanged; a
@@ -1939,7 +2028,8 @@ given an area. What they pin:
 
 In `bricks-account.test.tsx`, `bricks-appearance.test.tsx` and `bricks-secrets.test.tsx`, with
 `src/core/boards/bricks/account.test.ts`, `appearance.test.ts` and `secrets.test.ts`: the three bricks of the
-member's own settings. Each definition takes no parameter and no detail. `account`: every form from Account's
+member's own settings. Each definition takes no parameter, and no detail except the secrets brick's `setValue` and
+`remove`, which take the secret's name and outcome (above). `account`: every form from Account's
 selection, the small forms without a control, loading and unavailable; each removal sends nothing until the
 question is answered and then calls its operation with the reference and reports an empty detail; a browser signed
 out that was this one reloads and reports nothing; the device that is this one is marked and turning it on asks
@@ -1953,7 +2043,10 @@ media queries. `secrets`: every form from Settings' selection, the unavailable l
 not an owner, each command's input, removal after asking, an unacknowledged change showing nothing of the reply,
 the flag on a new request, and a value: the field's attributes, no value or handler of React's on it, the field
 emptied before the request, one request to `/api/secrets/set`, and the value absent from what is drawn, from what
-the board is told, from the data hook's calls and from the console. Not run: a real authenticator, a real push
+the board is told, from the data hook's calls and from the console; once acknowledged, a value set or a removal
+reported with the secret's name and `added`, `replaced` or `removed`, and nothing for a refused or unconfirmed
+change; a Name in the shape of a credential refused before anything is sent, and the same names refused by
+`boards.act` with nothing stored (`secrets.test.ts`). Not run: a real authenticator, a real push
 service, and the sign-in door itself, which are the server's suites.
 
 **No suite:** what needs a browser or a server under the page: 2 (the same DOM nodes), 7 (a second member), 15 (both

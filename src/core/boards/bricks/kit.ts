@@ -1,6 +1,7 @@
 /** What every brick's definition is made from: the shape of a brick, the kinds of record it may name and the
  * shapes of their references. One definition per brick sits beside this file; ../bricks.ts lists them. */
 import { z } from 'zod';
+import { SECRET_VALUE_WORDS, looksLikeSecretValue } from '../value-shape.js';
 
 /** Record references are checked for shape only. Whether the record exists, and whether the member looking
  * may read it, is decided by the read that draws the brick. The shape is an id's: ASCII letters, digits and
@@ -12,6 +13,13 @@ export const person = z.string().regex(/^(member|contact):[a-z0-9][a-z0-9._-]{0,
 /** A change's id as loom writes it (src/apps/changes.ts): `github:`, the repository as owner/repo in lower case,
  * `#` and the pull request's number. `#` is in no other reference. */
 export const change = z.string().max(120).regex(/^github:[a-z0-9._-]+\/[a-z0-9._-]+#[1-9]\d*$/);
+/** A secret's name as the secrets store takes it (`secretName`, src/pieces/secrets/input.ts): an action's detail
+ * may name the secret it changed, never its value or description. */
+export const secretName = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/);
+/** A name a member typed that the board is told, refused when it has the shape of a pasted secret value
+ * (../value-shape.ts). The page refuses it first with the same function and the same words. Nothing longer than
+ * the longest name shape (120) is looked at: its shape already refused it, and the look is not linear. */
+export const typedName = (shape: z.ZodString) => shape.refine((name) => name.length > 120 || !looksLikeSecretValue(name), { message: SECRET_VALUE_WORDS });
 
 export const recordKinds = [
   'project', 'ticket', 'change', 'repository', 'person', 'agent', 'inbox item', 'approval', 'session',

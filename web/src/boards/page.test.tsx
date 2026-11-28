@@ -70,7 +70,8 @@ vi.mock('../data/graphql', async () => {
   return {
     useDataQuery(query: string, _variables: unknown, options?: { pause?: boolean }) {
       useSyncExternalStore((fn) => { f.listeners.add(fn); return () => { f.listeners.delete(fn); }; }, () => f.version);
-      const name = /query (\w+)/.exec(query)![1], paused = !!options?.pause;
+      // An unnamed selection (`{ householdSetup … }`) is answered by its first field's name.
+      const name = (/query (\w+)/.exec(query) ?? /\{\s*(\w+)/.exec(query))![1], paused = !!options?.pause;
       // A hook that is mounted and not paused holds its selection open.
       useEffect(() => { if (paused) return; f.open.set(name, (f.open.get(name) ?? 0) + 1); return () => { f.open.set(name, f.open.get(name)! - 1); }; }, [name, paused]);
       if (options?.pause) return { status: 'loading' };
@@ -82,6 +83,7 @@ vi.mock('../data/graphql', async () => {
 import { Page, brickRetryMs } from './main';
 import { bricks, loadBricks } from './bricks';
 import { samples } from './samples.test.helper';
+import { forgetTokenNotices } from './token-notices';
 
 // A brick's body is fetched when it is first drawn (./bricks.tsx). Here they are all fetched first, so each draws at once.
 await loadBricks();
@@ -830,5 +832,102 @@ describe('now', () => {
     await act(async () => tree?.unmount());
     await draw([board('b-1', [ticket()], { closed: true })], { path: '/app/b/b-1' });
     expect(tree!.root.findAll((n) => n.props.className === 'board-refresh')).toEqual([]);
+  });
+});
+
+describe('a token asked for from the household brick, when its body goes away while loom is asked', () => {
+  const setup = {
+    defaultAgent: 'art', members: [{ id: 'sam', role: 'owner', fullOwner: true, agents: [] }],
+    agents: [{ id: 'art', spriteVersion: null, about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot', github: [], removedAt: null }],
+    tokens: [], sessions: [],
+  };
+  const BEARER = 'loom_' + 'Q7'.repeat(21) + 'x';
+  let answer!: (reply: { status: number; body?: unknown } | 'no reply') => void;
+  beforeEach(() => {
+    forgetTokenNotices();
+    f.answers.householdSetup = { status: 'live', data: { householdSetup: setup, boxes: [] } };
+    f.answers.programSetup = { status: 'live', data: { programSetup: { owner: 'sam', catalogue: { records: [], operations: [] }, tokens: [] } } };
+    f.door.mockReset().mockImplementation((url: string) => {
+      if (url !== '/api/signin/token') return Promise.reject(new Error('not asked here: ' + url));
+      return new Promise((resolve, reject) => { answer = (reply) => (reply === 'no reply' ? reject(new TypeError('Failed to fetch')) : resolve({ ok: reply.status < 300, status: reply.status, json: async () => reply.body })); });
+    });
+  });
+  const household = (over?: Partial<Made>) => placed('household', {}, over);
+  /** loom's live answer of the setup now lists a token of this label. */
+  const listed = (label: string) => feed({ answers: { ...f.answers, householdSetup: { status: 'live', data: { householdSetup: { ...setup, tokens: [{ fingerprint: 'f1', label, kind: 'owner', expired: false, identity: 'sam', createdAt: '2026-11-28T00:00:00Z', expiresAt: null, revokedAt: null, lastUsedAt: null }] }, boxes: [] } } } });
+  const words = () => text(tree!.root);
+  const tokenReports = () => called('boards.act').filter((input) => input.action === 'token');
+  async function ask(label: string) {
+    const form = () => tree!.root.findAll((n) => n.type === 'form' && n.props['aria-label'] === 'Make a token')[0];
+    await act(async () => tree!.root.findAll((n) => n.type === 'button' && text(n) === 'Make a token…')[0].props.onClick());
+    await act(async () => form().findAll((n) => n.type === 'input' && n.props['aria-label'] === 'Token label')[0].props.onChange({ target: { value: label } }));
+    await act(async () => { form().props.onSubmit({ preventDefault() {} }); });
+    expect(f.door).toHaveBeenCalledTimes(1);
+  }
+  const reply = (r: Parameters<typeof answer>[0]) => act(async () => { answer(r); await new Promise((done) => setTimeout(done, 0)); });
+  const MAYBE = 'Token creation for “pump-laptop” (Household member) may have completed.';
+  const MADE = 'Token “pump-laptop” (Household member) was made after its form went away, so its value cannot be shown.';
+
+  it('folded: the household brick drawn again says it may have been made; loom makes it, the board is told and the brick says its value is lost', async () => {
+    const mine = household({ big: true }), other = ticket();
+    await one([mine, other], {}, { area: { w: 500, h: 700 } });
+    await ask('pump-laptop');
+    // The agent makes the ticket the big one: on this narrow board the household brick folds, and its body is gone.
+    await feed({ boards: [board('b-1', [{ ...mine, big: false }, { ...other, big: true }])] });
+    expect(chips().map(text)).toContain('Household');
+    expect(words()).not.toContain('Make a token');
+    await feed({ boards: [board('b-1', [{ ...mine, big: true }, other])] });
+    expect(words()).toContain(MAYBE);
+    await reply({ status: 200, body: { ok: true, value: { token: BEARER } } });
+    expect(tokenReports()).toEqual([{ board: 'b-1', placement: mine.id, action: 'token', detail: { label: 'pump-laptop', kind: 'member' } }]);
+    expect(words()).toContain(MADE);
+    expect(words()).not.toContain('may have completed');
+    expect(JSON.stringify((tree as unknown as { toJSON(): unknown }).toJSON())).not.toContain(BEARER);
+    // It is the member's to dismiss; the token appearing in the list does not end it, since its value is still lost.
+    await listed('pump-laptop');
+    expect(words()).toContain(MADE);
+    await act(async () => tree!.root.findAll((n) => n.type === 'button' && n.props['aria-label'] === 'Dismiss the notice for pump-laptop')[0].props.onClick());
+    expect(words()).not.toContain('pump-laptop” (Household');
+  });
+
+  it('removed: a household brick placed again shows it, and keeps saying it while loom gives no answer that settles it', async () => {
+    const mine = household({ big: true }), other = ticket();
+    await one([mine, other]);
+    await ask('pump-laptop');
+    await feed({ boards: [board('b-1', [{ ...other, big: true }])] });
+    expect(words()).not.toContain('Household');
+    await reply({ status: 503, body: '<html>busy</html>' });
+    const again = household();
+    await feed({ boards: [board('b-1', [{ ...other, big: true }, again])] });
+    expect(articles().map((a) => a.props['data-form'])).toEqual(['primary', 'side']);
+    expect(words()).toContain(MAYBE);
+    expect(tokenReports()).toEqual([]);
+    // Seen in the token list: it was made after all, and the notice ends.
+    await listed('pump-laptop');
+    expect(words()).not.toContain(MAYBE);
+  });
+
+  it('another board shown: its household brick shows it at once, and a late refusal ends it', async () => {
+    const mine = household({ big: true });
+    await draw([board('b-1', [mine, ticket()])]);
+    await ask('pump-laptop');
+    // A new board joins the trail and is the one shown; the first board's bodies are not drawn.
+    await feed({ boards: [board('b-1', [mine, ticket()]), board('b-2', [lanes({ big: true }), household()])] });
+    expect(tree!.root.findAll((n) => n.type === 'section' && n.props['data-live'] === true).map((n) => n.props['aria-label'])).toEqual(['Lanes']);
+    expect(words()).toContain(MAYBE);
+    await reply({ status: 409, body: { error: 'A live token already has that label' } });
+    expect(words()).not.toContain('may have completed');
+    expect(tokenReports()).toEqual([]);
+  });
+
+  it('another board shown and no reply at all: it may have been made, and the board is told nothing', async () => {
+    const mine = household({ big: true });
+    await draw([board('b-1', [mine, ticket()])]);
+    await ask('pump-laptop');
+    await feed({ boards: [board('b-1', [mine, ticket()]), board('b-2', [lanes({ big: true })])] });
+    await reply('no reply');
+    await feed({ boards: [board('b-1', [mine, ticket()]), board('b-2', [lanes({ big: true }), household()])] });
+    expect(words()).toContain(MAYBE);
+    expect(tokenReports()).toEqual([]);
   });
 });
