@@ -59,7 +59,7 @@ it('lists members and agents as Household setup does, each member a person chip 
   await draw('primary');
   // Who is in the household leads; how they get in is the quiet line under it.
   for (const words of ['2 members · 2 agents', '1 active token · 1 signed-in browser', 'Household owner', 'Owns every agent, present and future', 'Member', 'Default agent: art', 'No assigned owner', 'Owned by lee',
-    'About art · GitHub accounts: art-bot · Animated portrait', 'About bea · GitHub accounts: none · Generated face', 'Removed: gone', 'ask the agent in the conversation', 'A new token is made on the desktop']) expect(shown(), words).toContain(words);
+    'About art · GitHub accounts: art-bot · Animated portrait', 'About bea · GitHub accounts: none · Generated face', 'Removed: gone', 'ask the agent in the conversation', 'Make a token…']) expect(shown(), words).toContain(words);
   expect(placed()).toEqual([{ brick: 'person', params: { person: 'member:sam' } }, { brick: 'person', params: { person: 'member:lee' } }, { brick: 'agent', params: { agent: 'bea' } },
     { brick: 'agent', params: { agent: 'art' } }, { brick: 'agent', params: { agent: 'bea' } }]);
 });

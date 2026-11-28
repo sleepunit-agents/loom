@@ -28,6 +28,9 @@ const composedOperations: Record<string, [file: string, written: string]> = {
   'mind.knowledgeVerify': ['src/pieces/mind/actions.ts', "['knowledgeVerify',"],
   'mind.knowledgeRecheck': ['src/pieces/mind/actions.ts', "['knowledgeRecheck',"],
   'mind.knowledgeAnnotate': ['src/pieces/mind/actions.ts', "['mind.knowledgeAnnotate',"],
+  // Not an operation: the sign-in door's HTTP route that makes a token and hands its bearer back once (a member's,
+  // an agent's or a machine's at /api/signin/token, an outside program's at /api/signin/program), for a household owner.
+  'signin.token': ['src/core/signin/shared-links.ts', "routes.post('/api/signin/token',c=>issueForOwner("],
   'tempo.runNow': ['src/core/tempo/operations.ts', "for (const action of ['stop', 'start', 'runNow'] as const) operations.register(operation({ ...common,\n    name: `tempo.${action}`"],
   'tempo.stop': ['src/core/tempo/operations.ts', "for (const action of ['stop', 'start', 'runNow'] as const) operations.register(operation({ ...common,\n    name: `tempo.${action}`"],
   'tempo.start': ['src/core/tempo/operations.ts', "for (const action of ['stop', 'start', 'runNow'] as const) operations.register(operation({ ...common,\n    name: `tempo.${action}`"],
