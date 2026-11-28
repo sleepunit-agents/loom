@@ -4,14 +4,16 @@
 export interface SetupMember{id:string;role:'owner'|'member';fullOwner:boolean;agents:string[]}
 /** `removedAt`: set on an agent taken out of use. It keeps its row and its owner link, so it can be restored. */
 export interface SetupAgent{id:string;spriteVersion:string|null;about:string;markBg:string;markFg:string;faceShape:string;faceEyes:string;github:string[];removedAt?:string|null}
-export interface SetupToken{fingerprint:string;label:string;kind:string;expired:boolean;identity:string;createdAt:string;expiresAt:string|null;revokedAt:string|null;lastUsedAt:string|null}
+export interface SetupToken{fingerprint:string;label:string;kind:string;expired:boolean;identity:string;createdAt:string;expiresAt:string|null;revokedAt:string|null;lastUsedAt:string|null;
+ /** Bound to one job: a body's own token. Its `state` says whether sign-in still takes it (src/core/data/household-read.ts). */
+ forJob?:boolean;state?:'active'|'revoked'|'expired'|'ended with its job'}
 export interface SetupSession{ref:string;device:string;member:string|null;tokenLabel:string|null;isAgent:boolean;ended:boolean;issuedAt:string;seenAt:string}
 export interface HouseholdSetup{defaultAgent:string|null;members:SetupMember[];agents:SetupAgent[];tokens:SetupToken[];sessions:SetupSession[]}
 export function agentOwnership(members: SetupMember[], agent: string) {
  const owners = members.filter(member => member.agents.includes(agent)).map(member => member.id);
  return owners.length ? 'Owned by ' + owners.join(', ') : 'No assigned owner';
 }
-export const householdSetupQuery=`{ householdSetup { defaultAgent members { id role fullOwner agents } agents { id about markBg markFg faceShape faceEyes github removedAt spriteVersion } tokens { fingerprint label kind expired identity createdAt expiresAt revokedAt lastUsedAt } sessions { ref device member tokenLabel isAgent ended issuedAt seenAt } } boxes { id name revokedAt } boxAlertSettings(limit:1) { diskPercent diskUrgentPercent diskFreeMib memoryFreeMib } }`;
+export const householdSetupQuery=`{ householdSetup { defaultAgent members { id role fullOwner agents } agents { id about markBg markFg faceShape faceEyes github removedAt spriteVersion } tokens { fingerprint label kind expired identity createdAt expiresAt revokedAt lastUsedAt forJob state } sessions { ref device member tokenLabel isAgent ended issuedAt seenAt } } boxes { id name revokedAt } boxAlertSettings(limit:1) { diskPercent diskUrgentPercent diskFreeMib memoryFreeMib } }`;
 export const tokenState=(token:SetupToken)=>token.revokedAt?'Revoked':token.expired?'Expired':'Active';
 export const sessionLine=(session:SetupSession)=>`${session.member} · ${session.tokenLabel} · ${session.isAgent?'Agent browser':'Browser'} · ${session.ended?'Ended':'Active'}`;
 /** What a change says when it ends. Revoking a token or a browser can end the member's own sign-in. */

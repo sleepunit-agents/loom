@@ -306,6 +306,12 @@ const householdAnswer = (setupRow: object | null, programs: object | null = prog
 });
 const manyTokens = { ...householdSetup, tokens: [...householdSetup.tokens, ...Array.from({ length: 45 }, (_, i) => token(`fp-old-${i}`, `ci-runner-${String(i + 1).padStart(2, '0')}`, 'worker', 'box-ci',
   i % 3 ? { revokedAt: ago(60 * 24 * (50 + i)), lastUsedAt: null } : { expired: true, expiresAt: ago(60 * 24 * (20 + i)) }))] };
+// A household whose agents have run many jobs (t-2428): each body's token is bound to its job, and a job's ended
+// token cannot sign in. They are apart from the household's others, in one fold.
+const jobToken = (n: number, running: boolean) => token(`fp-job-${n}`, `Job body [job-${(0x2f81c0 + n).toString(16)}]`, 'agent', n % 2 ? 'fern' : 'moss',
+  { forJob: true, state: running ? 'active' : 'ended with its job', lastUsedAt: ago(running ? 2 : 60 * (n + 3)) });
+const jobTokens = { ...householdSetup, tokens: [...householdSetup.tokens.map((row) => ({ ...row, forJob: false, state: row.revokedAt ? 'revoked' : row.expired ? 'expired' : 'active' })),
+  ...Array.from({ length: 40 }, (_, i) => jobToken(i, i < 2))] };
 const household: Scene[] = [
   { name: 'default', params: {}, data: { '': householdAnswer(householdSetup) } },
   { name: 'small', params: {}, data: { '': householdAnswer({ defaultAgent: null, members: [householdSetup.members[0]], agents: [householdSetup.agents[0]], tokens: [], sessions: [] }, { ...programSetup, tokens: [] }) } },
@@ -350,6 +356,8 @@ export const scenes: BrickScenes[] = [
     // A household that has made many tokens (t-2428): the live ones first, the rest folded, opened thirty at a time.
     { ...household[0], name: 'many-tokens-folded', only: ['primary'], data: { '': householdAnswer(manyTokens) }, press: ['Revoked or expired · 47'] },
     { ...household[0], name: 'tokens-searched', only: ['primary'], press: [{ field: 'Search tokens', text: 'alex' }, 'Search', 'Revoked or expired · 1'] },
-    { ...household[0], name: 'portrait-opened', only: ['primary'], press: ['Portrait'] }] },
+    { ...household[0], name: 'portrait-opened', only: ['primary'], press: ['Portrait'] },
+    { ...household[0], name: 'job-tokens', data: { '': householdAnswer(jobTokens) } },
+    { ...household[0], name: 'job-tokens-opened', only: ['primary'], data: { '': householdAnswer(jobTokens) }, press: ['Job tokens · 2 running · 38 ended'] }] },
   { brick: 'sharing', scenes: sharing },
 ];

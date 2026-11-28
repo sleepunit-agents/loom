@@ -175,3 +175,97 @@ it('puts Make a token at the top of the tokens, above the search and the list, e
   expect(shown()).toContain('No tokens');
   expect(shown().indexOf('Make a token…')).toBeLessThan(shown().indexOf('No tokens'));
 });
+
+/** A body's token, bound to one job: loom's setup read says whether its job still holds it (household-read.ts). */
+const body = (n: number, state: 'active' | 'ended with its job' | 'revoked' = 'ended with its job', over: object = {}) =>
+  token(1000 + n, { label: `job-${state === 'active' ? 'run' : 'end'}-${n}`, kind: 'agent', identity: 'art', forJob: true, state, ...(state === 'revoked' ? { revokedAt: at } : {}), ...over });
+
+it('keeps job tokens out of the household\'s tokens, in one fold counting the running and the ended, and counts only tokens that can sign in', async () => {
+  setup = { ...base, sessions: [],
+    tokens: [token(1, { state: 'active', forJob: false }), body(1), body(1, 'active'), token(2, { revokedAt: at, state: 'revoked' }), body(2), body(3, 'revoked'), body(2, 'active')] };
+  await draw();
+  // The household's own tokens, as before; no job token among them, live or folded.
+  expect(titles('Live tokens')).toEqual(['tok-1']);
+  expect(shown()).toContain('Tokens1 live');
+  await press('Revoked or expired · 1');
+  expect(titles('Revoked or expired tokens')).toEqual(['tok-2']);
+  // The headline counts what can still sign in: tok-1 and the two running jobs' tokens, never an ended one.
+  expect(shown()).toContain('3 active tokens');
+  expect(shown()).not.toMatch(/job-/);
+  expect(button('Job tokens · 2 running · 3 ended')!.props['aria-expanded']).toBe(false);
+  await press('Job tokens · 2 running · 3 ended');
+  // Running first, then ended, each by its own state.
+  expect(titles('Job tokens')).toEqual(['job-run-1', 'job-run-2', 'job-end-1', 'job-end-2', 'job-end-3']);
+  expect(shown()).toContain('Ended with its job');
+  // A running job's token keeps Revoke, asked first; an ended one (by its job or revoked) has none.
+  for (const n of [1, 2]) expect(button(`Revoke token job-run-${n}`), `run-${n}`).toBeDefined();
+  for (const n of [1, 2, 3]) expect(button(`Revoke token job-end-${n}`), `end-${n}`).toBeUndefined();
+  expect(button('Revoke token tok-1')).toBeDefined();
+  await press('Revoke token job-run-1');
+  expect(shown()).toContain('Revoke this token? Whatever uses it stops working, and it cannot be restored.');
+  for (const spy of [fetched, reported]) expect(spy).not.toHaveBeenCalled();
+});
+
+it('says an ended job\'s token is ended in the compact form\'s count too', async () => {
+  setup = { ...base, sessions: [], tokens: [token(1), ...Array.from({ length: 5 }, (_, i) => body(i + 1))] };
+  await act(async () => { tree = create(h(brickView('household').Body, { params: {}, form: 'compact', act: reported, raise: raised })); });
+  expect(shown()).toContain('1 active token');
+});
+
+it('opens the job tokens thirty at a time, with Show 30 more until every one is drawn', async () => {
+  setup = { ...base, sessions: [], tokens: [body(0, 'active'), ...Array.from({ length: 70 }, (_, i) => body(i + 1))] };
+  await draw();
+  await press('Job tokens · 1 running · 70 ended');
+  expect(titles('Job tokens')).toHaveLength(30);
+  expect(titles('Job tokens')[0]).toBe('job-run-0');
+  await press('Show 30 more job tokens');
+  expect(titles('Job tokens')).toHaveLength(60);
+  await press('Show 30 more job tokens');
+  expect(titles('Job tokens')).toHaveLength(71);
+  expect(button('Show 30 more job tokens')).toBeUndefined();
+  expect(shown()).toContain('No live tokens');
+});
+
+it('draws the live tokens and browsers thirty at a time, with Show 30 more', async () => {
+  setup = { ...base, tokens: Array.from({ length: 65 }, (_, i) => token(i + 1)), sessions: Array.from({ length: 35 }, (_, i) => browser(i + 1)) };
+  await draw();
+  expect(shown()).toContain('Tokens65 live');
+  expect(titles('Live tokens')).toEqual(Array.from({ length: 30 }, (_, i) => `tok-${i + 1}`));
+  expect(titles('Live browsers')).toHaveLength(30);
+  await press('Show 30 more live tokens');
+  expect(titles('Live tokens')).toHaveLength(60);
+  await press('Show 30 more live tokens');
+  expect(titles('Live tokens')).toHaveLength(65);
+  expect(button('Show 30 more live tokens')).toBeUndefined();
+  await press('Show 30 more live browsers');
+  expect(titles('Live browsers')).toHaveLength(35);
+  expect(button('Show 30 more live browsers')).toBeUndefined();
+  // A search starts each list at thirty again.
+  await search('Search tokens', 'tok');
+  expect(titles('Live tokens')).toHaveLength(30);
+  for (const spy of [fetched, reported, moved, stored]) expect(spy).not.toHaveBeenCalled();
+});
+
+it('searches the job tokens too, over what loom sent, with the fold\'s counts following', async () => {
+  setup = { ...base, sessions: [], tokens: [token(1, { label: 'pump-laptop' }), body(1, 'active', { label: 'build-pump' }), body(2, 'ended with its job', { label: 'build-shed' }), body(3, 'ended with its job', { label: 'review-pump' })] };
+  await draw();
+  const calls = feed.mock.calls.length;
+  await search('Search tokens', 'pump');
+  expect(titles('Live tokens')).toEqual(['pump-laptop']);
+  await press('Job tokens · 1 running · 1 ended');
+  expect(titles('Job tokens')).toEqual(['build-pump', 'review-pump']);
+  await search('Search tokens', 'shed');
+  expect(button('Job tokens · 0 running · 1 ended')).toBeDefined();
+  expect(shown()).toContain('No live token matches.');
+  await search('Search tokens', 'laptop');
+  expect(shown()).not.toContain('Job tokens');
+  expect(feed.mock.calls.slice(calls).every(([, variables]) => variables === undefined)).toBe(true);
+  for (const spy of [fetched, reported, raised, moved, stored]) expect(spy).not.toHaveBeenCalled();
+});
+
+it('leaves the list as it was when loom does not say which tokens are bound to jobs', async () => {
+  setup = { ...base, sessions: [], tokens: [token(1), token(2, { revokedAt: at })] };
+  await draw();
+  expect(titles('Live tokens')).toEqual(['tok-1']);
+  expect(shown()).not.toContain('Job tokens');
+});

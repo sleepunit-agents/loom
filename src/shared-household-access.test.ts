@@ -6,7 +6,7 @@ import {GraphQLString} from 'graphql/index.js';
 import {afterEach,expect,it} from 'vitest';
 import {FakeClock} from './core/clock.js';
 import {createDataSchema} from './core/data/database.js';
-import {members,agents,memberAgents,tokens,sessions,agentAccounts,changes} from './core/data/schema.js';
+import {members,agents,memberAgents,tokens,sessions,agentAccounts,changes,boxes,jobs} from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const visual={about:'Fictional agent',markBg:'#000000',markFg:'#ffffff',faceShape:'pebble' as const,faceEyes:'dot' as const};
@@ -73,7 +73,17 @@ it('bounds the actual setup query at two and ten members/agents while preserving
  }
  f.statements.length=0;const large=await(await f.read()).json();expect(large.errors).toBeUndefined();const result=large.data.householdSetup;
  expect(result.members).toHaveLength(10);expect(result.agents).toHaveLength(10);expect(result.members.find((row:{id:string})=>row.id==='fixture-9').agents).toEqual(['fixture-9']);expect(result.agents.find((row:{id:string})=>row.id==='fixture-9').github).toEqual(['login-9']);
- expect(f.statements.length).toBe(count);expect(count).toBe(6); // the sixth reads the backup keys; still the same at two rows and at ten
+ expect(f.statements.length).toBe(count);expect(count).toBe(7); // the sixth reads the backup keys, the seventh the jobs of job-bound tokens; still the same at two rows and at ten
+ // And at forty body tokens, each bound to a job of its own, half of them ended: one join, never a read per token.
+ f.db.insert(boxes).values({id:'box-1',name:'box-1',owner:'owner',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:f.at}).run();
+ for(let n=0;n<40;n++){
+  f.db.insert(jobs).values({id:'job-'+n,agent:'art',box:'box-1',title:'job',state:n%2?'running':'done',brief:'',model:'fixture',startedByKind:'agent',startedBy:'art',houseRepository:'fixture',houseFile:'HOUSE.md',houseBranch:'next',queuedAt:f.at}).run();
+  f.db.insert(tokens).values({fingerprint:createHash('sha256').update('job-'+n).digest('hex'),kind:'agent',agent:'art',job:'job-'+n,label:'Job body [job-'+n+']',createdAt:f.at}).run();
+ }
+ f.statements.length=0;const bodies=await(await f.read('{ householdSetup { tokens { label forJob state } } }')).json();expect(bodies.errors).toBeUndefined();
+ const listed=bodies.data.householdSetup.tokens.filter((row:{forJob:boolean})=>row.forJob);
+ expect(listed).toHaveLength(40);expect(listed.filter((row:{state:string})=>row.state==='ended with its job')).toHaveLength(20);expect(listed.filter((row:{state:string})=>row.state==='active')).toHaveLength(20);
+ expect(f.statements.length).toBe(count);
 });
 
 it('keeps browser validity tied to the exact current token expiry and revocation',async()=>{
