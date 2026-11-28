@@ -155,7 +155,7 @@ it('reads its reviews, loom\'s and GitHub\'s, only when the member opens them, o
   expect(onceAsked('BrickTicketGithubReviews').at(-1)).toEqual({ task: 't-7', at: null, id: null });
   expect(liveAsked('BrickTicketRounds')).toEqual([]);
   expect(liveAsked('BrickTicketGithubReviews')).toEqual([]);
-  for (const shown of ['Review 1 · #12 · cccccccc', 'changes requested', 'The hinge pin is missing.', 'fern', 'approved', 'Review body 1.']) expect(b.all(), shown).toContain(shown);
+  for (const shown of ['Round 1 · #12 · cccccccc', 'Blocking', 'The hinge pin is missing.', 'fern', 'approved', 'Review body 1.']) expect(b.all(), shown).toContain(shown);
   expect(b.root().findAllByType('a').map((a) => [a.props.href, a.props.target, b.said(a)])).toEqual([[github(1).url, '_blank', 'Open on GitHub']]);
   await b.press('Reviews');
   expect(b.all()).not.toContain('The hinge pin is missing.');

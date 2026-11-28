@@ -531,6 +531,22 @@ house: it must build from what the repository holds and what the engine can pull
 The worker passes one build argument to a build, `LOOM_CORE`, and no secret,
 host path or socket.
 
+**How an agent changes its own house.** It commits the change (a package in its
+Housefile, a file in its repository) to the branch its run settings name and
+pushes; nothing else is needed. A job keeps the repository, Housefile and branch
+recorded when it was queued, but not a commit: the worker reads the branch's
+head when it fetches for the job, at the job's build stage, after it has claimed
+it. So the push reaches the next job the worker builds from that branch, a job
+already queued included, and the first such job builds the new image (that
+build's time is the job's). A job already running is not touched: its container
+runs the image it was started from, and nothing rebuilds under it; to work with
+the new house now, the agent installs what it needs in its running house for
+this job as well. Changing which repository, Housefile or branch is the house
+is a run-settings change ("Agent house settings"), not a push. Which commit a
+job ran in: the body sees it as `LOOM_HOUSE_COMMIT` (below, "What a house image must say"),
+and loom keeps the image the worker reported, which ends in `:<commit>-<the
+core's tag>`, as the job's `build` when it starts running.
+
 The build context is written by the worker itself, from the commit's tree. git
 is used as a store of objects and nothing else: the worker asks it for the list
 of the commit's files and for each file's bytes, and writes the tar stream that

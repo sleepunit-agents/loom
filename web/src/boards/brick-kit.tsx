@@ -70,12 +70,19 @@ export function More({ n, words = 'more' }: { n: number; words?: string }) {
 export function Few<T>({ of, first, fit = true, most = 12, least = 1, children }: { of: readonly T[]; first: number; least?: number; /** False where the form may scroll (the primary): `first` are drawn and nothing is measured. */ fit?: boolean; most?: number; children(shown: readonly T[], hidden: number): ReactNode }) {
   const frame = useContext(Frame), body = fit ? frame.body : undefined;
   const top = Math.min(of.length, most);
-  const [shown, setShown] = useState(Math.min(of.length, first)), measured = useRef(''), [, again] = useState(0);
+  const [shown, setShown] = useState(Math.min(of.length, first)), measured = useRef(''), before = useRef(''), [, again] = useState(0);
   useLayoutEffect(() => {
     const el = body?.current;
     if (!el || !el.clientHeight) return;
     const room = `${of.length}:${el.clientWidth}:${el.clientHeight}`;
-    if (measured.current !== room) { measured.current = room; if (shown !== top) return setShown(top); }
+    if (measured.current !== room) {
+      // A frame whose own height follows what is drawn in it would be measured for ever (room A, then B, then A
+      // again: React ends that as "Maximum update depth exceeded" and the brick is lost). A room seen the time
+      // before last is not measured afresh: the count it settled on stands.
+      const back = before.current === room;
+      before.current = measured.current; measured.current = room;
+      if (!back && shown !== top) return setShown(top);
+    }
     if (shown > least && el.scrollHeight > el.clientHeight + 1) setShown(shown - 1);
   });
   useEffect(() => {
@@ -221,7 +228,7 @@ export function AskRow({ title, meta, end, asks, children }: { title: ReactNode;
 
 /** A brick's body that could not be drawn, after the placement's own tries (./main.tsx): sorry, said quietly, and
  * the ways on. `reload` is offered where loom now serves a newer page than this one. */
-export function Lost({ again, reload }: { again(): void; reload?(): void }) {
+export function Lost({ again, reload, why }: { again(): void; reload?(): void; /** What was caught, in the program's own words: for telling whoever mends it. */ why?: string }) {
   return (
     <div role="alert" className="board-lost">
       <p className="board-note">{reload ? 'Sorry, this brick didn’t load: loom was updated while this page was open. The page reloads by itself once your message is sent or cleared.' : 'Sorry, this brick didn’t load.'}</p>
@@ -229,6 +236,7 @@ export function Lost({ again, reload }: { again(): void; reload?(): void }) {
         <Action onClick={again}>Try again</Action>
         {reload && <Action kind="quiet" onClick={reload}>Reload now</Action>}
       </Actions>
+      {why && <p className="board-lost-why font-mono">{why}</p>}
     </div>
   );
 }
