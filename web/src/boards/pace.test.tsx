@@ -30,6 +30,9 @@ import { SessionTrace } from './session-trace';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 vi.stubGlobal('location', { protocol: 'https:', host: 'desk.invalid' });
+// A running session's latest run of steps is open, and its fold asks for a frame when it mounts; there is no browser here.
+vi.stubGlobal('requestAnimationFrame', (fn: () => void) => setTimeout(fn, 0));
+vi.stubGlobal('cancelAnimationFrame', (id: ReturnType<typeof setTimeout>) => clearTimeout(id));
 
 type Node = { type: string; props: Record<string, any>; children: (Node | string)[]; findAll(test: (n: Node) => boolean): Node[]; findAllByType(type: string): Node[] };
 let tree: { root: Node; unmount(): void; update(next: unknown): void } | undefined;

@@ -30,7 +30,7 @@ type Step = typeof jobTrace.$inferSelect;
  * said between its tool calls, its own message text. `reasoning`: its reasoning, where the harness gives it readably.
  * All three are sealed, kept, swept and read alike: the kind changes how a step is drawn and nothing else. */
 export type TraceKind = Step['kind'];
-export const TRACE_KINDS = ['tool', 'words', 'reasoning'] as const satisfies readonly TraceKind[];
+export const TRACE_KINDS = jobTrace.kind.enumValues;
 /** The tool line a step that is not a tool's carries. loom writes it, never the body, so a tool of the same name is
  * still told apart by its kind. */
 export const TRACE_KIND_TOOL: Readonly<Record<Exclude<TraceKind, 'tool'>, string>> = Object.freeze({ words: 'Words', reasoning: 'Reasoning' });

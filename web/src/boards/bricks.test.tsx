@@ -337,7 +337,8 @@ describe('session', () => {
     expect(f.queries.filter((q) => q.query.includes('BrickSessionJob')).every((q) => (q.options as { pause: boolean }).pause)).toBe(true);
     expect(JSON.stringify(tree!.toJSON())).not.toContain('Walk the fence line.');
     await draw('session', { session: 'cv-fence-0001' }, 'primary');
-    expect(f.queries.at(-1)).toMatchObject({ variables: { agent: 'art', id: 'j-1' }, options: { pause: false } });
+    // The conversation's own reads come after it (session-trace.tsx); the job's detail is the one asked in full.
+    expect(f.queries.filter((q) => q.query.includes('BrickSessionJob')).at(-1)).toMatchObject({ variables: { agent: 'art', id: 'j-1' }, options: { pause: false } });
     expect(JSON.stringify(tree!.toJSON())).toContain('Walk the fence line.');
   });
   it('Stop asks first, then calls runtime.jobStop as a write-off and reports the act', async () => {

@@ -158,7 +158,8 @@ const traceFields = '{seq job at tool cardState clientId words kind}';
 /** The big form: the session as a conversation, newest at the bottom, kept in view while the member has not scrolled
  * away from it. It says how many steps there are in all, and where the page holds fewer than that, a control loads the
  * ones before. With `trace` false (a session that keeps none) it reads no steps and is the brief and how it ended. */
-export function SessionTrace({ conversation, job, running, failed = false, trace = true, talk }: { conversation: string; job: string; running: boolean; failed?: boolean; trace?: boolean; talk: SessionTalk }) {
+const quiet: SessionTalk = { agent: '', brief: null, briefAt: null, report: null, endedAt: null, failure: null };
+export function SessionTrace({ conversation, job, running, failed = false, trace = true, talk = quiet }: { conversation: string; job: string; running: boolean; failed?: boolean; trace?: boolean; talk?: SessionTalk }) {
   const read = useDataQuery<{ steps: TraceStep[]; total: number; gone: boolean }>(
     'query BrickSessionTrace($c:String!,$j:String!,$n:Int!){steps:sessionTrace(conversation:$c,job:$j,limit:$n)' + traceFields + ' total:sessionTraceCount(conversation:$c,job:$j) gone:sessionTraceExpired(conversation:$c,job:$j)}',
     // Watching a session work is what this list is for: while its job runs it keeps up with every step, as the

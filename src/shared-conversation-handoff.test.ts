@@ -526,8 +526,11 @@ it.each(['success','failure','archive','transient','occupied','work-role','mixed
    tools:{'collab_tool_call.spawn_agent.completed':3,'collab_tool_call.spawn_agent.failed':1,'collab_tool_call.wait':1}});
   // The real harness's steps are that session's trace, beside the child conversation and in order; none entered the thread.
   const steps=db.select().from(s.jobTrace).where(eq(s.jobTrace.conversation,child)).orderBy(s.jobTrace.seq).all();
-  expect(steps.map(step=>[step.job,step.tool,step.cardState])).toEqual([
-   ...['done','done','done','failed','done'].flatMap((state,index)=>[[assignment.id,'Subagent · '+(index===4?'wait':'spawn_agent'),'running'],[assignment.id,'Subagent · '+(index===4?'wait':'spawn_agent'),state]])]);
+  // Its own last words (Codex's agent_message) are kept too, as a words step after its tools (schema 55), sealed like the rest.
+  expect(steps.map(step=>[step.job,step.tool,step.cardState,step.kind])).toEqual([
+   ...['done','done','done','failed','done'].flatMap((state,index)=>[[assignment.id,'Subagent · '+(index===4?'wait':'spawn_agent'),'running','tool'],[assignment.id,'Subagent · '+(index===4?'wait':'spawn_agent'),state,'tool']]),
+   [assignment.id,'Words','done','words']]);
+  expect(await f.key.open(steps.at(-1)!.words!)).toBe('PRIVATE REVIEW FINDINGS');
   expect(db.select().from(s.messages).where(eq(s.messages.kind,'card')).all()).toEqual([]);
  }
  await sdk.reply(reply);
