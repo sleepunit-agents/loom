@@ -499,8 +499,8 @@ ids, making it with `comms.open` if it does not exist.
 - **The conversation's header (design pass, 2026-11-27).** One quiet line: the agent's face and name, and under the
   name the thread's title as plain words before how the agent stands. One unobtrusive control beside it (three
   dots; the desktop launcher's keys open it too) opens one panel that holds everything else: the list of
-  conversations and a new one with each agent, this conversation's rename and archive, and notifications on this
-  device (a line that opens its state, its on and off, and its two choices). Nothing else is in the header.
+  conversations, its search and a new one with each agent, this conversation's rename, pin, archive and delete, and
+  notifications on this device (a line that opens its state, its on and off, and its two choices). Nothing else is in the header.
 - **Threads (built 2026-11-27).** A control beside the presence, and the desktop launcher's keys (Ctrl+Space, a
   double tap of Shift), open a list of the member's open threads: Comms' own rows in Comms' order (pinned, then most
   recent; its first fifty), each with its title, its agent, "Working" and "Unread". Arrow keys move, Enter chooses,
@@ -510,8 +510,16 @@ ids, making it with `comms.open` if it does not exist.
   (`comms.open` with a new id and no title) and goes to it. A thread that was read is not opened again with
   `comms.open`. The presence is the thread's own agent: its directory name and, for any agent but Art, its face
   drawn still from `agents.markBg/faceShape/faceEyes` and the desktop's face shapes. Under the presence is the
-  thread's title; the member whose thread it is can rename it and archive it (asked first) or restore it, by
-  `comms.change`. The page marks the thread read (`comms.change`, `read`) when its conversation is on screen in a
+  thread's title; the member whose thread it is can rename it, pin or unpin it, archive it (asked first) or restore
+  it, and delete it, by `comms.change` as Comms' More menu does. Delete is asked first, and the question names the
+  conversation by its title ("Delete “…” and its private words? It cannot be undone."); nothing is sent until it is
+  answered yes, and then the page goes to `/app/boards`. A refused or failed change says "Could not save. Try again."
+  and leaves the question open. **Search (2026-11-27)**: the top of the list is Comms' search box. It is asked on
+  submit (Enter or Search), never on a keystroke, as `commsThreads(archived:false, search:…)` by one request
+  (`useDataOnce`), never a live selection; what it found takes the list's place, in Comms' order, with no new
+  conversations under it, and says "No conversations match." or "Search is unavailable. Try again.". Emptying the
+  box or "Show the list" goes back to the live list. What was typed is the panel's own state: never a parameter,
+  a detail, the address or storage (rule 1). `commsFolders` is not read: the panel shows no folder counts. The page marks the thread read (`comms.change`, `read`) when its conversation is on screen in a
   visible tab and holds something after the read mark, as Comms does; "Unread" in the list is Home's rule, a reply
   from the thread's agent after that mark, served as `unread` on a Comms thread row. Nothing about the thread or
   board shown is in a query string, a fragment or storage.
@@ -609,7 +617,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `knowledge` | `show`: `all`, `recent` or `due`, default `all`; `domain`: a topic, optional: a lowercase letter or digit, then up to 119 of lowercase letters, digits and `. _ / -`. No parameter holds words to search for | `add {}`, by `mind.knowledgeAdd` | none |
 | `people` | `folder`: `all`, `person` or `agent`, default `all`. No parameter holds words to search for | `add {}`, by `mind.personAdd` | none |
 | `activity` | `days`: 1, 7 or 30, default 1 | none | none |
-| `threads` | `scope`: `open` or `archived` (Comms' two folders), default `open` | none | none |
+| `threads` | `scope`: `open` or `archived` (Comms' two folders), default `open` | `pin {}`, `unpin {}` and `delete {}` (asked first), each by `comms.change`, which lets in the thread's member alone | none |
 | `agents` | none | none | none |
 | `question`, added 2026-11-27 | as above | also `discuss {}`, after `inbox.discuss`; `taskAnswer {answer}`, after `tasks.command` `answer`, `answer` one of `yes`, `no`, `words`; `join {decision}`, after `runtime.workerJoinDecide`, `decision` one of `allow`, `block` | as above |
 | `ticket`, added later on 2026-11-27 | as above | also `ask {}`, by `tasks.command` `ask`, and `promote {}`, by `tasks.command` `edit` with the type alone, after asking | as above |
@@ -651,7 +659,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `knowledge` | yes: up to 40 pages, the search box, the topics, "Add a fact" | never |
 | `people` | yes: up to 60 cards with who knows each, the search box, "Add a person" | never |
 | `activity` | yes: the range by day, and an entry opened in place | never |
-| `threads` | yes: every row of Comms' first page, with when each was last used | never |
+| `threads` | yes: every row of Comms' first page, with when each was last used, Pin or Unpin and Delete… on each, and Comms' search | never |
 | `agents` | no | never |
 | `tempo` | yes: every trigger of the agent, the day's recorded firings, and New trigger…, which opens the desktop's Create trigger form in their place; small, the first six | a firing of one of the agent's triggers fails (more of them have a failed last firing than before) |
 | `trigger` | yes: also its project, machine needs, requested model, program, lessons and saved state where the member may read them, every recent run and its recent history; small, its source, target, words, three runs and its buttons | it fails, or its newest run fails |
@@ -712,7 +720,16 @@ calls through modules both sides import.
 
 - `threads`: the list the page's own switcher reads (`commsThreads` for the member, one folder, with `unread`), each
   row an ordinary link to `/app/t/<thread id>` with the agent's name and "Working" and "Unread". Side: the first six
-  and how many more. Compact: one line of counts. Comms' search, its later pages and pinning are not on it.
+  and how many more. Compact: one line of counts. Primary (2026-11-27): each row has Pin or Unpin and Delete…, named
+  for the row, by `comms.change` (pin with `pinned`, or `delete`), the operation and permission Comms' More menu
+  uses: the thread's member and nobody else (`src/shared-conversations.ts`). Delete asks first in place of the
+  row's controls, naming the conversation by its title, and sends nothing until answered yes. The board is told
+  `pin`, `unpin` or `delete` with an empty detail, after the change saved; a refused or failed one says so under
+  the row and tells the board nothing. Above the rows is Comms' search, as the panel's: asked on submit in the
+  brick's own folder, once (`useDataOnce`, never a live selection), and asked once more after a pin or delete
+  among its results, since its answer does not follow changes. The list itself is the brick's one live read, as
+  before; search adds none. What was typed is never a parameter or a detail (rule 1). Comms' later pages are not on
+  it. Delete is Comms' delete: what it removes and keeps is under "What ends a trace before 90 days".
 - `agent`: Home's card for one agent. Its directory name; its state line in Home's words (Working, Waiting, Quiet,
   Unavailable, and how many of its questions need the member); its own report (`agentStatus.work`); its description
   (`agents.about`); what it is doing now (`agentDoing`, in Home's sentences; the desktop's addresses for those are
@@ -1531,13 +1548,19 @@ the thread's member. No model is involved. Each check sets up its own board unle
 `web/src/boards/layout.test.ts`: 25 and the layout's rules. In `src/runtime/body-program.test.ts`: 29. In
 `web/src/boards/trend.test.ts` and `build.test.ts`: the trend's days and the new-build test.
 In `web/src/boards/threads.test.tsx`: the list of conversations (closed until asked for, Comms' order, working and
-unread, the launcher's keys, arrows, Enter and Escape, a new conversation and its retry), the thread's title, rename
-and archive (asked first), the presence of the thread's own agent, marking read, and the address across threads
+unread, the launcher's keys, arrows, Enter and Escape, a new conversation and its retry), its search (on submit only,
+found, nothing matches, failed, back to the list, nothing stored), the thread's title, rename, pin and unpin (refused
+or failed), archive (asked first), delete (asked first by title, cancel sends nothing, refused or failed keeps the
+question), the presence of the thread's own agent, marking read, and the address across threads
 (one id, nothing stored, back and forward, a board of the same thread keeps what was typed, not yours). In
-`bricks-threads.test.tsx` and `bricks-agent.test.tsx`: the `threads`, `agent` and `agents` bricks in every form,
+`bricks-threads.test.tsx` and `bricks-agent.test.tsx`: the `threads`, `agent` and `agents` bricks in every form, the
+threads brick's pin, unpin and delete (asked first, cancel, refused, failed) and search (one ask on submit, found,
+none, failed, asked again after a write),
 their loading and unavailable lines, the agent's stop (asked first, `runtime.jobStop`, nothing in the detail) and its
 flag. In `agents-queries.test.ts`: their own selections against the fields loom serves. In
-`src/core/conversations/comms-query.test.ts`: `unread` on a thread row.
+`src/core/conversations/comms-query.test.ts`: `unread` on a thread row. In `src/shared-conversations.test.ts`: the threads brick's
+pin, unpin and delete reach `comms.change` and are refused to another member, the household owner and an outside
+request (no session, a cookie or token loom never issued).
 
 **The two paces and "now", 2026-11-27.** In `src/core/data/live.test.ts`: a relaxed selection is read at once
 when it opens, at most once in its time under a stream of commits, once after the last, at once for a commit that
