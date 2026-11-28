@@ -391,7 +391,7 @@ that ignores it keeps working. Outside a household there's no `caller`.
   { "tab": { "label": "Garden", "icon": "sprout", "accent": "olive" } }
   ```
   Optional `fit`: how much room the piece's pages can use when apps share a big
-  screen as tiles (Appearance → Desktop → Tiling; `docs/specs/desk-tiling.md`,
+  screen as tiles (Appearance → Desktop → Tiling; `docs/archive/desk-tiling.md`,
   "Fit"). `min` is `[width, height]` in pixels, the least a tile of it can be
   (narrower and it goes to the dock rather than be drawn cramped); `ideal` is the
   width it looks best at, which sets its share of a split; `max` is the width past

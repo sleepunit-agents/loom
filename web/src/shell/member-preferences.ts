@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { LiveRecord, Snapshot } from '../data';
+import type { LiveRecord, Snapshot } from '../data/snapshot';
 import { homeCommsQuery, type HomeCommsData } from '../pieces/attention/home-comms-data';
 import { useDataQuery, type DataQuerySnapshot } from '../data/graphql';
 import type { Prefs } from '../look';

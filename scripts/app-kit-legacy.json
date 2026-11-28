@@ -1,21 +1,11 @@
 {
-  "filters.css": [
-    "loom-chip-row"
-  ],
   "index.css": [
     "loom-find-row",
     "loom-head-action",
     "loom-head-more"
   ],
-  "launcher.css": [
-    "loom-launcher__head",
-    "loom-launcher__none"
-  ],
   "looks/looks.css": [
     "loom-find-row"
-  ],
-  "row-more.css": [
-    "loom-row-more"
   ],
   "styles/cojeev/activity-feed.css": [
     "v-activity-feed__card-head",
@@ -36,12 +26,6 @@
   ],
   "styles/cojeev/card.css": [
     "v-card__project-head"
-  ],
-  "styles/cojeev/chart.css": [
-    "v-chart-empty",
-    "v-chart-frame__header",
-    "v-chart-tooltip__empty",
-    "v-chart-tooltip__row"
   ],
   "styles/cojeev/control-appearance.css": [
     "v-form-example__label-row"

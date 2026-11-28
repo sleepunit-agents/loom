@@ -273,18 +273,13 @@ Only `loom.db` and `knowledge.db` are checked for being the right kind of file a
 
 ## Code no program starts
 
-Two things are compiled but reached by no executable, each for a stated reason.
+One thing is compiled but reached by no executable, for a stated reason.
 
 - **The example household.** `src/example-home.ts`, `src/example-home-adapters.ts`,
   `src/example-runtime.ts` and `src/rebuild` build and check a fictitious home. They are
   run by `scripts/example-home.mjs` and the acceptance walkthrough
   (`docs/example-household.md`). The adapters file is loaded by path, from a file the
   example writes into its home, so no import names it.
-- **Two files the web app shares.** `src/ui/prose.ts` (the Markdown renderer's rules) and
-  `src/ui/project-cards.ts` (the shape of a project's cards) are imported only by `web/src`
-  (`web/src/markdown.tsx`, `web/src/kit/markdown.tsx`, `web/src/loom.ts`), which Vite builds
-  from source. They are under `src`, so `tsc` compiles them into `dist` with everything
-  else there; nothing in `dist` loads them.
 
 An agent's old conversation tables (above) are the one thing kept for the move of an older
 home's data. `docs/migration-plan.md` and `docs/migration-registry.md` describe that move;

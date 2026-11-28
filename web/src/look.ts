@@ -5,8 +5,11 @@
 // every device ("if every device I login I have to go and change the theme, that sucks"). This device keeps a copy
 // (localStorage) only so its first paint is already right (src/looks/boot.js reads it).
 import { createContext } from 'react';
-import type { Ground, Mode } from './views';
 import type { Follow } from './access';
+/** Light or dark, or following the device. */
+export type Mode = 'auto' | 'light' | 'dark';
+/** A page's ground: the contour field, the depth background's contours, or the plain wash. */
+export type Ground = 'contours' | 'depth' | 'wash';
 
 export type Look = 'neon' | 'lowlight' | 'daylight';
 /** The looks, in Appearance's order: each one's name, and whether it's light or dark. */

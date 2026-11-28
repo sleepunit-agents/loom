@@ -1,6 +1,6 @@
 /**
- * No dead weight in the app (web/; t-1875's trim): every module under web/src is reached from the app's entry
- * (main.tsx, the boot script vite.config.ts emits, or the boards page's boards/main.tsx, which board.html loads and
+ * No dead weight in the app (web/; t-1875's trim): every module under web/src is reached from a page's entry
+ * (the sign-in gate's shell/main.tsx, the boot script vite.config.ts emits, or the boards page's boards/main.tsx, which board.html loads and
  * vite.boards.config.ts builds; or, for boards/gallery alone, from the bricks' gallery, a development-only page that
  * vite.gallery.config.ts builds into a scratch directory and no shipped page loads), every 000h-library stylesheet is imported (one
  * that isn't ships nothing; one that's imported but gone breaks the build), and no Tailwind theme key is declared in
@@ -22,7 +22,7 @@ const resolveSpec = (from: string, spec: string): string | undefined => {
 describe('the app carries nothing it doesn\'t use', () => {
   it('every module under web/src is reached from a shipped entry', () => {
     const seen = new Set<string>();
-    const todo = [join(src, 'main.tsx'), join(src, 'shell/main.tsx'), join(src, 'looks/boot.js'), join(src, 'boards/main.tsx')];
+    const todo = [join(src, 'shell/main.tsx'), join(src, 'looks/boot.js'), join(src, 'boards/main.tsx')];
     // Development only, never shipped: the gallery that draws every brick from fixtures (web/vite.gallery.config.ts).
     todo.push(join(src, 'boards/gallery/main.tsx'));
     while (todo.length) {
@@ -44,10 +44,6 @@ describe('the app carries nothing it doesn\'t use', () => {
     const onDisk = readdirSync(join(src, 'styles/cojeev')).filter((f) => f.endsWith('.css'));
     expect(onDisk.filter((f) => !imported.includes(f)), 'a stylesheet nothing imports').toEqual([]);
     expect(imported.filter((f) => !onDisk.includes(f)), 'an import with no stylesheet').toEqual([]);
-    // Each component that has a stylesheet of its own has it imported (switch.tsx, switch.css …).
-    const components = readdirSync(join(src, 'components/ui')).map((f) => f.replace(/\.tsx$/, '.css')).filter((f) => onDisk.includes(f));
-    expect(components.length).toBeGreaterThan(20);
-    expect(components.filter((f) => !imported.includes(f))).toEqual([]);
   });
 
   it('no Tailwind theme key is declared in both index.css and theme.css', () => {

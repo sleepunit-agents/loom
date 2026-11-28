@@ -1,5 +1,31 @@
 import type { DataQuerySnapshot } from '../../data/graphql';
-import type { SecretsSnapshot } from '../secrets-view';
+
+export interface SecretRow { name: string; description: string; changedAt: string; changedBy: string }
+export interface SecretGrantRow {
+  id: string; secret: string; agent: string; job: string | null; request: string | null;
+  grantedBy: string; grantedAt: string; expiresAt: string;
+}
+export interface SecretRequestRow {
+  id: string; secret: string; agent: string; job: string | null; conversation: string | null;
+  why: string; state: 'pending' | 'allowed' | 'denied' | 'cancelled' | 'revoked';
+  minutes: number; answeredBy: string | null; always: boolean; askedAt: string; answeredAt: string | null;
+}
+export interface SecretsSnapshot {
+  status: 'loading' | 'live' | 'offline' | 'denied' | 'error';
+  /** Authenticated query principal. Root must replace the whole snapshot on
+   * authentication changes and enforce owner access at the query/command door. */
+  member: string;
+  secrets: readonly SecretRow[];
+  grants: readonly SecretGrantRow[];
+  requests: readonly SecretRequestRow[];
+  rules: readonly { secret: string; answer: 'ask' | 'auto' | 'never'; minutes: number }[];
+  ruleAgents: readonly { secret: string; agent: string; when: 'on_request' | 'at_start' }[];
+  uses: readonly { id: string; secret: string; agent: string; job: string; at: string; state: 'started' | 'released' | 'failed' }[];
+  changes: readonly { id: string; secret: string; action: 'add' | 'replace' | 'removed'; by: string; at: string }[];
+  /** Omit when the household default has not been fetched. */
+  defaultAnswer?: 'ask' | 'auto' | 'never';
+}
+
 
 export const settingsQuery = `query SettingsSecrets {
   secretsReader { id defaultAnswer }

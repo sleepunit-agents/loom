@@ -1,5 +1,8 @@
 # Collections: one shared, permissioned path for app data
 
+> **The desktop was removed 2026-11-28 (t-2428).** What this says about the desktop's screens, dock, cards and rail describes a page that
+> is gone: the boards page ([boards.md](boards.md)) is the only page after sign-in. The shared data path itself is loom's and stays.
+
 *2026-11-09. Status: **reviewed and accepted by the owner, 2026-11-09** (t-2020, epic t-2019). Built so far: queries (t-2021: the `collections` offer, `POST /collections/query` and `/api/loom/collections/query`, core's `agent` and `thread` types; `src/collections/`); live changes (t-2022: the change log in `$LOOM_HOME/collections/live.db`, pulls, nudges, subscriptions on `/events`); the client runtime (t-2023: `web/src/collections/`, TanStack DB pinned at 1.0.0-rc.1.4 behind `adapter.ts`); what needs you (t-2025: core's `attention` type, below); each agent's card (t-2028: `agent-status`, below). A design doc in
 the `docs/specs/` sense: it says what will be built and what each implementation's tests must pin. It defines the
 contract that the epic's implementation tasks (t-2021 to t-2032) build to, and it inventories every app data flow

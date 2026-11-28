@@ -43,9 +43,9 @@ it('fails the build when the shape module imports anything, a file the page may 
   ]);
 });
 
-it('fails the build for a server file not named, a desktop file, and anything from elsewhere', () => {
+it('fails the build for a server file not named, an unlisted web file, and anything from elsewhere', () => {
   expect(boardsGuard([...page, { id: at('src/runtime/body-harness.ts'), imports: [] }], root)).toEqual(['Server file in boards page: src/runtime/body-harness.ts']);
-  expect(boardsGuard([...page, { id: at('web/src/kit/index.ts'), imports: [] }], root)).toEqual(['Desktop dependency in boards page: kit/index.ts']);
+  expect(boardsGuard([...page, { id: at('web/src/kit/index.ts'), imports: [] }], root)).toEqual(['Unlisted web file in boards page: kit/index.ts']);
   expect(boardsGuard([...page, { id: at('scripts/ci-sequencer.js'), imports: [] }], root)).toEqual(['Not a page file in boards page: scripts/ci-sequencer.js']);
   expect(boardsGuard([...page, { id: '\0virtual:anything', imports: [] }], root)).toEqual(['Not a file of this repository in boards page: \0virtual:anything']);
 });

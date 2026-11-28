@@ -1,4 +1,4 @@
-import type { TaskListRow, TaskReaderFields, SharedTaskComment, SharedTaskLink, SharedTaskChange } from './shared-view';
+import type { TaskListRow, TaskReaderFields, SharedTaskComment, SharedTaskLink, SharedTaskChange } from './model';
 
 export const notePageSize = 30;
 const noteSelection = `orderBy:{seq:{direction:desc,priority:0}},limit:${notePageSize+1}`;

@@ -137,7 +137,7 @@ export function Trigger({ params, form, act, raise }: BodyProps) {
       {primary && controls}
       {busy && <p role="status" className="board-note">Waiting for Tempo…</p>}
       <Problem>{error}</Problem>
-      {primary && <Note>To change its times or words, ask its agent: Tempo has no editor here or on the desktop.</Note>}
+      {primary && <Note>To change its times or words, ask its agent: Tempo has no editor here.</Note>}
     </>
   );
 }

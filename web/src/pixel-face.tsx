@@ -20,7 +20,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useDataQuery } from './data/graphql';
 import { checkSpriteLayout } from '../../src/desk-sprite-layout';
-import type { FaceState } from './face';
+import type { FaceState } from './face-model';
 import { motionQuery, reducedMotion } from './access';
 
 import { createPlayer, PIXEL, usualOf, type Frame, type PlayerEnv, type Manifest, type Variant, type Crop } from './contexts/portrait-player';

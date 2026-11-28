@@ -8,7 +8,7 @@ import { liveAgents } from '../data/live-agents';
 import { taskCommandSender, type TaskCommandResult } from '../data/task-command';
 import { displayName } from '../kit/words';
 import { taskChoicesQuery } from '../pieces/tasks/query';
-import type { TaskCommand } from '../pieces/tasks/shared-form';
+import type { TaskCommand } from '../pieces/tasks/model';
 import { taskDefaultPriority, taskPriorities } from '../pieces/tasks/words';
 import { Field, Menu, Segmented, type Act } from './brick-kit';
 

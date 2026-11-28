@@ -1,10 +1,10 @@
 /**
  * Neon Noir's glow never carries meaning (Jonathan's brief, 2026-11-04): it sits on edges and on what's current or
  * chosen, the same whatever an agent's state or a status is, never behind text, and it all goes when more contrast is
- * asked for, in every look (Low Light and Daylight glow less or not at all). Checked over the looks' sheet (looks/looks.css,
- * and face.css's rim): every glow is a --glow-* token, every
+ * asked for, in every look (Low Light and Daylight glow less or not at all). Checked over the looks' sheet (looks/looks.css):
+ * every glow is a --glow-* token, every
  * --glow-* token is turned off under prefers-contrast: more, no glow rule is chosen by a state, a tone or a status, and
- * nothing casts a text-shadow. An agent's state is its face's expression (face-alive.test.ts, face-rim.test.ts).
+ * nothing casts a text-shadow.
  */
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
@@ -14,7 +14,7 @@ const css = (p: string) => readFileSync(new URL(p, web), 'utf-8').replace(/\/\*[
 // The looks' sheet, the face's, and any look's rule loom's own stylesheet carries (its rules under [data-look]).
 const lookRulesOf = (s: string) => [...s.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => m[1].includes('data-look')).map((m) => m[0]).join('\n');
 const SHEETS = {
-  ...Object.fromEntries(['looks/looks.css', 'face.css', 'shell/shell.css', 'pieces/attention/home.css', 'pieces/attention/rail.css', 'pieces/attention/comms-companion.css'].map(path => [path, css(path)])),
+  ...Object.fromEntries(['looks/looks.css'].map(path => [path, css(path)])),
   'index.css (the looks\' rules)': lookRulesOf(css('index.css')),
 };
 

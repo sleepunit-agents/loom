@@ -1,4 +1,4 @@
-import type { LiveRecord } from '../../data';
+import type { LiveRecord } from '../../data/snapshot';
 export interface OwnedAgent extends LiveRecord { name: string; position?: number }
 /** Only the shared directory identifies an agent; relationship cards are not its display identity. */
 export interface AgentPerson extends LiveRecord { slug: string; name: string; kind: 'person' | 'agent'; agent?: string }

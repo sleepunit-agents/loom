@@ -31,11 +31,11 @@ it('shows the member\'s own saved choices as rows of buttons, and says which of 
   expect(pressed()).toEqual(['Reduce motion: On', 'Look: Low Light', 'Desk background: Wash', 'Higher contrast: Follow this device', 'Pixel faces: On', 'Sound: On', 'Haptics: Off', 'One window at a time: Off', 'Allow zoom: Off']);
   expect(b.labels()).toEqual(['Follow this device', 'On', 'Off', 'Neon Noir', 'Low Light', 'Daylight', 'Depth', 'Contours', 'Wash', 'Follow this device', 'On', 'Off', ...Array(5).fill(['On', 'Off']).flat()]);
   expect(b.all()).toContain(WORN_WORDS);
-  expect(WORN_WORDS).toBe('On this page only Reduce motion takes effect. This page keeps its own look, light or dark as this device is, and has no higher-contrast styling; the other choices are for the desktop.');
-  // Reduce motion is the one under the first heading; everything else is under "For the desktop".
+  expect(WORN_WORDS).toBe('On this page only Reduce motion takes effect. This page keeps its own look, light or dark as this device is, and has no higher-contrast styling; the other choices are kept, and no page uses them yet.');
+  // Reduce motion is the one under the first heading; everything else is under "Kept, not used by a page yet" (the desktop that used them was removed, t-2428).
   expect(b.all().indexOf('Takes effect on this page')).toBeLessThan(b.all().indexOf('Reduce motion' + 'Follow'));
-  expect(b.all().indexOf('For the desktop')).toBeLessThan(b.all().indexOf('Look' + 'Neon'));
-  expect(b.all().indexOf('Reduce motion' + 'Follow')).toBeLessThan(b.all().indexOf('For the desktop'));
+  expect(b.all().indexOf('Kept, not used by a page yet')).toBeLessThan(b.all().indexOf('Look' + 'Neon'));
+  expect(b.all().indexOf('Reduce motion' + 'Follow')).toBeLessThan(b.all().indexOf('Kept, not used by a page yet'));
   expect(b.root().findAll((node) => node.type === 'select')).toEqual([]);
   expect(b.placed()).toEqual([]);
   expect(bricks.appearance.title({})).toBe('Appearance');

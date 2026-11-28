@@ -1,5 +1,8 @@
 # Collections inventory: loom core
 
+> **The desktop was removed 2026-11-28 (t-2428).** What this says about the desktop's files (`W:` paths) describes a page that
+> is gone: the boards page ([boards.md](boards.md)) is the only page after sign-in. It was already a dated survey.
+
 *Appendix to [collections.md](collections.md). Raw survey, 2026-11-09, read-only. Line numbers are against main `6ab2a79` and will drift.*
 
 

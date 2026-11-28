@@ -30,7 +30,7 @@ async function fixture(){
  const rows=()=>f.db.select().from(s.notificationReplies).all();
  return{...f,pushes,as,enrol,reply,idle,wait,rows};
 }
-const expected=(thread:string)=>({title:'loom',body:'',tag:'loom-reply-'+sha(thread).slice(0,32),url:'/p/comms-preview/thread/'+encodeURIComponent(thread.replace(/^th:/,'')),board:'/app/t/'+encodeURIComponent(thread)});
+const expected=(thread:string)=>({title:'loom',body:'',tag:'loom-reply-'+sha(thread).slice(0,32),url:'/app/t/'+encodeURIComponent(thread),board:'/app/t/'+encodeURIComponent(thread)});
 
 it('pushes a reply once to a device that chose replies, after the wait, saying no words',async()=>{
  const f=await fixture();await f.enrol('phone',true);

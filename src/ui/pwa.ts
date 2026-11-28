@@ -11,8 +11,9 @@ export const MANIFEST = JSON.stringify({
   name: 'loom',
   short_name: 'loom',
   description: 'Your agents: what needs you, what they did, and their pieces.',
+  // The id it was installed with; it opens at the boards page, the only page after sign-in.
   id: '/',
-  start_url: '/',
+  start_url: BOARDS_HOME,
   scope: '/',
   display: 'standalone',
   // A phone's app holds one way up (Jonathan, 2026-11-05: an OS, not a web page). iOS's home screen ignores this.
@@ -23,9 +24,10 @@ export const MANIFEST = JSON.stringify({
   icons,
 });
 
-/** The boards page installed as its own app: it opens at the boards page. A second manifest, with its own id, so
- * the app above (the desktop and the phone's) is exactly what it was. Its scope is the whole origin: sign-in and
- * every link out of a board stay inside the installed window. No orientation: it is a desktop's window. */
+/** The boards page installed from the boards page itself: a second manifest, with its own id, as it was installed
+ * while there was a desktop (the app above was the desktop's and the phone's). Both open the boards page now. Its
+ * scope is the whole origin: sign-in and every link out of a board stay inside the installed window. No orientation:
+ * it was a desk's window. */
 export const BOARDS_MANIFEST = JSON.stringify({
   name: 'loom boards',
   short_name: 'loom',

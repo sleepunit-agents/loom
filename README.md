@@ -20,7 +20,7 @@
 
 ## Running it
 
-Build the checkout, then start the coordinator with a new or empty private data directory. The coordinator serves the desktop and API on `127.0.0.1:8787` by default. Use `--host` and `--port` to change the listener. Workers can join later.
+Build the checkout, then start the coordinator with a new or empty private data directory. The coordinator serves the web app (the sign-in page and the boards page) and API on `127.0.0.1:8787` by default. Use `--host` and `--port` to change the listener. Workers can join later.
 
 ```sh
 npm ci && npm run build

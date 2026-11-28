@@ -14,10 +14,7 @@ it('keeps human-readable labels in the app and walkthrough site free of ellipses
     ['docs/how-it-works/site/site.css','.desk__tick'],
   ]);
   // Only linked message excerpts may clamp. Their adjacent titles and ages wrap.
-  const messagePreviews = new Map([
-    ['web/src/pieces/attention/home.css', new Set(['.desk-home-answer-words', '.desk-solo .desk-home-answer-words'])],
-    ['web/src/pieces/attention/agent-posts.css', new Set(['.desk-agent-posts[data-compact] .desk-agent-post-words'])],
-  ]);
+  const messagePreviews = new Map<string, Set<string>>();
   const offending:string[]=[];
   for(const file of files){
     const source=readFileSync(join(root,file),'utf8');

@@ -179,7 +179,7 @@ export function Pull({ params, form, act, raise }: { params: Params; form: Form;
             <Fact label="Review">{reviewWord[c.review] ?? c.review}</Fact>
             <Fact label="Can be merged">{mergeableWord[c.mergeable] ?? c.mergeable}</Fact>
             {people.length > 0 && <Fact label="People on it"><span className="board-pull-list">{people.map((p) => <span key={p.login + ':' + p.role}>{roleWord[p.role] ?? p.role}: {p.login}</span>)}</span></Fact>}
-            {c.state === 'open' && c.waitingOn === 'you' && <Fact label="Merge"><span className="board-note">The merge is answered in Changes on the desktop.</span></Fact>}
+            {c.state === 'open' && c.waitingOn === 'you' && <Fact label="Merge"><span className="board-note">The merge is answered by its approval, which the agent can place on a board.</span></Fact>}
           </Facts>
           <Section title="Files changed" count={files.length || undefined}>
             {files.length > 0

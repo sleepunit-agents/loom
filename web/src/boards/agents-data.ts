@@ -5,7 +5,7 @@ import { useDataQuery } from '../data/graphql';
 import { threadFields } from '../pieces/comms/thread-fields';
 import { threadRows, type CommsThread } from '../pieces/comms-view/model';
 import { useDeskAgentDirectory } from '../pieces/attention/agent-directory';
-import type { FaceState } from '../face';
+import type { FaceState } from '../face-model';
 import type { Tone } from './brick-kit';
 
 /** An agent's display name as Comms says it: the shared directory's, or its id with a capital. */
