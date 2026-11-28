@@ -12,6 +12,8 @@ const f = vi.hoisted(() => {
     listeners: new Set<() => void>(), version: 0,
     status: 'live', boards: [] as unknown[], answers: {} as Record<string, { status: string; data?: unknown }>,
     op: vi.fn(), build: vi.fn(), reload: vi.fn(), stored: vi.fn(), went: [] as string[],
+    /** What this browser's local and session storage hold: the composer's draft is the one thing the page keeps. */
+    local: new Map<string, string>(), session: new Map<string, string>(),
     /** Loom's door as the page's writes reach it, and the page asking for its bricks' data now. */ door: vi.fn(), asked: vi.fn(),
     area: { w: 1200, h: 800 },
     /** The page's motion is reduced: nothing slides. */ reduced: true,
@@ -20,12 +22,18 @@ const f = vi.hoisted(() => {
     Element: class { constructor(readonly found: Record<string, unknown>) {} closest(selector: string) { return this.found[selector] ?? null; } },
   };
   const g = globalThis as Record<string, any>;
-  const store = () => ({ length: 0, getItem: () => null, key: () => null, setItem: f.stored, removeItem: f.stored, clear: f.stored });
+  // Each write is told to `stored` with the storage it went to.
+  const store = (area: 'local' | 'session') => ({
+    get length() { return f[area].size; }, key: (i: number) => [...f[area].keys()][i] ?? null,
+    getItem: (key: string) => f[area].get(key) ?? null,
+    setItem: (key: string, value: string) => { f.stored(area, key, value); f[area].set(key, String(value)); },
+    removeItem: (key: string) => { f[area].delete(key); }, clear: () => f[area].clear(),
+  });
   g.document = { getElementById: () => null };
   g.location = { pathname: '/app/boards', search: '', hash: '', reload: f.reload };
   const go = (_state: unknown, _title: string, path: string) => { f.went.push(path); g.location.pathname = path; };
   g.history = { pushState: go, replaceState: go };
-  g.localStorage = store(); g.sessionStorage = store();
+  g.localStorage = store('local'); g.sessionStorage = store('session');
   g.Element = f.Element;
   g.ResizeObserver = class { observe() {} disconnect() {} };
   g.requestAnimationFrame = (frame: () => void) => { queueMicrotask(frame); return 1; };
@@ -99,10 +107,10 @@ const question = (over?: Partial<Made>) => placed('question', { item: 'in-3' }, 
 let tree: { root: Node; unmount(): void } | undefined;
 /** Change what the data hook answers, as a live read does. */
 const feed = (change: Partial<typeof f>) => act(async () => { Object.assign(f, change); f.version++; for (const fn of [...f.listeners]) fn(); });
-async function draw(boards: unknown[], at: { path?: string; area?: { w: number; h: number } } = {}) {
+async function draw(boards: unknown[], at: { path?: string; area?: { w: number; h: number }; thread?: string; member?: string } = {}) {
   f.boards = boards; f.area = at.area ?? { w: 1200, h: 800 };
   location.pathname = at.path ?? '/app/boards';
-  await act(async () => { tree = create(h(Page, { member: 'sam', thread, agent: 'art' }), { createNodeMock: () => ({ get clientWidth() { return f.area.w; }, get clientHeight() { return f.area.h; } }) }); });
+  await act(async () => { tree = create(h(Page, { member: at.member ?? 'sam', thread: at.thread ?? thread, agent: 'art' }), { createNodeMock: () => ({ get clientWidth() { return f.area.w; }, get clientHeight() { return f.area.h; } }) }); });
   return tree!.root;
 }
 const articles = () => tree!.root.findAllByType('article');
@@ -116,13 +124,17 @@ async function click(found: Record<string, unknown>, keys: object = {}) {
 }
 const chipElement = (place: object) => ({ '[data-place]': { dataset: { place: JSON.stringify(place) } } });
 const type = (words: string) => act(async () => tree!.root.findByType('textarea').props.onChange({ target: { value: words } }));
+/** Where the desktop keeps sam's draft for this conversation (../pieces/comms/drafts.ts). */
+const draftKey = 'loom:comms:draft:sam:' + encodeURIComponent(thread) + ':v1';
+const typed = () => tree!.root.findByType('textarea').props.value as string;
+const redraw = async (at: Parameters<typeof draw>[1] = {}) => { await act(async () => tree!.unmount()); return draw([], at); };
 const submit = () => act(async () => tree!.root.findByType('form').props.onSubmit({ preventDefault() {} }));
 
 beforeEach(() => {
   seq = 0;
   f.status = 'live'; f.answers = { BrickTicket: { status: 'live', data: { ticket: task } } } as Record<string, Answer>;
   f.op.mockReset().mockResolvedValue(undefined); f.build.mockReset().mockResolvedValue(false);
-  f.reload.mockReset(); f.stored.mockReset(); f.went.length = 0; f.reduced = true;
+  f.reload.mockReset(); f.stored.mockReset(); f.went.length = 0; f.reduced = true; f.local.clear(); f.session.clear();
   location.pathname = '/app/boards';
 });
 afterEach(async () => { await act(async () => tree?.unmount()); tree = undefined; });
@@ -351,8 +363,9 @@ describe('sending', () => {
     await submit();
     const sent = f.op.mock.calls.filter(([op]) => op === 'comms.send');
     expect(sent).toHaveLength(1);
-    const [, input, id] = sent[0];
-    expect(input).toEqual({ thread, clientId: id, words: 'what is left in the garden?', shows: { board: 'b-1' } });
+    const [, input] = sent[0];
+    // Its client id is the draft's, as the desktop's composer sends it: a Comms message id.
+    expect(input).toEqual({ thread, clientId: expect.stringMatching(/^[a-z2-7]{16}$/), words: 'what is left in the garden?', shows: { board: 'b-1' } });
     expect(root.findByType('textarea').props.value).toBe('');
   });
   it('says no board is shown when there is none', async () => {
@@ -517,7 +530,9 @@ describe('the address', () => {
     for (const path of f.went) expect(path).not.toMatch(/[?#]/);
     expect(location.search).toBe('');
     expect(location.hash).toBe('');
-    expect(f.stored).not.toHaveBeenCalled();
+    // The one thing kept is the composer's draft, in local storage, and it is gone once the send is acknowledged.
+    for (const [area, key] of f.stored.mock.calls) expect([area, key]).toEqual(['local', draftKey]);
+    expect([...f.local.keys(), ...f.session.keys()]).toEqual([]);
   });
 });
 
@@ -552,6 +567,27 @@ describe('a restart', () => {
     await type('   ');
     expect(f.reload).toHaveBeenCalledTimes(1);
   });
+  it('waits while a draft kept from before is in the input, though nothing was typed on this page', async () => {
+    const { writeDraft } = await import('../pieces/comms/drafts');
+    writeDraft('sam', thread, { id: 'abcdefghijklmnop', text: 'kept from before' });
+    f.build.mockResolvedValue(true);
+    await draw([]);
+    expect(f.build).toHaveBeenCalledTimes(1);
+    expect(typed()).toBe('kept from before');
+    expect(f.reload).not.toHaveBeenCalled();
+  });
+  it('waits for a typed draft, and the draft is there again after the member reloads by hand', async () => {
+    await draw([]);
+    await type('do not lose this');
+    f.build.mockResolvedValue(true);
+    await feed({ status: 'error' });
+    await feed({ status: 'live' });
+    expect(f.reload).not.toHaveBeenCalled();
+    // The member reloads: a new page, the same browser's storage.
+    f.build.mockResolvedValue(false);
+    await redraw();
+    expect(typed()).toBe('do not lose this');
+  });
   it('waits until nothing is being sent', async () => {
     let delivered!: () => void;
     f.op.mockImplementation((name: string) => (name === 'comms.send' ? new Promise<void>((done) => { delivered = done; }) : Promise.resolve()));
@@ -565,6 +601,107 @@ describe('a restart', () => {
     expect(f.reload).not.toHaveBeenCalled();
     await act(async () => delivered());
     expect(f.reload).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the draft', () => {
+  const other = 'th:board-sam-mira';
+  it('survives a reload: what was typed and not sent comes back in the same conversation, and nothing was sent', async () => {
+    await draw([]);
+    await type('half a thought');
+    expect(JSON.parse(f.local.get(draftKey)!)).toEqual({ id: expect.stringMatching(/^[a-z2-7]{16}$/), text: 'half a thought' });
+    await redraw();
+    expect(typed()).toBe('half a thought');
+    expect(called('comms.send')).toEqual([]);
+  });
+  it('is kept per conversation and per member: another conversation has its own, and going back brings the first back', async () => {
+    await draw([]);
+    await type('for art');
+    await redraw({ thread: other });
+    expect(typed()).toBe('');
+    await type('for mira');
+    await redraw();
+    expect(typed()).toBe('for art');
+    await redraw({ thread: other });
+    expect(typed()).toBe('for mira');
+    // Another member signed in on this browser sees none of sam's.
+    await redraw({ member: 'kim' });
+    expect(typed()).toBe('');
+  });
+  it('is the desktop\'s draft for the conversation: words kept by the desktop\'s composer are here, and these are there', async () => {
+    const { readDraft, writeDraft } = await import('../pieces/comms/drafts');
+    writeDraft('sam', thread, { id: 'abcdefghijklmnop', text: 'from the desktop' });
+    await draw([]);
+    expect(typed()).toBe('from the desktop');
+    await type('from the boards');
+    expect(readDraft('sam', thread).text).toBe('from the boards');
+  });
+  it('is cleared when the send is acknowledged, and stays cleared after a reload', async () => {
+    await draw([]);
+    await type('send me');
+    await submit();
+    expect(typed()).toBe('');
+    expect(f.local.has(draftKey)).toBe(false);
+    await redraw();
+    expect(typed()).toBe('');
+  });
+  it('keeps words typed while a send was on its way when that send is acknowledged', async () => {
+    let delivered!: () => void;
+    f.op.mockImplementation((name: string) => (name === 'comms.send' ? new Promise<void>((done) => { delivered = done; }) : Promise.resolve()));
+    await draw([]);
+    await type('first');
+    await submit();
+    await type('first, and more');
+    await act(async () => delivered());
+    expect(typed()).toBe('first, and more');
+    expect(JSON.parse(f.local.get(draftKey)!).text).toBe('first, and more');
+  });
+  it('is kept when a send fails, as the desktop keeps it, and sending again carries the same id so it cannot post twice', async () => {
+    f.op.mockImplementation((name: string) => (name === 'comms.send' ? Promise.reject(new Error('lost')) : Promise.resolve()));
+    await draw([]);
+    await type('send once');
+    await submit();
+    const first = called('comms.send')[0] as { clientId: string };
+    expect(typed()).toBe('send once');
+    await redraw();
+    expect(typed()).toBe('send once');
+    f.op.mockReset().mockResolvedValue(undefined);
+    await submit();
+    expect(called('comms.send')).toEqual([expect.objectContaining({ clientId: first.clientId, words: 'send once' })]);
+    expect(typed()).toBe('');
+    expect(f.local.has(draftKey)).toBe(false);
+  });
+  it('keeps the whole of a long draft, as the desktop does (it sets no size, count or age limit)', async () => {
+    const long = 'x'.repeat(100_000);
+    await draw([]);
+    await type(long);
+    await redraw();
+    expect(typed()).toBe(long);
+  });
+  it('still works when the browser keeps nothing: the box holds the words, and a stored draft that cannot be read is none', async () => {
+    const quiet = vi.spyOn(localStorage, 'setItem').mockImplementation(() => { throw new Error('QuotaExceededError'); });
+    await draw([]);
+    await type('nowhere to keep it');
+    expect(typed()).toBe('nowhere to keep it');
+    quiet.mockRestore();
+    f.local.set(draftKey, '{not json');
+    await redraw();
+    expect(typed()).toBe('');
+  });
+  it('is in no request the page makes, in no address and in no other storage', async () => {
+    const words = 'private unsent words';
+    await one([lanes({ big: true }), ticket({ flagged: true })]);
+    await type(words);
+    await act(async () => articles()[1].props.onPointerEnter());
+    await click(chipElement({ brick: 'project', params: { project: 'garden' } }));
+    await feed({ status: 'error' });
+    await feed({ status: 'live' });
+    const asked = JSON.stringify([f.op.mock.calls, f.door.mock.calls, f.build.mock.calls, f.asked.mock.calls]);
+    expect(asked).not.toContain(words);
+    for (const path of f.went) expect(path).not.toContain('private');
+    expect(location.search + location.hash).toBe('');
+    expect([...f.session.keys()]).toEqual([]);
+    expect([...f.local.keys()]).toEqual([draftKey]);
   });
 });
 

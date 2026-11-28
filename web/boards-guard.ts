@@ -73,6 +73,8 @@ export const shared: ReadonlySet<string> = new Set([
   'pieces/bridges/data.ts', // the Bridges app's one selection, its snapshot, which replies wait and their words (its imports are types)
   'pieces/household/model.ts', // Household setup's two selections, the shapes loom answers, who owns an agent and the words of a change (no imports)
   'pieces/sharing/model.ts', // the Sharing app's one selection and the shape loom answers (no imports)
+  'pieces/comms/drafts.ts', // the Comms composer's draft for a member and a conversation, in this browser's storage only, and its retry id (imports react and comms-id.ts)
+  'comms-id.ts', // a Comms message's id, which a draft carries as its retry id (no imports)
   'pieces/comms/conversation-query.ts', // the conversation activity's selections, the bridge receipt's among them, and their shapes (no imports)
 ]);
 const own = /^(access\.ts$|boards\/|pair\/|contexts\/(?:portrait\.tsx|portrait-player\.ts|manifest\.json|sheet\.png)$|data\/|signin\/use-session\.ts$|lib\/utils\.ts$|pieces\/comms\/use-deadline\.ts$)/;
@@ -82,6 +84,7 @@ export const outside: ReadonlyMap<string, { plain?: true; why: string }> = new M
   ['src/core/boards/value-shape.ts', { plain: true, why: 'whether a typed name is a pasted secret value: the one test the page and boards.act use' }],
   ['src/core/boards/bricks/kit.ts', { why: 'the bricks\' reference shapes (zod; value-shape.ts)' }],
   ['src/core/boards/bricks/tickets.ts', { why: 'the tickets brick\'s choices (zod; kit.ts)' }],
+  ['src/core/boards/bricks/catchup.ts', { why: 'the catchup brick\'s choices (zod; kit.ts)' }],
   ['src/core/boards/refs.ts', { why: 'how a record reference is read' }],
   ['src/apps/shell-command-record.ts', { why: 'a shell command\'s record shape' }],
   ['src/core/clock.ts', { why: 'the household clock' }],

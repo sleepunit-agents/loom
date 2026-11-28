@@ -16,7 +16,7 @@ const page = 'web/src/boards/';
  * Each was written before bricks had a suite each. A new brick is never added here: it gets
  * web/src/boards/bricks-<name>.test.tsx. An entry is removed when its checks move to a file of that name. */
 const sharedPageSuite: Record<string, string> = {
-  trend: 'bricks.test.tsx', // its forms and its chart; its counting is in trend.test.ts
+  trend: 'bricks.test.tsx', // its forms and its chart; its counting is in trend.test.ts, its backlog history in bricks-trend-backlog.test.tsx
   ticket: 'bricks.test.tsx', // its forms and commands; its edit and link forms are in bricks-ticket-edit.test.tsx
   comments: 'bricks.test.tsx',
   repository: 'bricks-drawn.test.tsx',

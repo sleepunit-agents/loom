@@ -418,6 +418,14 @@ ids, making it with `comms.open` if it does not exist.
   Pushing the bar opens the conversation as a sheet over the board. Closing the sheet returns to the board. With no
   board the sheet is open and cannot be closed.
 - **The input.** There is one, the same control with or without a board.
+- **The draft (built 2026-11-27).** What is typed and not sent is the desktop Comms composer's draft
+  (`web/src/pieces/comms/drafts.ts`, used as it is): kept in this browser's localStorage only, under
+  `loom:comms:draft:<member>:<thread>:v1`, so it comes back after a reload or a visit to another conversation, and the
+  desktop's composer for the same thread holds the same words. It is the member's own words and never a parameter, a
+  detail, a board record or part of the address (rule 1, rule 3): it leaves the browser only as the message, on Send.
+  It is cleared when loom acknowledges that send (a newer edit typed meanwhile is kept); a send that fails keeps it with
+  the same client id, so sending again cannot post it twice. As on the desktop there is no size, count or age limit
+  beyond loom's own limit on a message; storage that is blocked or full keeps nothing and the input works the same.
 - **The conversation.** Words and the work trace. The work trace is drawn in every Comms thread the member owns, not
   only the pairing thread.
 - **The board.** The layout is a pure function `layout(placements in rank order, fits, area) → for each placement a
@@ -604,7 +612,8 @@ deployed with it, and the agent places it. The member sees a brick arrive. They 
 
 - **The page.** It holds no state of its own (rule 3), so a reload opens the same board. When its live read comes
   back after loom was away, the page asks its own address for the current page; if that runs a different script from
-  the one running, the page reloads, once the input is empty and nothing is being sent. Run 2026-11-27 against a
+  the one running, the page reloads, once the input is empty and nothing is being sent. A draft kept from before
+  ("The draft") holds the reload as typed words do, and a reload by hand brings it back. Run 2026-11-27 against a
   restart with a new build: the page was on the new build, on the same board, about ten seconds after loom was back.
   While loom is away the board is drawn empty; that is a fault to fix.
 - **A brick the page does not know.** A page that has not yet reloaded draws it as "not drawn yet" and nothing else
@@ -660,6 +669,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `sharing` | none | none: a project's sharing is changed by asking the agent | none |
 | `tickets` | `state`: `ready`, `in-progress`, `shelved` or `all`, default `ready` (what the desktop's Tasks opens on). No record reference, and no parameter holds words to search for | none: a ticket is acted on in its `ticket` brick | none |
 | `projects` | none: the words searched for are typed inside the brick and are no parameter | none | none |
+| `catchup` | `since`: `today`, `3-days` or `7-days`, default `today`. No record reference | none: a ticket is acted on in its `ticket` brick | none |
 
 | Brick | Can be big | Flags itself when |
 | --- | --- | --- |
@@ -789,6 +799,38 @@ member, a household owner and a member on no project); `web/src/boards/bricks-ti
 asked for each state, rows as `ticket` chips, empty, loading, unavailable, paging to the cap, and the search (once
 on submit, results, nothing matches, unavailable, back to the list, nothing to the board).
 | `projects` | yes: up to 200 projects by name, each with its goal and where it stands, and a search box. Small: the first six. Folded: the counts | never |
+| `catchup` | yes: every project with something since `since`, by name, its three newest moved tickets, each a `ticket` chip with what moved it (an agent's update with the agent's chip, a comment, closed, started, opened) and when, the project's chip, and chips for the other two times. Small: as many moved tickets as fit across projects, newest first, with their project. Folded: how many tickets moved in how many projects | never |
+| `trend`, added later on 2026-11-27 | yes: also "Backlog history", opened on a press: what was open at the start and the end of the chart's window, and the desktop's groups with their counts, a picked group's tickets as `ticket` chips with their titles, fifty at most | as above |
+
+**The catch-up and the backlog history, 2026-11-27 (t-2428).** `catchup` is the desktop's Work catch-up
+(`pieces/work/catch-up.tsx`) across every project the member may read, through the desktop's two reads, by the brick's
+own names: the projects with their tickets changed since a time, four a project, each with its latest comment
+(`projects { tasksByProject }`, the generated schema, so by the tasks and projects rules alone), and the agents'
+latest updates on tickets, four a project (`projectActivityHighlights` with no project: only tickets the member may
+read, in projects they may read, from sources they may read, `core/conversations/project-posts.ts`). They are put
+together as the desktop puts them: a ticket says the newest of its update, its comment or what happened to it, a
+ticket only an update names is listed too, and a removed project is left out. The desktop's time is "since your last
+visit on this desktop", kept in the browser's storage; a board keeps nothing there (rule 3), so the time is the
+parameter, and `today` is the default because it is the nearest fixed choice to a daily visit and the smallest read.
+`today` is from the start of the member's day in the device's zone, and `3-days` and `7-days` from the start of the
+day two and six days before it, as `trend` counts its days; the time is worked out when the brick is drawn and when
+its parameter changes, not again at midnight. **Reads:** both are live, relaxed; if the updates fail the changed
+tickets are still shown, with a line saying the updates are unavailable. The project names are links on the desktop
+and `project` chips here; an update's agent is an `agent` chip; a comment's author is its id, in words.
+
+`trend`'s backlog history is the desktop's `projectBacklogWindow` (`core/data/backlog-window.ts`, the desktop's
+`pieces/work/backlog-window.tsx`) for the project and the window the chart shows: from the start of the first of its
+`days` to the moment it is opened. It is drawn in the big form only and is closed until the member opens it. **Reads:**
+none live. Each opening is one read of the counts (`useDataOnce`), and each group picked one read of that group's
+first fifty tickets, by title; past fifty it says how many there are and that the desktop lists the rest. Hiding it,
+the brick leaving its big form, or its project or `days` changing forgets what was read. Who may read it is the
+server's rule: a project the member may read, and in it only the tickets the member may open today; any other project
+is no answer, and the section says the history is unavailable. Before loom kept the history (migration 44) it says
+where history starts. Checked: `web/src/boards/bricks-catchup-queries.test.ts` runs the catch-up's two reads and the
+backlog history against loom's generated schema and the server's own fields under the real rules (a member, a
+household owner and a member on no project); `bricks-catchup.test.tsx` and `bricks-trend-backlog.test.tsx` check
+each time's variables, each form, empty, loading, unavailable, the updates failing alone, opening and closing, a
+picked group, and forgetting on a change.
 
 **The conversations and agents bricks, 2026-11-27.** Each reads what the desktop's Comms, Home and Agents apps read.
 
@@ -1950,13 +1992,15 @@ given an area. What they pin:
   container; a closed board that is not in the address gives way; a chip click with a closed board or none calls
   `boards.open`.
 - Of 18: after placing, maximizing, a chip click, a send and a move along the trail, the page has written nothing to
-  local or session storage, `location.search` and `location.hash` are empty, and each address it went to is a path
+  local or session storage but the composer's draft, which the acknowledged send removed, `location.search` and `location.hash` are empty, and each address it went to is a path
   with one id.
 - The heading rule; the names rule (a heading is the brick's name, the reference is in the monospace line); a stored
   flag (marked, labelled, `boards.seen` on pointing or focus, the folded chip and row marked); a brick's own flag
   (raised when the ticket, comments or session read changes, not after the member's own action, cleared on pointing
   with no call); the session brick's stop asking first; the reload onto a new build, only with the input empty and
-  nothing being sent.
+  nothing being sent. The draft ("The draft" under "The page"): back after a reload, one per conversation and member,
+  the desktop's own, cleared on an acknowledged send and kept with its client id on a failed one, a long one kept
+  whole, storage that refuses it harmless, in no request, address or session storage, and holding the reload.
 
 In `bricks-account.test.tsx`, `bricks-appearance.test.tsx` and `bricks-secrets.test.tsx`, with
 `src/core/boards/bricks/account.test.ts`, `appearance.test.ts` and `secrets.test.ts`: the three bricks of the
