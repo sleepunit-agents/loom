@@ -1,16 +1,52 @@
 /** More than one conversation on the boards page: the one quiet control beside the presence and the panel it opens,
- * which holds the list of the member's threads and whatever else the page puts there (the open thread's rename and
- * archive, this device's notifications), so the conversation's header is one line. Which thread is shown is the address and nothing else; whether
+ * which holds the list of the member's threads, Comms' search of them, and whatever else the page puts there (the
+ * open thread's rename, pin, archive and delete, this device's notifications), so the conversation's header is one line. Which thread is shown is the address and nothing else; whether
  * the list is open is this page's own and is kept nowhere. The reads, the order and the calls are Comms' own. */
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
-import { useDataQuery } from '../data/graphql';
+import { useDataOnce, useDataQuery } from '../data/graphql';
 import { memberOperation } from '../data/operation';
 import { newId } from '../data/id';
 import { threadFields } from '../pieces/comms/thread-fields';
-import type { CommsThread } from '../pieces/comms-view/model';
+import { threadRows, type CommsThread } from '../pieces/comms-view/model';
 import { SHORTCUTS, keysOf, onMac, shortcutEngine } from '../shell/shortcuts';
-import { threadPath, useAgentNames, useThreads } from './agents-data';
-import { Asking } from './brick-kit';
+import { threadPath, useAgentNames, useThreads, type ThreadsReading } from './agents-data';
+import { Action, Asking } from './brick-kit';
+
+/** Comms' own search of the member's threads in one folder (`commsThreads(search:)`, as the desktop's Comms asks
+ * it), with `unread`. It is asked once each time a search is submitted, by one request (`useDataOnce`), never as a
+ * live selection: a search answer does not follow later changes, and asking again is submitting again. Its rows are
+ * in Comms' order. What was typed is held by the drawn control alone: never a parameter, a detail or a board's. */
+export const threadSearchQuery = `query BoardsThreadSearch($archived:Boolean!,$search:String!){homeComms{member} commsThreads(archived:$archived,search:$search,offset:0,limit:51){${threadFields} unread}}`;
+export function useThreadSearch(search: string, archived = false): ThreadsReading {
+  const read = useDataOnce<{ homeComms: { member: string } | null; commsThreads: CommsThread[] }>(threadSearchQuery, { archived, search }, { pause: !search });
+  if (!search || read.status === 'loading') return { status: 'loading', agents: [], rows: [], more: false };
+  const home = read.data?.homeComms, threads = read.data?.commsThreads;
+  if (read.status !== 'live' || !home || !Array.isArray(threads)) return { status: 'unavailable', agents: [], rows: [], more: false };
+  return { status: 'live', agents: [], more: threads.length > 50, rows: threadRows({ status: 'live', member: home.member, threads: threads.slice(0, 50), agents: [] }, archived, '') };
+}
+/** What is sent for a search: the words typed, trimmed and with their spaces made single, at most 200 characters. */
+export const searchWords = (typed: string) => typed.trim().split(/\s+/).filter(Boolean).join(' ').slice(0, 200);
+/** The search box: asked on submit (Enter or Search), never on a keystroke. Emptying it goes back to the list. */
+export function ThreadSearch({ asked, ask }: { asked: string; ask(words: string): void }) {
+  const [typed, setTyped] = useState(asked);
+  const submit = (e: FormEvent) => { e.preventDefault(); ask(searchWords(typed)); };
+  return (
+    <form className="board-search" role="search" onSubmit={submit}>
+      <input className="board-input" type="search" aria-label="Search conversations" placeholder="Search conversations…" maxLength={200} value={typed}
+        onChange={(e) => { setTyped(e.target.value); if (!e.target.value.trim()) ask(''); }} />
+      <Action submit disabled={!searchWords(typed)}>Search</Action>
+      {asked && <Action kind="quiet" onClick={() => { setTyped(''); ask(''); }}>Show the list</Action>}
+    </form>
+  );
+}
+/** Comms' words for what a search found nothing for, and for a search that could not be asked. */
+export const searchNone = 'No conversations match.', searchFailed = 'Search is unavailable. Try again.';
+
+/** Pin or unpin one thread, or delete it, as Comms' More menu does (`comms.change`). `done` hears which, once it is saved. */
+export type ThreadAct = 'pin' | 'unpin' | 'delete';
+export const changeFor = (act: ThreadAct) => (act === 'delete' ? { change: 'delete' as const } : { change: 'pin' as const, pinned: act === 'pin' });
+/** The question before a delete, naming the conversation by its title. Nothing is sent until it is answered yes. */
+export const deleteQuestion = (title: string) => `Delete “${title}” and its private words? It cannot be undone.`;
 
 /** The desktop's launcher keys (shell/shortcuts.ts: its chord, its older chords, a double tap of Shift), read by
  * its own engine. Here they open and close the list of conversations. */
@@ -41,7 +77,10 @@ export function ThreadSwitch({ thread, visit, children }: { thread: string; visi
 }
 
 function ThreadList({ thread, visit, close, children }: { thread: string; visit(path: string): void; close(): void; children?: ReactNode }) {
-  const list = useThreads(), name = useAgentNames();
+  const threads = useThreads(), name = useAgentNames();
+  // A submitted search shows what Comms found in place of the list, and no new conversations; emptying it goes back.
+  const [asked, setAsked] = useState(''), found = useThreadSearch(asked);
+  const list = asked ? found : threads;
   const [at, setAt] = useState(0), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const box = useRef<HTMLDivElement>(null), fresh = useRef<Record<string, string>>({});
   useEffect(() => { box.current?.focus?.(); }, []);
@@ -55,6 +94,7 @@ function ThreadList({ thread, visit, close, children }: { thread: string; visit(
     catch { setError('Could not start the conversation. Try again.'); setBusy(false); }
   };
   const count = list.rows.length + list.agents.length;
+  const ask = (words: string) => { setAsked(words); setAt(0); };
   const choose = (n: number) => { const row = list.rows[n]; if (row) go(row.id); else if (list.agents[n - list.rows.length]) void start(list.agents[n - list.rows.length]); };
   const keys = (e: KeyboardEvent) => {
     // Typing in the panel (a new title) and its own controls keep their keys; Escape closes from anywhere in it.
@@ -70,8 +110,10 @@ function ThreadList({ thread, visit, close, children }: { thread: string; visit(
   const follow = (e: MouseEvent, id: string) => { if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; e.preventDefault(); go(id); };
   return (
     <div ref={box} className="boards-threads" role="dialog" aria-label="Conversations" tabIndex={-1} onKeyDown={keys}>
+      {threads.status === 'live' && <ThreadSearch asked={asked} ask={ask} />}
       {list.status === 'loading' && <p role="status" className="text-muted-foreground">Loading…</p>}
-      {list.status === 'unavailable' && <p className="text-muted-foreground">Conversations are unavailable.</p>}
+      {list.status === 'unavailable' && <p className="text-muted-foreground">{asked ? searchFailed : 'Conversations are unavailable.'}</p>}
+      {asked && list.status === 'live' && !list.rows.length && <p className="text-muted-foreground">{searchNone}</p>}
       {list.status === 'live' && (
         <ul>
           {list.rows.map((t, n) => (
@@ -81,7 +123,7 @@ function ThreadList({ thread, visit, close, children }: { thread: string; visit(
               </a>
             </li>
           ))}
-          {list.more && <li className="text-muted-foreground">Older conversations are in Comms.</li>}
+          {list.more && <li className="text-muted-foreground">{asked ? 'More match than these; the rest are in Comms.' : 'Older conversations are in Comms.'}</li>}
           {list.agents.map((agent, n) => (
             <li key={'new:' + agent}>
               <button type="button" data-active={list.rows.length + n === at} disabled={busy} onClick={() => void start(agent)} onPointerEnter={() => setAt(list.rows.length + n)}>New conversation with {name(agent)}</button>
@@ -108,18 +150,20 @@ export function ThreadLine({ thread, name }: { thread: CommsThread; name(id: str
 }
 
 export const threadHeadQuery = `query BoardsThreadHead($id:String!){thread:commsThread(id:$id){${threadFields}}}`;
-type Change = { change: 'rename'; title: string } | { change: 'archive'; archived: boolean };
-/** The open thread's title, and for the member whose thread it is, Comms' rename and archive (`comms.change`). */
-export function ThreadHead({ thread, member }: { thread: string; member: string }) {
+type Change = { change: 'rename'; title: string } | { change: 'archive'; archived: boolean } | { change: 'pin'; pinned: boolean } | { change: 'delete' };
+/** The open thread's title, and for the member whose thread it is, Comms' rename, pin, archive and delete
+ * (`comms.change`); archive and delete are asked first. A deleted thread is left for the page's own address
+ * (`visit('/app/boards')`), as Comms goes back to its list. */
+export function ThreadHead({ thread, member, visit }: { thread: string; member: string; visit?(path: string): void }) {
   const read = useDataQuery<{ thread: CommsThread | null }>(threadHeadQuery, { id: thread }, { keep: true });
-  const [mode, setMode] = useState<'rename' | 'archive' | null>(null), [title, setTitle] = useState('');
+  const [mode, setMode] = useState<'rename' | 'archive' | 'delete' | null>(null), [title, setTitle] = useState('');
   const [busy, setBusy] = useState(false), [error, setError] = useState(false);
   const t = read.status === 'live' && read.data?.thread?.id === thread ? read.data.thread : null;
   if (!t) return null;
   const run = async (change: Change) => {
     if (busy) return;
     setBusy(true); setError(false);
-    try { await memberOperation('comms.change', { thread, ...change }); setMode(null); }
+    try { await memberOperation('comms.change', { thread, ...change }); setMode(null); if (change.change === 'delete') visit?.('/app/boards'); }
     catch { setError(true); }
     finally { setBusy(false); }
   };
@@ -133,9 +177,11 @@ export function ThreadHead({ thread, member }: { thread: string; member: string 
         {t.member === member && !mode && (
           <>
             <button type="button" className="board-action" data-kind="quiet" disabled={busy} onClick={() => { setTitle(t.title); setMode('rename'); }}>Rename</button>
+            <button type="button" className="board-action" data-kind="quiet" disabled={busy} onClick={() => void run(changeFor(t.pinned ? 'unpin' : 'pin'))}>{t.pinned ? 'Unpin' : 'Pin'}</button>
             {t.archivedAt
               ? <button type="button" className="board-action" data-kind="quiet" disabled={busy} onClick={() => void run({ change: 'archive', archived: false })}>Restore</button>
               : <button type="button" className="board-action" data-kind="quiet" disabled={busy} onClick={() => setMode('archive')}>Archive…</button>}
+            <button type="button" className="board-action" data-kind="quiet" disabled={busy} onClick={() => setMode('delete')}>Delete…</button>
           </>
         )}
       </div>
@@ -148,6 +194,9 @@ export function ThreadHead({ thread, member }: { thread: string; member: string 
       )}
       {mode === 'archive' && (
         <Asking label="Archive conversation" kind="plain" yes="Archive conversation" no="Keep it" disabled={busy} onYes={() => void run({ change: 'archive', archived: true })} onNo={() => setMode(null)}>Archive this conversation? It leaves the list of conversations.</Asking>
+      )}
+      {mode === 'delete' && (
+        <Asking label="Delete conversation" yes="Delete conversation" no="Keep it" disabled={busy} onYes={() => void run({ change: 'delete' })} onNo={() => setMode(null)}>{deleteQuestion(t.title)}</Asking>
       )}
       {error && <p role="alert" className="text-destructive">Could not save. Try again.</p>}
     </div>
