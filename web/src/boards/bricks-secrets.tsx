@@ -37,8 +37,12 @@ const ASK_AGENT = 'To change this default or a secret\'s standing rule, ask your
 type Detail = Record<string, string>;
 /** `detail` null: the change is made and the board is not told (a stored name that looks like a value, below). */
 type Run = (action: string, work: () => Promise<boolean>, detail?: Detail | null) => void;
-/** The secrets store's name shape (secretName, src/pieces/secrets/input.ts), and the shape the board's detail takes. */
-const secretName = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+/** The secrets store's name shape (secretName, src/pieces/secrets/input.ts), and the shape the board's detail takes:
+ * one string, for the Name field's `pattern` and the check before sending. bricks-secrets.test.tsx holds it to the
+ * store's own over the same names. (`\-`: a pattern is read with the `v` flag, where a bare `-` in a class is not allowed.) */
+const NAME_SHAPE = '[A-Za-z0-9][A-Za-z0-9._\\-]{0,63}';
+const secretName = new RegExp('^' + NAME_SHAPE + '$', 'v');
+const NAME_RULE = 'A name is up to 64 letters, digits and . _ -, starting with a letter or digit.';
 /** What the board is told of a stored secret: its name and outcome, or nothing when an older name has the shape of a
  * value (one made on the desktop before this check), so that it can still be replaced or removed. */
 const told = (secret: string, outcome: string): Detail | null => (looksLikeSecretValue(secret) ? null : { secret, outcome });
@@ -166,7 +170,9 @@ function ValueForm({ name, description = '', busy, run, cancel }: { name?: strin
   const save = (event: FormEvent) => {
     event.preventDefault();
     const field = value.current, secret = name ?? named.current?.value ?? '';
-    if (busy || !field || !field.value || !secretName.test(secret)) return;
+    if (busy || !field || !field.value) return;
+    // Whatever was said of the last try is said again or not at all.
+    if (!secretName.test(secret)) { setProblem(NAME_RULE); return; }
     // A name typed here that has the shape of a value is refused before anything is sent: the board would be told it.
     if (!name && looksLikeSecretValue(secret)) { setProblem(SECRET_VALUE_WORDS); return; }
     setProblem('');
@@ -174,7 +180,7 @@ function ValueForm({ name, description = '', busy, run, cancel }: { name?: strin
   };
   return (
     <form className="board-form" aria-label={name ? `Replace ${name}` : 'Add a secret'} autoComplete="off" onSubmit={save}>
-      {!name && <label className="board-field"><span>Name</span><input ref={named} className="board-input font-mono" aria-label="Name" required maxLength={64} pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,63}" autoComplete="off" /></label>}
+      {!name && <label className="board-field"><span>Name</span><input ref={named} className="board-input font-mono" aria-label="Name" required maxLength={64} pattern={NAME_SHAPE} autoComplete="off" onInput={() => setProblem('')} /></label>}
       <label className="board-field"><span>Description</span><input ref={about} className="board-input" aria-label="Description" defaultValue={description} maxLength={4000} autoComplete="off" /></label>
       <label className="board-field"><span>Value</span><input ref={value} className="board-input" aria-label="Value" type="password" required autoComplete="new-password" spellCheck={false} /></label>
       <Note>{WRITE_ONLY_WORDS}</Note>

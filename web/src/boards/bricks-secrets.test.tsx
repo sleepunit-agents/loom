@@ -9,6 +9,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const feed = vi.hoisted(() => vi.fn());
 vi.mock('../data/graphql', () => ({ useDataQuery: feed }));
 import { settingsQuery } from '../pieces/settings/data';
+import { secretName as storeName } from '../../../src/pieces/secrets/input';
+import { ACCEPTED_NAMES, REFUSED_NAMES } from '../../../src/core/boards/value-shape.fixture';
 import { bricks, loadBricks } from './bricks';
 import { Frame } from './brick-kit';
 import type { Form } from './layout';
@@ -314,8 +316,12 @@ it('sends nothing for a name the secrets store would refuse, so the board is nev
 });
 
 const SAME = 'That looks like a secret value, not a name.';
-const PASTED = ['loom_' + 'S'.repeat(43), 'ghp_' + 'A1b2'.repeat(6), 'sk-ant-api03-' + 'k'.repeat(24), 'Zx9q8W7e6R5t4Y3u2I1o0P9a8S7d6F5g4'];
-it('sends nothing for a name that has the shape of a secret value, says so, and takes an ordinary name', async () => {
+// The one fixture list (src/core/boards/value-shape.fixture.ts), each side as far as the store's name shape takes it.
+const PASTED = REFUSED_NAMES.filter((name) => storeName.safeParse(name).success);
+const NAMES = ACCEPTED_NAMES.filter((name) => storeName.safeParse(name).success);
+it('sends nothing for a name that has the shape of a secret value, says so, and takes every name the fixture list takes', async () => {
+  expect(PASTED.length).toBeGreaterThanOrEqual(10);
+  expect(NAMES.length).toBeGreaterThanOrEqual(10);
   live();
   await draw('primary');
   await press('Add a secret…');
@@ -327,13 +333,41 @@ it('sends nothing for a name that has the shape of a secret value, says so, and 
   }
   expect(requests).toEqual([]);
   expect(reported).not.toHaveBeenCalled();
-  for (const name of ['PUMP_TOKEN', 'github-deploy-key', 'ci.runner']) {
+  for (const name of NAMES) {
     if (!tree!.root.findAll((node) => node.type === 'form' && node.props['aria-label'] === 'Add a secret').length) await press('Add a secret…');
     world.fields.get('Name')!.value = name; world.fields.get('Value')!.value = VALUE;
     await submit('Add a secret');
     expect(all(), name).not.toContain(SAME);
   }
-  expect(reported.mock.calls).toEqual(['PUMP_TOKEN', 'github-deploy-key', 'ci.runner'].map((secret) => ['setValue', { secret, outcome: 'added' }]));
+  expect(reported.mock.calls).toEqual(NAMES.map((secret) => ['setValue', { secret, outcome: 'added' }]));
+});
+
+it('says the store\'s rule for a name it would refuse, and no longer the last try\'s words', async () => {
+  live();
+  await draw('primary');
+  await press('Add a secret…');
+  world.fields.get('Name')!.value = PASTED[0]; world.fields.get('Value')!.value = VALUE;
+  await submit('Add a secret');
+  expect(all()).toContain(SAME);
+  world.fields.get('Name')!.value = 'two words';
+  await submit('Add a secret');
+  expect(all()).not.toContain(SAME);
+  expect(all()).toContain('A name is up to 64 letters, digits and . _ -, starting with a letter or digit.');
+  // Typing again clears what was said.
+  await act(async () => { tree!.root.findAll((node) => node.type === 'input' && node.props['aria-label'] === 'Name')[0].props.onInput(); });
+  expect(all()).not.toContain('A name is up to 64');
+  expect(requests).toEqual([]);
+});
+
+it('the Name field\'s pattern is the store\'s name shape, over names either side of it', async () => {
+  live();
+  await draw('primary');
+  await press('Add a secret…');
+  const pattern: string = tree!.root.findAll((node) => node.type === 'input' && node.props['aria-label'] === 'Name')[0].props.pattern;
+  // As a browser reads `pattern`: the whole value, with the v flag.
+  const field = new RegExp('^(?:' + pattern + ')$', 'v');
+  for (const name of ['PUMP_TOKEN', 'a', 'A.b_c-d', '9lives', 'x'.repeat(64), 'x'.repeat(65), '-dash', '.dot', '_under', 'two words', 'a/b', 'a:b', 'a@b', 'é', '', ...ACCEPTED_NAMES, ...REFUSED_NAMES])
+    expect(field.test(name), name).toBe(storeName.safeParse(name).success);
 });
 
 it('replaces or removes a stored secret whose name has the shape of a value, and tells the board nothing of it', async () => {
