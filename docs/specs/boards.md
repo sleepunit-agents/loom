@@ -6,6 +6,13 @@ and the last one's findings are folded here without a further round. This fixes 
 behaviour. It does not fix the look. What is built, what was only run by hand and what does not exist are said where
 they apply, and gathered at the end of "Checks".*
 
+> **The only page after sign-in, since 2026-11-28 (t-2428).** The desktop was removed (the owner: "toss it. it'll still
+> be in git after all."). This page is the one a member reaches after signing in; every other address of loom's is
+> the sign-in gate ("Sign-in, and the addresses that are not this page's", under "The page"). Where this spec says
+> "the desktop's X" or "as on the desktop", it names where a brick's reads, words and rules were taken from; those
+> files are in git before that day. What it once left to the desktop is gathered under "Not on any page since the
+> desktop went", at the end of "The page".
+
 ## Why
 
 > "does a future OS that's managed by an agent have apps? lain doesn't click email. she asks navi about her messages.
@@ -514,7 +521,7 @@ ids, making it with `comms.open` if it does not exist.
   there is nothing here, and no presence and no input.
 - **The conversation's header (design pass, 2026-11-27).** One quiet line: the agent's face and name, and under the
   name the thread's title as plain words before how the agent stands. One unobtrusive control beside it (three
-  dots; the desktop launcher's keys open it too) opens one panel that holds everything else: the list of
+  dots; the keys of `web/src/shell/shortcuts.ts` open it too) opens one panel that holds everything else: the list of
   conversations, its search and a new one with each agent, this conversation's rename, pin, archive and delete, and
   notifications on this device (a line that opens its state, its on and off, and its two choices). Nothing else is in the header,
   but for Stop while the agent is working (below).
@@ -535,8 +542,8 @@ ids, making it with `comms.open` if it does not exist.
   reply went back ("Your message by Discord 5 min ago · Art took it up 4 min ago · Reply sent"). It is the desktop's
   `latestBridgeReceipt` (the member's own messages only), read only for such a conversation, at the relaxed pace;
   nothing of the bridge is named but which one, and nothing is linked.
-- **Threads (built 2026-11-27).** A control beside the presence, and the desktop launcher's keys (Ctrl+Space, a
-  double tap of Shift), open a list of the member's open threads: Comms' own rows in Comms' order (pinned, then most
+- **Threads (built 2026-11-27).** A control beside the presence, and the keys the desktop's launcher had (Ctrl+Space,
+  a double tap of Shift; `web/src/shell/shortcuts.ts`), open a list of the member's open threads: Comms' own rows in Comms' order (pinned, then most
   recent; its first fifty), each with its title, its agent, "Working" and "Unread". Arrow keys move, Enter chooses,
   Escape closes. Choosing one pushes `/app/t/<thread id>`; back and forward are resolved again, and a board of the
   thread on screen is handed to the page without redrawing the conversation. The list ends with "New conversation
@@ -558,26 +565,27 @@ ids, making it with `comms.open` if it does not exist.
   from the thread's agent after that mark, served as `unread` on a Comms thread row. Nothing about the thread or
   board shown is in a query string, a fragment or storage.
 - **Coming back, and installing (2026-11-27).** The page links its own manifest (`/boards.webmanifest`: id and
-  start `/app/boards`, scope `/`), beside the desktop's, which is unchanged; installed from this page, loom opens
-  at `/app/boards`. The page registers the desktop's service worker (`/sw.js`, scope `/`), which asks the member
-  nothing. Beside the presence is "Notifications": a panel that says what is true of this device (unavailable,
+  start `/app/boards`, scope `/`); installed from this page, loom opens at `/app/boards`. The other manifest
+  (`/manifest.webmanifest`, id `/`), the one the desktop and the phone's app were installed with, keeps its id and
+  now starts at `/app/boards` too (2026-11-28). The page registers loom's service worker (`/sw.js`, scope `/`),
+  which asks the member nothing. Beside the presence is "Notifications": a panel that says what is true of this device (unavailable,
   unsupported by the browser, blocked by the browser, off, on for this device: on means loom lists this browser's
-  own push subscription and the browser allows it) and turns it on and off by the desktop Account's own helper and
+  own push subscription and the browser allows it) and turns it on and off by Account's own helper and
   operations (`notifications.subscribe`, `notifications.removeDevice`; `web/src/pieces/account/notifications.ts`).
   The browser is asked for permission only on the member's press. A push is sent for what it was sent for before
   (an Inbox item that waits on the member at full volume: a question, an approval, a notice) and still carries no
-  words and the desktop's address; when the item belongs to a thread that is the member's own it also carries that
-  thread's boards address (`/app/t/<thread id>`). Which one a click opens is decided on the device: the boards
-  address (or `/app/boards` when the push names no thread) when the member ticked "Open notifications from this
-  device in the boards page", or when the only loom windows open are boards pages; the desktop's otherwise, as
-  before. That choice is the device's and is kept in the browser's cache storage (`loom-device`), where the worker
-  reads it; it is no record of loom's. An open boards page is focused and is not loaded again when the push names
-  no thread or the thread it is already at.
+  words. It names a boards address in `url`: the thread's (`/app/t/<thread id>`) when the item belongs to a thread
+  that is the member's own, and `/app/boards` otherwise; the thread's is in `board` too, as before. A click always
+  opens the boards page (2026-11-28; until then a push named the desktop's address in `url` and the device chose
+  between the two, a choice kept in the browser's cache storage, `loom-device`, which a new worker now deletes): an
+  open boards page first, then any other loom window, taken there, then a new window. A notification shown before,
+  or a push sent before, that names the desktop's address opens the thread its `board` names, or `/app/boards`. An
+  open boards page is focused and is not loaded again when the push names no thread or the thread it is already at.
   **A reply can bring its member back (2026-11-27).** The panel of a device that is on also offers "Also notify
   this device when the agent replies". It is loom's record of that device (`notification_devices.replies`, schema
   51), off until ticked and off for every device enrolled before; it is set by `notifications.subscribe` with an
   optional `replies`, which changes only the device of the browser that calls it. Enrolling again without saying
-  keeps the choice; a browser another person takes over starts off. The desktop's Account does not draw it.
+  keeps the choice; a browser another person takes over starts off.
   When an agent's reply is stored in a loom thread that is one member's own (`conversation.message`, kind `reply`),
   each of that member's devices that chose replies is noted for it (`notification_replies`: one row for a device
   and a thread, holding the reply's number and no words). Nothing is noted for a card, a progress message, the
@@ -586,15 +594,15 @@ ids, making it with `comms.open` if it does not exist.
   pushed. *Looking at it:* the push is sent `REPLY_PUSH_WAIT_MS` (10 seconds,
   `src/core/signin/shared-notifications.ts`) after the reply was stored, and only if the thread's read mark is
   still before the reply then. A page with the conversation on screen in a visible tab marks it read within
-  that time, here or in the desktop's Comms, so it is not pushed; a hidden tab or a closed sheet does not mark it,
+  that time, so it is not pushed; a hidden tab or a closed sheet does not mark it,
   so it is. Loom keeps no record of open pages, and this is the whole rule: a member who left the conversation on
   screen and walked away gets no push, and a page too slow to mark the reply read inside the wait gets one while
   it is being read. *Several replies:* a later reply in the thread takes the device's row over and the wait starts
   again, so replies stored inside one wait are one push; a reply after a push was sent is a new push with the same
   tag, which replaces the earlier notification on the device. A reply is never pushed twice to a device, and a
   body's retry of a reply notes nothing new. *What it says:* the fixed title "loom", an empty body, a tag made
-  from a fingerprint of the thread's id, the thread's desktop address (`/p/comms-preview/thread/<id>`) and its
-  boards address (`/app/t/<thread id>`); the worker opens one or the other as above. No word of the reply, no
+  from a fingerprint of the thread's id, and the thread's boards address (`/app/t/<thread id>`) in both `url` and
+  `board`; the worker opens it as above. No word of the reply, no
   title of the thread and no name of the agent leaves loom: the push service and a locked screen learn that
   something happened in loom, and the device, on a press, which thread. The delivery is the Inbox push's own
   (claimed before it is sent and never sent again, an hour to arrive, a dead endpoint removed) and is rechecked
@@ -603,6 +611,23 @@ ids, making it with `comms.open` if it does not exist.
   progress message becomes the reply is not pushed.
   The tab's title is the thread's title, or "Loom", with "●" in front while the tab is hidden and the thread holds
   an unread reply.
+- **Sign-in, and the addresses that are not this page's (2026-11-28, t-2428).** loom serves the sign-in gate
+  (`web/next.html`, `web/src/shell/main.tsx` and `signin.tsx`, unchanged in look and behaviour from the desktop's)
+  at every address that is not this page's and not an asset or API path (`src/shared-web.ts`): the root, and every
+  address the desktop had (`/p/…`). Signed out, it is the sign-in page. Signed in, it goes on to this page in place
+  of its own address (`web/src/signin/gate-address.ts`): to the boards address it was sent from (`/?to=<address>`,
+  which must be one of this page's or is ignored), to the thread a desktop address for a thread names
+  (`/p/comms-preview/thread/<id>`, which held the id without its `th:`), or to `/app/boards`. This page, signed out,
+  goes to the gate with its own address in `?to=` (none for `/app/boards`), so a member signs in on the gate and
+  comes back where they were; it draws no sign-in of its own. A one-time sign-in link still ends at `/`
+  (`src/core/signin/shared-links.ts`), which is the gate, which comes here.
+- **Not on any page since the desktop went.** What this spec left to the desktop, and so is on no page now: enrolling
+  and revoking a machine (`machines`); held work (`core.effect`, which this server does not serve either); the
+  Appearance choices other than Reduce motion (`appearance`, which keeps them); and each "Not on the brick" item
+  this spec names under a brick (among them Ask a person and Promote to epic on a ticket, "Discuss with <agent>" on
+  an Inbox item, Activity's hour strip and filters by who, where and what, the Tasks board's epic filter and
+  recently finished lane, the household's time zone and the desktop's display names). Each is a brick, or a part of
+  one, to be built when wanted; until then the agent does it, or says it cannot.
 
 ## A restart
 
@@ -634,7 +659,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `trend` | `project`: project id; `days`: 7, 30 or 90, default 30 | none | none |
 | `ticket` | `ticket`: ticket id | `claim {}`, `unclaim {}`, `close {}`, `reopen {}`, each the `tasks.command` action of that name | the ticket id |
 | `comments` | `ticket`: ticket id | `comment {}`, by `tasks.command` | none |
-| `pull` | `change`: change id, `github:owner/repo#number` | `refresh {}`, after `changes.refresh` (`/api/changes/refresh`, the desktop's Refresh of Changes) read GitHub again; a household owner's, as on the desktop. A merge is answered through its approval, on the desktop | the change id |
+| `pull` | `change`: change id, `github:owner/repo#number` | `refresh {}`, after `changes.refresh` (`/api/changes/refresh`, the desktop's Refresh of Changes) read GitHub again; a household owner's, as on the desktop. A merge is answered through its approval (the `approval` brick) | the change id |
 | `repository` | `repository`: `owner/repo`, in any spelling `project_repositories` holds (a leading `github:`, capitals and a trailing `.git` are dropped); `project`: project id, optional | none | the repository id |
 | `person` | `person`: `member:<member id>` or `contact:<contact slug>` | none | the same string |
 | `agent` | `agent`: agent id | `stop {}`, by `runtime.jobStop` on one of its running jobs, after asking | the agent id |
@@ -700,7 +725,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `activity` | yes: the range by day, and an entry opened in place | never |
 | `threads` | yes: every row of Comms' first page, with when each was last used, Pin or Unpin and Delete… on each (no Delete on the conversation the page is open on), and Comms' search | never |
 | `agents` | no | never |
-| `tempo` | yes: every trigger of the agent, the day's recorded firings, and New trigger…, which opens the desktop's Create trigger form in their place; small, the first six | a firing of one of the agent's triggers fails (more of them have a failed last firing than before) |
+| `tempo` | yes: every trigger of the agent, the day's recorded firings, and New trigger…, which opens a Create trigger form (the desktop's fields) in their place; small, the first six | a firing of one of the agent's triggers fails (more of them have a failed last firing than before) |
 | `trigger` | yes: also its project, machine needs, requested model, program, lessons and saved state where the member may read them, every recent run and its recent history; small, its source, target, words, three runs and its buttons | it fails, or its newest run fails |
 | `account` | yes: each passkey, signed-in browser and notification device with its state and dates, and every change; small, the three counts and no control | never |
 | `appearance` | yes: every choice of the desktop's Appearance app as a row of buttons, and a press saves it; small, the choices as words and no control | never |
@@ -732,8 +757,9 @@ calls through modules both sides import.
   device is, and none of the desktop's three is it; a saved look is a default (`neon`) for every member with a row,
   so following its light or dark would turn the page dark for anyone who had only ever changed a switch. Higher
   contrast: the page has no higher-contrast styling. Desk background, pixel faces, sound, haptics, one window at a
-  time and zoom: each is a thing of the desktop's shell. The brick says this in one line and lists Reduce motion
-  under "Takes effect on this page" and the rest under "For the desktop".
+  time and zoom: each was a thing of the desktop's shell, and since the desktop went (2026-11-28) no page uses them.
+  The brick says this in one line and lists Reduce motion under "Takes effect on this page" and the rest under
+  "Kept, not used by a page yet".
 - `secrets` (the desktop's Settings): for a household owner, by the server's rule: `secretsReader` answers an owner
   only and the three secrets operations take an owner only; for anyone else the brick is its unavailable line and
   no row or control. Big: the household default; each secret by name with its description, when and by whom it
@@ -768,8 +794,8 @@ calls through modules both sides import.
   change reports nothing, that a typed value reaches no report, flag, data-hook call or drawn prop, that a
   credential-shaped Name sends nothing, and that a stored one is replaced and removed without a report.
   **Not on the brick:** changing the household default or a secret's standing rule. No member operation does
-  either, on the desktop too: Settings drafts a message asking an agent to propose the change and the owner
-  answers the proposal. The brick shows both and says to ask the agent in the conversation.
+  either (nor did the desktop's Settings): a message asks an agent to propose the change and the owner answers the
+  proposal. The brick shows both and says to ask the agent in the conversation.
 | `machines` | yes: a machine can be opened: its owner, hosting, listed agents, slots, the jobs on it now (each a `session` chip where the job has a conversation), and on the member's own machine its read grants, pending requests and read history; below, the household's alert lines, which a household owner can change. Small: each machine with whether it is the loom machine, when it was last seen, its open alerts and readings. Folded: the count of machines and of open alerts | never |
 | `subscriptions` | yes: the search box and "Needs attention", an account opened for its usage windows, weekly usage by agent, trigger or conversation, sign-ins with "Sign in on this machine" where loom allows it, and settings; each agent's models in order; "Add a subscription". Small: each service and account in one line with its windows. Folded: the count, how many are almost full and how many sign-ins are needed | another sign-in is needed (the count of sign-ins needing attention goes up) |
 | `usage` | yes: up to 60 conversations with reported tokens, jobs, retries and peak context, and one picked conversation's jobs, each opened for its measurements. Small: the first six. Folded: tokens, jobs and conversations in the period | never |
@@ -815,14 +841,14 @@ parameter, and `today` is the default because it is the nearest fixed choice to 
 `today` is from the start of the member's day in the device's zone, and `3-days` and `7-days` from the start of the
 day two and six days before it, as `trend` counts its days; the time is worked out when the brick is drawn and when
 its parameter changes, not again at midnight. **Reads:** both are live, relaxed; if the updates fail the changed
-tickets are still shown, with a line saying the updates are unavailable. The project names are links on the desktop
-and `project` chips here; an update's agent is an `agent` chip; a comment's author is its id, in words.
+tickets are still shown, with a line saying the updates are unavailable. The project names are `project`
+chips; an update's agent is an `agent` chip; a comment's author is its id, in words.
 
 `trend`'s backlog history is the desktop's `projectBacklogWindow` (`core/data/backlog-window.ts`, the desktop's
 `pieces/work/backlog-window.tsx`) for the project and the window the chart shows: from the start of the first of its
 `days` to the moment it is opened. It is drawn in the big form only and is closed until the member opens it. **Reads:**
 none live. Each opening is one read of the counts (`useDataOnce`), and each group picked one read of that group's
-first fifty tickets, by title; past fifty it says how many there are and that the desktop lists the rest. Hiding it,
+first fifty tickets, by title; past fifty it says how many there are. Hiding it,
 the brick leaving its big form, or its project or `days` changing forgets what was read. Who may read it is the
 server's rule: a project the member may read, and in it only the tickets the member may open today; any other project
 is no answer, and the section says the history is unavailable. Before loom kept the history (migration 44) it says
@@ -916,7 +942,7 @@ it in the desktop's words.
   and is read with the same rule: seen with its change. Each file's name opens its row in place to that file's patch
   ("The pull brick's file patches", below). A ticket the member may not read is left out. `changes.answer` exists and a
   member the household lets answer may call it, but it is a merge approval's answer and needs the approval that is
-  waiting for that commit; it stays on the desktop with the approval. Added later on 2026-11-27, in the big form only:
+  waiting for that commit; it is answered with the approval, in the `approval` brick. Added later on 2026-11-27, in the big form only:
   - **When loom last read GitHub.** The brick's last quiet line (`board-foot`): "Last read from GitHub" and the time,
     from `changeSync` (`readAt`), and "The last read failed: this is the copy from before it." where `failed` is set;
     "Read GitHub again" stands on the same line.
@@ -1820,9 +1846,9 @@ parameters refuse, that no detail takes an id or a word, apart from the househol
 from fake data, the compact form one line with no control, the loading and unavailable lines, the heading, and
 every action: the request loom receives, that it is asked first where it cannot be undone, and that `act` is told
 nothing typed and no id, apart from a new token's label). `admin-queries.test.ts` runs the two selections `machines` wrote for itself against the
-fields loom serves. Not on a board: enrolling or revoking a machine, which stays on the desktop; and whatever the desktop itself does by
-a message to the agent, which a brick says in one line. There is no `held-work` brick: the desktop's Held work view
-reads `core.effect` records over a `/live` socket and calls `core.releaseEffect`, and this server serves none of
+fields loom serves. Not on a board: enrolling or revoking a machine (it was on the desktop, and is on no page since it went); and
+what is done by a message to the agent, which a brick says in one line. There is no `held-work` brick: the
+desktop's Held work view read `core.effect` records over a `/live` socket and called `core.releaseEffect`, and this server serves none of
 the three, so there is nothing to draw or release.
 
 **A token made from the board, 2026-11-27** (the owner's ruling for the secrets brick, in the same shape: the
@@ -2103,16 +2129,19 @@ holds no other placement back, and one that cannot be fetched says so in its own
 a newer build unless something is typed. No suite holds a list
 of the bricks, of those that can be big, or a count of them.
 
-In `web/src/boards/notify.test.tsx`, `notify-target.test.ts`, `title.test.tsx` and
+In `web/src/boards/notify.test.tsx`, `title.test.tsx` and
 `web/src/pieces/account/notifications.test.ts`: the notifications control (beside the presence, closed, nothing asked
 of the browser when the page opens or the panel does; every state it says; turning on asks once and enrols by
 `notifications.subscribe`; a refusal enrols nothing; turning off removes this device's own reference and no other;
-the device's choice of where a notification opens and its failure), and the tab's title and its mark. In
-`src/next-pwa-boards.test.ts` and `src/core/signin/shared-notification-boards.test.ts`: the served worker run with
-faked browser objects (a device that did not choose boards opens the desktop's address as before; only boards
-pages open, or the choice made, opens the thread's boards address or `/app/boards`; an outside or non-boards address
-is dropped; the device's cache survives a new worker), both manifests, and the real root's push payload (unchanged,
-key for key, for an item with no thread; the thread's boards address added only for the member's own thread).
+no choice of where a notification opens, and nothing kept in the browser), and the tab's title and its mark. In
+`src/next-pwa-boards.test.ts`, `src/next-pwa.test.ts` and `src/core/signin/shared-notification-boards.test.ts`: the
+served worker run with faked browser objects (every click opens the boards page: the thread's address from either
+field, or `/app/boards`; an open boards page first, then any other loom window, then a new one; a push or a shown
+notification from before that names the desktop's address lands there too; an outside or non-boards address is
+dropped; a new worker deletes every old cache, `loom-device` among them), both manifests opening at `/app/boards`,
+and the real root's push payload (`/app/boards` key for key for an item with no thread; the thread's boards address,
+in both fields, only for the member's own thread). In `web/src/signin/gate-address.test.ts`: where the gate sends a
+member once signed in, and where this page sends one who is signed out.
 In `src/core/signin/shared-notification-replies.test.ts` (real root, in-process transport),
 `src/core/data/upgrade.test.ts` and `web/src/boards/notify-replies.test.tsx`: a device that chose replies gets
 exactly one push for a reply, after the wait and not before, with the exact payload and no words; a device that
