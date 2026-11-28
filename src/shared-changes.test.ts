@@ -216,3 +216,24 @@ it('requires access to the change and the job for each review returned by the HT
   expect(await read()).toEqual({data:{changeReviewHistory:allowed, taskReviewHistory:[]}});
 
 });
+
+it("the pull brick's Refresh from GitHub (changes.refresh): a member who can read the pull request but is no household owner is refused, and GitHub is not read", async () => {
+  let reads = 0;
+  const f = fixture(async () => { reads++; return [f.row]; });
+  f.root.services.changes.put(f.row);
+  f.db.update(members).set({ role: 'member' }).where(eq(members.id, 'sam')).run();
+  f.db.insert(projectMembers).values({ member: 'sam', project: 'pond' }).run();
+  const graphql = async (query: string) => (await f.root.http.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json', cookie: 'loom_ui=' + cookie }, body: JSON.stringify({ query }) })).json();
+  // The brick's own reads: the pull request is there for this member; when loom last read GitHub, and the right to
+  // read it again, are not.
+  expect(await graphql('{ changes { id } changeSync { readAt } workChangesRefresh }')).toEqual({ data: { changes: [{ id: f.row.id }], changeSync: [], workChangesRefresh: false } });
+  const refused = await f.root.http.request('http://loom/api/changes/refresh', { method: 'POST', headers: { 'content-type': 'application/json', cookie: 'loom_ui=' + cookie }, body: JSON.stringify({ input: {} }) });
+  expect(refused.status).toBe(403);
+  expect(reads).toBe(0);
+  // The same member made a household owner may.
+  f.db.update(members).set({ role: 'owner' }).where(eq(members.id, 'sam')).run();
+  expect((await graphql('{ workChangesRefresh }')).data.workChangesRefresh).toBe(true);
+  const allowed = await f.root.http.request('http://loom/api/changes/refresh', { method: 'POST', headers: { 'content-type': 'application/json', cookie: 'loom_ui=' + cookie }, body: JSON.stringify({ input: {} }) });
+  expect(await allowed.json()).toEqual({ ok: true, value: { refreshed: true } });
+  expect(reads).toBe(1);
+});
