@@ -12,6 +12,11 @@ export const person = z.string().regex(/^(member|contact):[a-z0-9][a-z0-9._-]{0,
 /** A change's id as loom writes it (src/apps/changes.ts): `github:`, the repository as owner/repo in lower case,
  * `#` and the pull request's number. `#` is in no other reference. */
 export const change = z.string().max(120).regex(/^github:[a-z0-9._-]+\/[a-z0-9._-]+#[1-9]\d*$/);
+/** A secret's name as the secrets store takes it (`secretName`, src/pieces/secrets/input.ts): an action's detail
+ * may name the secret it changed, never its value or description. */
+export const secretName = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/);
+/** The id shapes an action's detail may hold beside a fixed choice: nothing with a space, so no sentence. */
+export const idShapes: readonly string[] = [ref, ticket, person, change, secretName].map((shape) => (z.toJSONSchema(shape) as { pattern: string }).pattern);
 
 export const recordKinds = [
   'project', 'ticket', 'change', 'repository', 'person', 'agent', 'inbox item', 'approval', 'session',

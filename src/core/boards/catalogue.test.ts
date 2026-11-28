@@ -5,6 +5,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { bricks, catalogue, recordKinds } from './bricks.js';
+import { idShapes } from './bricks/kit.js';
 import { bricks as drawn } from '../../../web/src/boards/bricks';
 
 const names = bricks.map((b) => b.name);
@@ -77,11 +78,18 @@ describe('every definition (check 20)', () => {
       expect(b.shows.length, b.name).toBeGreaterThan(0);
     }
   });
-  it('lets no action\'s detail hold a sentence: every property of every detail is a fixed list, and nothing else is taken', () => {
-    for (const brick of catalogue()) for (const [action, detail] of Object.entries(brick.actions) as [string, { additionalProperties?: boolean; properties?: Record<string, { enum?: unknown[] }> }][]) {
+  it('lets no action\'s detail hold a sentence: every property of every detail is a fixed list or one of the kit\'s id shapes, and nothing else is taken', () => {
+    for (const brick of catalogue()) for (const [action, detail] of Object.entries(brick.actions) as [string, { additionalProperties?: boolean; properties?: Record<string, { enum?: unknown[]; pattern?: string }> }][]) {
       expect(detail.additionalProperties, `${brick.name}.${action}`).toBe(false);
-      for (const property of Object.values(detail.properties ?? {})) expect(property.enum, `${brick.name}.${action}`).toBeInstanceOf(Array);
+      for (const property of Object.values(detail.properties ?? {})) {
+        if (property.enum) expect(property.enum, `${brick.name}.${action}`).toBeInstanceOf(Array);
+        else expect(idShapes, `${brick.name}.${action}: ${JSON.stringify(property)}`).toContain(property.pattern);
+      }
     }
+  });
+  it('holds every id shape a detail may take to no blank space, so an id-shaped detail cannot carry a sentence', () => {
+    for (const shape of idShapes) expect(shape, shape).not.toMatch(/ |\\s/);
+    for (const shape of idShapes) expect(new RegExp(shape).test('two words'), shape).toBe(false);
   });
   it('reports each action for an operation loom registers', () => {
     const sources = (function read(directory: string): string[] {

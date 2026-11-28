@@ -643,7 +643,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `trigger` | `trigger`: a Tempo trigger's id: a letter or digit, then up to 119 of letters, digits and `: . _ / @ -` | `runNow {}`, `stop {}`, `start {}`, `pause {}`, `resume {}`, each after the `tempo.` operation of that name took it; running it now and stopping it ask first; `pause` and `resume` are of the trigger's agent, as on the desktop | the trigger id |
 | `account` | none: it is the signed-in member's own | `removePasskey {}`, by `account.removePasskey`; `revokeSession {}`, by `account.revokeSession`; `removeDevice {}`, by `notifications.removeDevice`; `enableNotifications {}`, by `notifications.subscribe`. Each removal asks first. Adding a passkey, making a sign-in link and signing this device out go to the sign-in door, which is no operation, and the board is not told | none |
 | `appearance` | none: it is the signed-in member's own | `set {}`, by `household.setPreferences` with the one choice pressed; the board is not told which | none |
-| `secrets` | none: it is the household's, for an owner | `allow {}`, `deny {}`, `cancel {}`, `revoke {}`, each by `secrets.command`; `setValue {}`, by `secrets.set`; `remove {}`, by `secrets.remove`, after asking. No detail holds a secret's name, description or value | none |
+| `secrets` | none: it is the household's, for an owner | `allow {}`, `deny {}`, `cancel {}`, `revoke {}`, each by `secrets.command`; `setValue {secret, outcome}`, by `secrets.set`, `outcome` `added` or `replaced`; `remove {secret, outcome}`, by `secrets.remove`, after asking, `outcome` `removed`. `secret` is the secret's name in the secrets store's own shape (`secretName`: a letter or digit, then up to 63 of letters, digits and `. _ -`). No detail holds a description or a value | none |
 | `machines` | none: the machine opened is picked inside the brick | `proposeReader {allow}`, by `machine.proposeReader`; `allow` is `yes` or `no`. `answerReader {answer}`, by `machine.answerReader`; `answer` is `allow` or `deny`. `setAlertLines {}`, by `machine.setAlertLines` (a household owner). Enrolling or revoking a machine is not offered | none |
 | `subscriptions` | none: the account opened and what is searched for are picked inside the brick | `signIn {}`, by `runtime.accountSignIn`; `create {}`, by `runtime.accountCreate`. The label typed goes to the operation and never to the board | none |
 | `usage` | `days`: 1, 7 or 30, default 7. The conversation whose jobs are listed is picked inside the brick | none | none |
@@ -726,7 +726,15 @@ calls through modules both sides import.
   browser once, in the body of `POST /api/secrets/set`, through the desktop's `submitSecret`
   (`pieces/settings/commands.ts`), which empties the field before the request is made. It is never in React
   state, never in a parameter or a detail, never sent to `boards.act`, and no reply's words are shown: a change is
-  "Saved." or "Change not confirmed". A value that was not confirmed is not kept and not sent again.
+  "Saved." or "Change not confirmed". A value that was not confirmed is not kept and not sent again. **What the
+  board is told** (the owner's ruling, 2026-11-27, reversing the earlier rule that a secret's name never reached a
+  board: "return the result of that to chat. so the agent knows oh ok we saved a new key in this-key-place but
+  never saw the key itself"): once loom acknowledged it, a value set is reported as `setValue` with the secret's
+  name and `added` or `replaced`, and a removal as `remove` with the name and `removed`, so the agent reads, for
+  instance, "used setValue on secrets() on board B: outcome=added, secret=PUMP_TOKEN." A description, a value and
+  anything else typed are refused by the detail's schema. A change that is refused or not confirmed tells the board
+  nothing: the member reads "Change not confirmed" in the brick, as before, and a name the store would refuse is
+  not sent at all.
   **Not on the brick:** changing the household default or a secret's standing rule. No member operation does
   either, on the desktop too: Settings drafts a message asking an agent to propose the change and the owner
   answers the proposal. The brick shows both and says to ask the agent in the conversation.
@@ -1373,7 +1381,8 @@ A brick has one home on each side and is listed once on each side. Adding one to
 Nothing else lists the bricks. `src/core/boards/catalogue.test.ts` holds what must be true of every brick and names
 none: the catalogue and the registry hold the same names, each once; every brick has a rectangle for each form it
 has, and one that can be big has a primary one; every parameter that is not a reference has a default; no action's
-detail takes anything but a fixed choice; every action's operation is one loom registers (found by its registration
+detail takes anything but a fixed choice or one of the kit's id shapes (`idShapes` in `bricks/kit.ts`: a
+reference, a ticket, a person, a change, a secret's name; none admits a blank); every action's operation is one loom registers (found by its registration
 in the source; three whose names are put together where they are registered are listed there); every brick has the
 four files above, with a short commented list of older bricks whose page checks are in a shared suite; and both
 tables have its row. A suite that draws every brick makes each one's parameters from its own schema
