@@ -1,5 +1,5 @@
 import { prepareHistoryContext } from './core/conversations/history-context.js';
-import { commsQuery, commsThreadQuery } from '../web/src/pieces/comms/shared-query.js';
+import { commsQuery, commsThreadQuery } from './ui/desk-queries.fixture.js';
 import { inboxItemQuery, inboxQuery } from '../web/src/pieces/attention/inbox-query.js';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';

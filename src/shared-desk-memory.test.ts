@@ -8,7 +8,10 @@ import { agents, household, members, tokens } from './core/data/schema.js';
 import { serveShared } from './shared-serve.js';
 import { deskMemoryFixture } from './ui/desk-memory.fixture.js';
 import { deskAgentDirectory, deskAgentDirectoryQuery, type DeskAgentDirectoryData } from '../web/src/pieces/attention/agent-directory';
-import { deskRecentActivity, deskRecentActivitySelection } from '../web/src/pieces/attention/recent-activity';
+import { memoryQueries } from '../web/src/memory/queries';
+
+// Home's recent steps, as the removed desktop read them (pieces/attention/recent-activity.ts): Memory's own selection.
+const deskRecentActivitySelection = memoryQueries.activity();
 
 const closes: Array<() => unknown> = [];
 afterEach(async () => { for (const close of closes.splice(0).reverse()) await close(); });
@@ -37,7 +40,7 @@ it('feeds Home directory and recent steps from the actual shared Memory listener
     return result.data;
   };
   const directory = async () => deskAgentDirectory({ status: 'live', data: await read(deskAgentDirectoryQuery) as DeskAgentDirectoryData });
-  const activity = async () => deskRecentActivity({ status: 'live', data: deskRecentActivitySelection.decode(await read(deskRecentActivitySelection.query, deskRecentActivitySelection.variables)) });
+  const activity = async () => { const data = deskRecentActivitySelection.decode(await read(deskRecentActivitySelection.query, deskRecentActivitySelection.variables)); return data ? { status: 'live', records: [data] } : { status: 'denied', records: [] }; };
   expect((await directory()).records).toEqual([{ id: 'commons:art', slug: 'art', name: memory.name, kind: 'agent' }]);
   expect((await activity()).records[0].entries).toContainEqual(expect.objectContaining({ id: `d~art~${digest.id}`, agent: 'art', title: 'Actual Home step', line: 'The shared Activity source supplied this step.' }));
   app.writes.run(() => db.update(members).set({ role: 'member' }).where(eq(members.id, 'owner')).run());

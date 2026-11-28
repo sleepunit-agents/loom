@@ -16,7 +16,7 @@ import { homeCommsQuery, type HomeCommsData } from '../pieces/attention/home-com
 import { memberPreferences, memberPreferencesQuery, type MemberPreferencesData } from '../shell/member-preferences';
 
 /** The one honest line the `appearance` brick shows. */
-export const WORN_WORDS = 'On this page only Reduce motion takes effect. This page keeps its own look, light or dark as this device is, and has no higher-contrast styling; the other choices are for the desktop.';
+export const WORN_WORDS = 'On this page only Reduce motion takes effect. This page keeps its own look, light or dark as this device is, and has no higher-contrast styling; the other choices are kept, and no page uses them yet.';
 
 /** The member's own saved choices, live, as the desktop's shell reads them: the mailbox says who is signed in, and
  * only that member's one row counts (shell/member-preferences.ts). */

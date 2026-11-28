@@ -5,10 +5,7 @@ import {act,create} from 'react-test-renderer';
 const f=vi.hoisted(()=>({snapshot:{} as any,listeners:new Set<()=>void>(),images:[] as string[],queries:[] as any[],decode:vi.fn()}));
 vi.mock('./data/graphql',()=>({useDataQuery:(document:string,variables:object)=>{f.queries.push({document,variables});return useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshot);}}));
 vi.mock('./access',()=>({reducedMotion:()=>true,motionQuery:()=>({matches:true,addEventListener(){},removeEventListener(){}})}));
-vi.mock('./face',()=>({default:()=>h('drawn-fallback')}));
 import PixelFace,{deskSpriteQuery} from './pixel-face';
-import AgentFace from './pieces/attention/agent-face';
-import {PixelContext} from './look';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>|undefined;
 const variant={row:0,frames:2,weight:1};
@@ -42,9 +39,7 @@ it('keeps a late image decode from restoring pixels after access is lost',async(
  await publish({...f.snapshot,status:'denied'});await act(async()=>{release();await held;});
  expect(tree!.root.findAllByType('canvas')).toHaveLength(0);expect(tree!.root.findAllByType('drawn-fallback')).toHaveLength(1);
 });
-it('uses the drawn fallback on malformed documents and requests no bytes when pixel faces are disabled',async()=>{
+it('uses the drawn fallback on malformed documents',async()=>{
  f.snapshot={status:'live',data:{deskSprite:{...asset('pixel-bad'),layout:'{}'}}};await draw('pixel-bad');expect(tree!.root.findAllByType('canvas')).toHaveLength(0);
- await act(async()=>tree!.unmount());tree=undefined;f.queries=[];
- await act(async()=>{tree=create(h(PixelContext.Provider,{value:false},h(AgentFace,{name:'Art',state:'idle',size:96,display:{id:'art',agent:'art',mark:{bg:'#000',fg:'#fff'},face:{shape:'pebble',eyes:'dot'},sprite:{agent:'art',v:'pixel-off'}}})));});
- await act(async()=>{await import('./face');});expect(f.queries).toEqual([]);expect(tree!.root.findAllByType('drawn-fallback')).toHaveLength(1);
+ expect(tree!.root.findAllByType('drawn-fallback')).toHaveLength(1);
 });

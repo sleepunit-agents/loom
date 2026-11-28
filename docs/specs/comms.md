@@ -1,5 +1,8 @@
 # Comms: talking with your agents inside loom
 
+> **The desktop was removed 2026-11-28 (t-2428).** What this says about the desktop's Comms app (its dock key, panes, bands and composer) describes a page that
+> is gone: the boards page ([boards.md](boards.md)) is the only page after sign-in. The threads, messages, routes and records below are loom's and stay; the boards page draws a conversation its own way.
+
 *2026-11-05. Status: **proposed**. This is a design doc in the `docs/specs/` sense: what loom will build, and the
 acceptance criteria its suites must pin. It adds one venue, `loom`, delivered through the runtime the way Discord and
 Slack are ([agent-runtime.md](agent-runtime.md) section 5, [bridges.md](bridges.md), [conversations.md](conversations.md)).
@@ -97,7 +100,7 @@ _Avoid_: log, trace, transcript
 4. **The live streams.** A thread's live updates come on its own stream, `GET /comms/<thread>/events`, which the app
    opens while that thread is on screen. It's a thread route like the others: `403` unless rule 3 passes, checked when
    it opens and again before each event it sends, so a member who stops owning the agent is cut off at the next event.
-   The app's shared stream, `GET /events` (ui-app.md, "Live"), carries nothing of Comms but a bare `change` (so the
+   The app's shared stream, `GET /events` (docs/archive/ui-app.md, "Live"), carries nothing of Comms but a bare `change` (so the
    dock's unread count refreshes), sent only to the streams of the thread's own member. That needs a member-scoped
    `changed` in `src/ui/live.ts`: today's `changed(about)` reaches every owner of an agent.
 5. **Agent tokens and pieces can't reach Comms' routes.** Comms routes take a signed-in page session and its

@@ -2,7 +2,7 @@ import {afterEach,expect,it} from 'vitest';
 import {eq} from 'drizzle-orm';
 import {bodyFixture,bodyCredentials as raw} from '../test/fixtures/conversation-body.js';
 import {changes,projectMembers,tasks} from './core/data/schema.js';
-import {sourceQuery,changeQuery,taskQuery} from '../web/src/pieces/comms/work-query.js';
+import {sourceQuery,changeQuery,taskQuery} from './ui/desk-queries.fixture.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 it.each(['house/loom#1','https://github.com/house/loom/pull/1'])('reads PRs filed on current visible source tasks, while rejecting hidden conversations, source tasks and changes through the actual UI query (%s)',async citation=>{
  const f=await bodyFixture(clean),at=new Date(f.clock.now()).toISOString(),actor={kind:'agent' as const,id:'art'},service=f.root.services.tasks;

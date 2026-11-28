@@ -5,7 +5,7 @@ import { expect, it } from 'vitest';
 import { createDataSchema } from './database';
 import { dataQueries } from './queries';
 import { members, tasks, taskLinks } from './schema';
-import { deskTasksQuery } from '../../../web/src/pieces/attention/bar-stats';
+import { deskTasksQuery } from '../../ui/desk-queries.fixture.js';
 
 it('reads minimal progress and SQL readiness, including a hidden blocker, and reapplies current fixture visibility', async () => {
   const client = new Database(':memory:');

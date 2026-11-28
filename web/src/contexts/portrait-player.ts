@@ -1,4 +1,4 @@
-import type { FaceState } from '../face';
+import type { FaceState } from '../face-model';
 
 /** The numbers, as settings: the preview (art-pixel-faces.html: MS, the gaps, ROLL_MS, P_LEAVE, P_BACK, MIN_AWAY). */
 export const PIXEL = {

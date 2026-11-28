@@ -8,8 +8,8 @@ import { useDataQuery } from '../data/graphql';
 import { memberOperation } from '../data/operation';
 import { useCommsDraft } from '../pieces/comms/drafts';
 import { useSession } from '../signin/use-session';
-import type { FaceState } from '../face';
-import { Button } from '../pair/ui/button';
+import { gateFor } from '../signin/gate-address';
+import type { FaceState } from '../face-model';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '../pair/ui/input-group';
 import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerProvider, MessageScrollerViewport } from '../pair/ui/message-scroller';
 import { emptyTail, threadId, TranscriptPage, type ThreadTail } from '../pair/transcript';
@@ -371,13 +371,17 @@ export function Resolve({ member }: { member: string }) {
 }
 
 function App() {
-  const { session, login, message } = useSession();
+  const { session, message } = useSession();
   // What the page remembered of a member's bricks ends with their session.
   const viewer = session?.viewer?.id;
   useEffect(() => { if (!viewer) forgetAnswers(); }, [viewer]);
+  // Signed out, the member signs in at loom's sign-in gate, which brings them back to this address after
+  // (signin/gate-address.ts). In place of this address, so Back does not come here again.
+  const signedOut = !!session && !session.viewer;
+  useEffect(() => { if (signedOut) location.replace(gateFor(location.pathname)); }, [signedOut]);
   return session?.viewer ? <><Wear /><Resolve member={session.viewer.id} /></> : (
     <main className="p-6">
-      {session ? <Button onClick={() => void login()}>Sign in with a passkey</Button> : <p>Connecting to Loom…</p>}
+      <p>{signedOut ? 'Signing in…' : 'Connecting to Loom…'}</p>
       {message && <p role="status">{message}</p>}
     </main>
   );

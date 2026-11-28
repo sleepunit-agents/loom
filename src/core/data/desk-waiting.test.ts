@@ -7,7 +7,9 @@ import { agents, members, memberAgents, inbox as inboxTable } from './schema';
 import { CommsMessages } from '../conversations/messages';
 import { CommsQueries, commsQueryFields } from '../conversations/comms-query';
 import { InboxQueries, inboxQueryFields } from '../conversations/inbox-query';
-import { deskWaitingCountsQuery, deskAgentWaitingQuery, waitingCounts, waitingPreview, type WaitingCountsData, type WaitingPreviewData } from '../../../web/src/pieces/attention/waiting';
+import { deskWaitingCountsQuery, waitingCounts, type WaitingCountsData } from '../../../web/src/pieces/attention/waiting-counts';
+import { deskAgentWaitingQuery } from '../../ui/desk-queries.fixture.js';
+type Waiting = { homeComms: { member: string } | null; inboxItems: { id: string; body: { words: string } | null }[] };
 it('executes exact desk counts and first-item queries with recipient filtering, no legacy store and no counting from a page',async()=>{
  const client=new Database(':memory:');
  try {
@@ -28,10 +30,11 @@ it('executes exact desk counts and first-item queries with recipient filtering, 
   const counts=waitingCounts({status:'live',data:count.data as unknown as WaitingCountsData});
   expect(counts.total).toBe(102);expect(counts.agents.get('art')).toBe(102);expect(opens).toBe(0);
   const first=await read(deskAgentWaitingQuery,'alice',{agent:'art'});expect(first.errors).toBeUndefined();
-  const shown=waitingPreview({status:'live',data:first.data as unknown as WaitingPreviewData},Date.parse(at),'art');
-  expect(shown.item).toMatchObject({id:ask.inboxItem,body:{words:'Own private question'}});
+  const shown=first.data as unknown as Waiting;
+  expect(shown.homeComms?.member).toBe('alice');expect(shown.inboxItems).toHaveLength(1);
+  expect(shown.inboxItems[0]).toMatchObject({id:ask.inboxItem,body:{words:'Own private question'}});
   const bob=await read(deskAgentWaitingQuery,'bob',{agent:'art'});expect(bob.errors).toBeUndefined();
-  expect(waitingPreview({status:'live',data:bob.data as unknown as WaitingPreviewData},Date.parse(at)).item).toBeUndefined();
+  expect((bob.data as unknown as Waiting).inboxItems).toEqual([]);
   allowed=false;const revoked=await read(deskWaitingCountsQuery);expect(revoked.errors).toBeUndefined();
   expect(waitingCounts({status:'live',data:revoked.data as unknown as WaitingCountsData}).total).toBe(0);
  }finally{client.close();}

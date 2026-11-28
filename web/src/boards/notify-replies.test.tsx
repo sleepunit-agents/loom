@@ -113,7 +113,7 @@ describe('also notify this device when the agent replies', () => {
   });
   it('is off until chosen, and another device\'s choice is not this one\'s', async () => {
     browser({ permission: 'granted', subscribed: true }); await open(account([{ ref: mine }, { ref: other, replies: true }]));
-    expect(boxes()).toHaveLength(2);
+    expect(boxes()).toHaveLength(1);
     expect(replyBox().props.checked).toBe(false);
   });
   it('shows what loom records for this device', async () => {
@@ -142,9 +142,9 @@ describe('also notify this device when the agent replies', () => {
     expect(alert()).toBe('Could not change this. Check the connection and try again.');
     expect(replyBox().props.checked).toBe(false); expect(replyBox().props.disabled).toBe(false);
   });
-  it('leaves the choice of where a notification opens alone', async () => {
+  it('keeps nothing in the browser: the choice is loom\'s record of the device', async () => {
     const b = browser({ permission: 'granted', subscribed: true }); await open(account([{ ref: mine, replies: false }]));
     await choose(true);
-    expect(b.kept.size).toBe(0); expect(boxes()[0].props.checked).toBe(false);
+    expect(b.kept.size).toBe(0);
   });
 });

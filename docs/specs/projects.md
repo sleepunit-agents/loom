@@ -1,5 +1,8 @@
 # Projects: a body of work, and everything about it in one place
 
+> **The desktop was removed 2026-11-28 (t-2428).** What this says about the desktop's project pages and cards describes a page that
+> is gone: the boards page ([boards.md](boards.md)) is the only page after sign-in. The store, tools and reads are loom's and stay.
+
 *2026-11-02; updated 2026-11-05. Status: **in progress**. Built: the store, tools, CLI, recall resolution, the
 identity block, the section seam and the `conversations` section (criteria 1–15). Specified here and not yet built:
 repo selectors, the `--repo` feed argument, `waiting` groups and linked items (16–18, which extend 10–11), and the

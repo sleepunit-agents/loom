@@ -63,7 +63,7 @@ vi.mock('../data/graphql', async () => {
 import { Page } from './main';
 import { Notify, notifyQuery } from './notify';
 import { NOTIFICATION_WORDS } from '../pieces/account/notifications';
-import { NOTIFICATION_DEVICE_REF, DEVICE_CACHE, OPEN_IN_BOARDS } from '../../../src/ui/notification-target';
+import { NOTIFICATION_DEVICE_REF } from '../../../src/ui/notification-target';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 type Node = { type: string; props: Record<string, any>; children: (Node | string)[]; findAll(test: (n: Node) => boolean): Node[]; findAllByType(type: string): Node[] };
@@ -227,25 +227,9 @@ describe('turning this device on and off', () => {
 });
 
 describe('where this device opens a notification', () => {
-  const choose = async (checked: boolean) => { await act(async () => { await box().props.onChange({ target: { checked } }); }); await settle(); };
-  it('is the desktop until chosen, and the choice is kept where the worker reads it, calling no operation', async () => {
+  it('is always the boards page now: the panel offers no choice of it and keeps nothing in the browser', async () => {
     const b = browser({ permission: 'granted', subscribed: true }); await open(account([mine]));
-    expect(box().props.checked).toBe(false);
-    await choose(true);
-    expect(box().props.checked).toBe(true); expect([...b.kept.keys()]).toEqual([OPEN_IN_BOARDS]); expect(new Set(b.opened)).toEqual(new Set([DEVICE_CACHE]));
-    await choose(false);
-    expect(box().props.checked).toBe(false); expect(b.kept.size).toBe(0);
-    expect(f.op).not.toHaveBeenCalled();
-  });
-  it('shows a choice made earlier', async () => {
-    const b = browser({ permission: 'granted', subscribed: true }); b.kept.set(OPEN_IN_BOARDS, {});
-    await open(account([mine]));
-    expect(box().props.checked).toBe(true);
-  });
-  it('says when the browser did not keep the choice', async () => {
-    browser({ permission: 'granted', subscribed: true }); await open(account([mine]));
-    vi.stubGlobal('caches', { open: async () => { throw new Error('denied'); } });
-    await choose(true);
-    expect(alert()).toBe('This browser did not keep the choice.'); expect(box().props.checked).toBe(false);
+    expect(tree!.root.findAll((n) => n.type === 'span' && typeof n.props.children === 'string' && /boards page/.test(n.props.children))).toEqual([]);
+    expect(b.kept.size).toBe(0); expect(b.opened).toEqual([]);
   });
 });

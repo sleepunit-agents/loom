@@ -2,7 +2,6 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { defineConfig, type Plugin } from 'vite';
-import type { ChunkingContext } from 'rolldown';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { accessMedia } from './access-media.ts';
@@ -28,61 +27,21 @@ function looks(): Plugin {
       // Every look's tokens are in the app's stylesheet (index.css imports looks/looks.css): without them nothing paints.
       const css = Object.values(bundle).filter((f) => f.type === 'asset' && /^assets\/[^/]+\.css$/.test(f.fileName)).map((f) => String((f as { source: unknown }).source)).join('');
       for (const look of ['neon', 'lowlight', 'daylight']) if (!new RegExp(`\\[data-look="?${look}"?\\]`).test(css)) throw new Error(`loom-looks: the app's stylesheet has no ${look} tokens (looks/looks.css)`);
-      const html = bundle['index.html'];
-      if (!html || html.type !== 'asset') throw new Error('loom-looks: no index.html in the build');
+      const html = bundle['next.html'];
+      if (!html || html.type !== 'asset') throw new Error('loom-looks: no next.html in the build');
       // First in the head, before the app's stylesheet: it decides which look paints.
       const anchor = '<meta charset="UTF-8" />';
-      if (!String(html.source).includes(anchor)) throw new Error(`loom-looks: index.html has no ${anchor} to put the look's script after`);
-      for (const name of ['index.html', 'next.html']) {
-        const page = bundle[name];
-        if (page?.type === 'asset') page.source = String(page.source).replace(anchor, `${anchor}\n    <script src="/app/${fileName}"></script>`);
-      }
+      if (!String(html.source).includes(anchor)) throw new Error(`loom-looks: next.html has no ${anchor} to put the look's script after`);
+      html.source = String(html.source).replace(anchor, `${anchor}\n    <script src="/app/${fileName}"></script>`);
     },
-  };
-}
-
-/** Build evidence records source membership even when a lazy screen is folded
- * into another chunk and has no manifest key of its own. Paths stay relative. */
-function screenGraph(): Plugin {
-  return { name: 'loom-screen-graph', apply: 'build', generateBundle(_options, bundle) {
-    const root = path.resolve(import.meta.dirname), graph: Record<string, {imports:string[];modules:string[]}> = {};
-    for (const chunk of Object.values(bundle)) if (chunk.type === 'chunk') graph[chunk.fileName] = {
-      imports: chunk.imports,
-      modules: Object.keys(chunk.modules).filter(id => !id.startsWith('\0')).map(id => path.relative(root,id.split('?')[0])).filter(id => id.startsWith('src/')).sort(),
-    };
-    this.emitFile({type:'asset',fileName:'.vite/screen-graph.json',source:JSON.stringify(graph)});
-  }};
-}
-
-/** Co-locate the synchronous kit shared by both shells. App screens stay in their
- * own dynamic chunks; splitting this same kit across many tiny chunks repeats
- * gzip dictionaries and preload wrappers on the first page. */
-function sharedInitialKit() {
-  let shared: Set<string> | undefined;
-  return (id: string, ctx: ChunkingContext) => {
-    if (!shared) {
-      const reach = (entry: string) => {
-        const seen = new Set<string>();
-        const visit = (id: string) => {
-          if (seen.has(id)) return;
-          seen.add(id);
-          for (const dependency of ctx.getModuleInfo(id)?.importedIds ?? []) visit(dependency);
-        };
-        visit(path.resolve(import.meta.dirname, entry));
-        return seen;
-      };
-      const classic = reach('src/main.tsx'), next = reach('src/shell/main.tsx');
-      shared = new Set([...classic].filter(id => next.has(id)));
-    }
-    return shared.has(id) ? 'shell-kit' : null;
   };
 }
 
 // loom serves the built app at /app/ (docs/specs/ui-app.md); the page itself is any of loom's paths.
 export default defineConfig({
   base: '/app/',
-  plugins: [react(), tailwindcss(), looks(), screenGraph()],
+  plugins: [react(), tailwindcss(), looks()],
   css: { postcss: { plugins: [accessMedia()] } },
   resolve: { alias: { '@': path.resolve(import.meta.dirname, './src') } },
-  build: { manifest: true, rolldownOptions: { output: { codeSplitting: { groups: [{ name: sharedInitialKit(), tags: ['$initial'] }] } }, input: { index: path.resolve(import.meta.dirname, 'index.html'), next: path.resolve(import.meta.dirname, 'next.html') } }, outDir: '../dist/web', emptyOutDir: true },
+  build: { manifest: true, rolldownOptions: { input: { next: path.resolve(import.meta.dirname, 'next.html') } }, outDir: '../dist/web', emptyOutDir: true },
 });

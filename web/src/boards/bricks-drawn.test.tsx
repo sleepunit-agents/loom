@@ -132,7 +132,7 @@ it('shows a pull request with its state, checks, review, who it waits on, and th
   // history (Read GitHub again is drawn only for a member loom says may use it; bricks-pull.test.tsx).
   answer(pullData({ waitingOn: 'you' }));
   await draw('pull', { change: change.id }, 'primary');
-  expect(text()).toContain('The merge is answered in Changes on the desktop.');
+  expect(text()).toContain('The merge is answered by its approval, which the agent can place on a board.');
   expect(controls().map((node) => said(node))).toEqual(["Loom's reviews"]);
   for (const [over, word] of [[{ draft: true }, 'Draft'], [{ state: 'merged' }, 'Merged'], [{ state: 'closed' }, 'Closed'], [{}, 'Open']] as const) {
     answer(pullData(over));
