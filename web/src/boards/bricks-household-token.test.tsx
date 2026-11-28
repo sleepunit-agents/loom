@@ -22,6 +22,8 @@ const ADDRESS = 'https://loom.example.test/boards?board=b-1', moved = vi.fn(), s
 const reported = vi.fn(), raised = vi.fn(), written = vi.fn(), logged: unknown[][] = [];
 const requests: { url: string; body: any }[] = [];
 let reply: () => { status: number; body: unknown };
+/** When set, loom answers only once it resolves: a request still in flight. */
+let hold: Promise<void> | null = null;
 const setup = {
   defaultAgent: 'art',
   members: [{ id: 'sam', role: 'owner', fullOwner: true, agents: [] }, { id: 'lee', role: 'member', fullOwner: false, agents: [] }],
@@ -30,18 +32,19 @@ const setup = {
 };
 const boxes = [{ id: 'bx-1', name: 'shed-pi', revokedAt: null }, { id: 'bx-0', name: 'old-pi', revokedAt: at }];
 const programs = { owner: 'sam', catalogue: { records: ['tasks', 'projects'], operations: ['tasks.command'] }, tokens: [] };
-let world: { setup: object | null };
+let world: { setup: object | null; owner: string };
 beforeEach(() => {
-  feed.mockReset(); reported.mockReset(); raised.mockReset(); written.mockReset(); requests.length = 0; logged.length = 0; world = { setup };
+  feed.mockReset(); reported.mockReset(); raised.mockReset(); written.mockReset(); requests.length = 0; logged.length = 0; world = { setup, owner: 'sam' }; hold = null;
   reply = () => ({ status: 200, body: { ok: true, value: { token: BEARER, fingerprint: 'f'.repeat(64) } } });
   feed.mockImplementation((query: string, _v?: object, options?: { pause?: boolean }) => {
     if (options?.pause) return { status: 'loading' };
     if (query.includes('householdSetup')) return { status: 'live', data: { householdSetup: world.setup, boxes, boxAlertSettings: [] } };
-    if (query.includes('programSetup')) return { status: 'live', data: { programSetup: world.setup ? programs : null } };
+    if (query.includes('programSetup')) return { status: 'live', data: { programSetup: world.setup ? { ...programs, owner: world.owner } : null } };
     throw new Error('A read the household brick should not make: ' + query);
   });
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: { body: string; method: string; credentials: string }) => {
     requests.push({ url, body: JSON.parse(init.body) });
+    if (hold) await hold;
     expect([init.method, init.credentials]).toEqual(['POST', 'same-origin']);
     const { status, body } = reply();
     return { ok: status < 400, status, json: async () => body };
@@ -65,14 +68,18 @@ const button = (words: string) => tree!.root.findAllByType('button').find((b) =>
 const press = (words: string) => act(async () => { await button(words)!.props.onClick(); });
 const type = (label: string, value: string) => act(async () => { tree!.root.findAll((n) => n.type === 'input' && n.props['aria-label'] === label)[0].props.onChange({ target: { value } }); });
 const submit = () => act(async () => { tree!.root.findAll((n) => n.type === 'form' && n.props['aria-label'] === 'Make a token')[0].props.onSubmit({ preventDefault() {} }); });
-/** Every place the value could have gone that is not the one place it is drawn. */
-function nowhere() {
+/** Every place the value could have gone that is not the one place it is drawn. `copies` is how often Copy was pressed:
+ * the clipboard is written then and at no other time. */
+function nowhere(copies = 0) {
+  expect(written.mock.calls, 'the clipboard').toEqual(Array.from({ length: copies }, () => [BEARER]));
   for (const [where, seen] of [['act', reported.mock.calls], ['flags', raised.mock.calls], ['the data hook', feed.mock.calls], ['logs', logged]] as const) expect(JSON.stringify(seen), where).not.toContain(BEARER);
   expect([location.href, location.search, location.hash], 'the address').toEqual([ADDRESS, '', '']);
   expect(moved, 'the address').not.toHaveBeenCalled();
   expect(stored, 'storage').not.toHaveBeenCalled();
 }
 async function make(label = 'pump-laptop') { await press('Make a token…'); await type('Token label', label); await submit(); }
+/** Type a label and submit, from the closed form or the open one. */
+async function tryLabel(label: string) { if (button('Make a token…')) await press('Make a token…'); await type('Token label', label); await submit(); }
 
 it('makes a member\'s token by the desktop\'s door, draws its value once with Copy, and tells the board only its label and kind', async () => {
   await draw('primary');
@@ -87,12 +94,12 @@ it('makes a member\'s token by the desktop\'s door, draws its value once with Co
   await press('Copy token');
   expect(written.mock.calls).toEqual([[BEARER]]);
   expect(shown()).toContain('Copied.');
-  nowhere();
+  nowhere(1);
   await press('Hide token');
   expect(json()).not.toContain(BEARER);
   expect(button('Make a token…')).toBeDefined();
   expect(requests).toHaveLength(1);
-  nowhere();
+  nowhere(1);
 });
 
 it('makes an agent\'s, a machine\'s and an outside program\'s token with what the desktop sends, each told by its kind', async () => {
@@ -140,10 +147,10 @@ it('forgets the value when the brick is drawn again, leaves its big form, or sto
   await redraw('primary');
   expect(json()).not.toContain(BEARER);
   await make('third');
-  world = { setup: null };
+  world = { setup: null, owner: 'sam' };
   await redraw('primary');
   expect(shown()).toBe('This household setup is unavailable.');
-  world = { setup };
+  world = { setup, owner: 'sam' };
   await redraw('primary');
   expect(json()).not.toContain(BEARER);
   // Nothing was asked for again: forgetting is not a retry.
@@ -171,7 +178,7 @@ it('is refused for a member loom does not let make one, and for a browser that s
   expect(reported).not.toHaveBeenCalled();
   expect(json()).not.toContain('loom_');
   // Anyone loom does not answer the setup for has no form at all.
-  world = { setup: null };
+  world = { setup: null, owner: 'sam' };
   await draw('primary');
   expect(button('Make a token…')).toBeUndefined();
 });
@@ -179,9 +186,79 @@ it('is refused for a member loom does not let make one, and for a browser that s
 it('sends nothing for a label the board could not be told, and says why', async () => {
   await draw('primary');
   for (const label of ['', 'Pump laptop', '-dash', 'x'.repeat(121)]) {
-    await (button('Make a token…') ? make(label) : act(async () => { await type('Token label', label); await submit(); }));
+    await tryLabel(label);
     expect(shown(), label).toContain('A label here is one word');
   }
   expect(requests).toEqual([]);
   expect(reported).not.toHaveBeenCalled();
+});
+
+const SAME = 'That looks like a secret value, not a name.';
+it('sends nothing for a label that has the shape of a secret value, says so, and takes an ordinary label', async () => {
+  await draw('primary');
+  for (const label of [BEARER, 'ghp_' + 'A1b2'.repeat(6), 'ci/sk-ant-' + 'k'.repeat(24), 'Zx9' + 'q8W7e6R5t4Y3u2I1'.repeat(2)]) {
+    await tryLabel(label);
+    expect(shown(), label).toContain(SAME);
+  }
+  expect(requests).toEqual([]);
+  expect(reported).not.toHaveBeenCalled();
+  for (const label of ['PUMP_TOKEN', 'github-deploy-key', 'ci:runner']) {
+    await tryLabel(label);
+    expect(shown(), label).not.toContain(SAME);
+    await press('Hide token');
+  }
+  expect(requests.map((r) => r.body.label)).toEqual(['PUMP_TOKEN', 'github-deploy-key', 'ci:runner']);
+});
+
+it('says the token may have been made when the form goes away while loom is asked, as the desktop does, and draws no value later', async () => {
+  let answer!: () => void;
+  hold = new Promise((resolve) => { answer = resolve; });
+  await draw('primary');
+  await make();
+  expect(requests).toHaveLength(1);
+  // The agent puts another brick in the big place: this one is drawn small, and the form is gone.
+  await redraw('side');
+  expect(shown()).toContain('Token creation for “pump-laptop” may have completed. Check its label before trying again.');
+  await act(async () => { answer(); await Promise.resolve(); });
+  await redraw('primary');
+  // loom made it, so the board is told it exists; its value is lost and drawn nowhere.
+  expect(reported.mock.calls).toEqual([['token', { label: 'pump-laptop', kind: 'member' }]]);
+  expect(json()).not.toContain(BEARER);
+  expect(shown()).toContain('may have completed');
+  // Asking again clears the warning.
+  hold = null;
+  await make('second');
+  expect(shown()).not.toContain('may have completed');
+  nowhere();
+});
+
+it('drops a value shown, or asked for, when the signed-in owner changes, as the desktop does', async () => {
+  await draw('primary');
+  await make();
+  expect(json()).toContain(BEARER);
+  // Another owner signs in on this browser: the setup is still answered, but not for the owner who made it.
+  world = { setup, owner: 'lee' };
+  await redraw('primary');
+  expect(json()).not.toContain(BEARER);
+  expect(button('Make a token…')).toBeDefined();
+  // In flight when the owner changes: the member is told it may have been made, and the late answer is not drawn.
+  let answer!: () => void;
+  hold = new Promise((resolve) => { answer = resolve; });
+  await make('second');
+  world = { setup, owner: 'sam' };
+  await redraw('primary');
+  expect(shown()).toContain('Token creation for “second” may have completed.');
+  await act(async () => { answer(); await Promise.resolve(); });
+  expect(json()).not.toContain(BEARER);
+  expect(reported.mock.calls).toEqual([['token', { label: 'pump-laptop', kind: 'member' }]]);
+  nowhere();
+});
+
+it('says it could not copy when the page has no clipboard', async () => {
+  vi.stubGlobal('navigator', {});
+  await draw('primary');
+  await make();
+  await press('Copy token');
+  expect(shown()).toContain('Could not copy. Select the token and copy it.');
+  expect(json().split(BEARER)).toHaveLength(2);
 });

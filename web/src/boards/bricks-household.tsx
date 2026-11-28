@@ -14,8 +14,11 @@
  * member hides it, when the brick leaves its big form, is drawn again or is no longer the owner's, and when the page
  * reloads. It is never passed to `act`, never written to a log, the address or storage, and never read through the
  * data hook, so no remembered answer holds it. The board is told the token's label and kind, and only once loom
- * made it. A label here is one word in the shape of a reference (rule 1: a detail holds no sentence). */
+ * made it, even if the form went away meanwhile; then the brick says the token may have been made, as the desktop
+ * does. A label here is one word in the shape of a reference (rule 1: a detail holds no sentence), and not one in
+ * the shape of a credential (`looksLikeSecretValue`, which `boards.act` refuses by too). */
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { SECRET_VALUE_WORDS, loomBearer, looksLikeSecretValue } from '../../../src/core/boards/value-shape';
 import { useDataQuery } from '../data/graphql';
 import { liveAgents } from '../data/live-agents';
 import { memberOperation } from '../data/operation';
@@ -58,13 +61,15 @@ export function Household({ form, act }: BodyProps) {
   const feed = useDataQuery<{ householdSetup: HouseholdSetup | null; boxes?: Box[] }>(householdSetupQuery, undefined, { keep: true });
   const programFeed = useDataQuery<{ programSetup: ProgramSetupData | null }>(programQuery, undefined, { keep: true, pause: !primary });
   const [busy, setBusy] = useState(false), [message, say] = useState('');
-  if (feed.status === 'loading') return <Loading />;
+  // Said here, not in the token form, so that it outlives the form: a token asked for when the form went away.
+  const [unsure, setUnsure] = useState(''), notice = unsure && <Problem>{unsure}</Problem>;
+  if (feed.status === 'loading') return <>{notice}<Loading /></>;
   const setup = feed.status === 'live' ? feed.data?.householdSetup : null;
-  if (!setup) return <Unavailable what="household setup" />;
+  if (!setup) return <>{notice}<Unavailable what="household setup" /></>;
   const agents = liveAgents(setup.agents), removed = setup.agents.filter((agent) => agent.removedAt);
   const tokens = setup.tokens.filter((token) => tokenState(token) === 'Active').length, browsers = setup.sessions.filter((session) => !session.ended).length;
   const summary = `${count(setup.members.length, 'member')} · ${count(agents.length, 'agent')}`, access = `${count(tokens, 'active token')} · ${count(browsers, 'signed-in browser')}`;
-  if (form === 'compact') return <p className="board-brief">{summary} · {access}</p>;
+  if (form === 'compact') return <>{notice}<p className="board-brief">{summary} · {access}</p></>;
   const programs = primary && programFeed.status === 'live' ? programFeed.data?.programSetup : null;
   const change = async (name: 'token.revoke' | 'sessions.revoke' | 'program.setGrants', input: object, report: string) => {
     if (busy) return false;
@@ -78,6 +83,7 @@ export function Household({ form, act }: BodyProps) {
   };
   if (!primary) return (
     <>
+      {notice}
       <Lead>{summary}</Lead>
       <Facts>
         <Fact label="Members">{setup.members.map((member) => <span key={member.id} className="board-household-who">{memberChip(member.id)} {member.role === 'owner' ? 'Household owner' : 'Member'}</span>)}</Fact>
@@ -91,6 +97,7 @@ export function Household({ form, act }: BodyProps) {
       <Lead>{summary}</Lead>
       <div className="board-meta"><span>{access}</span></div>
       {message && <p role="status" className="board-note">{message}</p>}
+      {notice}
       <Section title="Members" count={setup.members.length}>
         <Rows>
           {setup.members.map((member) => (
@@ -123,7 +130,7 @@ export function Household({ form, act }: BodyProps) {
               })}
             </Rows>
           )}
-          <TokenMaker setup={setup} boxes={feed.status === 'live' ? feed.data?.boxes ?? [] : []} programs={programs ?? null} act={act} />
+          <TokenMaker setup={setup} boxes={feed.status === 'live' ? feed.data?.boxes ?? [] : []} programs={programs ?? null} act={act} unsure={setUnsure} />
         </Section>
       )}
       {primary && (
@@ -161,19 +168,29 @@ type Kind = 'member' | 'agent' | 'machine' | 'program';
 const KINDS: readonly { value: Kind; label: string }[] = [{ value: 'member', label: 'Household member' }, { value: 'agent', label: 'Agent' }, { value: 'machine', label: 'Machine' }, { value: 'program', label: 'Outside program' }];
 /** What a member's, agent's or machine's token is called at the sign-in door. */
 const doorKind = { member: 'owner', agent: 'agent', machine: 'runner' } as const;
-const BEARER = /^loom_[A-Za-z0-9_-]{43}$/;
 const LABEL_RULE = 'A label here is one word of up to 120 letters, digits and . _ - : / @, starting with a letter or digit: the board is told it.';
 const STALE = 'Sign in again to make a token. This browser signed in more than ten minutes ago, or is an automated one.';
 const REFUSED = 'Token creation refused. Check its label and identity.';
 const UNKNOWN = 'Token creation may have completed. Check its label and revoke it before trying again.';
+/** The desktop's words when a token was asked for and the form went away before loom answered. */
+const gone = (label: string) => `Token creation for “${label}” may have completed. Check its label before trying again.`;
 
 /** Household setup's Create token on a board. Everything typed is the form's; the bearer is `bearer` and nothing else. */
-function TokenMaker({ setup, boxes, programs, act }: { setup: HouseholdSetup; boxes: Box[]; programs: ProgramSetupData | null; act: Act }) {
+function TokenMaker({ setup, boxes, programs, act, unsure }: { setup: HouseholdSetup; boxes: Box[]; programs: ProgramSetupData | null; act: Act; unsure(words: string): void }) {
   const [open, setOpen] = useState(false), [kind, setKind] = useState<Kind>('member'), [label, setLabel] = useState(''), [who, setWho] = useState(''), [expires, setExpires] = useState('');
   const [records, setRecords] = useState<string[]>([]), [operations, setOperations] = useState<string[]>([]);
   const [busy, setBusy] = useState(false), [problem, setProblem] = useState(''), [note, setNote] = useState(''), [bearer, setBearer] = useState('');
-  const here = useRef(true);
-  useEffect(() => { here.current = true; return () => { here.current = false; }; }, []);
+  const here = useRef(true), pending = useRef<string | null>(null), generation = useRef(0), owner = useRef<string | null>(null);
+  // Gone while loom was asked: the token may have been made and its value is lost, so the brick says so (the desktop does).
+  // A token loom does make is still told to the board by label and kind: it exists.
+  useEffect(() => { here.current = true; return () => { here.current = false; if (pending.current !== null) unsure(gone(pending.current)); }; }, [unsure]);
+  // As on the desktop, a token shown or asked for is dropped when the signed-in owner is no longer the one who asked.
+  const signedIn = programs?.owner ?? null;
+  useEffect(() => {
+    if (owner.current === null || signedIn === owner.current) return;
+    owner.current = null; generation.current++; setBearer(''); setNote('');
+    if (pending.current !== null) { setProblem(gone(pending.current)); pending.current = null; setBusy(false); }
+  }, [signedIn]);
   const choices = kind === 'agent' ? liveAgents(setup.agents).map((a) => ({ value: a.id, label: a.id }))
     : kind === 'machine' ? boxes.filter((box) => !box.revokedAt).map((box) => ({ value: box.id, label: box.name }))
     : setup.members.map((member) => ({ value: member.id, label: member.id }));
@@ -183,9 +200,13 @@ function TokenMaker({ setup, boxes, programs, act }: { setup: HouseholdSetup; bo
     event.preventDefault();
     if (busy || bearer) return;
     if (!isRef(label)) { setProblem(LABEL_RULE); return; }
+    // A label that has the shape of a value is refused before anything is sent: the board would be told it.
+    if (looksLikeSecretValue(label)) { setProblem(SECRET_VALUE_WORDS); return; }
     if (!chosen) { setProblem('Choose who the token is for.'); return; }
     if (kind === 'program' && !programs) { setProblem('Outside program tokens are unavailable.'); return; }
-    setBusy(true); setProblem(''); setNote('');
+    setBusy(true); setProblem(''); setNote(''); unsure('');
+    const attempt = ++generation.current;
+    pending.current = label; owner.current = signedIn;
     const until = expires.trim() ? { expiresAt: expires.trim() } : {};
     const body = kind === 'program' ? { label, member: chosen, records, operations, ...until }
       : { kind: doorKind[kind], label, [kind === 'agent' ? 'agent' : kind === 'machine' ? 'box' : 'member']: chosen, ...until };
@@ -193,21 +214,28 @@ function TokenMaker({ setup, boxes, programs, act }: { setup: HouseholdSetup; bo
       const response = await fetch(kind === 'program' ? '/api/signin/program' : '/api/signin/token', { method: 'POST', credentials: 'same-origin', redirect: 'error', cache: 'no-store',
         headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
       const result: unknown = await response.json();
+      if (attempt !== generation.current) return;
       if (!response.ok) {
         if (![400, 401, 403, 409].includes(response.status)) throw Error();
         const stale = response.status === 403 && !!result && typeof result === 'object' && 'error' in result && result.error === 'Sign in again before making a token';
+        owner.current = null;
         if (here.current) setProblem(stale ? STALE : REFUSED);
         return;
       }
       const token = !!result && typeof result === 'object' && 'ok' in result && result.ok === true && 'value' in result && !!result.value && typeof result.value === 'object' && 'token' in result.value ? result.value.token : undefined;
-      if (typeof token !== 'string' || !BEARER.test(token)) throw Error();
+      if (typeof token !== 'string' || !loomBearer.test(token)) throw Error();
       // Made: the board is told its label and kind. The bearer is drawn only if this brick is still here to draw it.
       act('token', { label, kind });
-      if (here.current) { setBearer(token); setOpen(false); setLabel(''); setExpires(''); setRecords([]); setOperations([]); }
-    } catch { if (here.current) setProblem(UNKNOWN); }
-    finally { if (here.current) setBusy(false); }
+      if (here.current) { setBearer(token); setProblem(''); setOpen(false); setLabel(''); setExpires(''); setRecords([]); setOperations([]); }
+    } catch { if (here.current && attempt === generation.current) { owner.current = null; setProblem(UNKNOWN); } }
+    finally { if (attempt === generation.current) pending.current = null; if (here.current && attempt === generation.current) setBusy(false); }
   };
-  const copy = () => { void navigator.clipboard?.writeText(bearer).then(() => { if (here.current) setNote('Copied.'); }, () => { if (here.current) setNote('Could not copy. Select the token and copy it.'); }); };
+  const copy = () => {
+    const failed = () => { if (here.current) setNote('Could not copy. Select the token and copy it.'); };
+    // No clipboard outside a secure page: say so rather than doing nothing.
+    if (!navigator.clipboard) { failed(); return; }
+    navigator.clipboard.writeText(bearer).then(() => { if (here.current) setNote('Copied.'); }, failed);
+  };
   if (bearer) return (
     <Section title="New token">
       <Note>Save this token now. It is shown once: it is gone when you hide it, when this brick is drawn again and when the page reloads.</Note>
@@ -215,7 +243,7 @@ function TokenMaker({ setup, boxes, programs, act }: { setup: HouseholdSetup; bo
       {note && <p role="status" className="board-note">{note}</p>}
       <Actions>
         <Action kind="primary" onClick={copy}>Copy token</Action>
-        <Action kind="quiet" onClick={() => { setBearer(''); setNote(''); }}>Hide token</Action>
+        <Action kind="quiet" onClick={() => { setBearer(''); setNote(''); setProblem(''); owner.current = null; }}>Hide token</Action>
       </Actions>
     </Section>
   );
