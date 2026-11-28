@@ -653,7 +653,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `ticket`, added 2026-11-27 | yes: also its description, its linked tickets with their titles, and the Edit and Links forms; small, its priority, who filed it, why it closed and its links as chips | as above; an edit or a link flags nothing |
 | `ticket`, added later on 2026-11-27 | yes: also its pull requests, each a `pull` chip with its title and state; the conversation it was filed from; and two sections opened on a press, Reviews (loom's rounds and GitHub's reviews, newest first) and Story (what agents posted about it, newest first), each read only when opened, thirty at a time; small, its pull requests as `pull` chips by number | as above |
 | `lanes`, added 2026-11-27 | yes: also how many of the project's questions wait on the member, and each agent's new claims with pause and resume | never |
-| `project`, added 2026-11-27 | yes: also its name, what each agent calls it, and its repositories | never |
+| `project`, added 2026-11-27 | yes: also its name, what each agent calls it, and its repositories; and, opened on demand, the agents' notes on it with a search box and each note readable whole | never |
 | `new-ticket` | yes: every field of the desktop's Create task form; small, title, goal and why with that form's defaults; folded, "File a ticket in <project name>" | never |
 | `backlog` | yes: thirty tickets, and each one's priority can be set; small, six | never |
 | `unfiled` | yes: the first fifty, and each can be filed into a project; small, six | never |
