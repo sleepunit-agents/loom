@@ -1417,8 +1417,11 @@ is not kept, so each try asks for the module again. The rest of the board stays 
 placement says "Sorry, this brick didn't load." with "Try again"; the page meanwhile looks for a newer build and
 takes it as "A restart" says, once nothing typed would be lost, and until then the placement says loom was updated
 and also offers "Reload now". The
-page's first script holds no brick and nothing only a brick needs. The bundle guard (`web/vite.boards.config.ts`)
-reads every chunk, the fetched ones too.
+page's first script holds no brick and nothing only a brick needs. The bundle guard (`web/boards-guard.ts`, run by
+`web/vite.boards.config.ts`) reads the whole module graph the build loaded, the fetched chunks too: a file under
+`web/src` must be the page's own or one the bricks share with the desktop, a file of the server's `src/` must be
+named in its `outside` list, and one marked plain there (`src/core/boards/value-shape.ts`) must import nothing;
+anything else, a `node:` module included, fails the build (`web/boards-guard.test.ts`).
 
 ### The design kit
 
