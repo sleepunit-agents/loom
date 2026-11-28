@@ -11,12 +11,13 @@ FROM docker.io/library/debian:trixie-slim
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# The system as it is this week, and the basic tools. apt fetches as root: a rootless build may have too
+# The system as it is this week, and the basic tools. tini is PID 1 of every body's container, with node
+# under it (house-layout.ts, HOUSE_INIT): it collects the orphans a body's tools leave. apt fetches as root: a rootless build may have too
 # few subordinate ids to map apt's own user.
 RUN echo 'APT::Sandbox::User "root";' > /etc/apt/apt.conf.d/99loom-core \
  && apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
       ca-certificates curl git jq ripgrep python3 python3-venv \
-      openssh-client procps less file unzip xz-utils locales tzdata \
+      openssh-client procps less file unzip xz-utils locales tzdata tini \
  && sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen && locale-gen \
  && rm -rf /var/lib/apt/lists/*
 
@@ -74,12 +75,12 @@ COPY body/claude.json body/codex.json /etc/loom/body/
 # Each tool answers, offline, from a plain shell and from a login shell: one that is missing fails the
 # build here and not a body later.
 RUN for sh in "sh -c" "bash -lc"; do \
-      $sh 'for c in node npm git python3 jq rg curl claude codex; do command -v "$c" >/dev/null || { echo "core house: $c not found" >&2; exit 1; }; done' \
+      $sh 'for c in node npm git python3 jq rg curl claude codex tini; do command -v "$c" >/dev/null || { echo "core house: $c not found" >&2; exit 1; }; done' \
    && $sh 'claude --version' >/dev/null \
    && $sh 'codex --version' >/dev/null \
    || exit 1; \
     done \
- && test -s /etc/loom/body/claude.json && test -s /etc/loom/body/codex.json
+ && test -s /etc/loom/body/claude.json && test -s /etc/loom/body/codex.json && test -x /usr/bin/tini
 
 # That this image is a house of this layout, and the harnesses it serves.
 LABEL loom.house="2" \

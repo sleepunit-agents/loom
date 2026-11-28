@@ -13,6 +13,13 @@ export const HOUSE_HOME = '/home/agent';
 export const HOUSE_REPOSITORY = `${HOUSE_HOME}/repo`;
 /** The node program that runs loom's body program. */
 export const HOUSE_NODE = '/usr/local/bin/node';
+/** The init that is PID 1 of a body's container, with node under it: Debian's tini, which the core house
+ * installs. It collects every orphan a body's tools leave (node as PID 1 never did, so each left a zombie),
+ * and with `-g` it passes a signal the container is sent on to the body's whole process group, the
+ * harness and its tools with it. Its exit is the body's, or 128 and the signal's number. */
+export const HOUSE_INIT = '/usr/bin/tini';
+/** How a body's container is started, before the body program and its file. */
+export const HOUSE_ENTRYPOINT: readonly string[] = Object.freeze([HOUSE_INIT, '-g', '--', HOUSE_NODE]);
 /** A harness's name, as a path and a label can carry it. */
 export const HARNESS_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 /** A harness's body file in the image. */

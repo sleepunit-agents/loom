@@ -754,11 +754,18 @@ LABEL loom.house="2" \
   between. It is what houses differ in that the worker must know before it
   starts a body.
 - The image declares no `VOLUME` and keeps nothing at `/opt/loom`.
-- The image has node at `/usr/local/bin/node`, and for each harness it lists a
-  body file at `/etc/loom/body/<harness>.json` (see "Private body bootstrap").
+- The image has node at `/usr/local/bin/node`, tini at `/usr/bin/tini`, and for
+  each harness it lists a body file at `/etc/loom/body/<harness>.json` (see
+  "Private body bootstrap"). A house that starts from the core has tini from it.
 
 The body's command is
-`/usr/local/bin/node /opt/loom/dist/body.js /etc/loom/body/<harness>.json`, started
+`/usr/bin/tini -g -- /usr/local/bin/node /opt/loom/dist/body.js /etc/loom/body/<harness>.json`.
+tini is PID 1: it collects every orphan the body's tools leave (with node as
+PID 1 each one stayed a zombie until the container ended), it passes a signal
+sent to the container on to the body's whole process group, the harness and
+its tools with it, and it ends as the body does, with its exit code or 128 and
+the signal's number. Removing the container kills PID 1, and with it everything
+in the container. The body is started
 in `/home/agent/repo` with the image's `ENV` and as the image's `USER`. The
 worker sets these variables whatever the image says (an image's `ENV` of the
 same name does not hold): `HOME=/home/agent`, `LOOM_BODY_SCRATCH=/tmp`, and what
