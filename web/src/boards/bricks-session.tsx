@@ -12,8 +12,8 @@ const running = (state: string) => state === 'queued' || state === 'starting' ||
 const tone = (state: string): Tone => (running(state) ? 'working' : state === 'done' ? 'good' : state === 'stopped' ? 'muted' : 'bad');
 const lasted = (from: string, to: number) => { const m = Math.max(0, Math.round((to - Date.parse(from)) / 60000)); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
 /** One session of agent work, by its conversation: the latest job there. It shows what it was asked, where it
- * stands and which tools it has used; and, for work handed off from the member's own thread, the steps its body
- * reported, live (session-trace.tsx). */
+ * stands and which tools it has used; and, for work handed off from the member's own thread, its final report once
+ * there is one (the server's sessionReport read) and the steps its body reported, live (session-trace.tsx). */
 export function Session({ params, form, act, raise }: BodyProps) {
   const conversation = words(params.session);
   const read = useDataQuery<{ jobs: SessionJob[]; cv: { agent: string; label: string | null; venue: string } | null }>(
@@ -24,13 +24,16 @@ export function Session({ params, form, act, raise }: BodyProps) {
   const more = useDataQuery<{ rows: SessionDetail[] }>(
     'query BrickSessionJob($agent:String!,$id:String!){rows:jobHistory(agent:$agent,id:$id){brief logTail endedNote claimedAt endedAt}}',
     { agent, id: job?.id ?? '' }, { keep: true, pause: !agent || !job || form !== 'primary' });
+  const report = useDataQuery<{ report: { words: string | null } | null }>(
+    'query BrickSessionReport($c:String!){report:sessionReport(conversation:$c){words}}',
+    { c: conversation }, { keep: true, pause: form !== 'primary' || read.data?.cv?.venue !== 'handoff' });
   const own = useOwnFlag(job?.state, raise, (was, now) => (!running(was) ? null : now === 'done' ? 'Finished' : now === 'stopped' ? 'Stopped' : running(now) ? null : 'Failed'));
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [now, setNow] = useState(Date.now);
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
   if (read.status === 'loading') return <Loading />;
   if (read.status !== 'live' || !job) return <Unavailable what="session" />;
-  const detail = more.data?.rows[0];
+  const detail = more.data?.rows[0], reported = report.status === 'live' ? report.data?.report?.words : null;
   const tools = [...(job.usage?.tools ?? [])].filter((t) => t.count).sort((a, b) => (b.count ?? 0) - (a.count ?? 0));
   const stop = async () => {
     setBusy(true); setError('');
@@ -59,6 +62,7 @@ export function Session({ params, form, act, raise }: BodyProps) {
           {tools.length > 0 && <Fact label="Tools"><span className="board-tool-counts">{tools.slice(0, 12).map((t) => <span key={t.name}>{t.name} ×{t.count}</span>)}</span></Fact>}
         </Facts>
       )}
+      {big && handoff && reported && <Section title="Report"><Reply words={reported} /></Section>}
       {big && handoff && <Section title="Steps"><SessionTrace key={job.id} conversation={conversation} job={job.id} running={running(job.state)} /></Section>}
       {!big && handoff && <SessionLatestStep conversation={conversation} job={job.id} />}
       {running(job.state) && <div className="board-actions"><Confirm ask="Stop…" yes="Stop this session" no="Keep it running" busy={busy} act={stop} /></div>}

@@ -141,8 +141,9 @@ const usage = { model: 'claude-fable-5-2', harness: 'claude-code', tools: [
   { name: 'Terminal', count: 6 }, { name: 'Edit', count: 2 }, { name: 'Read', count: 1 }, { name: 'Grep', count: 1 }, { name: 'Subagent', count: 1 }, { name: 'Write', count: 1 }, { name: 'TodoWrite', count: null },
 ] };
 const brief = 'Rebuild the fence plan for the north bed from the survey Sam took on the second. Work out how many posts it needs at the spacing we settled on last winter, and price them from two suppliers. Write the plan up in house/garden and tell me which supplier you would choose and why.';
+const fenceReport = 'The plan is in **house/garden/fence-plan.md**. The north bed needs 23 posts at the 1.8 m spacing.\n\n- Ashby Timber: 23 posts for £437, delivered Thursday\n- Brook Yard: 23 posts for £402, collect only\n\nI would choose Ashby: the £35 saved at Brook Yard goes on the van to fetch them.';
 const sessionTitle = 'Rebuild the fence plan for the north bed and price the posts from two suppliers';
-const sessionData = (state: string, over: { queued?: number; detail?: object; venue?: string; steps?: TraceStep[] | 'offline'; title?: string; total?: number; earlier?: TraceStep[] } = {}): Data => {
+const sessionData = (state: string, over: { queued?: number; detail?: object; venue?: string; steps?: TraceStep[] | 'offline'; title?: string; total?: number; earlier?: TraceStep[]; report?: string } = {}): Data => {
   const trace = over.steps ?? steps;
   return {
     BrickSession: {
@@ -156,6 +157,7 @@ const sessionData = (state: string, over: { queued?: number; detail?: object; ve
     BrickSessionTrace: trace === 'offline' ? 'offline' : { steps: trace, total: over.total ?? trace.length, gone: false },
     BrickSessionEarlier: { steps: over.earlier ?? [] },
     BrickSessionStep: trace === 'offline' ? 'offline' : { steps: trace.slice(-1).map(({ seq, tool, cardState }) => ({ seq, tool, cardState })) },
+    BrickSessionReport: { report: over.report ? { words: over.report } : null },
   };
 };
 const doneSteps = stepsFrom([...said.slice(0, -1), [14, 0, 'Terminal', 'running', 'npm test -- house/garden', 2], [14, 0, 'Terminal', 'done', ' ✓ house/garden/plan.test.ts (6 tests) 41ms\n\n Test Files  1 passed (1)\n      Tests  6 passed (6)', 1]]);
@@ -268,7 +270,7 @@ export const scenes: BrickScenes[] = [
   ] },
   { brick: 'session', scenes: [
     { name: 'default', params: { session: 'cv-fence-0001' }, data: sessionData('running') },
-    { name: 'done', params: { session: 'cv-fence-0001' }, flag: 'Finished', data: sessionData('done', { queued: 180, steps: doneSteps, detail: { endedAt: ago(128), endedNote: 'Finished: the plan is written and the two prices are compared.' } }) },
+    { name: 'done', params: { session: 'cv-fence-0001' }, flag: 'Finished', data: sessionData('done', { queued: 180, steps: doneSteps, report: fenceReport, detail: { endedAt: ago(128), endedNote: 'Finished: the plan is written and the two prices are compared.' } }) },
     { name: 'failed', params: { session: 'cv-fence-0001' }, flag: 'Failed', data: sessionData('failed', { queued: 95, steps: steps.slice(0, 18), detail: {
       endedAt: ago(70), endedNote: 'The harness left with status 1 after 25 minutes.',
       logTail: 'npx markdownlint house/garden/fence-plan.md\nhouse/garden/fence-plan.md:58 MD056/table-column-count Table column count [Expected: 4; Actual: 5]\nError: the session’s token budget was spent (200000 of 200000)\n    at Harness.turn (file:///opt/loom/runtime/harness.js:412:17)\n    at async Body.run (file:///opt/loom/runtime/body.js:88:5)\nexit 1',
