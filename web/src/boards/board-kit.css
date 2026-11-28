@@ -524,3 +524,64 @@ button.board-step-line::after { content: ''; grid-column: 3; grid-row: 1; justif
 .board-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--bk-1) var(--bk-3); padding-top: var(--bk-3); border-top: 1px solid var(--surface-edge); font-size: var(--bk-sm); color: var(--muted-foreground); }
 .board-foot > .board-action[data-kind='quiet'] { margin-block: calc(-1 * var(--bk-15)); }
 .board-lost-why { font-size: var(--bk-xs); color: var(--faint); overflow-wrap: anywhere; user-select: all; }
+
+/* ── The board's header row (added 2026-11-28, t-2428) ───────────────────────────────────────────────────── */
+/* The header row (./board-head.tsx): one line of a fixed height whatever comes and goes in it. The heading, the
+   attention chips (they take what room is left, and what does not fit is a +N), the page's notices, one quiet mark
+   while the board gets new data, and Close as an icon at the far end. Nothing in it wraps; its lists open over the
+   field beneath, never inside the row. */
+.boards-head { position: relative; z-index: 2; flex: none; display: flex; align-items: center; gap: var(--bk-3); block-size: 2rem; margin-bottom: 1rem; white-space: nowrap; }
+.boards-head h1 { flex: 0 1 auto; min-width: 4rem; max-width: 45%; overflow: hidden; font-size: 1.05rem; font-weight: 600; }
+.boards-head h1:empty { display: none; }
+/* Words cut where the row runs out fade at the line's end, as the kit's do (`board-clip`): no ellipsis. Only words
+   that overflow fade: the timeline of one that fits is inactive. */
+@keyframes boards-head-fade { from, 96% { mask-image: linear-gradient(90deg, black calc(100% - 2rem), transparent); } to { mask-image: none; } }
+@supports (animation-timeline: scroll()) { .boards-head :is(h1, .boards-attention span, .boards-notice-words) { animation: boards-head-fade linear both; animation-timeline: scroll(self inline); } }
+.boards-head-chips { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: var(--bk-2); overflow: hidden; }
+/* With chips to show the strip keeps room, beside any notices, for one chip and its +N (`CHIP_ROOM` and `MORE_ROOM`),
+   or on a phone for the count: the notices' words are what give way. */
+.boards-head-chips[data-some='true'] { min-width: 16rem; }
+.boards-head .board-chip { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow-wrap: normal; }
+.boards-attention { max-width: 12.5rem; }
+.boards-attention span { min-width: 0; overflow: hidden; }
+.boards-head-more { flex: none; font-variant-numeric: tabular-nums; color: var(--muted-foreground); }
+/* The page's notices: one is said in the row, two or more fold to one button that opens them (./board-head.tsx). */
+.boards-notices { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; }
+.boards-notice-fold { display: none; flex: none; align-items: center; gap: var(--bk-15); font-size: var(--bk-sm); font-weight: 500; color: var(--flag); }
+.boards-notice-fold::before { content: ''; flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.boards-notices[data-folded='true'] .boards-notice-fold { display: inline-flex; }
+/* A notice: its words in the waiting tone, cut short where the row runs out, and its one control. */
+.boards-notice { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: var(--bk-2); font-size: var(--bk-sm); color: var(--flag); }
+.boards-notice::before { content: ''; flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.boards-notice-words { min-width: 0; overflow: hidden; color: inherit; text-align: left; }
+.boards-notice[data-notice='lost'] .boards-notice-words { flex: none; }
+/* The app's alerts float and arrive with a movement (../pair/screen.css); a notice in this row is a line of words. */
+.boards-page .boards-head [role='alert'] { box-shadow: none; animation: none; }
+button.boards-notice-words { text-decoration: underline dotted; text-underline-offset: 3px; }
+.boards-head-act { flex: none; font-size: var(--bk-sm); font-weight: 500; color: var(--foreground); border-radius: var(--radius-small); padding: 0 var(--bk-1); }
+.boards-head-act:hover { color: var(--board-accent); }
+.boards-head :is(button, .board-chip):focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+/* Getting new data, for the whole board: the bricks' own small mark, once. */
+.boards-getting { flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--board-accent); opacity: 0; animation: board-settling-in 0s linear .35s forwards; }
+@media (prefers-reduced-motion: no-preference) { .boards-getting { animation: board-settling-in 0s linear .35s forwards, board-breathe 1.6s ease-in-out .35s infinite; } }
+.boards-close { flex: none; margin-left: auto; display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: var(--radius-control); color: var(--faint); }
+.boards-close svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.boards-close:hover { color: var(--foreground); background: var(--wash); }
+.boards-reopen { margin-left: auto; color: var(--faint); }
+/* What +N, the count and a token notice open: a small sheet over the board, at the row's end. */
+.boards-head-panel { position: absolute; top: calc(100% + var(--bk-15)); right: 0; display: flex; flex-direction: column; align-items: flex-start; gap: var(--bk-15);
+  max-width: min(26rem, 100%); max-height: 50vh; overflow: auto; padding: var(--bk-3); white-space: normal;
+  background: var(--popover); border: 1px solid var(--surface-edge); border-radius: var(--radius-inner); box-shadow: var(--shadow-float); }
+.boards-head-panel[hidden] { display: none; }
+.boards-head-panel .boards-attention { max-width: 100%; }
+.boards-notice-list { display: grid; gap: var(--bk-3); font-size: var(--bk-sm); }
+.boards-notice-list li { display: grid; gap: var(--bk-1); justify-items: start; }
+.boards-notice-list p { color: var(--foreground); }
+.boards-notice-list .boards-head-act { margin-left: calc(-1 * var(--bk-1)); }
+/* On a phone the header row keeps its line: the chips fold to a count, and the notices to one button that names them (./board-head.tsx). */
+@media (max-width: 639px) {
+  .boards-notices .boards-notice { display: none; }
+  .boards-notices .boards-notice-fold { display: inline-flex; }
+  .boards-head { gap: var(--bk-2); }
+  .boards-head-chips[data-some='true'] { min-width: 6.5rem; }
+}

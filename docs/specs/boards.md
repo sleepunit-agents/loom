@@ -2273,7 +2273,7 @@ page's notices, said once in the header row"): a chip for each flagged placement
 reference and flag word; `+N` and the count and the lists they open; a chip pressed scrolls to and focuses its
 placement (or its folded chip) and calls no operation, makes no request and clears no flag; each notice is said once,
 on the board on screen, and not in a brick; Try all again; Close an icon named "Close board"; the row's fixed block
-size, its one line and its lists outside it (`board.css` read). `board-head.test.tsx`: how many chips a width shows,
+size, its one line and its lists outside it (`board-kit.css` read). `board-head.test.tsx`: how many chips a width shows,
 a chip's words, the one mark. `pace.test.tsx`: a placement tells the board while it is getting new data, and when it
 stops or goes. No suite holds a list
 of the bricks, of those that can be big, or a count of them.

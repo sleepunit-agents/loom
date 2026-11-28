@@ -453,7 +453,7 @@ describe('the header row', () => {
   });
   it('holds its line: the row has a fixed block size, nothing in it wraps, and its lists open over the board, not in the row', async () => {
     const { readFileSync } = await import('node:fs');
-    const css = readFileSync(new URL('./board.css', import.meta.url), 'utf8');
+    const css = readFileSync(new URL('./board-kit.css', import.meta.url), 'utf8');
     const rule = (selector: string) => new RegExp(`^${selector.replace(/[.$]/g, '\\$&')} \\{([^}]*)\\}`, 'm').exec(css)?.[1] ?? '';
     expect(rule('.boards-head')).toMatch(/block-size: 2rem/);
     expect(rule('.boards-head')).toMatch(/white-space: nowrap/);
