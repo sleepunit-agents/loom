@@ -796,6 +796,15 @@ it('hands the worker the harness\'s fixed reason with its exit code, and none of
  expect(readFailureLine(said.split('\n')[1])).toEqual(why);
  expect(said).not.toContain('PRIVATE');expect(said).not.toContain('API Error');expect(said).not.toContain(raw);
 });
+it('hands on how an unknown failure ended, counted, and says the short of it in the final sealed step',async()=>{
+ const why={reason:'unknown',exitCode:0,result:'none',finalText:false,toolCalls:177,stdoutBytes:9_000_000,stdoutLines:412,unparsedLines:0,partialLine:false,quietMs:2_900,compacted:true,refusal:'no-result',
+  events:{assistant:230,user:177,system:3,result:0,rateLimit:1,stream:0,other:1}} as const;
+ const {f,code,cards,said}=await failedWith(why,undefined,{venue:'handoff',thread:null,review:true});
+ expect(code).toBe(BODY_EXIT.harness);
+ expect(f.error).toHaveBeenCalledExactlyOnceWith('Body stopped: invalid input or unavailable execution\n'+failureLine(why));
+ expect(readFailureLine(said.split('\n')[1])).toEqual(why);
+ expect(cards).toEqual([{kind:'card',tool:'Harness',cardState:'failed',clientId:'harness-failed',words:'Stopped: the harness exited 0 with no final result after 177 tool calls.'}]);
+});
 it('writes what the harness last said as the final sealed step of a session that keeps its steps',async()=>{
  const {cards}=await failedWith({reason:'overloaded',status:529},'API Error: 529 PRIVATE DETAIL',{venue:'handoff',thread:null,review:true});
  expect(cards).toEqual([{kind:'card',tool:'Harness',cardState:'failed',clientId:'harness-failed',words:'Stopped: the model\'s provider was overloaded (529).\n\nAPI Error: 529 PRIVATE DETAIL'}]);

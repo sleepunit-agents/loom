@@ -50,6 +50,51 @@ const SIGNAL_NUMBERS: Readonly<Record<number, FailureSignal>> = { 1: 'SIGHUP', 2
  * something it had started kept its output open past the body's wait for it (body-harness.ts). */
 export const FAILURE_LIMITS = ['stream-idle', 'output-close'] as const;
 
+/** What a harness's final `result` event was, for a failure nothing else explains: `none` when it printed none;
+ * its subtype when that is one loom knows; `other` for any other. */
+export const ENDING_RESULTS = ['none', 'success', 'error_during_execution', 'error_max_turns', 'error_max_budget_usd', 'error_max_structured_output_retries', 'other'] as const;
+/** The model's reason for stopping, as the final result gave it: `none` when it gave none, `other` for one loom does not know. */
+export const ENDING_STOP_REASONS = ['none', 'end_turn', 'max_tokens', 'stop_sequence', 'tool_use', 'pause_turn', 'refusal', 'model_context_window_exceeded', 'tool_deferred', 'other'] as const;
+/** The step at which the adapter refused a run that ended well (claude-body.ts): the output was not UTF-8; a
+ * line was not JSON; an event had no type or session; an event was of another session; an answer of the
+ * model's was not shaped like one; there were two results; the result was not a success with text; there was
+ * no result; the model said nothing of its own; the result was empty and the run did no work; or the result
+ * was not the model's last words. */
+export const ENDING_REFUSALS = ['decode', 'line', 'event', 'session', 'message', 'second-result', 'result', 'no-result', 'no-message', 'empty', 'mismatch'] as const;
+const count = (most: number) => z.number().int().min(0).max(most).optional();
+/** Ten times the most a harness may print (body-harness.ts): a count of its output never passes it. */
+const COUNT_MAX = 1_000_000_000;
+/** How many events of each kind the harness printed. */
+const endingEvents = z.object({ assistant: count(COUNT_MAX), user: count(COUNT_MAX), system: count(COUNT_MAX), result: count(COUNT_MAX),
+  rateLimit: count(COUNT_MAX), stream: count(COUNT_MAX), other: count(COUNT_MAX) }).strict();
+/** How a run ended, as counted facts: what an `unknown` failure carries so that the next one is decided by what
+ * was seen. Numbers, choices from the fixed lists above, and yes or no; never a word the harness printed. */
+const ending = {
+  result: z.enum(ENDING_RESULTS).optional(),
+  /** The result's own `is_error`. */
+  isError: z.boolean().optional(),
+  /** The result's text was empty. */
+  resultEmpty: z.boolean().optional(),
+  stopReason: z.enum(ENDING_STOP_REASONS).optional(),
+  /** The model's last message of its own had words. */
+  finalText: z.boolean().optional(),
+  /** The turns the harness counted (`num_turns`). */
+  numTurns: count(COUNT_MAX),
+  /** The tools the model called itself, outside any helper it started. */
+  toolCalls: count(COUNT_MAX),
+  stdoutBytes: count(COUNT_MAX), stdoutLines: count(COUNT_MAX),
+  /** Whole lines that were not an event. */
+  unparsedLines: count(COUNT_MAX),
+  /** The output ended in the middle of a line that is no event. */
+  partialLine: z.boolean().optional(),
+  /** Milliseconds from the last thing the harness printed to its process ending. */
+  quietMs: count(COUNT_MAX),
+  /** The harness compacted the session's context during the run. */
+  compacted: z.boolean().optional(),
+  refusal: z.enum(ENDING_REFUSALS).optional(),
+  events: endingEvents.optional(),
+};
+export type FailureEnding = z.infer<ReturnType<typeof z.object<typeof ending>>>;
 /** What a failure's detail may hold, beside its reason. Each is optional and none is free text. */
 const detail = {
   /** An HTTP status. */
@@ -60,6 +105,7 @@ const detail = {
   /** When a limit resets, as the harness reported it. */
   resetsAt: z.iso.datetime().optional(),
   limit: z.enum(FAILURE_LIMITS).optional(),
+  ...ending,
 };
 export const jobFailureDetail = z.object(detail).strict();
 /** What a worker may report with a failed job's exit code (runtime.finish, `failed`), and what the body hands it. */
@@ -92,7 +138,7 @@ export function failureOf(row: { state: string; exitCode: number | null; exitBy:
  * (readFailureLine): a body cannot pass words through it. */
 const FAILURE_LINE = 'loom-job-failure ';
 /** Longer than any failure's line; a longer line is no failure. */
-const FAILURE_LINE_MAX = 400;
+const FAILURE_LINE_MAX = 1_200;
 export const failureLine = (failure: JobFailure): string => FAILURE_LINE + JSON.stringify(jobFailure.parse(failure)) + '\n';
 export function readFailureLine(line: string): JobFailure | undefined {
   if (!line.startsWith(FAILURE_LINE) || line.length > FAILURE_LINE_MAX) return undefined;
@@ -135,6 +181,17 @@ function clock(at: string, zone: string): string {
       + (zone === 'UTC' ? ' UTC' : '');
   } catch { return at; }
 }
+/** An `unknown` failure in plain words: the fixed sentence, or, where the body counted how the run ended, the
+ * short of that. Built from the counts and choices only. */
+function unknownWords(failure: JobFailure): string {
+  if (failure.result === undefined) return 'the harness ended without an answer and gave no reason loom could read';
+  const left = failure.signal ? `was ended by ${failure.signal}` : failure.exitCode !== undefined ? `exited ${failure.exitCode}` : 'ended';
+  const after = failure.toolCalls !== undefined ? ` after ${failure.toolCalls} tool ${failure.toolCalls === 1 ? 'call' : 'calls'}` : '';
+  const cut = failure.partialLine ? ', its last line cut off' : '';
+  if (failure.result === 'none') return `the harness ${left} with no final result${after}${cut}`;
+  const kind = failure.result === 'success' ? (failure.isError ? 'an error' : failure.resultEmpty ? 'an empty one' : 'a success') : failure.result === 'other' ? 'of a kind loom does not know' : failure.result.replaceAll('_', ' ');
+  return `the harness ${left} with a final result loom could not take as an answer (${kind})${after}${cut}`;
+}
 /** A failure in plain words, built from its reason and numbers only: what the parent thread is told and what the
  * page shows. Times are said in `zone` (the household's); with none, in UTC. */
 export function failureWords(failure: JobFailure, zone = 'UTC'): string {
@@ -154,6 +211,6 @@ export function failureWords(failure: JobFailure, zone = 'UTC'): string {
     case 'out-of-memory': return 'the session ran out of memory';
     case 'killed': return `a signal ended the session${failure.signal ? ` (${failure.signal})` : ''}`;
     case 'harness-crashed': return `the harness stopped with an error of its own${failure.exitCode !== undefined ? ` (exit code ${failure.exitCode})` : ''}`;
-    case 'unknown': return 'the harness ended without an answer and gave no reason loom could read';
+    case 'unknown': return unknownWords(failure);
   }
 }
