@@ -176,7 +176,7 @@ it('forgets the opened files when the head commit or the change moves, and asks 
   expect(once.mock.calls.length).toBe(other);
 });
 
-// ── When loom last read GitHub, the cold review history, and Refresh from GitHub ────────────────────────────────────
+// ── When loom last read GitHub, loom's reviews, and Read GitHub again ────────────────────────────────────
 const access = (refresh: boolean) => ({ status: 'live', data: { workAnswerOwner: refresh, workChangesRefresh: refresh, members: [] } });
 function world(pull: unknown, { refresh = false, review = { status: 'live', data: { changeReviewHistory: [] } } as unknown } = {}) {
   feed.mockImplementation((query: string) => (query.includes('WorkAnswerOwner') ? access(refresh) : query.includes('ChangeReviewHistory') ? review : { status: 'live', data: pull }));
@@ -219,7 +219,7 @@ const rounds = [
 ];
 const reviewOpener = () => tree!.root.findAll((node) => node.type === 'button' && node.props.className === 'board-fold' && said(node) === "Loom's reviews")[0];
 
-it('asks for the cold review history only once it is opened, and draws each round with its verdict, commit and findings', async () => {
+it('asks for loom\'s reviews only once it is opened, and draws each round with its verdict, commit and findings', async () => {
   world(read(), { review: { status: 'live', data: { changeReviewHistory: rounds } } });
   await draw('primary');
   expect(asked('ChangeReviewHistory')).toEqual([]);
@@ -270,7 +270,7 @@ async function drawWith(actFn: ReturnType<typeof vi.fn>) {
 }
 afterEach(() => { vi.unstubAllGlobals(); });
 
-it('offers Refresh from GitHub only to a member loom says may use it, and only in the primary form', async () => {
+it('offers Read GitHub again only to a member loom says may use it, and only in the primary form', async () => {
   world(read(), { refresh: false });
   await draw('primary');
   expect(button('Read GitHub again')).toBeUndefined();

@@ -374,7 +374,7 @@ export const scenes: BrickScenes[] = [
     { name: 'reviews-opened', params: { change: change.id }, only: ['primary'], press: ["Loom's reviews"], data: { ...pullData(), ...pullReviews } },
     { name: 'no-reviews', params: { change: change.id }, only: ['primary'], press: ["Loom's reviews"], data: { ...pullData(), ChangeReviewHistory: { changeReviewHistory: [] } } },
     // The gallery answers every write with an empty value, which Refresh does not take as done: this is its failure.
-    { name: 'refresh-failed', params: { change: change.id }, only: ['primary'], press: ['Refresh from GitHub'], data: pullOwner() },
+    { name: 'refresh-failed', params: { change: change.id }, only: ['primary'], press: ['Read GitHub again'], data: pullOwner() },
     { name: 'unavailable', params: { change: change.id }, only: ['side'], data: { ...shared, BrickPull: 'offline' } },
   ] },
   { brick: 'repository', scenes: [

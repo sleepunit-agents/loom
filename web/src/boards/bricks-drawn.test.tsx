@@ -129,7 +129,7 @@ it('shows a pull request with its state, checks, review, who it waits on, and th
   for (const more of ['art/pump', 'into ', 'next', 'Failing', 'build', 'Running', 'unit', 'Asked to review', 'sam', 'Pump reads low', 'Not known yet']) expect(text(), more).toContain(more);
   expect(text()).not.toContain('t-99');
   // A merge is answered through its approval, on the desktop: the only control is the one that opens its review
-  // history (Refresh from GitHub is drawn only for a member loom says may use it; bricks-pull.test.tsx).
+  // history (Read GitHub again is drawn only for a member loom says may use it; bricks-pull.test.tsx).
   answer(pullData({ waitingOn: 'you' }));
   await draw('pull', { change: change.id }, 'primary');
   expect(text()).toContain('The merge is answered in Changes on the desktop.');
