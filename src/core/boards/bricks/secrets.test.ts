@@ -52,10 +52,11 @@ it('a value set or a secret removed is told by the secret\'s name and its outcom
 });
 
 const VALUE = 'synthetic-private-value-7Q', ABOUT = 'The pond pump, private words';
-it('through the real operations, the name and outcome reach the board and the agent\'s brief, and a value or description is refused and stored nowhere', async () => {
+it('through the real operations, the name and outcome reach the board and the agent\'s brief, and a value or description in its own field is refused and stored nowhere', async () => {
   const house = await household('secrets');
   try {
-    for (const typed of [{ value: VALUE }, { description: ABOUT }, { secret: VALUE }, { secret: 'PUMP_TOKEN', outcome: 'added', value: VALUE }, { secret: 'PUMP_TOKEN', outcome: 'replaced', description: ABOUT }])
+    // `{ secret: VALUE }` is refused here only for its missing outcome: what is in `secret` is told as a name.
+    for (const typed of [{ value: VALUE }, { description: ABOUT }, { secret: 'PUMP_TOKEN', outcome: 'added', value: VALUE }, { secret: 'PUMP_TOKEN', outcome: 'replaced', description: ABOUT }])
       expect(await house.act('setValue', typed), JSON.stringify(typed)).toMatchObject({ ok: false });
     expect(await house.act('remove', { secret: 'PUMP_TOKEN', outcome: 'removed', value: VALUE })).toMatchObject({ ok: false });
     expect(await house.act('setValue', { secret: 'PUMP_TOKEN', outcome: 'added' })).toMatchObject({ ok: true });
@@ -71,5 +72,25 @@ it('through the real operations, the name and outcome reach the board and the ag
     expect(brief).toContain(': outcome=replaced, secret=PUMP_TOKEN.');
     expect(brief).toContain('used remove on secrets() on board');
     expect(brief).toContain(': outcome=removed, secret=PUMP_TOKEN.');
+  } finally { house.close(); }
+});
+
+// What the detail cannot know: a name-shaped value typed into Name is told as the name. A value with a credential's
+// shape is refused, by the same function the page uses (../value-shape.ts); anything else name-shaped is a name.
+const PASTED = ['loom_' + 'S'.repeat(43), 'ghp_' + 'A1b2'.repeat(6), 'github_pat_' + 'Ab3'.repeat(8), 'xoxb-' + '12ab'.repeat(4), 'sk-ant-api03-' + 'k'.repeat(24), 'AGE-SECRET-KEY-' + '1Q'.repeat(12), 'deploy.ghp_' + 'A1b2'.repeat(6), 'Zx9q8W7e6R5t4Y3u2I1o0P9a8S7d6F5g4'];
+it('a name in the shape of a secret value is refused with the page\'s words and stored nowhere; a name-shaped value of no known shape is told as a name', async () => {
+  const house = await household('secrets');
+  try {
+    for (const secret of PASTED) for (const [action, outcome] of [['setValue', 'added'], ['setValue', 'replaced'], ['remove', 'removed']]) {
+      const answer = await house.act(action, { secret, outcome });
+      expect(answer, `${action} ${secret}`).toMatchObject({ ok: false });
+      expect(JSON.stringify(answer), secret).toContain('That looks like a secret value, not a name.');
+    }
+    for (const secret of ['PUMP_TOKEN', 'github-deploy-key', 'ci.runner', 'task-runner-pump-station-north', 'x'.repeat(64), VALUE])
+      expect(await house.act('setValue', { secret, outcome: 'added' }), secret).toMatchObject({ ok: true });
+    const stored = house.stored(), read = JSON.stringify(await house.read()), brief = house.brief();
+    for (const [where, text] of [['stored rows', stored], ['boards.read', read], ['brief', brief]]) for (const secret of PASTED) expect(text, `${where} ${secret}`).not.toContain(secret);
+    // The residual risk, stated (docs/accepted-tradeoffs.md): this one is told, because nothing marks it as a value.
+    expect(brief).toContain(`secret=${VALUE}.`);
   } finally { house.close(); }
 });

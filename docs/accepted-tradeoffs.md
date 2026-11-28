@@ -372,6 +372,33 @@ Entries are grouped by the part of the program they belong to.
   loom sits behind a proxy or on a private network. Sign-in by link is unaffected.
 - What would change it: loom being served to the open internet with nothing in front of it.
 
+### A secret value typed as a secret's name or a token's label reaches the agent's brief
+- **What.** The boards page's `secrets` brick tells the board a secret's NAME after a value is set or a secret
+  removed, and its `household` brick tells it a new token's LABEL. Both go into `board_changes`, `boards.read`
+  and the agent's brief, which is sent to the model provider. The detail takes a name only in the store's shape
+  (`secretName`) or a reference's (`ref`), so it carries no sentence, but a name-shaped string cannot be told
+  from a value by its shape alone: an owner who pastes a key into Name or Label by mistake would have it told.
+  Removing that secret later tells it again.
+- **Where.** `src/core/boards/bricks/secrets.ts`, `src/core/boards/bricks/household.ts`,
+  `web/src/boards/bricks-secrets.tsx`, `web/src/boards/bricks-household.tsx`; the check is
+  `src/core/boards/value-shape.ts`.
+- **What is enforced.** One function, `looksLikeSecretValue`, used by both forms before anything is sent and by
+  `boards.act` in those two details, refuses with "That looks like a secret value, not a name.": loom's own
+  bearer (`loom_` and 43 more); any credential loom's output check already knows (`looksLikeCredential` in
+  `src/runtime/fixed-program.ts`: GitHub, Slack, `sk-`/`sk-ant-`, age, `body_`, `loom_ui=`, a private key's
+  header), when it starts the name or follows a separator; and a run of 32 or more characters with no separator
+  that mixes letters and digits. A stored secret whose name already has that shape (made on the desktop) can
+  still be replaced or removed from the brick, and the board is not told of it.
+- **What still passes.** A value of no known prefix shorter than 32 characters (`hunter2`), and a longer one
+  broken up by `-`, `_`, `.`, `:`, `/` or `@` into runs under 32, as a base64url key often is. Such a name is
+  told. Before boards it stayed in the secrets store's metadata and the tokens table, which only owners see.
+  `src/core/boards/value-shape.test.ts` pins what passes.
+- **Why accepted.** The owner, 2026-11-27: the agent should learn "we saved a new key in this-key-place but
+  never saw the key itself", and a name that is really a pasted value is the residual risk, to be stated and
+  reduced, not a reason to tell the agent nothing. The desktop takes the same name without any check.
+- **What would change the answer.** A mis-pasted value seen in a brief; or a reason for the agent not to know
+  the name, after which the report would go back to telling nothing.
+
 ## Running work
 
 ### A job can finish before its usage report arrives

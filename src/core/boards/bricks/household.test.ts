@@ -43,17 +43,20 @@ it('a token made is told by its label and kind, and by nothing else', () => {
     expect(ok({ label: 'pump-laptop', kind: 'agent', ...extra }), JSON.stringify(extra)).toBe(false);
   // A label is told as a reference: no sentence, no blank, no line break, nothing past 120.
   for (const label of ['Pump laptop', 'two words', 'line\nbreak', '', '-dash', 'x'.repeat(121), BEARER + ' ']) expect(ok({ label, kind: 'agent' }), JSON.stringify(label)).toBe(false);
-  for (const label of ['pump-laptop', 'shed.pi', 'art@one', 'ci/runner:2', 'x'.repeat(120)]) expect(ok({ label, kind: 'machine' }), label).toBe(true);
+  // A label in the shape of a secret value: a bare bearer pasted into Label, or a provider's key (../value-shape.ts).
+  for (const label of [BEARER, 'ci/' + BEARER, 'ghp_' + 'A1b2'.repeat(6), 'sk-ant-api03-' + 'k'.repeat(24), 'Zx9q8W7e6R5t4Y3u2I1o0P9a8S7d6F5g4']) expect(ok({ label, kind: 'agent' }), label).toBe(false);
+  for (const label of ['pump-laptop', 'shed.pi', 'art@one', 'ci/runner:2', 'ci:runner', 'github-deploy-key', 'PUMP_TOKEN', 'x'.repeat(120)]) expect(ok({ label, kind: 'machine' }), label).toBe(true);
   const entry = catalogue().find((b) => b.name === 'household')!.actions.token as { properties: object; additionalProperties: boolean; required: string[] };
   expect(Object.keys(entry.properties).sort()).toEqual(['kind', 'label']);
   expect([entry.additionalProperties, [...entry.required].sort()]).toEqual([false, ['kind', 'label']]);
 });
 
-it('through the real operations, a token made reaches the board and the agent\'s brief by label and kind, and its value is refused and stored nowhere', async () => {
+it('through the real operations, a token made reaches the board and the agent\'s brief by label and kind, and its value, beside the label or as the label, is refused and stored nowhere', async () => {
   const house = await household('household');
   try {
-    for (const typed of [{ label: 'pump-laptop', kind: 'agent', token: BEARER }, { label: BEARER + ' x', kind: 'agent' }, { label: 'pump-laptop', kind: 'agent', fingerprint: FINGERPRINT }, { token: BEARER }])
+    for (const typed of [{ label: 'pump-laptop', kind: 'agent', token: BEARER }, { label: BEARER + ' x', kind: 'agent' }, { label: BEARER, kind: 'agent' }, { label: 'laptop/' + BEARER, kind: 'machine' }, { label: 'pump-laptop', kind: 'agent', fingerprint: FINGERPRINT }, { token: BEARER }])
       expect(await house.act('token', typed), JSON.stringify(typed)).toMatchObject({ ok: false });
+    expect(JSON.stringify(await house.act('token', { label: BEARER, kind: 'agent' }))).toContain('That looks like a secret value, not a name.');
     expect(await house.act('token', { label: 'pump-laptop', kind: 'agent' })).toMatchObject({ ok: true });
     expect(await house.act('token', { label: 'shed.pi', kind: 'machine' })).toMatchObject({ ok: true });
     const stored = house.stored(), read = JSON.stringify(await house.read()), brief = house.brief();

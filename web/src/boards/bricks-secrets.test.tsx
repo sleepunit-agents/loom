@@ -312,3 +312,40 @@ it('sends nothing for a name the secrets store would refuse, so the board is nev
   expect(requests).toEqual([]);
   expect(reported).not.toHaveBeenCalled();
 });
+
+const SAME = 'That looks like a secret value, not a name.';
+const PASTED = ['loom_' + 'S'.repeat(43), 'ghp_' + 'A1b2'.repeat(6), 'sk-ant-api03-' + 'k'.repeat(24), 'Zx9q8W7e6R5t4Y3u2I1o0P9a8S7d6F5g4'];
+it('sends nothing for a name that has the shape of a secret value, says so, and takes an ordinary name', async () => {
+  live();
+  await draw('primary');
+  await press('Add a secret…');
+  for (const name of PASTED) {
+    world.fields.get('Name')!.value = name; world.fields.get('Value')!.value = VALUE;
+    await submit('Add a secret');
+    expect(all(), name).toContain(SAME);
+    expect(world.fields.get('Value')!.value, name).toBe(VALUE); // nothing was read out of the field
+  }
+  expect(requests).toEqual([]);
+  expect(reported).not.toHaveBeenCalled();
+  for (const name of ['PUMP_TOKEN', 'github-deploy-key', 'ci.runner']) {
+    if (!tree!.root.findAll((node) => node.type === 'form' && node.props['aria-label'] === 'Add a secret').length) await press('Add a secret…');
+    world.fields.get('Name')!.value = name; world.fields.get('Value')!.value = VALUE;
+    await submit('Add a secret');
+    expect(all(), name).not.toContain(SAME);
+  }
+  expect(reported.mock.calls).toEqual(['PUMP_TOKEN', 'github-deploy-key', 'ci.runner'].map((secret) => ['setValue', { secret, outcome: 'added' }]));
+});
+
+it('replaces or removes a stored secret whose name has the shape of a value, and tells the board nothing of it', async () => {
+  const name = PASTED[1];
+  live({ secrets: [{ name, description: '', changedAt: '2026-11-20T10:00:00Z', changedBy: 'sam' }], secretGrants: [], secretRequests: [], secretRules: [], secretRuleAgents: [], secretUses: [] });
+  await draw('primary');
+  await press(`Replace the value of ${name}`);
+  world.fields.get('Value')!.value = VALUE;
+  await submit(`Replace ${name}`);
+  await press(`Remove ${name}`);
+  await press('Remove value and revoke access');
+  expect(requests.map((r) => [r.url, r.body.input.name])).toEqual([['/api/secrets/set', name], ['/api/secrets/remove', name]]);
+  expect(all()).toContain('Saved.');
+  expect(reported).not.toHaveBeenCalled();
+});
