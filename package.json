@@ -42,6 +42,7 @@
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:shadow": "LOOM_LIVE_SCOPE=shadow vitest run",
     "build:web": "npm --prefix web ci --no-audit --no-fund --silent && npm --prefix web run build",
     "schema:generate": "tsx scripts/generate-data-schema.ts"
   },

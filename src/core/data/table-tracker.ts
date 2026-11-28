@@ -40,6 +40,12 @@ const VIRTUAL_OPCODES = new Set(['VOpen', 'VFilter', 'VUpdate', 'VBegin', 'VColu
 const OPEN_READ = new Set(['OpenRead', 'ReopenIdx']);
 const FUNCTION_OPCODES = new Set(['Function', 'PureFunc', 'AggStep', 'AggStep1', 'AggInverse', 'AggValue', 'AggFinal']);
 const DETERMINISTIC = 0x800;
+// The statements the tracker itself runs on the connection it watches, besides the EXPLAIN of each new SQL text.
+const SCHEMA_VERSION_SQL = 'PRAGMA schema_version';
+const DATA_VERSION_SQL = 'PRAGMA data_version';
+const SCHEMA_ROWS_SQL = 'SELECT type, name, tbl_name AS tableName, rootpage FROM main.sqlite_schema WHERE rootpage > 0';
+const FUNCTION_ROWS_SQL = 'SELECT name, type, flags FROM pragma_function_list';
+const OWN_SQL = new Set([SCHEMA_VERSION_SQL, DATA_VERSION_SQL, SCHEMA_ROWS_SQL, FUNCTION_ROWS_SQL]);
 
 const recorder = new AsyncLocalStorage<ReadRecord>();
 const trackers = new WeakMap<object, TableTracker>();
@@ -57,6 +63,17 @@ export function recordReads<T>(read: () => T): { record: ReadRecord; value: T } 
 /** Say that the reading under way depends on something no table of the shared database holds. Free outside one. */
 export function markUnscoped(reason: string): void { recorder.getStore()?.unscoped.add(reason); }
 export function readingUnderWay(): boolean { return recorder.getStore() !== undefined; }
+
+/** Whether a statement seen by better-sqlite3's `verbose` hook is one the tracker ran itself: its schema and data
+ * version pragmas, its reads of sqlite_schema and pragma_function_list, or the EXPLAIN of a statement it was
+ * classifying (`EXPLAIN ` and a data statement: SELECT, INSERT, UPDATE, DELETE, REPLACE, WITH or VALUES, so
+ * `EXPLAIN QUERY PLAN` is not one). A test that counts a connection's statements leaves these out, so the count
+ * means the same with LOOM_LIVE_SCOPE=shadow as without. */
+export function trackerStatement(sql: string): boolean {
+  if (OWN_SQL.has(sql)) return true;
+  if (!/^EXPLAIN\s/.test(sql)) return false;
+  return DATA_STATEMENTS.has(keyword(sql.slice('EXPLAIN'.length)));
+}
 
 /** The tracker installed on this connection, if any. */
 export function tableTracker(client: Database.Database): TableTracker | undefined { return trackers.get(client); }
@@ -153,10 +170,10 @@ export class TableTracker {
 
   constructor(private readonly client: Database.Database) {
     const prepare = client.prepare.bind(client), exec = client.exec.bind(client), fn = client.function.bind(client);
-    this.schemaVersion = prepare('PRAGMA schema_version').pluck();
-    this.dataVersion = prepare('PRAGMA data_version').pluck();
-    this.schemaRows = prepare("SELECT type, name, tbl_name AS tableName, rootpage FROM main.sqlite_schema WHERE rootpage > 0");
-    this.functionRows = prepare('SELECT name, type, flags FROM pragma_function_list');
+    this.schemaVersion = prepare(SCHEMA_VERSION_SQL).pluck();
+    this.dataVersion = prepare(DATA_VERSION_SQL).pluck();
+    this.schemaRows = prepare(SCHEMA_ROWS_SQL);
+    this.functionRows = prepare(FUNCTION_ROWS_SQL);
     patchStatements(this.schemaVersion);
     const tracker = this;
     client.prepare = function (this: Database.Database, source: string) {
