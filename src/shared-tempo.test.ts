@@ -12,6 +12,7 @@ import { createDataSchema } from './core/data/database.js';
 import { members, agents, memberAgents, tokens, inbox, changes, projects, projectMembers, agentModels, agentRunSettings, jobs, jobUsage, measuringSettings, timingDays, triggers, triggerLog, programFirings, conversations, boxes } from './core/data/schema.js';
 import { mayReadProgramWork, type SharedTempoOptions } from './shared-tempo.js';
 import { sharedRoot } from './shared-root.js';
+import { brickNamed } from './core/boards/bricks.js';
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
 const credential='tempo-owner-credential-'.repeat(3), hash=(s:string)=>createHash('sha256').update(s).digest('hex');
@@ -447,4 +448,38 @@ it('requires an owner to set new executable pins and keeps a reviewed definition
  expect((await f.call('tempo.set', schedule,'owned')).status).toBe(200);
  expect((await f.call('tempo.edit',{id:'checked',program:{...program,commit:'2'.repeat(40)}},'replace')).status).toBe(400);
  expect(f.db.select().from(triggers).where(eq(triggers.id,'checked')).get()?.program).toEqual(program);
+});
+// The boards' Tempo bricks send what the desktop's Tempo page sends, to the operation the catalogue declares
+// (src/core/boards/bricks/tempo.ts, trigger.ts): the same door, so the same members are let in and no others.
+it('takes each Tempo brick action at its declared operation from exactly the members that operation lets in', async () => {
+ const f=scheduling(),lee='lee-tempo-token-'.repeat(3);
+ f.db.insert(members).values({id:'lee',role:'member',joinedAt:f.now()}).run();
+ f.db.insert(tokens).values({fingerprint:hash(lee),label:'Lee',kind:'owner',member:'lee',createdAt:f.now()}).run();
+ const declared=(brick:string)=>Object.fromEntries(Object.entries(brickNamed(brick)!.actions).map(([name,action])=>[name,action.operation]));
+ expect(declared('tempo')).toEqual({create:'tempo.set'});
+ expect(declared('trigger')).toEqual({runNow:'tempo.runNow',stop:'tempo.stop',start:'tempo.start',pause:'tempo.pause',resume:'tempo.resume'});
+ const later=()=>new Date(f.clock.now()+3600000).toISOString(), stored=(id:string)=>f.db.select().from(triggers).where(eq(triggers.id,id)).get();
+ // The form as the tempo brick opens it: set by this agent, waking this agent, with words.
+ const form=(id:string,fields:object={})=>({id,ownerKind:'agent',owner:'art',sourceKind:'time',lifespan:'once',targetKind:'inbox',note:'Pond',project:null,times:later(),days:null,toKind:'agent',to:'art',instructions:'Look at the pond',...fields});
+ const create=(who:string,input:object,key:string)=>f.as(who)(declared('tempo').create,input,key);
+ // A household owner sets the agent's own; a member who has the agent sets one recorded as their own.
+ expect((await create(credential,form('by-owner'),'by-owner')).status).toBe(200);
+ expect([stored('by-owner')?.ownerKind,stored('by-owner')?.owner]).toEqual(['agent','art']);
+ expect((await create(f.raw.sam,form('by-sam'),'by-sam')).status).toBe(200);
+ expect([stored('by-sam')?.ownerKind,stored('by-sam')?.owner]).toEqual(['member','sam']);
+ // A member who does not have the agent is refused, and nothing is set; so is one asking for the household's sweep.
+ expect((await create(lee,form('by-lee'),'by-lee')).status).toBe(403);
+ expect(stored('by-lee')).toBeUndefined();
+ const sweep=form('sweep',{ownerKind:'household',owner:null,targetKind:'operation',target:'tempo.sweep',toKind:undefined,to:undefined,instructions:undefined});
+ expect((await create(f.raw.sam,sweep,'sweep-sam')).status).toBe(403);
+ expect((await create(credential,sweep,'sweep-owner')).status).toBe(200);
+ // The trigger brick's five, by the same rule: a member who neither sees the trigger nor has its agent is refused each.
+ const act=(who:string,action:string,input:object)=>f.as(who)(declared('trigger')[action],input,who.slice(0,4)+action);
+ for(const action of ['runNow','stop','start'])expect((await act(lee,action,{id:'by-owner'})).status,action).toBe(403);
+ for(const action of ['pause','resume'])expect((await act(lee,action,{agent:'art'})).status,action).toBe(403);
+ expect(stored('by-owner')?.enabled).toBe(true);
+ expect((await act(credential,'pause',{agent:'art'})).status).toBe(200);
+ expect((await act(credential,'resume',{agent:'art'})).status).toBe(200);
+ expect((await act(credential,'stop',{id:'by-owner'})).status).toBe(200);
+ expect(stored('by-owner')?.enabled).toBe(false);
 });

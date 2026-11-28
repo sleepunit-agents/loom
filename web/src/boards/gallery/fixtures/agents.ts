@@ -294,6 +294,9 @@ export const scenes: BrickScenes[] = [
     { name: 'empty', params: { agent: 'art' }, data: tempoData([tMoss, tBackup], [], [], []) },
     { name: 'loading', params: { agent: 'fern' }, only: ['side'], data: { ...tempoData([]), Tempo: 'loading' } },
     { name: 'unavailable', params: { agent: 'fern' }, data: { Tempo: 'offline', BrickTempoClock: 'offline', TempoDayHistory: 'offline' } },
+    // The desktop's Create trigger, opened by its press: as it opens, and for the household's sweep watching a job.
+    { name: 'creating', params: { agent: 'fern' }, only: ['primary'], press: ['New trigger…'], data: tempoData([...fernTriggers, tBackup, tMoss]) },
+    { name: 'creating-operation', params: { agent: 'fern' }, only: ['primary'], press: ['New trigger…', 'A job stopping', 'The household', 'An operation'], data: tempoData([...fernTriggers, tBackup, tMoss]) },
   ] },
   { brick: 'trigger', scenes: [
     { name: 'default', params: { trigger: tWalk.id }, data: triggerData(tWalk, { runs: walkRuns, log: walkLog, journal }) },

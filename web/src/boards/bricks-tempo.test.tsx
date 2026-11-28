@@ -54,7 +54,9 @@ it('lists the agent\'s triggers from the desktop\'s read, in its order, with its
     expect(b.placed()).toEqual(expect.arrayContaining([{ brick: 'agent', params: { agent: 'art' } }, { brick: 'trigger', params: { trigger: 'tr-water' } }, { brick: 'trigger', params: { trigger: 'tr-pr' } }]));
     // An id a board cannot hold is said without a chip.
     expect(b.placed()).not.toContainEqual({ brick: 'trigger', params: { trigger: 'tr-bad id' } });
-    expect(b.controls()).toEqual([]);
+    // Its one control is the desktop's Create trigger, in the big form only.
+    expect(b.labels()).toEqual(form === 'primary' ? ['New trigger…'] : []);
+    expect(b.controls().length).toBe(form === 'primary' ? 1 : 0);
     expect(all.includes('Today'), form).toBe(form === 'primary');
   }
   expect(bricks.tempo.title({ agent: 'art' })).toBe('Tempo');
@@ -132,4 +134,89 @@ it('says there are none for an agent with no trigger the member may see, is unav
     await b.draw('tempo', { agent: 'art' }, form);
     expect(b.all(), form).toBe('Loading…');
   }
+});
+
+const open = async () => { b.answer(data()); await b.draw('tempo', { agent: 'art' }, 'primary'); await b.press('New trigger…'); };
+const pressed = (group: string) => b.root().findAll((node) => node.props.role === 'group' && node.props['aria-label'] === group)[0]
+  .findAllByType('button').filter((button) => button.props['aria-pressed']).map(b.said);
+
+it('opens the desktop\'s Create trigger form in place of the list, set by and waking this agent, and goes back without sending', async () => {
+  await open();
+  expect(b.all()).toContain('A new trigger');
+  expect(b.all()).not.toContain('Morning water');
+  expect(b.all()).not.toContain('Today');
+  expect(b.field('Agent')!.props.value).toBe('art');
+  expect(b.field('Recipient')!.props.value).toBe('art');
+  expect(['Source', 'Lifespan', 'Set by', 'Target', 'Recipient kind', 'Content'].map(pressed)).toEqual([['A time'], ['The next time only'], ['An agent'], ['An inbox item'], ['Agent'], ['Words']]);
+  expect(b.fields().map((field) => field.props['aria-label'])).toEqual(['Label', 'Time (UTC)', 'Days', 'Agent', 'Recipient', 'Words', 'Project']);
+  // Nothing is sent until what Tempo needs is there: a label, a time and the words.
+  expect(b.button('Create trigger')!.props.disabled).toBe(true);
+  await b.type('Label', 'Evening water'); await b.type('Time (UTC)', '18:31');
+  expect(b.button('Create trigger')!.props.disabled).toBe(true);
+  await b.type('Words', 'Water the beds again');
+  expect(b.button('Create trigger')!.props.disabled).toBe(false);
+  await b.press('Back to the list');
+  expect(b.sent).not.toHaveBeenCalled();
+  expect(b.reported).not.toHaveBeenCalled();
+  expect(b.all()).toContain('Morning water');
+});
+
+it('creates a timed trigger with the desktop\'s input through tempo.set, tells the board create and nothing typed, and goes back to the list', async () => {
+  await open();
+  await b.type('Label', ' Evening water '); await b.type('Time (UTC)', '18:31'); await b.type('Days', 'weekdays');
+  await b.type('Words', 'Water the beds again'); await b.type('Project', 'garden');
+  await b.press('Until stopped');
+  await b.submit('Create trigger');
+  expect(b.sent.mock.calls).toEqual([['/api/tempo/set', { ownerKind: 'agent', owner: 'art', sourceKind: 'time', lifespan: 'until-stopped', targetKind: 'inbox',
+    note: 'Evening water', project: 'garden', times: '18:31', days: 'weekdays', toKind: 'agent', to: 'art', instructions: 'Water the beds again' }]]);
+  expect(b.reported.mock.calls).toEqual([['create', {}]]);
+  expect(b.all()).toContain('Morning water');
+  expect(b.all()).toContain('Created. It is in the list once Tempo has it.');
+  expect(b.labels()).toEqual(['New trigger…']);
+});
+
+it('sends each of the form\'s other choices as the desktop does: a watched record, a person or the household, an operation, a file', async () => {
+  await open();
+  // A pull request watched, set by a person, for a person's inbox, from a repository file, for today.
+  await b.type('Label', 'Fence PR'); await b.press('A pull request changing');
+  expect(b.field('Time (UTC)')).toBeUndefined();
+  expect(b.field('Pull request')!.props.placeholder).toBe('change:…');
+  await b.type('Pull request', 'change:9'); await b.press('For today');
+  await b.press('A person'); expect(b.field('Agent')).toBeUndefined(); await b.type('Person', 'sam');
+  await b.press('Person'); await b.type('Recipient', 'sam');
+  await b.press('Repository file'); await b.type('Repository file', 'notes/fence.md');
+  await b.submit('Create trigger');
+  expect(b.sent.mock.calls.at(-1)).toEqual(['/api/tempo/set', { ownerKind: 'member', owner: 'sam', sourceKind: 'pull-request', lifespan: 'today', targetKind: 'inbox',
+    note: 'Fence PR', project: null, watches: 'change:9', toKind: 'person', to: 'sam', file: 'notes/fence.md' }]);
+  // The household's sweep at a time: no owner, an operation and no words; an empty recipient is not sent.
+  await open();
+  await b.type('Label', 'Sweep'); await b.type('Time (UTC)', '03:13');
+  await b.press('The household'); expect(b.field('Person')).toBeUndefined(); expect(b.field('Agent')).toBeUndefined();
+  await b.press('An operation'); expect(b.field('Words')).toBeUndefined(); expect(b.button('Repository file')).toBeUndefined();
+  await b.type('Recipient', ''); await b.type('Operation', 'tempo.sweep');
+  await b.submit('Create trigger');
+  expect(b.sent.mock.calls.at(-1)).toEqual(['/api/tempo/set', { ownerKind: 'household', owner: null, sourceKind: 'time', lifespan: 'once', targetKind: 'operation',
+    note: 'Sweep', project: null, times: '03:13', days: null, target: 'tempo.sweep' }]);
+  // A job stopping and an answer arriving ask for their own record.
+  await open();
+  await b.press('A job stopping'); expect(b.field('Job')!.props.placeholder).toBe('job:…');
+  await b.press('An answer arriving'); expect(b.field('Answer to')!.props.placeholder).toBe('approval:… or question:…');
+  expect(b.reported.mock.calls).toEqual([['create', {}], ['create', {}]]);
+});
+
+it('keeps the form and what was typed when Tempo refuses or cannot be reached, tells the board nothing, and says so', async () => {
+  await open();
+  await b.type('Label', 'Evening water'); await b.type('Time (UTC)', '18:31'); await b.type('Words', 'Water');
+  b.reply.ok = false;
+  await b.submit('Create trigger');
+  expect(b.sent).toHaveBeenCalledTimes(1);
+  expect(b.reported).not.toHaveBeenCalled();
+  expect(b.alert()).toBe('Tempo could not create that trigger. Check the details and your access.');
+  expect(b.field('Label')!.props.value).toBe('Evening water');
+  expect(b.button('Create trigger')!.props.disabled).toBe(false);
+  vi.stubGlobal('fetch', async () => { throw new TypeError('Failed to fetch'); });
+  await b.submit('Create trigger');
+  expect(b.reported).not.toHaveBeenCalled();
+  expect(b.alert()).toBe('Tempo could not create that trigger. Check the details and your access.');
+  expect(b.all()).toContain('A new trigger');
 });

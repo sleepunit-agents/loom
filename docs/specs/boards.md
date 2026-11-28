@@ -613,7 +613,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `agents` | none | none | none |
 | `question`, added 2026-11-27 | as above | also `discuss {}`, after `inbox.discuss`; `taskAnswer {answer}`, after `tasks.command` `answer`, `answer` one of `yes`, `no`, `words`; `join {decision}`, after `runtime.workerJoinDecide`, `decision` one of `allow`, `block` | as above |
 | `ticket`, added later on 2026-11-27 | as above | also `ask {}`, by `tasks.command` `ask`, and `promote {}`, by `tasks.command` `edit` with the type alone, after asking | as above |
-| `tempo` | `agent`: agent id | none: a trigger is acted on in its `trigger` brick | none |
+| `tempo` | `agent`: agent id | `create {}`, after `tempo.set` took the desktop's Create trigger form as the member filled it (big form only); the board is told nothing typed. A trigger that exists is acted on in its `trigger` brick | none |
 | `trigger` | `trigger`: a Tempo trigger's id: a letter or digit, then up to 119 of letters, digits and `: . _ / @ -` | `runNow {}`, `stop {}`, `start {}`, `pause {}`, `resume {}`, each after the `tempo.` operation of that name took it; running it now and stopping it ask first; `pause` and `resume` are of the trigger's agent, as on the desktop | the trigger id |
 | `account` | none: it is the signed-in member's own | `removePasskey {}`, by `account.removePasskey`; `revokeSession {}`, by `account.revokeSession`; `removeDevice {}`, by `notifications.removeDevice`; `enableNotifications {}`, by `notifications.subscribe`. Each removal asks first. Adding a passkey, making a sign-in link and signing this device out go to the sign-in door, which is no operation, and the board is not told | none |
 | `appearance` | none: it is the signed-in member's own | `set {}`, by `household.setPreferences` with the one choice pressed; the board is not told which | none |
@@ -653,7 +653,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `activity` | yes: the range by day, and an entry opened in place | never |
 | `threads` | yes: every row of Comms' first page, with when each was last used | never |
 | `agents` | no | never |
-| `tempo` | yes: every trigger of the agent, and the day's recorded firings; small, the first six | a firing of one of the agent's triggers fails (more of them have a failed last firing than before) |
+| `tempo` | yes: every trigger of the agent, the day's recorded firings, and New trigger…, which opens the desktop's Create trigger form in their place; small, the first six | a firing of one of the agent's triggers fails (more of them have a failed last firing than before) |
 | `trigger` | yes: also its project, machine needs, requested model, program, lessons and saved state where the member may read them, every recent run and its recent history; small, its source, target, words, three runs and its buttons | it fails, or its newest run fails |
 | `account` | yes: each passkey, signed-in browser and notification device with its state and dates, and every change; small, the three counts and no control | never |
 | `appearance` | yes: every choice of the desktop's Appearance app as a row of buttons, and a press saves it; small, the choices as words and no control | never |
@@ -738,7 +738,16 @@ neither.
   paused. Big: "Today", the household day's recorded events for these triggers, newest first, as Tempo's "Recent
   history" lists a day (`TempoDayHistory` and `tempoCalendarOutcomes`, read for the household's today by `deskTime`).
   The last firing's outcome is known only inside that read (yesterday to tomorrow); an older one shows its time alone.
-  It has no search, no day picker, no week and no subscription readings.
+  It has no search, no day picker, no week and no subscription readings. Big, it ends in **New trigger…**, the
+  desktop's Create trigger (`web/src/pieces/tempo/create.tsx`), added 2026-11-27 for parity (t-2428): pressed, the
+  form takes the place of the list and the day, with that form's fields in its order and words, its choices drawn
+  as `Segmented` rows in place of its select controls, "Set by" an agent and the recipient this agent until the
+  member changes them, and Create trigger disabled until a label, a time or a watched record, an owner where one is
+  named, and the words, file or operation are there. It sends that form's input through the desktop's call
+  (`tempo.set` by `web/src/pieces/tempo/commands.ts`); who may set what was asked is loom's answer to that call
+  (policy.ts, `maySetTrigger`, and the watched record's own read rule), so a member is offered the form and refused
+  in words where the operation refuses them. Then the board is told `create` and the list returns, saying it was
+  created; a refusal keeps the form and what was typed.
 - `trigger`: the desktop reader's reads (`TempoCard`, `TriggerHistory`, `ProgramDetails`, `JournalDetails`). What it
   fires on, when it is due, who set it, its target, its words or repository file, its recent runs (what each was,
   how it ended, how long it took, and a `session` chip for a run with a conversation), and in the big form its
@@ -746,10 +755,10 @@ neither.
   only), and its recent history. Its buttons are the desktop's, by the desktop's calls to `/api/tempo/…`
   (`web/src/pieces/tempo/commands.ts`): Run now and Stop (Cancel for one that is not standing) ask first; Start for
   a stopped standing trigger whose schedule was not removed; Pause agent and Resume agent. Whether the member may
-  is loom's answer to the call. **It cannot edit a trigger or create one.** The desktop's Tempo app has no editor
-  (`tempo.edit` is called by agents and the command line only), and its Create form is built on select controls and
-  free-text fields for times, days, a recipient and an operation name with no shared pure logic to reuse; the brick
-  says "To change its times or words, ask its agent".
+  is loom's answer to the call. **It cannot edit or delete a trigger.** The desktop's Tempo app has no editor and no
+  delete (`tempo.edit` is called by agents and the command line only, and loom has no operation that deletes a
+  trigger: Stop is the end of one), so the brick says "To change its times or words, ask its agent". A new trigger
+  is created from the `tempo` brick, as the desktop's Create trigger sits above its list.
 
 **What the five bricks drawn on 2026-11-27 show.** Each reads what the desktop reads for the same record, and says
 it in the desktop's words.
