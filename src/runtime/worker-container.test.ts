@@ -3,7 +3,8 @@ import {houseCliSource} from './worker-mounts.js';
 import {defaultWorkerState} from './worker-left.js';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:net';
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { plainContext } from './house-context.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Duplex, PassThrough } from 'node:stream';
@@ -1374,4 +1375,74 @@ it.each([[true, { reason: 'out-of-memory' }], [false, { reason: 'killed', signal
   f.engine.json.mockImplementation(async (method, path, sent, signal) => inspecting(path) ? { State: { OOMKilled } } : base(method, path, sent, signal));
   f.socket.push(null); f.wait.resolve({ StatusCode: 137 });
   expect(await body.exited).toEqual({ exitCode: 29, logTail: '', signalled: true, failure }); await body.stop();
+});
+
+/** A frozen review (conversation.review): its copy, written by `build`, mounted read-only by `start`. */
+const reviewHead = '1'.repeat(40), reviewBase = '2'.repeat(40);
+const frozenJob: WorkerAssignment = { ...job, review: true, frozenReview: { repository: 'acme/app', head: reviewHead, base: reviewBase } };
+function frozenFixture(engineSaysWritable = false) {
+  const f = fixture(), state = mkdtempSync(join(houseRoot, 'frozen-state-')), copy = join(state, 'reviews', frozenJob.id);
+  const source = { ...f.source,
+    fetch: vi.fn(async (_house: WorkerAssignment['house'], _credential: Uint8Array | undefined, _signal: AbortSignal, requested?: string) => requested ?? commit),
+    context: vi.fn((_house: WorkerAssignment['house'], at: string, _signal: AbortSignal) => at === reviewHead
+      ? plainContext([{ name: 'src/pump.ts', data: Buffer.from('export const rate = 2;\n') }]) : (() => { const tar = new PassThrough(); tar.end('tar'); return tar; })()),
+    diff: vi.fn(async () => ({ bytes: Buffer.from('diff --git a/src/pump.ts b/src/pump.ts\n-export const rate = 1;\n+export const rate = 2;\n'), cut: false })) };
+  const original = f.engine.json.getMockImplementation()!;
+  const created: { HostConfig: { Mounts: { Type: string; Source: string; Target: string; ReadOnly: boolean }[] }; Env: string[] }[] = [];
+  f.engine.json.mockImplementation(async (method, url, body, signal) => {
+    if (url.startsWith('/containers/create')) created.push(body as typeof created[number]);
+    // What the engine reports it made. A frozen review's copy must be reported read-only, or the body is not started.
+    if (inspecting(url)) return { Mounts: [...programReport(programDirectory, state), reported(loginA, '/run/loom/login/harness', true), reported(copy, '/review', engineSaysWritable)] };
+    return original(method, url, body, signal);
+  });
+  const executor = containerWorkerExecutor({ ...f.config, state, accountLogins, container: { ...f.config.container, mounts: { art: houseMounts } } },
+    { ...f.deps, source, name: () => 'frozen', kitAccess: { url: 'https://root.invalid', runner: 'machine-only' } });
+  return { ...f, state, copy, source, executor, created };
+}
+it('gives a frozen review its exact commit read-only at /review, none of its agent\'s mounts and no kit, and the copy\'s fingerprint before and after', async () => {
+  const f = frozenFixture(), credential = new TextEncoder().encode('house-fetch-secret');
+  const image = await f.executor.build(frozenJob, f.abort.signal, credential);
+  // Both pinned commits by their full ids, with the house's own fetch credential, which goes to git and nowhere else.
+  expect(f.source.fetch).toHaveBeenCalledWith({ repository: 'https://github.com/acme/app.git', file: '', branch: 'main' }, credential, expect.any(AbortSignal), reviewBase);
+  expect(f.source.fetch).toHaveBeenCalledWith({ repository: 'https://github.com/acme/app.git', file: '', branch: 'main' }, credential, expect.any(AbortSignal), reviewHead);
+  expect(readFileSync(join(f.copy, 'tree/src/pump.ts'), 'utf8')).toBe('export const rate = 2;\n');
+  expect(readFileSync(join(f.copy, 'change.diff'), 'utf8')).toContain('+export const rate = 2;');
+  const body = f.executor.start(frozenJob, image, f.abort.signal);
+  try {
+    await body.spawned;
+    const [spec] = f.created, mounts = spec.HostConfig.Mounts;
+    expect(mounts).toContainEqual({ Type: 'bind', Source: f.copy, Target: '/review', ReadOnly: true });
+    // Nothing of the agent's own: neither of its fixed mounts, nor a kit socket. Its sign-in, as every body has.
+    expect(mounts.map(m => m.Target)).toEqual(['/opt/loom', '/usr/local/bin/loom', '/run/loom/login/harness', '/review']);
+    expect(spec.Env.some(entry => /SECRET|TOKEN|GH_|GITHUB/.test(entry))).toBe(false);
+    expect(JSON.stringify(f.engine.json.mock.calls)).not.toMatch(/house-fetch-secret|machine-only/);
+    await body.release(bootstrap());
+    // No kit was offered or reported for it.
+    expect(JSON.parse(f.writes[0])).toEqual({ job: frozenJob, build: image, bootstrap: handed });
+    f.socket.push(null); f.wait.resolve({ StatusCode: 0 });
+    const ended = await body.exited;
+    expect(ended.reviewTree?.head).toBe(reviewHead);
+    expect(ended.reviewTree?.before).toMatch(/^[0-9a-f]{64}$/); expect(ended.reviewTree?.after).toBe(ended.reviewTree?.before);
+  } finally { await body.stop(); }
+  // The copy is removed with the body.
+  expect(existsSync(f.copy)).toBe(false);
+});
+it('does not start a frozen review whose copy the engine reports writable, and reports a copy changed under it', async () => {
+  const writable = frozenFixture(true), image = await writable.executor.build(frozenJob, writable.abort.signal);
+  const refused = writable.executor.start(frozenJob, image, writable.abort.signal);
+  await expect(refused.spawned).rejects.toThrow('Unexpected container storage'); await refused.stop();
+  expect(writable.engine.json.mock.calls.some(call => String(call[1]).endsWith('/start'))).toBe(false);
+  // Read-only in the container, but not to this machine's own user: a change made beside the body is seen.
+  const f = frozenFixture(), built2 = await f.executor.build(frozenJob, f.abort.signal), body = f.executor.start(frozenJob, built2, f.abort.signal);
+  try {
+    await body.spawned; await body.release(bootstrap());
+    chmodSync(join(f.copy, 'tree/src/pump.ts'), 0o644); writeFileSync(join(f.copy, 'tree/src/pump.ts'), 'export const rate = 3;\n');
+    f.socket.push(null); f.wait.resolve({ StatusCode: 0 });
+    const ended = await body.exited;
+    expect(ended.reviewTree?.after).not.toBe(ended.reviewTree?.before);
+  } finally { await body.stop(); }
+  // Without its copy, a frozen review is not started at all.
+  const none = frozenFixture();
+  expect(() => none.executor.start(frozenJob, built, none.abort.signal)).toThrow('Review copy unavailable');
+  expect(none.created).toEqual([]);
 });

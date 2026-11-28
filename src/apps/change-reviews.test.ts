@@ -52,3 +52,15 @@ it('files a late result on its assigned commit and preserves the original assign
     client.close();
   }
 });
+
+it('reads a frozen review\'s verdict from its last line alone, the same for every harness', async () => {
+  const { replyVerdict } = await import('./change-reviews.js');
+  expect(replyVerdict('No findings.\nVERDICT: CLEAR')).toBe('CLEAR');
+  expect(replyVerdict('No findings.\nVERDICT: CLEAR  \n\n')).toBe('CLEAR');
+  expect(replyVerdict('- MINOR a.ts:1 a name.\nVERDICT: BLOCKING')).toBe('BLOCKING');
+  // A CRITICAL or MAJOR finding is blocking, whatever the last line says.
+  expect(replyVerdict('  - MAJOR a.ts:1 wrong.\nVERDICT: CLEAR')).toBe('BLOCKING');
+  // No verdict: none at all, one that is not the last line, one that only starts the same, one in other words.
+  for (const reply of ['Looks fine.', 'VERDICT: CLEAR\nThanks!', 'VERDICT: CLEARLY', 'verdict: clear', 'VERDICT: NONE', '`VERDICT: CLEAR`'])
+    expect(replyVerdict(reply), reply).toBeUndefined();
+});

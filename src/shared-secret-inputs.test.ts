@@ -1,4 +1,5 @@
 import {testProgramPin} from './runtime/pinned-program.fixture.js';
+import {reviewPlace} from './core/conversations/review-place.js';
 import {DataLive} from './core/data/live.js';
 import {httpWorkerControl} from './runtime/worker-http.js';
 import {SecretPrivateInputs} from './pieces/secrets/private-inputs.js';
@@ -305,4 +306,22 @@ it('hands the assigned worker only the frozen program alias with its current sta
  for(const bytes of values.values())bytes.fill(0);
  expect((await read('KIT_TOKEN')).status).toBe(409);
  expect(f.client.serialize().includes(Buffer.from('PRIVATE_SOURCE_VALUE'))).toBe(false);
+});
+it('hands a frozen review no secret at start or on request, whatever is granted, and only its house fetch credential to its worker',async()=>{
+ const f=fixture();f.rule();f.rule('REPO');f.grant();
+ // A GitHub token the agent's house would read at start (Art's bin/git-credential-art reads such an alias).
+ f.db.insert(agentHouseSecrets).values({agent:'art',alias:'LOOM_SECRET_GITHUB_ART_E_FISH_TOKEN',secret:'TOKEN'}).run();
+ const target={repository:'acme/app',head:'1'.repeat(40),base:'2'.repeat(40),change:null,tier:'medium' as const};
+ const review=(id:string)=>f.root.services.conversations.open({agent:'art',venue:'handoff',place:reviewPlace('parent',id,{id:'review',revision:'r'.repeat(64)},target),label:'Frozen review'}).id;
+ // The same jobs as the other tests, now each a frozen review's: the running body and the starting build.
+ f.db.update(jobs).set({conversation:review('one')}).where(eq(jobs.id,'body')).run();
+ f.db.update(jobs).set({conversation:review('two')}).where(eq(jobs.id,'build')).run();
+ expect((await f.post('startup',{})).status).toBe(403);
+ for(const alias of ['API_TOKEN','LOOM_SECRET_GITHUB_ART_E_FISH_TOKEN'])expect((await f.post('read',{kind:'startup',alias})).status).toBe(403);
+ expect((await f.post('read',{kind:'request',id:randomUUID(),secret:'TOKEN'})).status).toBe(403);
+ // The house is still fetched: the worker is given its fetch credential, for git and nothing else (house-source.ts).
+ const fetch=await f.post('read',{kind:'repository',job:'build'},raw.runner);expect(fetch.status).toBe(200);
+ expect(f.source.read).toHaveBeenCalledExactlyOnceWith('REPO');
+ // An ordinary job of the same agent is served as before: the refusal is the review's, not the agent's.
+ expect((await f.post('startup',{},raw.other)).status).toBe(200);
 });

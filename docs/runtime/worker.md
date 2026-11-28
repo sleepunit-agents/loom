@@ -1988,6 +1988,86 @@ The receipt and later status include `cancelled: true`. Reopening the coordinato
 or retrying the original handoff keeps the cancellation. Once a job has been
 admitted, use its normal job controls.
 
+### Frozen reviews
+
+`conversation.review` hands a pull request or a commit to a reviewer: a fresh body
+of the same agent in a work role (`review` unless `role` names another), on one
+exact commit, with a read-only copy of it and no credential that can push. Its
+answer comes back to the originating thread like any role handoff's, and its
+verdict is filed on the pull request's review round, which the pull brick shows.
+It is asked from the same private owner thread a role handoff is, through
+`loom_command`:
+
+```json
+{
+  "operation": "conversation.review",
+  "id": "review-walkthrough",
+  "input": {
+    "clientId": "review-acme-3",
+    "label": "Review acme/app#3",
+    "target": {"change": "acme/app#3"},
+    "contract": "Ticket t-17: the pump rate doubles and nothing else changes."
+  }
+}
+```
+
+`target` is a pull request loom follows (`{"change":"owner/repo#number"}`) or a
+commit (`{"repository":"owner/repo","commit":"<40 hex>"}`). `contract` is what to
+review against, in the requester's words: the ticket, the spec section, the
+acceptance criteria. `includeDescription: true` gives the reviewer the pull
+request's description too; it is left out otherwise. `tier` (`medium`, the
+default, or `high`) is recorded on the round. `tickets` links the session to
+tickets, as for a handoff. The receipt is `{conversation, item, commit, base}`.
+
+- **What is pinned.** For a pull request, the head commit loom last read from
+  GitHub and its merge base with the pull request's base branch; for a commit,
+  that commit and its first parent. Loom reads the base from GitHub once, when
+  the review is asked for (`githubReviewBase`, `src/pieces/changes/github.ts`),
+  and writes both into the child conversation's place, which never changes
+  (`reviewPlace`, `src/core/conversations/review-place.ts`). A head that moved
+  while the request was prepared refuses it with `conflict`.
+- **The round.** When the review's job is formed, a round is filed on the pull
+  request (`change_review_rounds`, `assignFrozen` in
+  `src/apps/change-reviews.ts`), on the pinned commit, numbered after the change's
+  earlier rounds. A commit review files its round on a followed pull request
+  whose head is that commit, and keeps none otherwise. A review's job is never
+  retried.
+- **The brief.** Loom writes it (`src/core/conversations/review-brief.ts`): the
+  role's description, the repository, the commit and the base, where the copy is,
+  the rule for the answer, and the contract. Nothing of the author's goes in: no
+  line of the originating thread, no session transcript or report, no pull
+  request description unless asked for. The reviewer's body loads no memory or
+  identity either (`src/runtime/body-program.ts`).
+- **The copy.** Only a worker that says it gives frozen reviews their copy
+  (`frozenReviews` on `runtime.next`) is offered one. Its `build` fetches both
+  commits by their full ids into its own mirror, writes the head commit's files,
+  the diff from base to head and `review.json` into a directory of its own
+  (`src/runtime/review-snapshot.ts`), and `start` mounts it read-only at
+  `/review` (`/review/tree`, `/review/change.diff`, `/review/review.json`). The
+  engine's report of the container's mounts must say read-only, or the body is not
+  started. The worker fingerprints the copy before the body starts and after it
+  ends and reports both with `runtime.finish` (`reviewTree`); a round whose
+  fingerprints differ, or whose worker reported none, has no verdict.
+- **No push credential.** The job is refused every secret at start and on request
+  (`src/shared-secret-inputs.ts`), so a house credential helper that reads one
+  (Art's `bin/git-credential-art` reads `LOOM_SECRET_GITHUB_ART_E_FISH_TOKEN`)
+  finds none; its body asks for none. It is given no kit
+  (`src/shared-kit-access.ts`), no kit socket and none of its agent's fixed
+  mounts. The house's own fetch credential still goes to the worker, for git's
+  fetch of the house and of the reviewed commits, and never to the body
+  (`src/runtime/house-source.ts`).
+- **The answer.** Its last line must be exactly `VERDICT: CLEAR` or
+  `VERDICT: BLOCKING`; a CRITICAL or MAJOR bullet makes it blocking (`replyVerdict`,
+  `src/apps/change-reviews.ts`). The rule reads the reply's words, which every
+  harness gives the same way. A reply without that line is a failed review: its
+  round says `NONE` and the relayed answer starts with a line saying so. The
+  verdict is filed in the same write as the relay (`src/core/conversations/review-result.ts`).
+
+What is not enforced from loom is in `docs/accepted-tradeoffs.md`, "A frozen
+reviewer keeps its model sign-in, loom's tools and the network". A role handoff
+with `role: "review"` (`conversation.handoff`) still runs as before, with no copy
+and no pin: use `conversation.review` for code.
+
 Briefs remain encrypted in the existing Inbox words cell with an original
 household retention deadline of at most 14 days. Only the bound receiving body or a currently authorized member through the
 existing Inbox read may open them; current policy can shorten that deadline, and expiry withdraws

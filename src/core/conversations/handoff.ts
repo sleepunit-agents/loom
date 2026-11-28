@@ -267,7 +267,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
   }
   const repository=input.target.repository.toLowerCase(),head=input.target.commit;
   // The pull request whose head this commit is, when loom follows one: the round is filed on it.
-  const row=db.select().from(changes).where(and(eq(changes.repository,'github:'+repository),eq(changes.headCommit,head),visible)).orderBy(desc(changes.updatedAt)).limit(1).get();
+  const row=db.select().from(changes).where(and(eq(changes.repository,repository),eq(changes.headCommit,head),visible)).orderBy(desc(changes.updatedAt)).limit(1).get();
   return {repository,head,change:row?.id??null,pull:undefined,body:undefined};
  };
  operations.register(operation({...common,name:'conversation.review',

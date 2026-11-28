@@ -425,6 +425,67 @@ Entries are grouped by the part of the program they belong to.
 - **What would change the answer.** A mis-pasted value seen in a brief; or a reason for the agent not to know
   the name, after which the report would go back to telling nothing.
 
+### A frozen reviewer keeps its model sign-in, loom's tools and the network
+- **What.** A frozen review's body (`conversation.review`, `docs/runtime/worker.md`, "Frozen reviews") is handed
+  no secret, no kit, none of its agent's fixed mounts and a read-only copy of what it reviews. Three things it
+  still has, because loom cannot take them without taking the body: its account's sign-in directory, mounted
+  read-write at `/run/loom/login/<harness>` as for every body; loom's own tools (`loom_command` and the named
+  tools), under the agent's body token; and the network.
+- **Where.** `src/runtime/worker-mounts.ts` (`bodyMounts`, the sign-in mount), `src/runtime/body-program.ts`
+  (`bodyProgramTools`), `src/runtime/worker-container.ts` (`createSpec` sets no network mode).
+- **Why accepted.** The sign-in must stay writable: the provider's program rewrites its files when it renews the
+  sign-in, and a reviewer that could not would fail mid-review. It holds the model account's sign-in, not a
+  forge credential: nothing in it can push. loom's tools are how a body reports, takes its mail and answers,
+  and the loom operations they reach act as the agent's body, which can change no repository and take no
+  owner's action; but they can read what the agent may read, the agent's memory among it, so a reviewer that
+  went looking could find the author's notes about the change. The brief loom writes holds none of them
+  (`src/core/conversations/review-brief.ts`) and the body loads no memory at start; what it is not given it
+  could still ask for. The network is how the harness reaches its model. With no credential, the network gives
+  the body nothing to push with: a push to GitHub needs a token, and none is in its environment, its files or
+  its mounts.
+- **What would change it.** A body door that serves a review only the operations a reviewer needs (reply,
+  status, mail), or a provider that signs in without a writable directory. Then the review would get those
+  alone, and this entry would shrink to the network.
+
+### A frozen review's copy is read-only in its container, not on the worker's machine
+- **What.** The copy is a directory under the worker's state directory, written by the worker's own user, and
+  bind-mounted read-only into the body's container. In the container nothing can write it: the engine's
+  read-only bind refuses root's writes too, and the body has no capability to remount. On the machine, the
+  worker's own user (or root) can.
+- **Where.** `src/runtime/review-snapshot.ts`, `src/runtime/worker-container.ts` (`build`, `start`, the engine's
+  mount report checked by `ownMounts`).
+- **Why accepted.** The machine is the worker's, and the worker is trusted to run the review at all. What a
+  change there would do is caught: the worker fingerprints the copy before the body starts and after it ends,
+  and loom files no verdict for a round whose fingerprints differ or were not reported (`runtime.finish`,
+  `reviewTree`, `src/shared-runtime.ts`). Files are also left mode 0444 (0555 for an executable).
+- **What would change it.** An engine-held read-only volume populated by the engine itself, so no host path holds
+  the copy; that needs engine features this worker does not assume (podman and Docker differ there).
+
+### A frozen review of a commit that heads no followed pull request keeps no round
+- **What.** `conversation.review` of `{repository, commit}` files its round on a pull request loom follows whose
+  head is that commit. For any other commit the review runs, its answer is relayed and its first line says the
+  verdict loom read, but no round is kept: `change_review_rounds.change` is a foreign key to a followed pull
+  request (schema 27).
+- **Where.** `assignFrozen` in `src/apps/change-reviews.ts`; `src/core/conversations/handoff.ts`
+  (`reviewTargetFor`).
+- **Why accepted.** The rounds belong to a change and are read on its brick; a commit with no pull request has no
+  brick to read them on. Keeping them would need a schema change (a nullable change and a repository column)
+  that nothing reads yet.
+- **What would change it.** A page that shows a commit's reviews, or a merge rule that asks for a commit's
+  verdict before its pull request exists.
+
+### The house's fetch credential reaches a frozen review's worker
+- **What.** A frozen review is refused every secret at start and on request, but its worker is still given the
+  agent's house fetch credential (`agent_run_settings.repository_secret`), and uses it for git's fetch of the
+  house and of the two reviewed commits.
+- **Where.** `src/shared-secret-inputs.ts` (`target`, `houseFetch`), `src/runtime/worker-container.ts` (`build`),
+  `src/runtime/review-snapshot.ts`.
+- **Why accepted.** Without it the agent's house, which is often private, could not be built for the review, nor a
+  private reviewed repository fetched. It goes to one git fetch as a header in git's own environment and to
+  nothing the engine or the body is told (`src/runtime/house-source.ts`), exactly as for every job; the
+  worker-container test checks the body's spec does not hold it.
+- **What would change it.** A separate read-only forge credential for reviews, configured beside the house one.
+
 ## Running work
 
 ### A job can finish before its usage report arrives

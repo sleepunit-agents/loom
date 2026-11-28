@@ -331,3 +331,24 @@ it('keeps review-result capability when only coldReviews is unknown to the serve
     { execution: 'container', reviewResults: true, coldReviews: true }, { execution: 'container', reviewResults: true },
   ]);
 });
+
+it('says it gives frozen reviews their copy, and asks again without it of a loom from before frozen reviews', async () => {
+  const fetcher = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ ok: false, code: 'invalid', message: 'Input does not match operation schema' }), { status: 400 }))
+    .mockResolvedValueOnce(response({ ...assignment, frozenReview: { repository: 'acme/app', head: '1'.repeat(40), base: '2'.repeat(40) } }));
+  const control = httpWorkerControl({ url: 'https://loom.example', token: 'fixture', signal: new AbortController().signal, fetch: fetcher, frozenReviews: true });
+  expect(await control.next()).toMatchObject({ frozenReview: { repository: 'acme/app', head: '1'.repeat(40), base: '2'.repeat(40) } });
+  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).input)).toEqual([
+    { execution: 'container', reviewResults: true, frozenReviews: true }, { execution: 'container', reviewResults: true },
+  ]);
+});
+
+it('sends a frozen review\'s copy fingerprints with its finish, and nothing of them for any other job', async () => {
+  const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => response({ ok: true }));
+  const control = httpWorkerControl({ url: 'https://loom.example', token: 'fixture', signal: new AbortController().signal, fetch: fetcher, pause: async () => {} });
+  const reviewTree = { head: '1'.repeat(40), before: 'd'.repeat(64), after: 'd'.repeat(64) };
+  await control.finish('review', 0, '', 'body', undefined, undefined, undefined, reviewTree);
+  await control.finish('plain', 0, '', 'body');
+  const [review, plain] = fetcher.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).input);
+  expect(review.reviewTree).toEqual(reviewTree); expect(plain).not.toHaveProperty('reviewTree');
+});

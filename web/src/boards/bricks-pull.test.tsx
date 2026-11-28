@@ -338,3 +338,23 @@ it('keeps saying it was refused once loom no longer offers the refresh, and draw
   expect(problems()).toEqual(['Loom refused: only a household owner may have it read GitHub again.']);
   expect(button('Read GitHub again')).toBeUndefined();
 });
+
+it('draws a frozen review\'s round with its verdict and commit, and a chip to the session that reviewed it', async () => {
+  const frozen = [
+    { change: change.id, job: 'j-4', headCommit: change.headCommit, tier: 'medium', round: 4, verdict: 'BLOCKING', findings: '- MAJOR src/pump.ts:1 tripled.\nVERDICT: BLOCKING', conversation: 'cv-review-0004' },
+    { change: change.id, job: 'j-5', headCommit: 'b'.repeat(40), tier: 'medium', round: 5, verdict: 'NONE', findings: 'The reviewer did not return a final verdict.', conversation: 'cv-review-0005' },
+    { change: change.id, job: 'j-6', headCommit: change.headCommit, tier: 'high', round: 6, verdict: 'CLEAR', findings: 'VERDICT: CLEAR', conversation: null },
+  ];
+  world(read(), { review: { status: 'live', data: { changeReviewHistory: frozen } } });
+  await draw('primary');
+  await act(async () => reviewOpener().props.onClick());
+  // The round's session is asked for with the rest of it.
+  expect(String(asked('ChangeReviewHistory')[0][0])).toContain('conversation');
+  expect(rows()).toEqual([
+    'Round 4 · mediumCurrent commit aaaaaaa SessionBlockingFindings- MAJOR src/pump.ts:1 tripled.\nVERDICT: BLOCKING',
+    'Round 5 · mediumEarlier commit bbbbbbb SessionNo verdictFindingsThe reviewer did not return a final verdict.',
+    'Round 6 · highCurrent commit aaaaaaaClearFindingsVERDICT: CLEAR',
+  ]);
+  const chips = tree!.root.findAll((node) => typeof node.props['data-place'] === 'string' && JSON.parse(node.props['data-place']).brick === 'session');
+  expect(chips.map((chip) => JSON.parse(chip.props['data-place']))).toEqual(['cv-review-0004', 'cv-review-0005'].map((session) => ({ brick: 'session', params: { session } })));
+});
