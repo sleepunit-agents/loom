@@ -66,6 +66,9 @@ it('lists members and agents as Household setup does, each member a person chip 
 
 it('shows tokens and browsers by label and state and never a value or a fingerprint', async () => {
   await draw('primary');
+  // A revoked or expired token is folded under one heading with its count (./bricks-household-lists.test.tsx).
+  expect(shown()).not.toContain('Old one');
+  await press('Revoked or expired · 1');
   for (const words of ['Laptop CLI', 'owner · sam', 'Active', 'Last used Never', 'Old one', 'Revoked', 'Firefox on Linux', 'sam · Passkey · Browser · Active']) expect(shown(), words).toContain(words);
   const drawn = JSON.stringify(tree!.toJSON());
   for (const hidden of [print, ref, 'loom_']) expect(drawn).not.toContain(hidden);
