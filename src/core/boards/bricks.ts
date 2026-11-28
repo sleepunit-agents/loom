@@ -49,6 +49,7 @@ import bridges from './bricks/bridges.js';
 import household from './bricks/household.js';
 import sharing from './bricks/sharing.js';
 import projects from './bricks/projects.js';
+import catchup from './bricks/catchup.js';
 
 export { recordKinds, type Brick, type RecordKind } from './bricks/kit.js';
 export { questionAnswers } from './bricks/question.js';
@@ -66,6 +67,7 @@ export const bricks: readonly Brick[] = [
   machines, subscriptions, usage, bridges, household, sharing,
   tickets,
   projects,
+  catchup,
 ];
 
 const byName = new Map(bricks.map((b) => [b.name, b]));
