@@ -56,13 +56,14 @@ export const STAMP_WAKE_MS = 60_000;
  * `relaxed` waits `LIVE_RELAXED_MS` instead (core/data/live-pace.ts), and this time when the client asks for it now. */
 export const LIVE_SETTLE_MS = 100;
 export function nextData(db: DataDatabase, baseClock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>, measure?: MeasureRead, programRecords?: (viewer:Viewer)=>readonly string[]|undefined, canReadUsage: (viewer:Viewer)=>boolean = () => true, canReadProgram: (viewer:Viewer)=>boolean = canReadUsage) {
-  // t-2431, shadow only (core/data/live-scope.ts). Off, none of this is installed and nothing below differs.
-  // Shadow, a reading that asks the clock, or reads another database file or a cache shared between selections,
-  // is unscoped: the shadow check never takes it as skippable.
+  // t-2431 (core/data/live-scope.ts). Off, none of this is installed and nothing below differs. Shadow and on, a
+  // reading that asks the clock, or resolves a field this composition is given (memory and the other databases,
+  // comms, accounts, notices and the rest from shared-root.ts: not yet inspected one by one), or reads a cache
+  // shared between selections, is unscoped: every commit wakes it, as when off.
   const scope = liveScope();
-  const tracker = scope === 'shadow' ? installTableTracker(db.$client) : undefined;
+  const tracker = scope !== 'off' ? installTableTracker(db.$client) : undefined;
   const clock: Clock = tracker ? { now: () => { markUnscoped('the clock'); return baseClock.now(); }, at: (time, fn) => baseClock.at(time, fn) } : baseClock;
-  if (tracker) fields = unscopedFields(fields, 'another database (memory)');
+  if (tracker) fields = unscopedFields(fields, 'a field not yet inspected (memory, comms, accounts …)');
   const summaries = (viewer:Viewer) => new JobSummaries(db, () => ({ ...talkVisibility(viewer), ...conversationVisibility(viewer), ...boxVisibility(viewer), ...taskVisibility(viewer), ...tempoVisibility(viewer) }), () => clock.now(), () => { if (!currentJobsRead) { currentJobsRead = true; schedule(); } });
   let cancelLoginWake:(()=>void)|undefined, loginWakeAt = Infinity;
   const accounts = modelAccountQueries(db, () => new Date(clock.now()).toISOString(),viewer=>canReadUsage(viewer) ? summaries(viewer) : undefined, summaries, at=>{

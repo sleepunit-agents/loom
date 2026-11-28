@@ -1,11 +1,14 @@
 import Database from 'better-sqlite3';
 import { execute, GraphQLObjectType, GraphQLSchema, GraphQLString, parse } from 'graphql/index.js';
-import { afterEach, expect, it, vi } from 'vitest';
-import { createDataSchema } from './database.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createDataSchema, dataDatabase } from './database.js';
 import { dataQueries } from './queries.js';
 import { taskVisibility } from './visibility.js';
 import { DataLive, wouldSkip } from './live.js';
-import { liveScope, liveScopeViolations, type LiveScopeViolation } from './live-scope.js';
+import { liveScope, liveScopeViolations, type LiveScope, type LiveScopeViolation } from './live-scope.js';
 import { installTableTracker, markUnscoped, recordReads, tableTracker } from './table-tracker.js';
 import { DataWrites } from './writes.js';
 import { nextData } from '../../next-data.js';
@@ -14,7 +17,7 @@ import { FakeClock } from '../clock.js';
 const clean: (() => void)[] = [];
 afterEach(() => { clean.splice(0).reverse().forEach(fn => fn()); vi.unstubAllEnvs(); });
 
-function setup(scope: 'off' | 'shadow' = 'shadow', report?: (violation: LiveScopeViolation) => void) {
+function setup(scope: LiveScope = 'shadow', report?: (violation: LiveScopeViolation) => void) {
   const client = new Database(':memory:'); clean.push(() => client.close());
   const db = createDataSchema(client);
   client.exec(`INSERT INTO members (id, role, joined_at) VALUES ('sam','member','2026-11-14T00:00:00.000Z');
@@ -22,7 +25,7 @@ function setup(scope: 'off' | 'shadow' = 'shadow', report?: (violation: LiveScop
     INSERT INTO project_members (project,member) VALUES ('pond','sam');
     INSERT INTO tasks (id,title,owner_kind,owner,project,created_by_kind,created_by,created_at,changed_at)
     VALUES ('t-1','Pump','member','sam','pond','member','sam','2026-11-14T00:00:00.000Z','2026-11-14T00:00:00.000Z');`);
-  const tracker = scope === 'shadow' ? installTableTracker(client) : undefined;
+  const tracker = scope !== 'off' ? installTableTracker(client) : undefined;
   const schema = dataQueries(client, { tables: ['tasks', 'taskComments'], visibility: taskVisibility({ kind: 'member', id: 'sam' }) });
   const live = new DataLive(undefined, 0, 0, scope, report); clean.push(() => live.close());
   const writes = new DataWrites(db, { refreshAccess() {}, changed: written => live.changed(written) }, tracker);
@@ -130,21 +133,184 @@ it('off reads and reports exactly as before, whatever the commit says it wrote',
   expect(violations).toEqual([]);
 });
 
-it('reads LOOM_LIVE_SCOPE as off or shadow, refusing on and anything else', () => {
-  expect(liveScope({})).toBe('off');
-  expect(liveScope({ LOOM_LIVE_SCOPE: '' })).toBe('off');
+it('reads LOOM_LIVE_SCOPE as off, shadow or on, on when unset, refusing anything else', () => {
+  expect(liveScope({})).toBe('on');
+  expect(liveScope({ LOOM_LIVE_SCOPE: '' })).toBe('on');
+  expect(liveScope({ LOOM_LIVE_SCOPE: ' On ' })).toBe('on');
   expect(liveScope({ LOOM_LIVE_SCOPE: 'off' })).toBe('off');
   expect(liveScope({ LOOM_LIVE_SCOPE: ' Shadow ' })).toBe('shadow');
-  expect(() => liveScope({ LOOM_LIVE_SCOPE: 'on' })).toThrow(/not built yet/);
-  expect(() => liveScope({ LOOM_LIVE_SCOPE: 'yes' })).toThrow(/must be off or shadow/);
+  expect(() => liveScope({ LOOM_LIVE_SCOPE: 'yes' })).toThrow(/must be off, shadow or on/);
 });
 
-it('installs the tracker for the shared composition only when shadow', async () => {
-  for (const [value, installed] of [['off', false], ['shadow', true]] as const) {
+it('installs the tracker for the shared composition unless off', async () => {
+  for (const [value, installed] of [['off', false], ['shadow', true], ['on', true]] as const) {
     vi.stubEnv('LOOM_LIVE_SCOPE', value);
     const client = new Database(':memory:'); clean.push(() => client.close());
     const root = nextData(createDataSchema(client), new FakeClock(), () => true);
     expect(tableTracker(client) !== undefined).toBe(installed);
     await root.close();
   }
+});
+
+describe('on', () => {
+  /** A selection over one table, counting its readings. */
+  function counted(scope: LiveScope = 'on') {
+    const parts = setup(scope);
+    const { client } = parts;
+    client.exec('CREATE TABLE side (x); CREATE TABLE things (x); INSERT INTO things VALUES (1)');
+    // The script above is carried into the next commit as unknown; this one takes it, telling nobody.
+    parts.writes.run(() => undefined);
+    let readings = 0, outside = 'a', unscoped = false;
+    const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+      thing: { type: GraphQLString, resolve: () => {
+        readings++;
+        const x = client.prepare('SELECT x FROM things').pluck().get();
+        if (unscoped) { markUnscoped('in-process'); return outside; }
+        return String(x);
+      } },
+    } }) });
+    const stream = parts.live.watch({ schema, query: '{ thing }', valid: () => true }); clean.push(() => { void stream.return?.(); });
+    return { ...parts, stream, readings: () => readings, setOutside(value: string) { outside = value; }, unscope() { unscoped = true; } };
+  }
+  const settled = async <T>(promise: Promise<T>) => { let done = false; void promise.then(() => { done = true; }, () => { done = true; }); await new Promise(resolve => setTimeout(resolve, 20)); return done; };
+
+  it('does not read a selection again for a commit that wrote none of its tables, and does for one that did', async () => {
+    const { client, writes, stream, readings } = counted();
+    expect((await stream.next()).value).toEqual({ revision: 1, patches: [{ path: [], value: { thing: '1' } }] });
+    const next = stream.next();
+    writes.run(() => client.prepare('INSERT INTO side (x) VALUES (1)').run());
+    expect(await settled(next)).toBe(false);
+    expect(readings()).toBe(1);
+    writes.run(() => client.prepare('UPDATE things SET x = 2').run());
+    expect((await next).value).toEqual({ revision: 2, patches: [{ path: ['thing'], value: '2' }] });
+    expect(readings()).toBe(2);
+  });
+
+  it('off reads it again for every commit', async () => {
+    const { client, writes, stream, readings } = counted('off');
+    await stream.next();
+    const next = stream.next();
+    writes.run(() => client.prepare('INSERT INTO side (x) VALUES (1)').run());
+    expect(await settled(next)).toBe(false);
+    expect(readings()).toBe(2);
+  });
+
+  it('wakes a selection for a write to the table its visibility rule read', async () => {
+    const { client, writes, watch } = setup('on');
+    const stream = watch(); await stream.next();
+    writes.run(() => client.prepare('DELETE FROM project_members').run());
+    expect((await stream.next()).value).toEqual({ revision: 2, patches: [{ path: ['tasks', 0] }] });
+  });
+
+  it('wakes every selection for a write whose tables are not known: exec, an untold change, a stamp', async () => {
+    const { client, live, writes, stream, readings } = counted();
+    await stream.next();
+    writes.run(() => client.exec('UPDATE things SET x = 3'));
+    expect((await stream.next()).value).toEqual({ revision: 2, patches: [{ path: ['thing'], value: '3' }] });
+    client.prepare('UPDATE things SET x = 4').run(); live.changed();
+    expect((await stream.next()).value).toEqual({ revision: 3, patches: [{ path: ['thing'], value: '4' }] });
+    const before = readings();
+    live.metadataChanged();
+    expect(await settled(stream.next())).toBe(false);
+    expect(readings()).toBe(before + 1);
+  });
+
+  it('reads a selection that depends on something no table holds again for every commit', async () => {
+    const { client, writes, stream, setOutside, unscope } = counted();
+    unscope();
+    await stream.next();
+    setOutside('b');
+    writes.run(() => client.prepare('INSERT INTO side (x) VALUES (1)').run());
+    expect((await stream.next()).value).toEqual({ revision: 2, patches: [{ path: ['thing'], value: 'b' }] });
+  });
+
+  it('wakes on the commit, not the statement: a rolled-back write tells nobody, a rolled-back part of a commit over-reports', async () => {
+    const { client, writes, stream, readings } = counted();
+    await stream.next();
+    const next = stream.next();
+    expect(() => writes.run(() => { client.prepare('UPDATE things SET x = 5').run(); throw new Error('no'); })).toThrow('no');
+    expect(await settled(next)).toBe(false);
+    expect(readings()).toBe(1);
+    // A savepoint inside the commit rolls its write back; the commit still says it wrote the table, and wakes.
+    writes.run(() => {
+      client.prepare('INSERT INTO side (x) VALUES (2)').run();
+      try { client.transaction(() => { client.prepare('UPDATE things SET x = 6').run(); throw new Error('inner'); })(); } catch { /* rolled back */ }
+    });
+    expect(await settled(next)).toBe(false);
+    expect(readings()).toBe(2);
+    expect(client.prepare('SELECT x FROM things').pluck().get()).toBe(1);
+  });
+
+  it('carries a write nobody was told of into the next commit, so it is never lost', async () => {
+    const { client, writes, stream } = counted();
+    await stream.next();
+    client.prepare('UPDATE things SET x = 7').run();
+    writes.run(() => client.prepare('INSERT INTO side (x) VALUES (3)').run());
+    expect((await stream.next()).value).toEqual({ revision: 2, patches: [{ path: ['thing'], value: '7' }] });
+  });
+
+  it('wakes every selection after another connection wrote the file', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'loom-scope-')); clean.push(() => rmSync(directory, { recursive: true, force: true }));
+    const file = join(directory, 'data.db');
+    const client = new Database(file); clean.push(() => client.close());
+    client.exec('CREATE TABLE side (x); CREATE TABLE things (x); INSERT INTO things VALUES (1)');
+    const tracker = installTableTracker(client);
+    const live = new DataLive(undefined, 0, 0, 'on'); clean.push(() => live.close());
+    const writes = new DataWrites(dataDatabase(client), { refreshAccess() {}, changed: written => live.changed(written) }, tracker);
+    writes.run(() => client.prepare('INSERT INTO side (x) VALUES (0)').run());
+    const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+      thing: { type: GraphQLString, resolve: () => String(client.prepare('SELECT x FROM things').pluck().get()) } } }) });
+    const stream = live.watch({ schema, query: '{ thing }', valid: () => true }); clean.push(() => { void stream.return?.(); });
+    await stream.next();
+    const other = new Database(file); clean.push(() => other.close());
+    other.prepare('UPDATE things SET x = 8').run();
+    writes.run(() => client.prepare('INSERT INTO side (x) VALUES (4)').run());
+    expect((await stream.next()).value).toEqual({ revision: 2, patches: [{ path: ['thing'], value: '8' }] });
+  });
+
+  it('reads again a reading during which a commit wrote what it read, and not one during which a commit wrote elsewhere', async () => {
+    const { client, writes, live } = setup('on');
+    client.exec('CREATE TABLE side (x); CREATE TABLE things (x); INSERT INTO things VALUES (1)');
+    writes.run(() => undefined);
+    // Each reading reads its table, then waits until the test lets it go; the test writes meanwhile.
+    let readings = 0, reading: (() => void) | undefined, release: (() => void) | undefined;
+    const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+      thing: { type: GraphQLString, resolve: async () => {
+        readings++;
+        const x = client.prepare('SELECT x FROM things').pluck().get();
+        await new Promise<void>(resolve => { release = resolve; reading?.(); });
+        return String(x);
+      } },
+    } }) });
+    const underWay = () => new Promise<void>(resolve => { reading = resolve; });
+    const stream = live.watch({ schema, query: '{ thing }', valid: () => true }); clean.push(() => { void stream.return?.(); });
+    let paused = underWay();
+    const first = stream.next();
+    await paused; paused = underWay();
+    writes.run(() => client.prepare('INSERT INTO side (x) VALUES (1)').run());
+    release!();
+    expect((await first).value).toEqual({ revision: 1, patches: [{ path: [], value: { thing: '1' } }] });
+    expect(readings).toBe(1);
+    writes.run(() => client.prepare('UPDATE things SET x = 2').run());
+    const second = stream.next();
+    await paused; paused = underWay();
+    // The reading that saw 2 is stale before it is sent: it is made again, and the answer is 3.
+    writes.run(() => client.prepare('UPDATE things SET x = 3').run());
+    release!();
+    await paused; release!();
+    expect((await second).value).toEqual({ revision: 2, patches: [{ path: ['thing'], value: '3' }] });
+    expect(readings).toBe(3);
+  });
+
+  it('answers when asked for now, whatever was written', async () => {
+    const { client, live, writes } = setup('on');
+    client.exec('CREATE TABLE side (x)');
+    const schema = dataQueries(client, { tables: ['tasks'], visibility: taskVisibility({ kind: 'member', id: 'sam' }) });
+    let now: (() => void) | undefined;
+    const stream = live.watch({ schema, query: '{ tasks { id } }', valid: () => true, refresh(ask) { now = ask; return () => {}; } }); clean.push(() => { void stream.return?.(); });
+    await stream.next();
+    writes.run(() => client.prepare('INSERT INTO side (x) VALUES (1)').run());
+    now!();
+    expect((await stream.next()).value).toEqual({ revision: 2, patches: [] });
+  });
 });

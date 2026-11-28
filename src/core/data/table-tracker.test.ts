@@ -96,6 +96,15 @@ it('over-reports a write that was rolled back, and says nothing for transaction 
   expect(tables(tracker.capture(() => client.transaction(() => undefined)()).written)).toEqual([]);
 });
 
+it('carries a write made with no capture open into the next capture', () => {
+  const { client, tracker } = setup();
+  client.prepare('UPDATE children SET name = ?').run('Loose');
+  expect(tables(tracker.capture(() => client.prepare('INSERT INTO quiet (x) VALUES (1)').run()).written)).toEqual(['children', 'quiet']);
+  expect(tables(tracker.capture(() => client.prepare('INSERT INTO quiet (x) VALUES (2)').run()).written)).toEqual(['quiet']);
+  client.exec('UPDATE quiet SET x = 3');
+  expect(tracker.capture(() => undefined).written).toBe('unknown');
+});
+
 it('takes anything run through exec as unknown, to a write and to a reading', () => {
   const { client, tracker } = setup();
   expect(tracker.capture(() => client.exec("UPDATE quiet SET x = 1")).written).toBe('unknown');
@@ -151,6 +160,8 @@ it('classifies again after the schema changes, here or from another connection',
   // Our own DDL, through exec.
   client.exec('CREATE TABLE echo (x); CREATE TRIGGER quiet_echo AFTER INSERT ON quiet BEGIN INSERT INTO echo VALUES (new.x); END;');
   expect(tracker.generation).toBeGreaterThan(generation);
+  // The script ran with no capture open: it is carried into the next one, which is unknown for it.
+  expect(tracker.capture(() => insert.run(2)).written).toBe('unknown');
   expect(tables(tracker.capture(() => insert.run(2)).written)).toEqual(['echo', 'quiet']);
   // Another connection's DDL is seen at the next prepare or capture.
   const other = new Database(join(directory, 'data.db')); clean.push(() => other.close());

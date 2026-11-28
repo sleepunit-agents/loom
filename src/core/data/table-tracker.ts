@@ -3,8 +3,8 @@ import type Database from 'better-sqlite3';
 
 /** Which tables of the shared database a commit wrote, or `unknown`: anything could have changed, so every open
  * selection must be read again. Over-reporting is allowed (a write later rolled back still counts); reporting
- * fewer tables than were written is not. t-2431 steps 1 and 2: nothing acts on this yet but the shadow check in
- * ./live.ts. */
+ * fewer tables than were written is not. With LOOM_LIVE_SCOPE=on (./live-scope.ts) open selections that read none
+ * of these tables are not read again (./live.ts). */
 export type WrittenTables = ReadonlySet<string> | 'unknown';
 
 /** What one live reading read: the tables its SQL opened on the shared connection, and the reasons, if any, that
@@ -122,8 +122,8 @@ function observe(statement: Database.Statement, args: unknown[]) {
       if (shape.dateFunctions && mentionsNow(args)) record.unscoped.add('the clock (now)');
     }
   }
-  if (tracker.captures.length && (shape.unknown || shape.writes.length)) {
-    for (const capture of tracker.captures) {
+  if (shape.unknown || shape.writes.length) {
+    for (const capture of tracker.writing()) {
       if (shape.unknown) capture.unknown ??= shape.unknown;
       for (const table of shape.writes) capture.tables.add(table);
     }
@@ -157,6 +157,12 @@ export class TableTracker {
   generation = 0;
   /** Open write captures, outermost first. Every write of the connection is added to each. */
   readonly captures: Capture[] = [];
+  /** What the connection wrote while no capture was open: a write that did not go through DataWrites.run, or that
+   * told nobody. The next capture to begin starts with it, so it is told with the next commit, as it always was
+   * when every commit woke every selection, and never lost. */
+  private loose: Capture = { tables: new Set() };
+  /** Where a write made now is collected. */
+  writing(): readonly Capture[] { return this.captures.length ? this.captures : [this.loose]; }
   private shapes = new Map<string, Shape>();
   private roots = new Map<number, string>();
   private functions = new Map<string, boolean>();
@@ -185,7 +191,7 @@ export class TableTracker {
     // Whatever a script does, its tables are not known: unscoped to a reading, `unknown` to a write.
     client.exec = function (this: Database.Database, source: string) {
       markUnscoped('exec');
-      for (const capture of tracker.captures) capture.unknown ??= 'exec';
+      for (const capture of tracker.writing()) capture.unknown ??= 'exec';
       try { return exec(source); } finally { tracker.checkSchema(); }
     } as typeof client.exec;
     client.function = function (this: Database.Database, ...args: unknown[]) {
@@ -210,7 +216,8 @@ export class TableTracker {
     this.checkSchema();
     // Writes by others before the first capture woke nobody, as they never have; from here on they make it unknown.
     if (this.lastData === undefined) this.lastData = this.quietly(() => this.dataVersion.get() as number);
-    const capture: Capture = { tables: new Set() };
+    let capture: Capture = { tables: new Set() };
+    if (!this.captures.length) { capture = this.loose; this.loose = { tables: new Set() }; }
     this.captures.push(capture);
     return capture;
   }
