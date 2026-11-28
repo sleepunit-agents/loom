@@ -16,6 +16,8 @@ export interface Scene {
   /** Buttons to press once the brick is drawn, by their words, in order: how a scene shows a form that opens on a
    * press (an edit form, the question a brick asks before it acts). */
   press?: string[];
+  /** The conversation the page is open on, for a brick that treats it apart (the `threads` brick: no Delete on it). */
+  here?: string;
   /** Draw only these forms (default: all). */
   only?: ('primary' | 'side' | 'compact')[];
 }

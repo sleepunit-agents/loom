@@ -260,5 +260,7 @@ export const scenes: BrickScenes[] = [
     { name: 'unavailable', params: { scope: 'open' }, data: { BoardsThreads: 'offline', DeskAgentDirectory: directory }, only: ['side'] },
     // Delete… on the first row opens the question that names it, in place of that row's controls.
     { name: 'deleting', params: { scope: 'open' }, data: threadsData(open), press: ['Delete…'], only: ['primary'] },
+    // The page is open on one of these conversations: its row has Pin and no Delete.
+    { name: 'open-here', params: { scope: 'open' }, data: threadsData(open), here: (open[0] as { id: string }).id, only: ['primary'] },
   ] },
 ];

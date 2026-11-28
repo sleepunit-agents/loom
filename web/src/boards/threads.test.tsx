@@ -443,6 +443,89 @@ describe('the presence', () => {
   });
 });
 
+describe('Stop for the whole conversation', () => {
+  const head = (over: object) => ({ BoardsThreadHead: { status: 'live', data: { thread: row('th:old', { title: 'The gate', ...over }) } } });
+  const top = () => tree!.root.findAll((n) => n.props.className === 'boards-top')[0];
+  const labels = () => top().findAllByType('button').map((b) => b.props['aria-label'] ?? (b.props.className === 'boards-presence' ? 'boards-presence' : text(b)));
+  it('is shown only while the agent is working in this conversation, and only to its member, never in a terminal\'s', async () => {
+    f.answers = head({ working: false });
+    await mount(h(Page, { member: 'sam', thread: 'th:old', agent: 'art' }));
+    expect(labels()).toEqual(['boards-presence', 'Conversations']);
+    await feed(head({ working: true }));
+    expect(labels()).toEqual(['boards-presence', 'Stop Art in The gate…', 'Conversations']);
+    await feed(head({ working: true, member: 'kit' }));
+    expect(labels()).toEqual(['boards-presence', 'Conversations']);
+    await feed(head({ working: true, venue: 'terminal' }));
+    expect(labels()).toEqual(['boards-presence', 'Conversations']);
+    // The agent stops working: the control goes.
+    await feed(head({ working: true }));
+    await feed(head({ working: false }));
+    expect(labels()).toEqual(['boards-presence', 'Conversations']);
+    expect(called('comms.change').filter((input) => (input as { change: string }).change === 'stop')).toEqual([]);
+  });
+  it('asks first, naming the conversation; Keep it going sends nothing; yes sends Comms\' thread stop, not a job\'s', async () => {
+    f.answers = head({ working: true });
+    await mount(h(Page, { member: 'sam', thread: 'th:old', agent: 'art' }));
+    await press('Stop Art in The gate…');
+    expect(called('comms.change')).toEqual([]);
+    const question = top().findAll((n) => n.props.role === 'group' && n.props['aria-label'] === 'Stop conversation The gate')[0];
+    expect(text(question.findAllByType('p')[0])).toBe('Stop Art in “The gate”? What it is doing in this conversation ends now; what it already did stays.');
+    await press('Keep it going');
+    expect(f.op).not.toHaveBeenCalledWith('comms.change', expect.objectContaining({ change: 'stop' }));
+    expect(labels()).toContain('Stop Art in The gate…');
+    await press('Stop Art in The gate…'); await press('Stop the conversation');
+    expect(called('comms.change')).toEqual([{ thread: 'th:old', change: 'stop' }]);
+    expect(called('runtime.jobStop')).toEqual([]);
+    // Once loom has the Stop, the header says it is stopping and offers nothing more.
+    await feed(head({ working: true, stopRequested: true }));
+    expect(top().findAllByType('button').filter((b) => text(b) === 'Stopping…').map((b) => !!b.props.disabled)).toEqual([true]);
+  });
+  it('says so and keeps the question when the stop is refused, and when it fails', async () => {
+    f.answers = head({ working: true });
+    await mount(h(Page, { member: 'sam', thread: 'th:old', agent: 'art' }));
+    await press('Stop Art in The gate…');
+    f.op.mockRejectedValueOnce(Object.assign(new Error('Could not save'), { status: 403 }));
+    await press('Stop the conversation');
+    expect(top().findAll((n) => n.props.role === 'alert').map(text)).toEqual(['You can’t stop this conversation.']);
+    expect(labels()).toEqual(expect.arrayContaining(['Stop the conversation', 'Keep it going']));
+    f.op.mockRejectedValueOnce(Object.assign(new Error('Could not save'), { status: 500 }));
+    await press('Stop the conversation');
+    expect(top().findAll((n) => n.props.role === 'alert').map(text)).toEqual(['That did not stop it. Try again.']);
+    f.op.mockRejectedValueOnce(new Error('offline'));
+    await press('Stop the conversation');
+    expect(top().findAll((n) => n.props.role === 'alert').map(text)).toEqual(['That did not stop it. Try again.']);
+  });
+});
+
+describe('the bridge receipt', () => {
+  const head = (over: object) => ({ BoardsThreadHead: { status: 'live', data: { thread: row('th:old', { title: 'The gate', conversation: 'cv-gate', ...over }) } } });
+  const line = () => tree!.root.findAll((n) => n.props.className === 'boards-receipt board-note');
+  const receipt = (over: object = {}) => ({ ConversationBridgeReceipt: (variables: Record<string, unknown>) => ({ status: 'live', data: { latestBridgeReceipt: variables.id === 'cv-gate'
+    ? { agent: 'art', receivedAt: '2026-11-27T09:00:00Z', acceptedAt: '2026-11-27T09:01:00Z', replied: true, ...over } : null } }) });
+  it('is drawn for a conversation that came in by Discord or Slack, in plain words: when it came, whether it was taken up, whether a reply went back', async () => {
+    f.answers = { ...head({ venue: 'discord' }), ...receipt() };
+    await mount(h(Page, { member: 'sam', thread: 'th:old', agent: 'art' }));
+    expect(line()).toHaveLength(1);
+    expect(text(line()[0])).toMatch(/^Your message by Discord .+ · Art took it up .+ · Reply sent$/);
+    // Nothing of the bridge is linked or named beyond which one.
+    expect(line()[0].findAllByType('a')).toEqual([]);
+    await feed({ ...head({ venue: 'slack' }), ...receipt({ acceptedAt: null, replied: false }) });
+    expect(text(line()[0])).toMatch(/^Your message by Slack .+ · Art has not taken it up yet · No reply sent yet$/);
+  });
+  it('is not drawn, and not read, for a conversation of the page or a terminal, or when there is no receipt', async () => {
+    f.answers = { ...head({ venue: 'loom' }), ...receipt() };
+    await mount(h(Page, { member: 'sam', thread: 'th:old', agent: 'art' }));
+    expect(line()).toEqual([]);
+    expect(f.asked).not.toContain('ConversationBridgeReceipt');
+    await feed(head({ venue: 'terminal' }));
+    expect(line()).toEqual([]);
+    expect(f.asked).not.toContain('ConversationBridgeReceipt');
+    await feed({ ...head({ venue: 'discord', conversation: 'cv-other' }) });
+    expect(f.asked).toContain('ConversationBridgeReceipt');
+    expect(line()).toEqual([]);
+  });
+});
+
 describe('the address and more than one thread', () => {
   const transcripts = () => tree!.root.findAllByType('transcript-of').map((t) => t.props.id);
   const known: Record<string, string> = { 'th:old': 'art', 'th:new': 'mira' };

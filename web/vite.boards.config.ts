@@ -68,6 +68,7 @@ const shared = new Set([
   'pieces/bridges/data.ts', // the Bridges app's one selection, its snapshot, which replies wait and their words (its imports are types)
   'pieces/household/model.ts', // Household setup's two selections, the shapes loom answers, who owns an agent and the words of a change (no imports)
   'pieces/sharing/model.ts', // the Sharing app's one selection and the shape loom answers (no imports)
+  'pieces/comms/conversation-query.ts', // the conversation activity's selections, the bridge receipt's among them, and their shapes (no imports)
 ]);
 const isolation: Plugin = {
   name: 'boards-visual-isolation',
