@@ -37,7 +37,7 @@ import { WorkerStop } from './worker-stop.js';
 import { holdAlone, type Alone, type HoldAlone } from './worker-alone.js';
 import { keyPart } from './worker-mounts.js';
 import { containerExit } from './job-exit.js';
-import { HOUSE_ENV, HOUSE_HOME, HOUSE_NODE, HOUSE_REPOSITORY, houseBodyFile, houseOverlap, houseSessions } from './house-layout.js';
+import { HOUSE_ENTRYPOINT, HOUSE_ENV, HOUSE_HOME, HOUSE_REPOSITORY, houseBodyFile, houseOverlap, houseSessions } from './house-layout.js';
 import { bodyMounts, BODY_PROGRAM, HOUSE_CLI_FILE, type AccountLogins, type AgentMounts, type BodyMount } from './worker-mounts.js';
 
 /** The names the worker may send as the engine's runtime. The operator states which one their engine has;
@@ -104,7 +104,7 @@ function ownSessions(harness: string, mounts: readonly EngineMount[]): boolean {
  * @param built What the image was built from: the repository as fetched, the job's branch, and the
  * commit in the image's own name, which is the commit built and not wherever the branch is now. */
 function createSpec(job: WorkerAssignment, house: HouseStart, built: { repository: string; branch: string; commit: string }, config: ContainerConfig, mounts: readonly EngineMount[], bindings: ReturnType<typeof portBindings>) {
-  return { Image: house.id, Entrypoint: [HOUSE_NODE], Cmd: [BODY_PROGRAM, houseBodyFile(job.harness)], WorkingDir: HOUSE_REPOSITORY,
+  return { Image: house.id, Entrypoint: [...HOUSE_ENTRYPOINT], Cmd: [BODY_PROGRAM, houseBodyFile(job.harness)], WorkingDir: HOUSE_REPOSITORY,
     Env: [`${BODY_SCRATCH}=/tmp`, `HOME=${HOUSE_HOME}`, `${HOUSE_ENV.repository}=${built.repository}`, `${HOUSE_ENV.branch}=${built.branch}`, `${HOUSE_ENV.commit}=${built.commit}`,
       // And whether the place its harness keeps sessions is this body's alone: it is the container's own
       // home unless a mount (an agent's own directory; a sign-in is mounted elsewhere) is, holds, or is inside

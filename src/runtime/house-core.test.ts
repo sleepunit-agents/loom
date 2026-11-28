@@ -7,7 +7,7 @@ import type { Readable } from 'node:stream';
 import { afterAll, expect, it } from 'vitest';
 import { CORE_DIRECTORY, coreDefinition, coreWeek, noHousefile } from './house-core.js';
 import { coreImage, HOUSE_LABEL, HOUSE_LABEL_HARNESSES, HOUSE_VERSION } from './house-image.js';
-import { HOUSE_HOME, HOUSE_NODE, HOUSE_REPOSITORY, houseBodyFile, houseLogin, houseSessions } from './house-layout.js';
+import { HOUSE_HOME, HOUSE_INIT, HOUSE_NODE, HOUSE_REPOSITORY, houseBodyFile, houseLogin, houseSessions } from './house-layout.js';
 import { bodyFileSchema } from './body-program.js';
 
 const root = mkdtempSync(join(realpathSync(tmpdir()), 'loom-house-core-'));
@@ -85,6 +85,9 @@ it('ships a core house that meets the image contract and the layout by itself, a
   // Claude Code's own directory is made by the house, apart from its sign-in: a body keeps a conversation's session there and never makes it.
   expect(lines).toContain(`mkdir -p /home/agent/.codex ${HOUSE_REPOSITORY} ${houseSessions('claude')} `); expect(houseSessions('claude')).not.toBe(houseLogin('claude'));
   expect(lines).toContain(`ln -s ${houseLogin('codex')}/auth.json /home/agent/.codex/auth.json`);
+  // The init the worker starts a body under is Debian's, installed with the other tools and checked by the build.
+  expect(HOUSE_INIT).toBe('/usr/bin/tini'); expect(lines).toMatch(/apt-get install -y --no-install-recommends[^&]* tini \\\n/);
+  expect(lines).toContain(`test -x ${HOUSE_INIT}`);
   // Nothing a house may not have: a volume, a user of its own, anything at /opt/loom, an argument without a default, a secret, a copy of a sign-in.
   expect(lines).not.toMatch(/^\s*(VOLUME|USER|ENTRYPOINT|CMD)\b/m); expect(lines).not.toContain('/opt/loom');
   expect(lines.match(/^ARG .*$/gm)!.every(line => line.includes('='))).toBe(true);

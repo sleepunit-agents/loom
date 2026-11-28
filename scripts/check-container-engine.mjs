@@ -60,6 +60,7 @@ writeFileSync(join(readOnly, 'seen-by-the-body'), 'x');
 mkdirSync(join(standIn, 'body'), { recursive: true });
 writeFileSync(join(standIn, 'Housefile'), `FROM ${image}
 COPY check-node /usr/local/bin/node
+COPY check-init /usr/bin/tini
 COPY body /etc/loom/body
 LABEL loom.house="2" loom.house.harnesses="true echo sleep readonly"
 ENV PROBE=from-the-core HOME=/somewhere/else LOOM_HOUSE_COMMIT=set-by-the-image
@@ -79,6 +80,14 @@ case "$2" in */sleep.json) exec sleep 300 ;; */echo.json) exit 7 ;; esac
 exit 0
 `);
 chmodSync(join(standIn, 'check-node'), 0o755);
+// The stand-in core's init: the worker starts a body under tini's options and "--"; this runs the body and
+// nothing more. The real core's tini is looked at with --core.
+writeFileSync(join(standIn, 'check-init'), `#!/bin/sh
+while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done
+shift
+exec "$@"
+`);
+chmodSync(join(standIn, 'check-init'), 0o755);
 for (const harness of ['true', 'echo', 'sleep', 'readonly']) writeFileSync(join(standIn, 'body', `${harness}.json`), '{}\n');
 writeFileSync(join(repository, 'Housefile'), `ARG LOOM_CORE
 FROM \${LOOM_CORE}
@@ -112,7 +121,10 @@ const found = { node: process.version, 'node is the pinned version': process.ver
   'LOOM_HOUSE_REPOSITORY': process.env.LOOM_HOUSE_REPOSITORY, 'LOOM_HOUSE_BRANCH': process.env.LOOM_HOUSE_BRANCH, 'LOOM_HOUSE_COMMIT': process.env.LOOM_HOUSE_COMMIT,
   claude: version('claude'), codex: version('codex'), git: version('git'),
   'Claude Code keeps its sign-in in': process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR, 'Codex auth.json is a link to': tried(() => fs.readlinkSync(process.env.HOME + '/.codex/auth.json')),
-  'the mounted sign-in directory can be written': tried(() => { fs.writeFileSync('/run/loom/login/claude/written-by-the-body', ''); return true; }) };
+  'the mounted sign-in directory can be written': tried(() => { fs.writeFileSync('/run/loom/login/claude/written-by-the-body', ''); return true; }),
+  'PID 1 is': tried(() => fs.readFileSync('/proc/1/cmdline', 'utf8').split('\\0').filter(Boolean)),
+  'capabilities': tried(() => fs.readFileSync('/proc/self/status', 'utf8').split('\\n').filter(line => /^(Cap(Eff|Prm|Bnd)|NoNewPrivs):/.test(line))),
+  'zombies a second after an orphan was left': tried(() => Number(execFileSync('sh', ['-c', '(sleep 0.2 &); sleep 1; ps -eo stat= | grep -c "^Z" || true'], { encoding: 'utf8' }).trim())) };
 fs.writeFileSync(process.env.HOME + '/written/core-' + (process.env.CHECK ?? 'plain') + '.json', JSON.stringify(found, null, 2));
 `);
 // The core house a worker would build the houses on: a stand-in by default, the real one with --core.
