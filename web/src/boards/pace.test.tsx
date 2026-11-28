@@ -191,3 +191,22 @@ it('says how long ago a brick\'s data was confirmed in the kit\'s words', () => 
   const now = Date.parse('2026-11-27T10:00:00Z');
   expect([0, 12_000, 59_400, 90_000, 3 * 3_600_000].map((ago) => asOf(now - ago, now))).toEqual(['as of 0 s ago', 'as of 12 s ago', 'as of 59 s ago', 'as of 2 min ago', 'as of 3 h ago']);
 });
+
+it('tells the board while a placement is getting new data, so the header row says it once for all of them, and that it stopped', async () => {
+  answers.clear();
+  const told: [string, boolean][] = [];
+  const telling = (title: string, id: string) => h(PlacementFrame, { key: title, title, sub: id, form: 'side' as const, onGetting: (on: boolean) => told.push([title, on]), children: h(Mini, { id }) });
+  await draw(page(telling('Ticket', 't-1'), telling('Other', 't-2')));
+  const [one, two] = open('BrickMini');
+  await answer(one, 'open'); await answer(two, 'open');
+  expect(told).toEqual([]);
+  f.now.mockResolvedValue([String(one.key)]);
+  await act(async () => refresh(articles()[0]).props.onClick());
+  expect(told).toEqual([['Ticket', true]]);
+  await answer(one, 'open');
+  expect(told).toEqual([['Ticket', true], ['Ticket', false]]);
+  // A placement that goes while it is getting says it stopped.
+  await act(async () => refresh(articles()[1]).props.onClick());
+  await act(async () => tree!.update(page(telling('Ticket', 't-1'))));
+  expect(told.slice(2)).toEqual([['Other', true], ['Other', false]]);
+});

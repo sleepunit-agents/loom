@@ -12,6 +12,7 @@ const f = vi.hoisted(() => {
     listeners: new Set<() => void>(), version: 0,
     status: 'live', boards: [] as unknown[], answers: {} as Record<string, { status: string; data?: unknown }>,
     op: vi.fn(), build: vi.fn(), reload: vi.fn(), stored: vi.fn(), went: [] as string[],
+    /** What was brought into view and given the keyboard: the element's type and its class or place on the board. */ focused: [] as [string, string][], scrolled: [] as [string, string][],
     /** What this browser's local and session storage hold: the composer's draft is the one thing the page keeps. */
     local: new Map<string, string>(), session: new Map<string, string>(),
     /** Loom's door as the page's writes reach it, and the page asking for its bricks' data now. */ door: vi.fn(), asked: vi.fn(),
@@ -83,7 +84,7 @@ vi.mock('../data/graphql', async () => {
 import { Page, brickRetryMs } from './main';
 import { bricks, loadBricks } from './bricks';
 import { samples } from './samples.test.helper';
-import { forgetTokenNotices } from './token-notices';
+import { addTokenNotice, forgetTokenNotices } from './token-notices';
 
 // A brick's body is fetched when it is first drawn (./bricks.tsx). Here they are all fetched first, so each draws at once.
 await loadBricks();
@@ -110,7 +111,10 @@ const feed = (change: Partial<typeof f>) => act(async () => { Object.assign(f, c
 async function draw(boards: unknown[], at: { path?: string; area?: { w: number; h: number }; thread?: string; member?: string } = {}) {
   f.boards = boards; f.area = at.area ?? { w: 1200, h: 800 };
   location.pathname = at.path ?? '/app/boards';
-  await act(async () => { tree = create(h(Page, { member: at.member ?? 'sam', thread: at.thread ?? thread, agent: 'art' }), { createNodeMock: () => ({ get clientWidth() { return f.area.w; }, get clientHeight() { return f.area.h; } }) }); });
+  await act(async () => { tree = create(h(Page, { member: at.member ?? 'sam', thread: at.thread ?? thread, agent: 'art' }), { createNodeMock: (el: { type: string; props: Record<string, any> }) => {
+    const which = (): [string, string] => [el.type, el.props.style?.transform ?? el.props.className];
+    return { get clientWidth() { return f.area.w; }, get clientHeight() { return f.area.h; }, focus: () => f.focused.push(which()), scrollIntoView: () => f.scrolled.push(which()) };
+  } }); });
   return tree!.root;
 }
 const articles = () => tree!.root.findAllByType('article');
@@ -136,7 +140,7 @@ beforeEach(() => {
   seq = 0;
   f.status = 'live'; f.answers = { BrickTicket: { status: 'live', data: { ticket: task } } } as Record<string, Answer>;
   f.op.mockReset().mockResolvedValue(undefined); f.build.mockReset().mockResolvedValue(false);
-  f.reload.mockReset(); f.stored.mockReset(); f.went.length = 0; f.reduced = true; f.local.clear(); f.session.clear();
+  f.reload.mockReset(); f.stored.mockReset(); f.went.length = 0; f.focused.length = 0; f.scrolled.length = 0; f.reduced = true; f.local.clear(); f.session.clear();
   location.pathname = '/app/boards';
 });
 afterEach(async () => { await act(async () => tree?.unmount()); tree = undefined; });
@@ -354,6 +358,168 @@ describe('chips', () => {
     ]) expect(event.preventDefault).not.toHaveBeenCalled();
     expect(called('boards.change')).toEqual([]);
     expect(called('boards.open')).toEqual([]);
+  });
+});
+
+describe('the header row', () => {
+  const head = (at = 0) => tree!.root.findAll((n) => n.type === 'header' && n.props.className === 'boards-head')[at];
+  const attention = (within = head()) => within.findAll((n) => n.type === 'button' && n.props.className === 'board-chip boards-attention');
+  const more = () => head().findAll((n) => n.type === 'button' && n.props.className === 'board-chip boards-head-more');
+  const panel = () => head().findAll((n) => n.props.className === 'boards-head-panel' && !n.props.hidden);
+  const marks = () => tree!.root.findAll((n) => n.props.className === 'boards-getting');
+  const tickets = (n: number, over?: Partial<Made>) => Array.from({ length: n }, (_, i) => placed('ticket', { ticket: 't-' + (i + 1) }, over));
+
+  it('on a quiet board is the heading, an empty chip strip and Close: no chip, no notice, no mark', async () => {
+    await one([lanes({ big: true }), ticket()]);
+    expect(head().children.map((c) => (typeof c === 'string' ? c : c.type + (c.props.className ? '.' + c.props.className : '')))).toEqual(['h1', 'div.boards-head-chips', 'button.boards-close']);
+    expect(attention()).toEqual([]);
+    expect(marks()).toEqual([]);
+  });
+  it('has a chip for each flagged placement, in the board\'s order: its name, its reference and its flag word, from what the placement carries', async () => {
+    await one([lanes({ big: true, flagged: true }), ticket(), question({ flagged: true })]);
+    expect(attention().map(text)).toEqual(['Lanes garden · look here', 'Question in-3 · look here']);
+    expect(attention().map((b) => b.props['data-flagged'])).toEqual(['true', 'true']);
+    // The brick's own flag is a chip too, with the brick's word, in its place on the board.
+    await feed({ answers: { BrickTicket: { status: 'live', data: { ticket: { ...task, status: 'closed' } } } } });
+    expect(attention().map(text)).toEqual(['Lanes garden · look here', 'Ticket t-7 · closed', 'Question in-3 · look here']);
+    // Seen, a flag goes, and its chip with it.
+    await act(async () => articles()[1].props.onPointerEnter());
+    expect(attention().map(text)).toEqual(['Lanes garden · look here', 'Question in-3 · look here']);
+  });
+  it('a chip pressed brings its placement into view and gives it the keyboard, and does nothing else: no flag cleared, no request', async () => {
+    const flagged = ticket({ flagged: true });
+    await one([lanes({ big: true }), flagged]);
+    f.op.mockClear(); f.door.mockClear(); f.asked.mockClear();
+    await act(async () => attention()[0].props.onClick());
+    const at = articles()[1].props.style.transform;
+    expect(f.scrolled).toEqual([['article', at]]);
+    expect(f.focused).toEqual([['article', at]]);
+    // The placement can take the keyboard only from the chip: it is not in the tab order.
+    expect(articles()[1].props.tabIndex).toBe(-1);
+    // The focus that lands on it is no looking: nothing is called, nothing is asked, the flag and its chip stay.
+    await act(async () => articles()[1].props.onFocus({ target: 'the placement', currentTarget: 'the placement' }));
+    expect(f.op).not.toHaveBeenCalled();
+    expect(f.door).not.toHaveBeenCalled();
+    expect(f.asked).not.toHaveBeenCalled();
+    expect(articles()[1].props['data-flagged']).toBe(true);
+    expect(attention().map(text)).toEqual(['Ticket t-7 · look here']);
+  });
+  it('a chip of a folded placement focuses its chip in the folded row, and it stays folded', async () => {
+    await one([lanes({ big: true }), ticket({ flagged: true }), question({ flagged: true })], {}, { area: { w: 500, h: 700 } });
+    expect(forms()).toEqual(['primary']);
+    await act(async () => attention()[1].props.onClick());
+    expect(f.focused).toEqual([['span', 'board-chip']]);
+    await act(async () => attention()[0].props.onClick());
+    expect(f.focused.at(-1)).toEqual(['button', 'board-chip']);
+    expect(forms()).toEqual(['primary']);
+    expect(called('boards.change')).toEqual([]);
+  });
+  it('shows as many chips as the row has room for, and the rest as +N, which opens a list of them made of the same chips', async () => {
+    // The row is 1200 wide here: five chips of 208 and the +N.
+    await one([lanes({ big: true }), ...tickets(9, { flagged: true })]);
+    expect(attention().map(text)).toEqual(['t-1', 't-2', 't-3', 't-4', 't-5'].map((t) => `Ticket ${t} · look here`));
+    expect(more().map((b) => [text(b), b.props['aria-label'], b.props['aria-expanded']])).toEqual([['+4', '4 more flagged: show them', false]]);
+    expect(panel()).toEqual([]);
+    await act(async () => more()[0].props.onClick());
+    expect(more()[0].props['aria-expanded']).toBe(true);
+    expect(attention(panel()[0]).map(text)).toEqual(['t-6', 't-7', 't-8', 't-9'].map((t) => `Ticket ${t} · look here`));
+    // A chip in the list does what any chip does, and the list closes.
+    f.op.mockClear();
+    await act(async () => attention(panel()[0])[0].props.onClick());
+    expect(f.focused).toHaveLength(1);
+    expect(panel()).toEqual([]);
+    expect(f.op).not.toHaveBeenCalled();
+    // Escape closes it too.
+    await act(async () => more()[0].props.onClick());
+    await act(async () => head().props.onKeyDown({ key: 'Escape', stopPropagation() {} }));
+    expect(panel()).toEqual([]);
+  });
+  it('folds every chip to one count where not even one fits beside it, as on a phone', async () => {
+    await one([lanes({ big: true }), ...tickets(3, { flagged: true })], {}, { area: { w: 200, h: 700 } });
+    expect(attention()).toEqual([]);
+    expect(more().map((b) => [text(b), b.props['aria-label']])).toEqual([['3 flagged', '3 flagged: show them']]);
+    await act(async () => more()[0].props.onClick());
+    expect(attention(panel()[0])).toHaveLength(3);
+  });
+  it('holds its line: the row has a fixed block size, nothing in it wraps, and its lists open over the board, not in the row', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync(new URL('./board.css', import.meta.url), 'utf8');
+    const rule = (selector: string) => new RegExp(`^${selector.replace(/[.$]/g, '\\$&')} \\{([^}]*)\\}`, 'm').exec(css)?.[1] ?? '';
+    expect(rule('.boards-head')).toMatch(/block-size: 2rem/);
+    expect(rule('.boards-head')).toMatch(/white-space: nowrap/);
+    expect(rule('.boards-head')).not.toMatch(/min-height|flex-wrap: wrap/);
+    expect(rule('.boards-head-chips')).toMatch(/overflow: hidden/);
+    expect(rule('.boards-head-chips')).toMatch(/min-width: 0/);
+    expect(rule('.boards-head-panel')).toMatch(/position: absolute/);
+    expect(css).not.toMatch(/\.boards-head[^{]*\{[^}]*flex-wrap: wrap/);
+    // With nine chips, two notices and the mark the row is still these parts in one line; the lists are the header's own children, out of the strip.
+    addTokenNotice({ label: 'pump-laptop', kind: 'member', fate: 'unknown', had: 0 });
+    f.build.mockResolvedValue(true);
+    await one([lanes({ big: true }), ...tickets(9, { flagged: true })]);
+    await act(async () => more()[0].props.onClick());
+    const parts = head().children.map((c) => (typeof c === 'string' ? c : c.props.className));
+    expect(parts).toEqual([undefined, 'boards-head-chips', 'boards-notice', 'boards-notice', 'boards-close', 'boards-head-panel', 'boards-head-panel']);
+    forgetTokenNotices();
+  });
+});
+
+describe('the page\'s notices, said once in the header row', () => {
+  beforeEach(() => forgetTokenNotices());
+  it('a token notice: its label and kind in a few words, the whole of it and Dismiss in what it opens, and never in the household brick', async () => {
+    addTokenNotice({ label: 'pump-laptop', kind: 'member', fate: 'unknown', had: 0 });
+    await one([placed('household', {}, { big: true }), ticket()]);
+    expect(notices('token').map(text)).toEqual(['Token “pump-laptop” may have been made']);
+    expect(articles().flatMap((a) => a.findAll((n) => n.props.role === 'alert').map(text)).filter((w) => w.includes('pump-laptop'))).toEqual([]);
+    const open = notices('token')[0].findByType('button');
+    expect(open.props['aria-expanded']).toBe(false);
+    await act(async () => open.props.onClick());
+    const list = tree!.root.findAll((n) => n.props.className === 'boards-head-panel' && n.props['aria-label'] === 'Token notices')[0];
+    expect(list.props.hidden).toBe(false);
+    expect(text(list)).toBe('Token creation for “pump-laptop” (Household member) may have completed. Check its label in the token list and revoke it before trying again.Dismiss');
+    await act(async () => list.findByType('button').props.onClick());
+    expect(notices('token')).toEqual([]);
+    // Two or more are counted, each in full in the list.
+    addTokenNotice({ label: 'a', kind: 'member', fate: 'unknown', had: 0 }); addTokenNotice({ label: 'b', kind: 'agent', fate: 'made', had: 0 });
+    await feed({});
+    expect(notices('token').map(text)).toEqual(['2 token notices']);
+  });
+  it('loom was updated: said with Reload now, which reloads; the placements do not say it', async () => {
+    f.build.mockResolvedValue(true);
+    await one([lanes({ big: true }), ticket()]);
+    await type('half a thought');
+    f.reload.mockClear();
+    expect(notices('update').map(text)).toEqual(['loom was updated: the page reloads when your message is sent or clearedReload now']);
+    expect(articles().map(text).join('')).not.toContain('loom was updated');
+    await act(async () => notices('update')[0].findByType('button').props.onClick());
+    expect(f.reload).toHaveBeenCalledTimes(1);
+  });
+  it('is said on the board on screen only, never once per board on the trail', async () => {
+    f.build.mockResolvedValue(true);
+    addTokenNotice({ label: 'pump-laptop', kind: 'member', fate: 'unknown', had: 0 });
+    await draw([board('b-1', [lanes({ big: true })]), board('b-2', [ticket({ big: true })])]);
+    expect(tree!.root.findAll((n) => n.props.className === 'boards-head')).toHaveLength(2);
+    expect(notices('update')).toHaveLength(1);
+    expect(notices('token')).toHaveLength(1);
+  });
+  it('counts the bricks that did not load, once their own tries are spent, and Try all again fetches each again', async () => {
+    const { later } = await import('./bricks');
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let asks = 0, works = false;
+    const shaky = () => later(() => (asks++, works ? Promise.resolve(() => h('p', null, 'Here after all')) : Promise.reject(new Error('404'))));
+    bricks.shakyA = { ...bricks.ticket, ...shaky() }; bricks.shakyB = { ...bricks.ticket, ...shaky() };
+    try {
+      brickRetryMs.splice(0);
+      await one([lanes({ big: true }), placed('shakyA', { ticket: 't-7' }), placed('shakyB', { ticket: 't-8' })]);
+      expect(notices('lost').map(text)).toEqual(['2 bricks didn’t load' + 'Try all again']);
+      // Each placement still says its own sorry, with its own Try again.
+      expect(articles().slice(1).map((a) => text(a.children[1] as Node))).toEqual(['Sorry, this brick didn’t load.Try againError: 404', 'Sorry, this brick didn’t load.Try againError: 404']);
+      works = true;
+      await act(async () => notices('lost')[0].findByType('button').props.onClick());
+      await act(async () => { await new Promise((done) => setTimeout(done, 10)); });
+      expect(articles().slice(1).map((a) => text(a.children[1] as Node))).toEqual(['Here after all', 'Here after all']);
+      expect(notices('lost')).toEqual([]);
+      expect(asks).toBe(4);
+    } finally { delete bricks.shakyA; delete bricks.shakyB; quiet.mockRestore(); }
   });
 });
 
