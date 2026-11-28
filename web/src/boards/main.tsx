@@ -6,7 +6,7 @@ import { createRoot } from 'react-dom/client';
 import { ArrowUpIcon } from 'lucide-react';
 import { useDataQuery } from '../data/graphql';
 import { memberOperation } from '../data/operation';
-import { newId } from '../data/id';
+import { useCommsDraft } from '../pieces/comms/drafts';
 import { useSession } from '../signin/use-session';
 import type { FaceState } from '../face';
 import { Button } from '../pair/ui/button';
@@ -219,7 +219,12 @@ export function Page({ member, thread, agent, at, exists = false }: { member: st
   }, [shown, thread, change]);
 
   const [ready, setReady] = useState(exists), [tail, setTail] = useState<ThreadTail>(emptyTail);
-  const [words, setWords] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  // What is typed is the desktop's Comms draft for this member and conversation (../pieces/comms/drafts.ts): kept in
+  // this browser's own storage only, so it comes back after a reload or another conversation, and the same words are
+  // in the desktop's composer for this thread. It leaves the browser only as the message, on Send, and goes when loom
+  // acknowledges that send; a send that fails keeps it, with the same id, so sending again cannot post it twice.
+  const composer = useCommsDraft(member, thread), words = composer.value.text;
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [sheet, setSheet] = useState(false);
   useEffect(() => {
     if (exists) return;
@@ -243,13 +248,12 @@ export function Page({ member, thread, agent, at, exists = false }: { member: st
   const sending = useRef(false);
   async function send(e: FormEvent) {
     e.preventDefault();
-    const text = words.trim();
+    const sent = composer.value, text = sent.text.trim();
     if (!text || !ready || sending.current) return;
     sending.current = true; setBusy(true); setError('');
     try {
-      const clientId = newId();
-      await memberOperation('comms.send', { thread, clientId, words: text, shows: { board: shown?.id ?? null } }, clientId);
-      setWords((now) => (now.trim() === text ? '' : now)); setSheet(true);
+      await memberOperation('comms.send', { thread, clientId: sent.id, words: text, shows: { board: shown?.id ?? null } });
+      composer.acknowledged(sent); setSheet(true);
     } catch { setError('Delivery unconfirmed. Send the same message to retry.'); }
     finally { sending.current = false; setBusy(false); }
   }
@@ -325,7 +329,7 @@ export function Page({ member, thread, agent, at, exists = false }: { member: st
         <form className="boards-ask" onSubmit={(e) => void send(e)}>
           <InputGroup>
             <InputGroupTextarea aria-label={'Message ' + name} placeholder="What are we doing now?" value={words} autoFocus
-              onChange={(e) => setWords(e.target.value)}
+              onChange={(e) => composer.edit(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
             <InputGroupAddon align="block-end">
               <InputGroupButton className="ms-auto" type="submit" variant="default" size="icon-sm" aria-label="Send" disabled={busy || !ready || !words.trim()}><ArrowUpIcon /></InputGroupButton>

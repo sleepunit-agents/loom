@@ -15,8 +15,9 @@ export function readDraft(member:string,thread:string):Draft {
   const raw=localStorage.getItem(storedKey(member,thread));
   if(raw!==null){const value:unknown=JSON.parse(raw);if(value&&typeof value==='object'&&'id' in value&&'text' in value&&typeof value.id==='string'&&/^[a-z2-7]{16}$/.test(value.id)&&typeof value.text==='string')return {id:value.id,text:value.text};}
   // Upgrade old text-only drafts once, retaining their words.
-  const text=localStorage.getItem(draftKey(member,thread))??'';
-  const draft=editDraft({id:'',text:''},text);writeDraft(member,thread,draft,false);return draft;
+  // Reading where nothing was kept writes nothing.
+  const old=localStorage.getItem(draftKey(member,thread));if(old===null)return {id:'',text:''};
+  const draft=editDraft({id:'',text:''},old);writeDraft(member,thread,draft,false);return draft;
  }catch{return {id:'',text:''};}
 }
 export function writeDraft(member:string,thread:string,draft:Draft,broadcast=true){
