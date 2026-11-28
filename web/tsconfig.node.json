@@ -19,5 +19,5 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["vite.config.ts", "access-media.ts"]
+  "include": ["vite.config.ts", "access-media.ts", "vite.boards.config.ts", "boards-guard.ts"]
 }

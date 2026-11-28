@@ -9,6 +9,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const feed = vi.hoisted(() => vi.fn());
 vi.mock('../data/graphql', () => ({ useDataQuery: feed }));
 import { settingsQuery } from '../pieces/settings/data';
+import { secretName as storeName } from '../../../src/pieces/secrets/input';
+import { ACCEPTED_NAMES, REFUSED_NAMES } from '../../../src/core/boards/value-shape.fixture';
 import { bricks, loadBricks } from './bricks';
 import { Frame } from './brick-kit';
 import type { Form } from './layout';
@@ -162,7 +164,8 @@ it('removes a secret only after asking', async () => {
   await press('Remove PUMP_TOKEN');
   await press('Remove value and revoke access');
   expect(requests.map((r) => [r.url, Object.keys(r.body.input).sort(), r.body.input.name])).toEqual([['/api/secrets/remove', ['id', 'name'], 'PUMP_TOKEN']]);
-  expect(reported.mock.calls).toEqual([['remove', {}]]);
+  // Removed and acknowledged: the board is told which secret, and that it was removed.
+  expect(reported.mock.calls).toEqual([['remove', { secret: 'PUMP_TOKEN', outcome: 'removed' }]]);
 });
 
 it('a change that is not acknowledged says only that, shows nothing of the reply, and reports nothing', async () => {
@@ -209,8 +212,9 @@ it('a value goes from a password field to /api/secrets/set once, by the desktop\
   expect(requests[0].url).toBe('/api/secrets/set');
   expect(requests[0].body.input).toMatchObject({ name: 'PUMP_TOKEN', description: 'The pond pump, new', mode: 'replace', value: VALUE });
   expect(Object.keys(requests[0].body.input).sort()).toEqual(['description', 'id', 'mode', 'name', 'value']);
-  // The board is told that a value was set: no name, no description, no value.
-  expect(reported.mock.calls).toEqual([['setValue', {}]]);
+  // The board is told which secret and that its value was replaced: no description, no value.
+  expect(reported.mock.calls).toEqual([['setValue', { secret: 'PUMP_TOKEN', outcome: 'replaced' }]]);
+  expect(JSON.stringify(reported.mock.calls)).not.toContain('The pond pump, new');
   expect(JSON.stringify(reported.mock.calls)).not.toContain(VALUE);
   expect(JSON.stringify(raised.mock.calls)).not.toContain(VALUE);
   expect(text()).not.toContain(VALUE);
@@ -251,4 +255,131 @@ it('flags itself when a new request arrives, and not for an answer', async () =>
   live({ secretRequests: [] });
   await redraw('side');
   expect(raised).toHaveBeenCalledOnce();
+});
+
+it('adds a secret and, once loom acknowledged it, tells the board its name and "added", and nothing typed beside the name', async () => {
+  live();
+  await draw('primary');
+  await press('Add a secret…');
+  world.fields.get('Name')!.value = 'NEW_KEY'; world.fields.get('Description')!.value = 'A private description'; world.fields.get('Value')!.value = VALUE;
+  await submit('Add a secret');
+  expect(requests.map((r) => [r.url, r.body.input.mode, r.body.input.name])).toEqual([['/api/secrets/set', 'add', 'NEW_KEY']]);
+  expect(reported.mock.calls).toEqual([['setValue', { secret: 'NEW_KEY', outcome: 'added' }]]);
+  for (const typed of [VALUE, 'A private description']) {
+    expect(JSON.stringify(reported.mock.calls), typed).not.toContain(typed);
+    expect(JSON.stringify(raised.mock.calls), typed).not.toContain(typed);
+    expect(JSON.stringify(feed.mock.calls), typed).not.toContain(typed);
+    expect(text(), typed).not.toContain(typed);
+  }
+  expect(all()).toContain('Saved.');
+});
+
+it('tells the board nothing when a value set or a removal is refused or not confirmed, for each outcome', async () => {
+  for (const status of [403, 409, 503]) {
+    live();
+    await draw('primary');
+    world.reply = () => ({ status, body: { ok: false, message: 'PRIVATE UPSTREAM WORDS' } });
+    await press('Add a secret…');
+    world.fields.get('Name')!.value = 'NEW_KEY'; world.fields.get('Value')!.value = VALUE;
+    await submit('Add a secret');
+    await press('Cancel');
+    await press('Replace the value of PUMP_TOKEN');
+    world.fields.get('Value')!.value = VALUE;
+    await submit('Replace PUMP_TOKEN');
+    await press('Cancel');
+    await press('Remove MAIL_KEY');
+    await press('Remove value and revoke access');
+    expect(requests.map((r) => r.url).slice(-3), String(status)).toEqual(['/api/secrets/set', '/api/secrets/set', '/api/secrets/remove']);
+    expect(all()).toContain('Change not confirmed.');
+    expect(text()).not.toContain('PRIVATE');
+  }
+  // A reply that is 200 but does not say saved is not an acknowledgement either.
+  live();
+  await draw('primary');
+  world.reply = () => ({ status: 200, body: { ok: true, value: { saved: false } } });
+  await press('Remove PUMP_TOKEN');
+  await press('Remove value and revoke access');
+  expect(reported).not.toHaveBeenCalled();
+});
+
+it('sends nothing for a name the secrets store would refuse, so the board is never told one', async () => {
+  live();
+  await draw('primary');
+  await press('Add a secret…');
+  for (const name of ['two words', '-dash', 'a/b', 'x'.repeat(65)]) {
+    world.fields.get('Name')!.value = name; world.fields.get('Value')!.value = VALUE;
+    await submit('Add a secret');
+    expect(world.fields.get('Value')!.value, name).toBe(VALUE); // nothing was read out of the field
+  }
+  expect(requests).toEqual([]);
+  expect(reported).not.toHaveBeenCalled();
+});
+
+const SAME = 'That looks like a secret value, not a name.';
+// The one fixture list (src/core/boards/value-shape.fixture.ts), each side as far as the store's name shape takes it.
+const PASTED = REFUSED_NAMES.filter((name) => storeName.safeParse(name).success);
+const NAMES = ACCEPTED_NAMES.filter((name) => storeName.safeParse(name).success);
+it('sends nothing for a name that has the shape of a secret value, says so, and takes every name the fixture list takes', async () => {
+  expect(PASTED.length).toBeGreaterThanOrEqual(10);
+  expect(NAMES.length).toBeGreaterThanOrEqual(10);
+  live();
+  await draw('primary');
+  await press('Add a secret…');
+  for (const name of PASTED) {
+    world.fields.get('Name')!.value = name; world.fields.get('Value')!.value = VALUE;
+    await submit('Add a secret');
+    expect(all(), name).toContain(SAME);
+    expect(world.fields.get('Value')!.value, name).toBe(VALUE); // nothing was read out of the field
+  }
+  expect(requests).toEqual([]);
+  expect(reported).not.toHaveBeenCalled();
+  for (const name of NAMES) {
+    if (!tree!.root.findAll((node) => node.type === 'form' && node.props['aria-label'] === 'Add a secret').length) await press('Add a secret…');
+    world.fields.get('Name')!.value = name; world.fields.get('Value')!.value = VALUE;
+    await submit('Add a secret');
+    expect(all(), name).not.toContain(SAME);
+  }
+  expect(reported.mock.calls).toEqual(NAMES.map((secret) => ['setValue', { secret, outcome: 'added' }]));
+});
+
+it('says the store\'s rule for a name it would refuse, and no longer the last try\'s words', async () => {
+  live();
+  await draw('primary');
+  await press('Add a secret…');
+  world.fields.get('Name')!.value = PASTED[0]; world.fields.get('Value')!.value = VALUE;
+  await submit('Add a secret');
+  expect(all()).toContain(SAME);
+  world.fields.get('Name')!.value = 'two words';
+  await submit('Add a secret');
+  expect(all()).not.toContain(SAME);
+  expect(all()).toContain('A name is up to 64 letters, digits and . _ -, starting with a letter or digit.');
+  // Typing again clears what was said.
+  await act(async () => { tree!.root.findAll((node) => node.type === 'input' && node.props['aria-label'] === 'Name')[0].props.onInput(); });
+  expect(all()).not.toContain('A name is up to 64');
+  expect(requests).toEqual([]);
+});
+
+it('the Name field\'s pattern is the store\'s name shape, over names either side of it', async () => {
+  live();
+  await draw('primary');
+  await press('Add a secret…');
+  const pattern: string = tree!.root.findAll((node) => node.type === 'input' && node.props['aria-label'] === 'Name')[0].props.pattern;
+  // As a browser reads `pattern`: the whole value, with the v flag.
+  const field = new RegExp('^(?:' + pattern + ')$', 'v');
+  for (const name of ['PUMP_TOKEN', 'a', 'A.b_c-d', '9lives', 'x'.repeat(64), 'x'.repeat(65), '-dash', '.dot', '_under', 'two words', 'a/b', 'a:b', 'a@b', 'é', '', ...ACCEPTED_NAMES, ...REFUSED_NAMES])
+    expect(field.test(name), name).toBe(storeName.safeParse(name).success);
+});
+
+it('replaces or removes a stored secret whose name has the shape of a value, and tells the board nothing of it', async () => {
+  const name = PASTED[1];
+  live({ secrets: [{ name, description: '', changedAt: '2026-11-20T10:00:00Z', changedBy: 'sam' }], secretGrants: [], secretRequests: [], secretRules: [], secretRuleAgents: [], secretUses: [] });
+  await draw('primary');
+  await press(`Replace the value of ${name}`);
+  world.fields.get('Value')!.value = VALUE;
+  await submit(`Replace ${name}`);
+  await press(`Remove ${name}`);
+  await press('Remove value and revoke access');
+  expect(requests.map((r) => [r.url, r.body.input.name])).toEqual([['/api/secrets/set', name], ['/api/secrets/remove', name]]);
+  expect(all()).toContain('Saved.');
+  expect(reported).not.toHaveBeenCalled();
 });

@@ -7,8 +7,14 @@
  * A VALUE. It is typed into one uncontrolled password field and leaves the browser exactly once, through the
  * desktop's `submitSecret`, which empties the field before the request is made. It is never in React state, never
  * a property of this brick, never passed to `act`, and no reply's words are shown: a change is "Saved." or "not
- * confirmed" (pieces/settings/words.ts). The board is told that an action happened and nothing else, not even the
- * secret's name.
+ * confirmed" (pieces/settings/words.ts). A description is never told either.
+ *
+ * WHAT THE BOARD IS TOLD. Once loom acknowledged a value set or a secret removed, the board is told the secret's
+ * NAME and what happened, `added`, `replaced` or `removed` (the owner's ruling, 2026-11-27: the agent knows a key
+ * was saved under that name and never sees the key). An answer, a cancel or a revoke is told with nothing. A change
+ * that was refused or not confirmed tells the board nothing: the member reads "not confirmed" here, and that is all.
+ * A Name in the shape of a credential is refused before anything is sent (`looksLikeSecretValue`, the function
+ * `boards.act` refuses it by too), and a stored name of that shape is replaced or removed without a report.
  *
  * Not here: the household default and a secret's standing rule cannot be changed by a member's own operation, on
  * the desktop either. Settings drafts a message asking an agent to propose the change, and the owner answers that
@@ -16,10 +22,11 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { newId } from '../data/id';
+import { SECRET_VALUE_WORDS, looksLikeSecretValue } from '../../../src/core/boards/value-shape';
 import { settingsCommand, submitSecret } from '../pieces/settings/commands';
 import { settingsQuery, settingsSnapshot, type SettingsData } from '../pieces/settings/data';
 import { ANSWER_WORDS, USE_WORDS, WRITE_ONLY_WORDS, resultText } from '../pieces/settings/words';
-import { Action, Actions, Asking, Chip, Fact, Facts, Few, Lead, Loading, More, Note, Row, Rows, Section, State, Time, Unavailable, useOwnFlag, useSettling, type BodyProps, type Tone } from './brick-kit';
+import { Action, Actions, Asking, Chip, Fact, Facts, Few, Lead, Loading, More, Note, Problem, Row, Rows, Section, State, Time, Unavailable, useOwnFlag, useSettling, type BodyProps, type Tone } from './brick-kit';
 
 const agentRef = /^[A-Za-z0-9][A-Za-z0-9:._\/@-]{0,119}$/;
 /** An agent as a chip that places its brick, or its id alone when the id is not one a board can hold. */
@@ -27,7 +34,18 @@ const agentChip = (id: string) => (agentRef.test(id) ? <Chip place={{ brick: 'ag
 const count = (n: number, one: string, many = one + 's') => `${n || 'No'} ${n === 1 ? one : many}`;
 const requestTone = (state: string): Tone => (state === 'allowed' ? 'good' : state === 'denied' ? 'bad' : state === 'pending' ? 'waiting' : 'muted');
 const ASK_AGENT = 'To change this default or a secret\'s standing rule, ask your agent in this conversation to propose it. Its proposal comes to you as an approval to answer.';
-type Run = (action: string, work: () => Promise<boolean>) => void;
+type Detail = Record<string, string>;
+/** `detail` null: the change is made and the board is not told (a stored name that looks like a value, below). */
+type Run = (action: string, work: () => Promise<boolean>, detail?: Detail | null) => void;
+/** The secrets store's name shape (secretName, src/pieces/secrets/input.ts), and the shape the board's detail takes:
+ * one string, for the Name field's `pattern` and the check before sending. bricks-secrets.test.tsx holds it to the
+ * store's own over the same names. (`\-`: a pattern is read with the `v` flag, where a bare `-` in a class is not allowed.) */
+const NAME_SHAPE = '[A-Za-z0-9][A-Za-z0-9._\\-]{0,63}';
+const secretName = new RegExp('^' + NAME_SHAPE + '$', 'v');
+const NAME_RULE = 'A name is up to 64 letters, digits and . _ -, starting with a letter or digit.';
+/** What the board is told of a stored secret: its name and outcome, or nothing when an older name has the shape of a
+ * value (one made on the desktop before this check), so that it can still be replaced or removed. */
+const told = (secret: string, outcome: string): Detail | null => (looksLikeSecretValue(secret) ? null : { secret, outcome });
 
 export function Secrets({ form, act, raise }: BodyProps) {
   const snapshot = settingsSnapshot(useDataQuery<SettingsData>(settingsQuery, undefined, { keep: true }));
@@ -53,13 +71,13 @@ export function Secrets({ form, act, raise }: BodyProps) {
     </>
   );
   /** One change at a time. `work` starts in the same turn as the press, so a value's field is emptied at once. The
-   * board is told only when the change was acknowledged. */
-  const run: Run = (action, work) => {
+   * board is told only when the change was acknowledged, with `detail` (a secret's name and outcome, or nothing). */
+  const run: Run = (action, work, detail = {}) => {
     if (lock.current || stale) return;
     lock.current = true; setBusy(true); setMessage('');
     void work().catch(() => false).then((saved) => {
       lock.current = false; setBusy(false); setMessage(resultText(saved));
-      if (saved) { setOpen(undefined); act(action, {}); }
+      if (saved) { setOpen(undefined); if (detail) act(action, detail); }
     });
   };
   const answer = (id: string, allow: boolean) => run(allow ? 'allow' : 'deny', () => settingsCommand('command', { action: 'answer', id, allow, always: always.includes(id) }));
@@ -115,7 +133,7 @@ export function Secrets({ form, act, raise }: BodyProps) {
                 {open === 'value:' + secret.name && <ValueForm name={secret.name} description={secret.description} busy={busy} run={run} cancel={() => setOpen(undefined)} />}
                 {open === 'remove:' + secret.name && (
                   <Asking label="Remove this secret?" yes="Remove value and revoke access" no="Keep" disabled={busy}
-                    onYes={() => run('remove', () => settingsCommand('remove', { id: newId(), name: secret.name }))} onNo={() => setOpen(undefined)}>Remove this secret's value and revoke every access to it? It cannot be brought back.</Asking>
+                    onYes={() => run('remove', () => settingsCommand('remove', { id: newId(), name: secret.name }), told(secret.name, 'removed'))} onNo={() => setOpen(undefined)}>Remove this secret's value and revoke every access to it? It cannot be brought back.</Asking>
                 )}
               </Row>
             );
@@ -144,21 +162,29 @@ export function Secrets({ form, act, raise }: BodyProps) {
 }
 
 /** Settings' write-only form. Every field is uncontrolled: nothing typed here is in React state. On submit the
- * value field itself is handed to `submitSecret`, which reads it, empties it and sends it, in that order. */
+ * value field itself is handed to `submitSecret`, which reads it, empties it and sends it, in that order. A name the
+ * store would refuse is not sent: nothing leaves, and the field keeps what was typed. */
 function ValueForm({ name, description = '', busy, run, cancel }: { name?: string; description?: string; busy: boolean; run: Run; cancel(): void }) {
   const value = useRef<HTMLInputElement>(null), named = useRef<HTMLInputElement>(null), about = useRef<HTMLInputElement>(null);
+  const [problem, setProblem] = useState('');
   const save = (event: FormEvent) => {
     event.preventDefault();
     const field = value.current, secret = name ?? named.current?.value ?? '';
-    if (busy || !field || !field.value || !secret) return;
-    run('setValue', () => submitSecret({ name: secret, description: about.current?.value ?? '', mode: name ? 'replace' : 'add', field }));
+    if (busy || !field || !field.value) return;
+    // Whatever was said of the last try is said again or not at all.
+    if (!secretName.test(secret)) { setProblem(NAME_RULE); return; }
+    // A name typed here that has the shape of a value is refused before anything is sent: the board would be told it.
+    if (!name && looksLikeSecretValue(secret)) { setProblem(SECRET_VALUE_WORDS); return; }
+    setProblem('');
+    run('setValue', () => submitSecret({ name: secret, description: about.current?.value ?? '', mode: name ? 'replace' : 'add', field }), name ? told(name, 'replaced') : { secret, outcome: 'added' });
   };
   return (
     <form className="board-form" aria-label={name ? `Replace ${name}` : 'Add a secret'} autoComplete="off" onSubmit={save}>
-      {!name && <label className="board-field"><span>Name</span><input ref={named} className="board-input font-mono" aria-label="Name" required maxLength={64} pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,63}" autoComplete="off" /></label>}
+      {!name && <label className="board-field"><span>Name</span><input ref={named} className="board-input font-mono" aria-label="Name" required maxLength={64} pattern={NAME_SHAPE} autoComplete="off" onInput={() => setProblem('')} /></label>}
       <label className="board-field"><span>Description</span><input ref={about} className="board-input" aria-label="Description" defaultValue={description} maxLength={4000} autoComplete="off" /></label>
       <label className="board-field"><span>Value</span><input ref={value} className="board-input" aria-label="Value" type="password" required autoComplete="new-password" spellCheck={false} /></label>
       <Note>{WRITE_ONLY_WORDS}</Note>
+      <Problem>{problem}</Problem>
       <Actions>
         <Action submit kind="primary" disabled={busy}>{busy ? 'Saving…' : name ? 'Save replacement' : 'Add secret'}</Action>
         <Action kind="quiet" disabled={busy} onClick={cancel}>Cancel</Action>

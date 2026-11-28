@@ -334,11 +334,16 @@ const sharing: Scene[] = [
 ];
 
 export const scenes: BrickScenes[] = [
-  { brick: 'secrets', scenes: [...secrets, { ...secrets[0], name: 'opened', only: ['primary'], press: ['Remove…'] }] },
+  { brick: 'secrets', scenes: [...secrets, { ...secrets[0], name: 'opened', only: ['primary'], press: ['Remove…'] },
+    { ...secrets[0], name: 'adding', only: ['primary'], press: ['Add a secret…'] }] },
   { brick: 'machines', scenes: [...machines, { ...machines[0], name: 'opened', only: ['primary'], press: ['shed-server'] }] },
   { brick: 'subscriptions', scenes: [...subscriptions, { ...subscriptions[0], name: 'opened', only: ['primary'], press: ['Household Max'] }] },
   { brick: 'usage', scenes: [...usage, { ...usage[0], name: 'opened', only: ['primary'], press: ['Jobs'] }] },
   { brick: 'bridges', scenes: [...bridges, { ...bridges[0], name: 'opened', only: ['primary'], press: ['Release send…'] }] },
-  { brick: 'household', scenes: [...household, { ...household[0], name: 'opened', only: ['primary'], press: ['Revoke token…'] }] },
+  { brick: 'household', scenes: [...household, { ...household[0], name: 'opened', only: ['primary'], press: ['Revoke token…'] },
+    // Make a token: its form, a label the board could not be told, and the value shown once after it was made.
+    { ...household[0], name: 'making-token', only: ['primary'], press: ['Make a token…', 'Agent'] },
+    { ...household[0], name: 'token-label-refused', only: ['primary'], press: ['Make a token…', { field: 'Token label', text: 'Pump laptop' }, 'Make token'] },
+    { ...household[0], name: 'token-shown-once', only: ['primary'], press: ['Make a token…', { field: 'Token label', text: 'pump-laptop' }, 'Make token'] }] },
   { brick: 'sharing', scenes: sharing },
 ];

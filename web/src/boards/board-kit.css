@@ -467,6 +467,7 @@ button.board-step-line::after { content: ''; grid-column: 3; grid-row: 1; justif
 .board-bridges-text { max-height: 7.5em; font-family: inherit; font-size: var(--bk-sm); color: var(--foreground); padding-left: var(--bk-3); border-left: 1px solid var(--surface-edge); }
 .board-bridges-text[data-short] { max-height: 4.5em; overflow: hidden; }
 .board-household-who { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--bk-2); flex: 1 0 100%; font-size: var(--bk-sm); color: var(--muted-foreground); }
+.board-household-token { overflow-wrap: anywhere; user-select: all; }
 /* A flagged row's mark is its own: a row opened inside it does not wear it. */
 .board-row[data-flagged] .board-row:not([data-flagged]) .board-row-title::before { content: none; }
 /* Two questions side by side: while one is open, the other's control steps aside. */
