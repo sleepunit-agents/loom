@@ -63,7 +63,7 @@ it('draws a pull request whose id a board cannot hold as its number alone, and s
     await b.draw('ticket', { ticket: 't-7' }, form);
     expect(b.all(), form).not.toContain('Pull requests');
     // With no pull request the member may read there are no reviews to open, as on the desktop.
-    expect(b.labels(), form).not.toContain('Show reviews');
+    expect(b.labels(), form).not.toContain('Reviews');
   }
 });
 
@@ -102,7 +102,7 @@ it('reads its story only when the member opens it, once and not live, and hides 
   expect(b.all()).toContain('Story');
   expect(onceAsked('BrickTicketPosts')).toEqual([]);
   expect(b.all()).not.toContain('Post number 1.');
-  await b.press('Show the story');
+  await b.press('Story');
   expect(onceAsked('BrickTicketPosts').at(-1)).toEqual({ task: 't-7', before: '0' });
   expect(liveAsked('BrickTicketPosts')).toEqual([]);
   expect(b.all()).toContain('Post number 1.');
@@ -110,12 +110,12 @@ it('reads its story only when the member opens it, once and not live, and hides 
   expect(b.placed()).toContainEqual({ brick: 'agent', params: { agent: 'art' } });
   // Two posts are one page: nothing older to ask for.
   expect(b.labels()).not.toContain('Older posts');
-  await b.press('Hide the story');
+  await b.press('Story');
   expect(b.all()).not.toContain('Post number 1.');
   // No small form has it.
   once.mockClear();
   await b.draw('ticket', { ticket: 't-7' }, 'side');
-  expect(b.labels()).not.toContain('Show the story');
+  expect(b.labels()).not.toContain('Story');
   expect(onceAsked('BrickTicketPosts')).toEqual([]);
 });
 
@@ -124,7 +124,7 @@ it('says while its story loads, when it is empty and when it cannot be read', as
     answer(data({}, { BrickTicketPosts: posts === 'offline' ? undefined : posts }));
     if (posts === 'offline') once.mockImplementation(() => ({ status: 'offline' }));
     await b.draw('ticket', { ticket: 't-7' }, 'primary');
-    await b.press('Show the story');
+    await b.press('Story');
     expect(b.all(), String(words)).toContain(words);
   }
 });
@@ -135,7 +135,7 @@ it('pages its story thirty at a time: the thirty-first read says there is more, 
   once.mockImplementation((query: string, variables: { before?: string }) => (/BrickTicketPosts/.test(query)
     ? { status: 'live', data: { posts: variables.before === '0' ? first : second } } : { status: 'loading' }));
   await b.draw('ticket', { ticket: 't-7' }, 'primary');
-  await b.press('Show the story');
+  await b.press('Story');
   expect(b.all()).toContain('Post number 30.');
   expect(b.all()).not.toContain('Post number 31.');
   await b.press('Older posts');
@@ -150,32 +150,32 @@ it('reads its reviews, loom\'s and GitHub\'s, only when the member opens them, o
   await b.draw('ticket', { ticket: 't-7' }, 'primary');
   expect(onceAsked('BrickTicketRounds')).toEqual([]);
   expect(onceAsked('BrickTicketGithubReviews')).toEqual([]);
-  await b.press('Show reviews');
+  await b.press('Reviews');
   expect(onceAsked('BrickTicketRounds').at(-1)).toEqual({ task: 't-7' });
   expect(onceAsked('BrickTicketGithubReviews').at(-1)).toEqual({ task: 't-7', at: null, id: null });
   expect(liveAsked('BrickTicketRounds')).toEqual([]);
   expect(liveAsked('BrickTicketGithubReviews')).toEqual([]);
   for (const shown of ['Review 1 · #12 · cccccccc', 'changes requested', 'The hinge pin is missing.', 'fern', 'approved', 'Review body 1.']) expect(b.all(), shown).toContain(shown);
   expect(b.root().findAllByType('a').map((a) => [a.props.href, a.props.target, b.said(a)])).toEqual([[github(1).url, '_blank', 'Open on GitHub']]);
-  await b.press('Hide reviews');
+  await b.press('Reviews');
   expect(b.all()).not.toContain('The hinge pin is missing.');
 });
 
 it('says while its reviews load, when there are none, and when they cannot be read', async () => {
   answer(data({}, { BrickTicketRounds: undefined, BrickTicketGithubReviews: undefined }));
   await b.draw('ticket', { ticket: 't-7' }, 'primary');
-  await b.press('Show reviews');
+  await b.press('Reviews');
   expect(b.all().match(/Loading…/g)?.length).toBe(2);
   answer(data({}, { BrickTicketRounds: { rounds: [{ ...round, change: 'github:acme/other#1' }] }, BrickTicketGithubReviews: { reviews: [] } }));
   await b.draw('ticket', { ticket: 't-7' }, 'primary');
-  await b.press('Show reviews');
+  await b.press('Reviews');
   // A round for a pull request not among the ones shown is left out, as on the desktop.
   expect(b.all()).toContain('Loom has not reviewed its pull requests.');
   expect(b.all()).toContain('No one has reviewed its pull requests on GitHub.');
   answer(data());
   once.mockImplementation(() => ({ status: 'offline' }));
   await b.draw('ticket', { ticket: 't-7' }, 'primary');
-  await b.press('Show reviews');
+  await b.press('Reviews');
   expect(b.all()).toContain("Loom's reviews are unavailable.");
   expect(b.all()).toContain("GitHub's reviews are unavailable.");
 });
@@ -187,7 +187,7 @@ it('pages GitHub reviews by when they were submitted and their id, and links onl
     ? { status: 'live', data: { reviews: variables.id === null ? first : [{ ...github(40), url: 'https://example.com/x' }] } }
     : /BrickTicketRounds/.test(query) ? { status: 'live', data: { rounds: [] } } : { status: 'loading' }));
   await b.draw('ticket', { ticket: 't-7' }, 'primary');
-  await b.press('Show reviews');
+  await b.press('Reviews');
   expect(b.all()).toContain('Review body 30.');
   expect(b.all()).not.toContain('Review body 31.');
   await b.press('Older GitHub reviews');

@@ -133,7 +133,7 @@ it('shows a pull request with its state, checks, review, who it waits on, and th
   answer(pullData({ waitingOn: 'you' }));
   await draw('pull', { change: change.id }, 'primary');
   expect(text()).toContain('The merge is answered in Changes on the desktop.');
-  expect(controls().map((node) => said(node))).toEqual(['Review history']);
+  expect(controls().map((node) => said(node))).toEqual(["Loom's reviews"]);
   for (const [over, word] of [[{ draft: true }, 'Draft'], [{ state: 'merged' }, 'Merged'], [{ state: 'closed' }, 'Closed'], [{}, 'Open']] as const) {
     answer(pullData(over));
     await draw('pull', { change: change.id }, 'compact');

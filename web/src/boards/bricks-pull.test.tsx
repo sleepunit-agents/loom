@@ -119,13 +119,15 @@ it('says when a patch was cut, when GitHub gives none, when it could not be read
   await draw('primary');
   await open('docs/pump.md');
   expect(lines()).toEqual([['board-patch-add', '+first part\n']]);
-  expect(notes()).toContain('This patch is longer than 200 KB: only its first part is shown. The whole of it is on GitHub.');
+  // Code keeps its lines and the patch scrolls sideways, so it is a named region the keyboard can reach.
+  expect([patchOf().props.role, patchOf().props.tabIndex, patchOf().props['aria-label']]).toEqual(['region', 0, 'Patch of docs/pump.md']);
+  expect(notes()).toContain('Only the first 200 KB of this patch is shown. The whole of it is on GitHub.');
   const cases: [unknown, string][] = [
-    [{ status: 'live', data: { patch: { state: 'none', patch: null, cut: false } } }, 'GitHub shows no patch for this file: it may be binary, a change too large for GitHub to show, a rename with no change in it, or an empty file.'],
-    [{ status: 'live', data: { patch: { state: 'unlisted', patch: null, cut: false } } }, "GitHub's list of this pull request's files does not have this file just now: it may have changed since. Close it and open it again in a moment."],
-    [{ status: 'live', data: { patch: { state: 'unavailable', patch: null, cut: false } } }, 'GitHub could not be read for this file just now. Close it and open it again in a moment to try again.'],
-    [{ status: 'live', data: { patch: null } }, "This file's patch could not be read. Close it and open it again to try again."],
-    [{ status: 'offline' }, "This file's patch could not be read. Close it and open it again to try again."],
+    [{ status: 'live', data: { patch: { state: 'none', patch: null, cut: false } } }, 'GitHub has no patch for this file: it may be binary, too large for GitHub to show, renamed with no change in it, or empty.'],
+    [{ status: 'live', data: { patch: { state: 'unlisted', patch: null, cut: false } } }, 'GitHub does not list this file for the pull request just now: it may have changed since. Close the file and open it again in a moment.'],
+    [{ status: 'live', data: { patch: { state: 'unavailable', patch: null, cut: false } } }, 'GitHub could not be read for this file. Close the file and open it again to try again.'],
+    [{ status: 'live', data: { patch: null } }, "This file's patch could not be read. Close the file and open it again to try again."],
+    [{ status: 'offline' }, "This file's patch could not be read. Close the file and open it again to try again."],
     [{ status: 'loading' }, 'Loading…'],
   ];
   for (const [snapshot, note] of cases) {
@@ -134,7 +136,7 @@ it('says when a patch was cut, when GitHub gives none, when it could not be read
     await open('docs/pump.md');
     expect(patchOf(), note).toBeUndefined();
     expect(notes(), note).toContain(note);
-    expect(notes(), note).not.toContain('This patch is longer than 200 KB: only its first part is shown. The whole of it is on GitHub.');
+    expect(notes(), note).not.toContain('Only the first 200 KB of this patch is shown. The whole of it is on GitHub.');
   }
 });
 
@@ -189,17 +191,20 @@ it('says when loom last read GitHub, and that the last read failed, in the prima
   world(read({}, { changeSync: [{ readAt, failed: false, nextAt: null }] }));
   await draw('primary');
   expect(asked('BrickPull')[0][0]).toContain('changeSync{readAt failed nextAt}');
-  const fact = tree!.root.findAll((node) => node.type === 'dt' && said(node) === 'Last read from GitHub');
-  expect(fact).toHaveLength(1);
+  // It is the brick's last quiet line, said once, with the time it was read.
+  const foot = () => tree!.root.findAll((node) => node.type === 'div' && node.props.className === 'board-foot');
+  expect(foot()).toHaveLength(1);
+  expect(said(foot()[0])).toMatch(/^Last read from GitHub /);
+  expect(foot()[0].findAll((node) => node.type === 'time' && node.props.dateTime === readAt)).toHaveLength(1);
   expect(tree!.root.findAll((node) => node.type === 'time' && node.props.dateTime === readAt)).toHaveLength(1);
-  expect(text()).not.toContain("GitHub's last read failed");
+  expect(text()).not.toContain('The last read failed');
   world(read({}, { changeSync: [{ readAt, failed: true, nextAt: null }] }));
   await draw('primary');
-  expect(notes()).toContain("GitHub's last read failed: this is the last copy that was read.");
+  expect(said(foot()[0])).toContain('The last read failed: this is the copy from before it.');
   for (const form of ['side', 'compact'] as const) {
     await draw(form);
     expect(text(), form).not.toContain('Last read from GitHub');
-    expect(text(), form).not.toContain("GitHub's last read failed");
+    expect(text(), form).not.toContain('The last read failed');
   }
   // Anyone but a household owner reads no row of it, and nothing is said.
   world(read({}, { changeSync: [] }));
@@ -212,7 +217,7 @@ const rounds = [
   { change: change.id, job: 'j-2', headCommit: change.headCommit, tier: 'high', round: 2, verdict: 'CLEAR', findings: null },
   { change: change.id, job: 'j-3', headCommit: change.headCommit, tier: 'high', round: 3, verdict: null, findings: null },
 ];
-const reviewOpener = () => tree!.root.findAll((node) => node.type === 'button' && node.props.className === 'board-opens' && said(node) === 'Review history')[0];
+const reviewOpener = () => tree!.root.findAll((node) => node.type === 'button' && node.props.className === 'board-fold' && said(node) === "Loom's reviews")[0];
 
 it('asks for the cold review history only once it is opened, and draws each round with its verdict, commit and findings', async () => {
   world(read(), { review: { status: 'live', data: { changeReviewHistory: rounds } } });
@@ -234,7 +239,7 @@ it('asks for the cold review history only once it is opened, and draws each roun
   expect(asked('ChangeReviewHistory').length).toBe(calls);
   for (const form of ['side', 'compact'] as const) {
     await draw(form);
-    expect(text(), form).not.toContain('Review history');
+    expect(text(), form).not.toContain("Loom's reviews");
   }
 });
 
@@ -243,8 +248,8 @@ it('says when there is no review, while it loads, and when it cannot be read; an
     [{ status: 'live', data: { changeReviewHistory: [] } }, 'Loom has not reviewed it.'],
     [{ status: 'live', data: { changeReviewHistory: [{ ...rounds[0], change: 'github:acme/app#13' }] } }, 'Loom has not reviewed it.'],
     [{ status: 'loading' }, 'Loading…'],
-    [{ status: 'offline' }, 'Its review history is unavailable.'],
-    [{ status: 'denied' }, 'Its review history is unavailable.'],
+    [{ status: 'offline' }, "Loom's reviews are unavailable. Close them and open them again to try again."],
+    [{ status: 'denied' }, "Loom's reviews are unavailable. Close them and open them again to try again."],
   ];
   for (const [review, note] of cases) {
     world(read(), { review });
@@ -268,15 +273,15 @@ afterEach(() => { vi.unstubAllGlobals(); });
 it('offers Refresh from GitHub only to a member loom says may use it, and only in the primary form', async () => {
   world(read(), { refresh: false });
   await draw('primary');
-  expect(button('Refresh from GitHub')).toBeUndefined();
+  expect(button('Read GitHub again')).toBeUndefined();
   world(read(), { refresh: true });
   await draw('primary');
-  expect(button('Refresh from GitHub')).toBeDefined();
+  expect(button('Read GitHub again')).toBeDefined();
   // The small forms do not even ask whether the member may.
   for (const form of ['side', 'compact'] as const) {
     feed.mockClear();
     await draw(form);
-    expect(button('Refresh from GitHub'), form).toBeUndefined();
+    expect(button('Read GitHub again'), form).toBeUndefined();
     expect(asked('WorkAnswerOwner'), form).toEqual([]);
   }
 });
@@ -288,15 +293,15 @@ it('a press sends the desktop\'s refresh once, says it is refreshing, then that 
   vi.stubGlobal('fetch', request);
   const told = vi.fn();
   await drawWith(told);
-  await act(async () => button('Refresh from GitHub').props.onClick());
+  await act(async () => button('Read GitHub again').props.onClick());
   // Pending: the button says so and cannot be pressed; a second press is dropped.
-  expect(button('Refreshing…').props.disabled).toBe(true);
-  await act(async () => button('Refreshing…').props.onClick());
+  expect(button('Reading GitHub…').props.disabled).toBe(true);
+  await act(async () => button('Reading GitHub…').props.onClick());
   expect(request).toHaveBeenCalledTimes(1);
   expect(request.mock.calls[0]).toEqual(['/api/changes/refresh', expect.objectContaining({ method: 'POST', body: JSON.stringify({ input: {} }) })]);
   expect(told).not.toHaveBeenCalled();
   await act(async () => answer(Response.json({ ok: true, value: { refreshed: true } })));
-  expect(button('Refresh from GitHub').props.disabled).toBe(false);
+  expect(button('Read GitHub again').props.disabled).toBe(false);
   expect(notes()).toContain('Loom has read GitHub again.');
   expect(problems()).toEqual([]);
   expect(told.mock.calls).toEqual([['refresh', {}]]);
@@ -314,12 +319,12 @@ it('says loom refused a refresh, apart from one that failed, and tells the board
     vi.stubGlobal('fetch', vi.fn(reply));
     const told = vi.fn();
     await drawWith(told);
-    await act(async () => button('Refresh from GitHub').props.onClick());
+    await act(async () => button('Read GitHub again').props.onClick());
     expect(problems(), words).toEqual([words]);
     expect(notes(), words).not.toContain('Loom has read GitHub again.');
     expect(told, words).not.toHaveBeenCalled();
     // The control stays, so it can be pressed again.
-    expect(button('Refresh from GitHub').props.disabled, words).toBe(false);
+    expect(button('Read GitHub again').props.disabled, words).toBe(false);
   }
 });
 
@@ -327,9 +332,9 @@ it('keeps saying it was refused once loom no longer offers the refresh, and draw
   world(read(), { refresh: true });
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ok: false }, { status: 403 })));
   await drawWith(vi.fn());
-  await act(async () => button('Refresh from GitHub').props.onClick());
+  await act(async () => button('Read GitHub again').props.onClick());
   world(read(), { refresh: false });
   await act(async () => tree!.update(h(brickView('pull').Body, { params: { change: change.id }, form: 'primary', act: vi.fn(), raise: vi.fn() })));
   expect(problems()).toEqual(['Loom refused: only a household owner may have it read GitHub again.']);
-  expect(button('Refresh from GitHub')).toBeUndefined();
+  expect(button('Read GitHub again')).toBeUndefined();
 });

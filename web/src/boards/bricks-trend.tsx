@@ -9,7 +9,7 @@
  * member may read, and in it only the tickets the member may open today. */
 import { useState } from 'react';
 import { useDataOnce } from '../data/graphql';
-import { Lead, Loading, Menu, Note, Opened, Opens, Row, Rows, Section, ticketChip, words, type BodyProps } from './brick-kit';
+import { Fold, Lead, Loading, Menu, Note, Row, Rows, Section, ticketChip, words, type BodyProps } from './brick-kit';
 import { Trend as Chart, since } from './trend';
 
 /** The desktop's groups, in its order and words (backlog-window.tsx, `labels`). */
@@ -38,7 +38,7 @@ function Tickets({ project, from, until, group, total }: { project: string; from
   if (!tickets.length) return <Note>No ticket you can open is in this group.</Note>;
   return (
     <>
-      <Rows label={backlogGroups[group]}>{tickets.map((t) => <Row key={t.id} title={ticketChip(t.id)} meta={t.title} />)}</Rows>
+      <Rows label={backlogGroups[group]}>{tickets.map((t) => <Row key={t.id} place={{ brick: 'ticket', params: { ticket: t.id } }} title={<>{t.title} <span className="font-mono board-row-ref">{t.id}</span></>} />)}</Rows>
       {total > PAGE && <Note>The first {PAGE} of {total}, by title. The desktop's backlog history lists the rest.</Note>}
     </>
   );
@@ -50,7 +50,7 @@ function History({ project, from, until }: { project: string; from: string; unti
   const [group, pick] = useState<Group | null>(null);
   if (read.status === 'loading') return <Loading />;
   const report = read.status === 'live' ? read.data?.projectBacklogWindow : null;
-  if (!report) return <Note>The backlog history is unavailable. Hide it and show it again to try again.</Note>;
+  if (!report) return <Note>The backlog history is unavailable. Close it and open it again to try again.</Note>;
   const counts = new Map(report.counts.map((c) => [c.key, c.total]));
   const n = (key: Group) => counts.get(key) ?? 0;
   return (
@@ -78,10 +78,7 @@ function Backlog({ project, days }: { project: string; days: number }) {
     setOpen(!open);
   };
   return (
-    <Section title="Backlog history">
-      <Opens open={open} onToggle={toggle}>{open ? 'Hide the backlog history' : 'Show the backlog history'}</Opens>
-      {open && span && <Opened><History project={project} from={span.from} until={span.until} /></Opened>}
-    </Section>
+    <Fold title="Backlog history" open={open} onToggle={toggle}>{span && <History project={project} from={span.from} until={span.until} />}</Fold>
   );
 }
 

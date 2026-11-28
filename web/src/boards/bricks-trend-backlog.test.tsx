@@ -27,15 +27,19 @@ const chart = { BrickTrend: { opened: [], closed: [] } };
 
 beforeEach(() => { answer = grouped; once.mockImplementation((_q: string, v: Vars, o?: { pause?: boolean }) => (o?.pause ? { status: 'loading' } : answer(v))); });
 
+/** Whether the section's heading, which is its control, says it is closed (false) or open (true). */
+const folded = () => b.root().findAll((node) => node.type === 'button' && node.props.className === 'board-fold' && b.said(node) === 'Backlog history')[0]?.props['aria-expanded'];
+
 it('is closed until the member opens it, then reads once for the window the chart shows, and shows the counts', async () => {
   b.answer(chart);
   await b.draw('trend', { project: 'garden', days: 7 }, 'primary');
-  expect(b.all()).toContain('Show the backlog history');
+  expect(folded()).toBe(false);
   expect(once).not.toHaveBeenCalled();
-  await b.press('Show the backlog history');
+  await b.press('Backlog history');
   expect(asked().at(-1)).toEqual({ project: 'garden', since: new Date(since(now, 7)).toISOString(), until: new Date(now).toISOString(), group: null, offset: 0 });
   expect(new Set(asked().map((v) => JSON.stringify(v))).size).toBe(1);
-  for (const shown of ['4 open at the start · 5 open at the end', 'tickets you can open today', 'Hide the backlog history']) expect(b.all(), shown).toContain(shown);
+  for (const shown of ['4 open at the start · 5 open at the end', 'tickets you can open today']) expect(b.all(), shown).toContain(shown);
+  expect(folded()).toBe(true);
   // A redraw with the same answer asks nothing new; the read is once per opening.
   const before = asked().length;
   await b.redraw('trend', { project: 'garden', days: 7 }, 'primary');
@@ -52,7 +56,7 @@ it('is closed until the member opens it, then reads once for the window the char
 it('reads a picked group\'s tickets once and lists them as ticket chips with their titles', async () => {
   b.answer(chart);
   await b.draw('trend', { project: 'garden', days: 30 }, 'primary');
-  await b.press('Show the backlog history');
+  await b.press('Backlog history');
   await b.press('Tickets: none');
   expect(b.labels()).toContain('Tickets created here · 2');
   await b.press('Tickets created here · 2');
@@ -68,39 +72,39 @@ it('reads a picked group\'s tickets once and lists them as ticket chips with the
 it('forgets what it read when it is hidden, when the brick leaves its big form, and when its project or days change', async () => {
   b.answer(chart);
   await b.draw('trend', { project: 'garden', days: 7 }, 'primary');
-  await b.press('Show the backlog history');
-  await b.press('Hide the backlog history');
+  await b.press('Backlog history');
+  await b.press('Backlog history');
   expect(b.all()).not.toContain('open at the start');
   once.mockClear();
-  await b.press('Show the backlog history');
+  await b.press('Backlog history');
   expect(asked()).not.toEqual([]);
   // Smaller, then big again: closed.
   await b.redraw('trend', { project: 'garden', days: 7 }, 'side');
   await b.redraw('trend', { project: 'garden', days: 7 }, 'primary');
-  expect(b.all()).toContain('Show the backlog history');
+  expect(folded()).toBe(false);
   expect(b.all()).not.toContain('open at the start');
   // Open, then another window: closed again.
-  await b.press('Show the backlog history');
+  await b.press('Backlog history');
   await b.redraw('trend', { project: 'garden', days: 30 }, 'primary');
-  expect(b.all()).toContain('Show the backlog history');
-  await b.press('Show the backlog history');
+  expect(folded()).toBe(false);
+  await b.press('Backlog history');
   await b.redraw('trend', { project: 'pond', days: 30 }, 'primary');
-  expect(b.all()).toContain('Show the backlog history');
+  expect(folded()).toBe(false);
 });
 
 it('says while it reads, when it is unavailable, when nothing was in the backlog, and where history starts', async () => {
   b.answer(chart);
   answer = () => ({ status: 'loading' });
   await b.draw('trend', { project: 'garden', days: 7 }, 'primary');
-  await b.press('Show the backlog history');
+  await b.press('Backlog history');
   expect(b.all()).toContain('Loading…');
   answer = () => ({ status: 'live', data: { projectBacklogWindow: null } });
-  await b.press('Hide the backlog history');
-  await b.press('Show the backlog history');
+  await b.press('Backlog history');
+  await b.press('Backlog history');
   expect(b.all()).toContain('The backlog history is unavailable.');
   answer = () => ({ status: 'live', data: { projectBacklogWindow: report({ counts: [], coverage: new Date(now - 3600000).toISOString() }) } });
-  await b.press('Hide the backlog history');
-  await b.press('Show the backlog history');
+  await b.press('Backlog history');
+  await b.press('Backlog history');
   expect(b.all()).toContain('Nothing was in this project\'s backlog in this time.');
   expect(b.all()).toContain('History starts');
 });

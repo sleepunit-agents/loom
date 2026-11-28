@@ -58,12 +58,16 @@ export function Session({ params, form, act, raise }: BodyProps) {
           {detail?.endedNote && <Fact wide label="How it ended">{detail.endedNote}</Fact>}
           {job.state === 'failed' && detail?.failedWhy && <Fact wide label="Why it failed">{detail.failedWhy.charAt(0).toUpperCase() + detail.failedWhy.slice(1)}.</Fact>}
           {!running(job.state) && job.state !== 'done' && detail?.logTail && <Fact wide label="Last output"><pre className="board-tail">{detail.logTail}</pre></Fact>}
+        </Facts>
+      )}
+      {big && handoff && reported && <Section title="Report"><div className="board-prose"><Reply words={reported} /></div></Section>}
+      {big && (
+        <Facts>
           <Fact label="Result"><span className="board-note">{job.state === 'done' ? 'Its answer is in the conversation.' : running(job.state) ? 'Its answer will arrive in the conversation.' : 'It gave no answer.'}</span></Fact>
           {job.usage?.model && <Fact label="Running on">{[job.usage.harness, job.usage.model].filter(Boolean).join(' · ')}</Fact>}
           {tools.length > 0 && <Fact label="Tools"><span className="board-tool-counts">{tools.slice(0, 12).map((t) => <span key={t.name}>{t.name} ×{t.count}</span>)}</span></Fact>}
         </Facts>
       )}
-      {big && handoff && reported && <Section title="Report"><Reply words={reported} /></Section>}
       {big && handoff && <Section title="Steps"><SessionTrace key={job.id} conversation={conversation} job={job.id} running={running(job.state)} /></Section>}
       {!big && handoff && <SessionLatestStep conversation={conversation} job={job.id} />}
       {running(job.state) && <div className="board-actions"><Confirm ask="Stop…" yes="Stop this session" no="Keep it running" busy={busy} act={stop} /></div>}

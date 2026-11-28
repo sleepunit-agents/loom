@@ -18,7 +18,7 @@ import { displayName } from '../kit/words';
 import { memoryQueries } from '../memory/queries';
 import { useMemoryRecord } from '../memory/query';
 import { Reply } from '../pair/reply';
-import { Action, Chip, Excerpt, Fact, Facts, Few, Lead, Loading, More, Note, Opened, Opens, Problem, Row, Rows, Section, State, Time, Unavailable, count, plain, repositoryKey, words, type Params, type Tone } from './brick-kit';
+import { Action, Chip, Excerpt, Fact, Facts, Few, Fold, Lead, Loading, More, Note, Opened, Opens, Problem, Row, Rows, Section, State, Time, Unavailable, count, plain, repositoryKey, words, type Params, type Tone } from './brick-kit';
 import type { Form } from './layout';
 
 type Contribution = { id: string; agent: string; name: string; goal: string | null; summary: string | null };
@@ -76,7 +76,7 @@ function NotesFound({ cards }: { cards: string[] }) {
   const read = useDataOnce<Record<string, NotesCard>>(notesSearchQuery(cards.length), Object.fromEntries(cards.map((id, i) => ['c' + i, id])));
   const [typed, setTyped] = useState(''), [asked, setAsked] = useState('');
   if (read.status === 'loading') return <Loading />;
-  if (read.status !== 'live' || !read.data) return <Problem>The agents' notes could not be read. Hide them and show them again to try again.</Problem>;
+  if (read.status !== 'live' || !read.data) return <Problem>The agents' notes could not be read. Close them and open them again to try again.</Problem>;
   const notes: Found[] = [];
   let total = 0, missing = 0;
   cards.forEach((asked, i) => {
@@ -110,10 +110,7 @@ function NotesFound({ cards }: { cards: string[] }) {
 function AgentNotes({ cards }: { cards: string[] }) {
   const [open, setOpen] = useState(false);
   return (
-    <Section title="Agents' notes">
-      <Opens open={open} onToggle={() => setOpen(!open)}>{open ? "Hide the agents' notes" : "Show the agents' notes"}</Opens>
-      {open && <Opened><NotesFound cards={cards} /></Opened>}
-    </Section>
+    <Fold title="Agents' notes" open={open} onToggle={() => setOpen(!open)}><NotesFound cards={cards} /></Fold>
   );
 }
 

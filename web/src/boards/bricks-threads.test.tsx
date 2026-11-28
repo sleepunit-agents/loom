@@ -112,6 +112,11 @@ describe('pin, unpin and delete, in the primary form', () => {
     answer();
     await draw({ scope: 'open' }, 'primary');
     expect(buttons().map((b) => b.props['aria-label'] ?? said(b))).toEqual(['Search', 'Unpin Standing orders', 'Delete Standing orders…', 'Pin The pond', 'Delete The pond…', 'Pin The gate', 'Delete The gate…']);
+    // A row's controls are quiet (the kit's RowTools: seen when the row is pointed at or holds the keyboard), never
+    // taken from the keyboard or a screen reader: each row has one named group of real buttons, none hidden or skipped.
+    const tools = tree!.root.findAll((n) => n.type === 'span' && n.props.className === 'board-row-tools');
+    expect(tools.map((t) => [t.props.role, t.props['aria-label']])).toEqual([['group', 'Change Standing orders'], ['group', 'Change The pond'], ['group', 'Change The gate']]);
+    for (const b of tools.flatMap((t) => t.findAllByType('button'))) expect([b.props.tabIndex, b.props.hidden, b.props['aria-hidden']]).toEqual([undefined, undefined, undefined]);
     await draw({ scope: 'open' }, 'side');
     expect(buttons()).toEqual([]);
   });
