@@ -61,17 +61,41 @@ const visit = (path: string) => { go(path); for (const tell of [...moved]) tell(
 /** Where the member went, once it is known to be in this page's thread. A new one each time they go. */
 type At = { board?: string };
 
-/** A brick's body is fetched when a board first shows it (./bricks.tsx). One whose module does not arrive, as when
- * loom was deployed while the page stayed open and the old file is gone, says so in its own placement and leaves
- * the rest of the board drawn, and tells the page, which takes the new build if there is one (see `stale` below). */
-class BodyBoundary extends Component<{ children: ReactNode; onLost(): void }, { failed: boolean }> {
-  state = { failed: false };
+/** How long a placement waits before it draws a failed body again by itself, each time in turn. After the last it
+ * stops and offers the member the same. An array so a suite can shorten or empty it. */
+export const brickRetryMs = [700, 2500];
+
+/** A brick's body is fetched when a board first shows it (./bricks.tsx). One that fails, as when loom was deployed
+ * while the page stayed open and the old file is gone, or a body that threw, is drawn again by its own placement
+ * after a moment, twice, saying only that it is being fetched again. The rest of the board stays drawn. If it still
+ * fails the placement says sorry and offers to try again; where loom now serves a newer page it offers that page,
+ * which the page takes by itself once nothing typed would be lost (see `stale` below). */
+class BodyBoundary extends Component<{ children: ReactNode; stale: boolean; onLost(): void; /** Makes the body fetchable again (bricks.tsx `again`). */ again?(): void }, { failed: boolean; tries: number }> {
+  state = { failed: false, tries: 0 };
+  private timer: ReturnType<typeof setTimeout> | undefined;
   static getDerivedStateFromError() { return { failed: true }; }
-  componentDidCatch() { this.props.onLost(); }
-  render() { return this.state.failed ? <p role="alert" className="text-muted-foreground">This brick did not load. Reload the page to try again.</p> : this.props.children; }
+  componentDidCatch() {
+    this.props.onLost();
+    const wait = brickRetryMs[this.state.tries];
+    if (wait !== undefined) this.timer = setTimeout(() => { this.props.again?.(); this.setState(({ tries }) => ({ failed: false, tries: tries + 1 })); }, wait);
+  }
+  componentWillUnmount() { clearTimeout(this.timer); }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    if (this.state.tries < brickRetryMs.length) return <p role="status" className="board-note">Getting this brick again…</p>;
+    return (
+      <div role="alert" className="board-lost">
+        <p>{this.props.stale ? 'Sorry, this brick didn’t load: loom was updated while this page was open. The page reloads by itself once your message is sent or cleared.' : 'Sorry, this brick didn’t load.'}</p>
+        <div className="board-lost-actions">
+          <button type="button" className="board-action" onClick={() => { this.props.again?.(); this.setState({ failed: false, tries: brickRetryMs.length }); }}>Try again</button>
+          {this.props.stale && <button type="button" className="board-action" onClick={() => location.reload()}>Reload now</button>}
+        </div>
+      </div>
+    );
+  }
 }
 
-function BoardView({ board, live, onRemove, onMaximize, onClose, onLost }: { board: Board; /** It is the board on screen (or sliding off it): its bricks are drawn. Any other board on the trail is its frames alone: no body, no read, no brick fetched. */ live: boolean; onRemove(id: string): void; onMaximize(id: string): void; onClose(): void; /** A brick's body could not be fetched. */ onLost(): void }) {
+function BoardView({ board, live, stale, onRemove, onMaximize, onClose, onLost }: { board: Board; /** loom now serves a newer page than this one. */ stale: boolean; /** It is the board on screen (or sliding off it): its bricks are drawn. Any other board on the trail is its frames alone: no body, no read, no brick fetched. */ live: boolean; onRemove(id: string): void; onMaximize(id: string): void; onClose(): void; /** A brick's body could not be fetched. */ onLost(): void }) {
   const field = useRef<HTMLDivElement>(null);
   const [area, setArea] = useState({ w: 0, h: 0 });
   useLayoutEffect(() => {
@@ -122,7 +146,7 @@ function BoardView({ board, live, onRemove, onMaximize, onClose, onLost }: { boa
               flag={p.flagged || own[p.id] ? own[p.id] || 'Look here' : undefined} closed={board.closed} canMaximize={p.canBeBig && !p.big}
               onMaximize={() => onMaximize(p.id)} onRemove={() => onRemove(p.id)} onLook={() => looked(p)}
               style={{ transform: `translate(${slot.x}px, ${slot.y}px)`, width: slot.w, height: slot.h }}>
-              {live && <BodyBoundary onLost={onLost}><Suspense fallback={<Loading />}><Body params={p.values} form={slot.form} raise={(name) => raise(p.id, name)} act={(action, detail) => void memberOperation('boards.act', { board: board.id, placement: p.id, action, detail }).catch(() => {})} /></Suspense></BodyBoundary>}
+              {live && <BodyBoundary stale={stale} onLost={onLost} again={p.view.again}><Suspense fallback={<Loading />}><Body params={p.values} form={slot.form} raise={(name) => raise(p.id, name)} act={(action, detail) => void memberOperation('boards.act', { board: board.id, placement: p.id, action, detail }).catch(() => {})} /></Suspense></BodyBoundary>}
             </PlacementFrame>
           );
         })}
@@ -262,7 +286,7 @@ export function Page({ member, thread, agent, at, exists = false }: { member: st
             {drawn.map((b) => (
               <BoardView key={b.id} board={b} live={b.id === shown?.id || b.id === onScreen.leaving} onRemove={(id) => void change(b.id, [{ change: 'remove', placement: id }])}
                 onMaximize={(id) => void change(b.id, [{ change: 'maximize', placement: id }])}
-                onClose={() => void memberOperation('boards.close', { board: b.id }).catch(() => {})} onLost={newer} />
+                onClose={() => void memberOperation('boards.close', { board: b.id }).catch(() => {})} onLost={newer} stale={stale} />
             ))}
             </Here.Provider></Remembered.Provider>
           </div>

@@ -1382,9 +1382,12 @@ tables have its row. A suite that draws every brick makes each one's parameters 
 **A body is loaded when a board first shows its brick.** The registry holds, for each brick, what the page needs at
 once to lay a board out and head a placement, and a body whose module is fetched the first time it is drawn. Until
 it arrives the placement, already in its rectangle and under its heading, says "Loading…"; from then on that brick
-draws at once. A module that cannot be fetched, as when loom was deployed while the page stayed open, says "This
-brick did not load. Reload the page to try again." in its own placement, and the rest of the board is drawn; the
-page then looks for a newer build and takes it as "A restart" says, once nothing typed would be lost. The
+draws at once. A body that fails, as when loom was deployed while the page stayed open and its module is gone, is drawn
+again by its own placement after 0.7 s and again after 2.5 s, saying only "Getting this brick again…"; a failed fetch
+is not kept, so each try asks for the module again. The rest of the board stays drawn. If it still fails the
+placement says "Sorry, this brick didn't load." with "Try again"; the page meanwhile looks for a newer build and
+takes it as "A restart" says, once nothing typed would be lost, and until then the placement says loom was updated
+and also offers "Reload now". The
 page's first script holds no brick and nothing only a brick needs. The bundle guard (`web/vite.boards.config.ts`)
 reads every chunk, the fetched ones too.
 
