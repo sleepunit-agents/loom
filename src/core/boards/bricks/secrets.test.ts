@@ -5,7 +5,7 @@ import { secretName as storeName } from '../../../pieces/secrets/input.js';
 import { catalogue } from '../bricks.js';
 import { live, Refused } from '../model.js';
 import { agent, empty, pins } from './bench.test.helper.js';
-import { household } from './house.test.helper.js';
+import { household } from '../house.fixture.js';
 import { secretName } from './kit.js';
 import definition from './secrets.js';
 

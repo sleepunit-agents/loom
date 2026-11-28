@@ -3,15 +3,15 @@
  * board holding one placement of the brick. `stored()` is every row of every table as one string, and `brief()` is
  * what the agent is handed at the start of its next job, so a suite can say what a report can never carry. */
 import Database from 'better-sqlite3';
-import { FakeClock } from '../../clock.js';
-import { createDataSchema } from '../../data/database.js';
-import { OperationResults } from '../../data/operation-results.js';
-import { DataWrites } from '../../data/writes.js';
-import { agents, members } from '../../data/schema.js';
-import { Operations } from '../../operations/index.js';
-import { CommsMessages } from '../../conversations/messages.js';
-import type { Viewer } from '../../../policy.js';
-import { registerBoardOperations } from '../operations.js';
+import { FakeClock } from '../clock.js';
+import { createDataSchema } from '../data/database.js';
+import { OperationResults } from '../data/operation-results.js';
+import { DataWrites } from '../data/writes.js';
+import { agents, members } from '../data/schema.js';
+import { Operations } from '../operations/index.js';
+import { CommsMessages } from '../conversations/messages.js';
+import type { Viewer } from '../../policy.js';
+import { registerBoardOperations } from './operations.js';
 
 export async function household(brick: string) {
   const client = new Database(':memory:');

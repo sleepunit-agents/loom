@@ -648,7 +648,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `subscriptions` | none: the account opened and what is searched for are picked inside the brick | `signIn {}`, by `runtime.accountSignIn`; `create {}`, by `runtime.accountCreate`. The label typed goes to the operation and never to the board | none |
 | `usage` | `days`: 1, 7 or 30, default 7. The conversation whose jobs are listed is picked inside the brick | none | none |
 | `bridges` | none | `release {}` and `dismiss {}`, each after `/api/bridges/command` (`bridges.command`) took the review, and each asked first. A reply's words never reach the board. A connection, a channel rule and a person link are changed by asking the agent | none |
-| `household` | none | `revokeToken {}`, by `token.revoke`, and `revokeSession {}`, by `sessions.revoke`, each asked first; `setGrants {}`, by `program.setGrants`. A member, an agent's appearance and accounts and a restore are changed by asking the agent; making a token and changing a portrait stay on the desktop | none |
+| `household` | none | `revokeToken {}`, by `token.revoke`, and `revokeSession {}`, by `sessions.revoke`, each asked first; `setGrants {}`, by `program.setGrants`; `token {label, kind}`, after the sign-in door (`signin.token`: `POST /api/signin/token`, or `/api/signin/program` for an outside program) made one, `label` the token's label in the shape of a reference and `kind` `member`, `agent`, `machine` or `program`; never its value. A member, an agent's appearance and accounts and a restore are changed by asking the agent; changing a portrait stays on the desktop | none |
 | `sharing` | none | none: a project's sharing is changed by asking the agent | none |
 | `tickets` | `state`: `ready`, `in-progress`, `shelved` or `all`, default `ready` (what the desktop's Tasks opens on). No record reference, and no parameter holds words to search for | none: a ticket is acted on in its `ticket` brick | none |
 | `projects` | none: the words searched for are typed inside the brick and are no parameter | none | none |
@@ -734,7 +734,10 @@ calls through modules both sides import.
   instance, "used setValue on secrets() on board B: outcome=added, secret=PUMP_TOKEN." A description, a value and
   anything else typed are refused by the detail's schema. A change that is refused or not confirmed tells the board
   nothing: the member reads "Change not confirmed" in the brick, as before, and a name the store would refuse is
-  not sent at all.
+  not sent at all. `src/core/boards/bricks/secrets.test.ts` holds each detail to its two fields and follows a report through
+  `boards.act` into the stored rows, `boards.read` and the agent's brief, where no value or description is found;
+  `web/src/boards/bricks-secrets.test.tsx` checks each outcome, that a refused or unconfirmed change reports
+  nothing, and that a typed value reaches no report, flag, data-hook call or drawn prop.
   **Not on the brick:** changing the household default or a secret's standing rule. No member operation does
   either, on the desktop too: Settings drafts a message asking an agent to propose the change and the owner
   answers the proposal. The brick shows both and says to ask the agent in the conversation.
@@ -742,7 +745,7 @@ calls through modules both sides import.
 | `subscriptions` | yes: the search box and "Needs attention", an account opened for its usage windows, weekly usage by agent, trigger or conversation, sign-ins with "Sign in on this machine" where loom allows it, and settings; each agent's models in order; "Add a subscription". Small: each service and account in one line with its windows. Folded: the count, how many are almost full and how many sign-ins are needed | another sign-in is needed (the count of sign-ins needing attention goes up) |
 | `usage` | yes: up to 60 conversations with reported tokens, jobs, retries and peak context, and one picked conversation's jobs, each opened for its measurements. Small: the first six. Folded: tokens, jobs and conversations in the period | never |
 | `bridges` | yes: every waiting reply with its words, thread and state, with Release (a held one) and Dismiss; for a household owner each connection with its state, activity, filters and the names of its stored secrets, the channel rules and the person links. Small: the first four waiting replies and the connections. Folded: the counts | another reply is held (the count of held replies goes up) |
-| `household` | yes: members with their roles and agents, agents with their owners, description and accounts, removed agents; every token and signed-in browser by label and state, never a value, with revoke and sign out; each outside program's grants, which can be changed. Small: members and agents. Folded: the counts. Anyone who is not a household owner is told it is unavailable | never |
+| `household` | yes: members with their roles and agents, agents with their owners, description and accounts, removed agents; every token and signed-in browser by label and state, never a value, with revoke and sign out; Make a token, for a member, an agent, a machine or an outside program, whose value is then shown once; each outside program's grants, which can be changed. Small: members and agents. Folded: the counts. Anyone who is not a household owner is told it is unavailable | never |
 | `sharing` | yes: up to 60 projects, each with its goal, its members and agents as chips and its repositories as `repository` chips. Small: the first six with who is on them. Folded: the counts. Anyone who is not a household owner is told it is unavailable | never |
 | `tickets` | yes: thirty tickets at a time, each a chip that places its `ticket` brick, with its id, title, project, state and who has it; "Show 30 more", up to 300; chips for the other three states; the search box. Small: as many of the first thirty as fit, and how many more. Folded: the count | never |
 
@@ -1728,15 +1731,37 @@ answer a household owner and say "unavailable" to anyone else; `bridges` shows a
 bridges only the replies loom sends them; `machines` shows a member their own machines and an owner every one,
 and offers the alert lines' form to a household owner alone; `subscriptions` shows an account the member may not
 read in full as a label and a level. Each has `src/core/boards/bricks/<name>.test.ts` (its pins, what its
-parameters refuse, that no detail takes an id or a word) and `web/src/boards/bricks-<name>.test.tsx` (every form
+parameters refuse, that no detail takes an id or a word, apart from the household's `token` below) and `web/src/boards/bricks-<name>.test.tsx` (every form
 from fake data, the compact form one line with no control, the loading and unavailable lines, the heading, and
 every action: the request loom receives, that it is asked first where it cannot be undone, and that `act` is told
-nothing typed and no id). `admin-queries.test.ts` runs the two selections `machines` wrote for itself against the
-fields loom serves. Not on a board: enrolling or revoking a machine, making a token (its value is shown once) and
-changing an agent's portrait (two chosen files), which stay on the desktop; and whatever the desktop itself does by
+nothing typed and no id, apart from a new token's label). `admin-queries.test.ts` runs the two selections `machines` wrote for itself against the
+fields loom serves. Not on a board: enrolling or revoking a machine and changing an agent's portrait (two chosen
+files), which stay on the desktop; and whatever the desktop itself does by
 a message to the agent, which a brick says in one line. There is no `held-work` brick: the desktop's Held work view
 reads `core.effect` records over a `/live` socket and calls `core.releaseEffect`, and this server serves none of
 the three, so there is nothing to draw or release.
+
+**A token made from the board, 2026-11-27** (the owner's ruling for the secrets brick, in the same shape: the
+brick does the work through loom's existing door and the agent is told what now exists, never the secret). The
+household brick's Make a token is Household setup's Create token: the same door, `POST /api/signin/token` for a
+member's (`owner`), an agent's or a machine's (`runner`) token and `POST /api/signin/program` for an outside
+program's, with the same body, and the same reading of the answer
+(`src/core/signin/shared-links.ts`, `issueForOwner`). The door's rule is the permission: a current household owner,
+whose browser signed in within the last ten minutes and is not an automated one (`newProof`), on a same-origin
+request; there is no new server operation. A refusal says Household setup's words ("Sign in again to make a
+token…" or "Token creation refused…"), a reply that is not a token says it may have been made and to check its
+label, and neither tells the board anything. Once made, the board is told `token {label, kind}`. The label is told,
+so the brick takes one only in the shape of a reference (one word of up to 120 letters, digits and `: . _ / @ -`,
+starting with a letter or digit), narrower than the desktop's, and says so; the desktop still takes any one line.
+**The value** is held in one component's state inside the big form and drawn once, under "Save this token now", with
+Copy (the clipboard) and Hide. It is forgotten when the member hides it, when the body is drawn anew (the brick is
+placed again or the board redrawn), when the brick leaves its big form, when the household setup stops answering
+for the member, and when the page reloads; a fresh answer of the same setup keeps it, so the member can still copy
+it after the token list grows by one. It never reaches `act`, a flag, the data hook (so no remembered answer), a
+log, the address or the browser's storage. `src/core/boards/bricks/household.test.ts` (over `src/core/boards/house.fixture.ts`, a real household) holds the detail to those two
+fields and follows a report through `boards.act` into the stored rows, `boards.read` and the agent's brief;
+`web/src/boards/bricks-household-token.test.tsx` checks the requests per kind, shown once, Copy, each way it is
+forgotten, the refusals and a label the board could not be told.
 
 A session's steps have their own suites, outside the numbered checks: `src/shared-session-trace.test.ts` (kept,
 sealed, read by the thread's member alone and not by a full owner, absent from the thread, the relay unchanged; a

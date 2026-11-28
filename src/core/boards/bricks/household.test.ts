@@ -3,7 +3,7 @@ import { expect, it } from 'vitest';
 import { catalogue } from '../bricks.js';
 import { actRow, Refused } from '../model.js';
 import { agent, empty, pins } from './bench.test.helper.js';
-import { household } from './house.test.helper.js';
+import { household } from '../house.fixture.js';
 import definition, { tokenKinds } from './household.js';
 
 it('household: whether it can be big, what it flags itself for, how it is named, and each action with its operation', () => {

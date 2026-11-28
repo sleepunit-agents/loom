@@ -14,8 +14,9 @@ export interface Scene {
   /** The placement's flag words, when the scene is a flagged one. */
   flag?: string;
   /** Buttons to press once the brick is drawn, by their words, in order: how a scene shows a form that opens on a
-   * press (an edit form, the question a brick asks before it acts). */
-  press?: string[];
+   * press (an edit form, the question a brick asks before it acts). A `{ field, text }` step types `text` into the
+   * field of that label instead, for a scene that a press alone cannot reach (a form that needs words). */
+  press?: (string | { field: string; text: string })[];
   /** The conversation the page is open on, for a brick that treats it apart (the `threads` brick: no Delete on it). */
   here?: string;
   /** Draw only these forms (default: all). */
