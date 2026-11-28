@@ -89,7 +89,9 @@ function browser(now: { permission?: string; answer?: string; subscribed?: boole
   const subscribe = vi.fn(async () => (state.held = sub)), registration = { pushManager: { subscribe, getSubscription: async () => state.held } };
   const requestPermission = vi.fn(async () => (state.permission = now.answer ?? 'granted')), register = vi.fn(async () => registration);
   vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Macintosh) Chrome/130.0 Safari/537.36', serviceWorker: { ready: Promise.resolve(registration), register, getRegistration: async () => registration } });
-  vi.stubGlobal('window', now.push === false ? { Notification: class {} } : { PushManager: class {}, Notification: class {} });
+  // The window also carries the listeners the composer's draft keeps (../pieces/comms/drafts.ts).
+  const listen = { addEventListener() {}, removeEventListener() {} };
+  vi.stubGlobal('window', now.push === false ? { ...listen, Notification: class {} } : { ...listen, PushManager: class {}, Notification: class {} });
   vi.stubGlobal('Notification', { get permission() { return state.permission; }, requestPermission });
   const kept = new Map<string, unknown>(), opened: string[] = [];
   vi.stubGlobal('caches', { open: async (name: string) => { opened.push(name); return { match: async (key: string) => kept.get(key), put: async (key: string, value: unknown) => { kept.set(key, value); }, delete: async (key: string) => kept.delete(key) }; } });
