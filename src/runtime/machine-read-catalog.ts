@@ -79,7 +79,7 @@ type Executor = (file: string, argv: string[], options: ExecFileOptionsWithStrin
 const executeUnprivileged: Executor = (file, argv, options) =>
   promisify(execFile)('/usr/bin/setpriv', ['--no-new-privs', '--inh-caps=-all', '--ambient-caps=-all', '--', file, ...argv], options);
 
-function unprivilegedWorker() {
+export function unprivilegedWorker() {
   if (process.platform !== 'linux' || !process.getuid?.() || !process.geteuid?.()) return false;
   try {
     const status = readFileSync('/proc/self/status','utf8');
