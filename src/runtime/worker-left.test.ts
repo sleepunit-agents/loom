@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -19,8 +19,12 @@ function body(script: string, scratch: string) {
   const child = spawn('/bin/sh', ['-c', script], { detached: true, stdio: ['ignore', 'pipe', 'ignore'], env: { PATH: process.env.PATH ?? '/usr/bin:/bin', LOOM_BODY_SCRATCH: scratch } });
   children.push(child); return child;
 }
-const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
-/** A killed orphan is collected by whichever process adopted it; that takes a moment. */
+/** Whether a process is still running. A zombie is not: it has ended, and is only waiting to be collected. */
+const alive = (pid: number) => { try { process.kill(pid, 0); } catch { return false; } return !zombie(pid); };
+/** Whether the process has ended and is waiting to be collected: state Z in /proc/<pid>/stat, after the command's parentheses. */
+const zombie = (pid: number) => { try { return readFileSync(`/proc/${pid}/stat`, 'utf8').replace(/^.*\) /s, '').startsWith('Z'); } catch { return false; } };
+/** A killed orphan is collected by whichever process adopted it; that takes a moment. Where the adopter never collects
+ *  it (a container whose first process is not an init, as a build house's is), it stays a zombie: ended all the same. */
 async function dead(pid: number) { for (let n = 0; n < 100 && alive(pid); n++) await delay(50); return !alive(pid); }
 const firstLine = async (child: ChildProcess) => String((await once(child.stdout!, 'data'))[0]).trim();
 
