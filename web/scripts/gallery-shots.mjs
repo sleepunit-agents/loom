@@ -2,7 +2,9 @@
 // Photographs the bricks' gallery (src/boards/gallery; build it first with `npm --prefix web run gallery:build`).
 //
 //   node web/scripts/gallery-shots.mjs <out dir> [--dist <built gallery>] [--scale 2] [--scheme dark,light]
-//                                      [--brick ticket,lanes] [--only bricks|figures|sheets]
+//                                      [--brick ticket,lanes] [--only bricks|figures|sheets] [--tall yes]
+//
+// With `--tall yes` a primary form is as tall as what it holds (the whole of a long brick, nothing scrolled away).
 //
 // Into <out dir>, for each colour scheme:
 //   <scheme>/<brick>.png                      every scene and form of one brick, side by side
@@ -19,6 +21,7 @@ const flag = (name, otherwise) => { const at = args.indexOf('--' + name); return
 const here = path.dirname(new URL(import.meta.url).pathname);
 const dist = path.resolve(flag('dist', process.env.GALLERY_OUT || path.join(here, '../../dist/gallery')));
 const scale = Number(flag('scale', '2')), schemes = flag('scheme', 'dark,light').split(','), only = flag('only', '');
+const tall = flag('tall', '') ? '&tall' : '';
 const wanted = flag('brick', '').split(',').filter(Boolean);
 const out = path.resolve(args[0] || '');
 if (!args[0]) { console.error('usage: gallery-shots.mjs <out dir> [--dist dir] [--scale n] [--scheme dark,light] [--brick a,b] [--only bricks|figures|sheets]'); process.exit(2); }
@@ -48,7 +51,7 @@ try {
     const open = async (search) => { await page.goto(`${base}?scheme=${scheme}${search}`, { waitUntil: 'networkidle' }); await page.evaluate(() => document.fonts.ready); await page.waitForTimeout(700); };
     if (only !== 'sheets') {
       for (const brick of wanted.length ? wanted : ['']) {
-        await open(brick ? '&brick=' + brick : '');
+        await open((brick ? '&brick=' + brick : '') + tall);
         if (only !== 'figures') for (const section of await page.locator('.gallery-brick').all()) {
           const name = (await section.locator('figure').first().getAttribute('data-shot'))?.split('.')[0];
           if (name) { await section.screenshot({ path: path.join(out, scheme, name + '.png') }); count++; }

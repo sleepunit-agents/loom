@@ -14,3 +14,4 @@ html, body { margin: 0; }
 .gallery-sheet figure { display: block; break-inside: avoid; margin-bottom: 1.5rem; }
 .gallery-sheet[data-sheet='primary'] { column-width: 700px; }
 .gallery-sheet[data-sheet='phone'] { column-width: 362px; }
+.gallery .gallery-talk { position: relative; height: auto; border: 1px solid var(--surface-edge); background: color-mix(in srgb, var(--card) 55%, transparent); }

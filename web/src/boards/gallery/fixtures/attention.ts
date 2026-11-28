@@ -178,9 +178,9 @@ const one = (a: Card, access: object = owner, change: object[] = []) => ({
 const openChange = [{ id: 'github:hollow/pond-watch#48', state: 'open', agent: 'art', project: 'pond', headCommit: head }];
 
 // ── Conversations ───────────────────────────────────────────────────────────────────────────────────────────────
-const thread = (id: string, title: string, agent: string, lastAt: string, over: object = {}) => ({ id, conversation: 'cv-' + id.slice(3), venue: 'comms', title, agent, project: null,
+export const thread = (id: string, title: string, agent: string, lastAt: string, over: object = {}) => ({ id, conversation: 'cv-' + id.slice(3), venue: 'comms', title, agent, project: null,
   member: 'alex', pinned: false, archivedAt: null, lastAt, readSeq: 0, working: false, stopRequested: false, unread: false, ...over });
-const open = [
+export const open = [
   thread('th:board-alex-art', 'Boards', 'art', ago(4), { pinned: true, working: true }),
   thread('th:pond-liner', 'The pond liner: patch it again or replace it before winter', 'moss', ago(22), { project: 'pond', unread: true }),
   thread('th:beds', 'Watering the raised beds', 'fern', ago(75), { project: 'garden', working: true, unread: true }),
@@ -200,7 +200,7 @@ const archived = [
   thread('th:old-plan', 'Planting plan for last spring', 'fern', ago(90000), { archivedAt: ago(80000), project: 'garden' }),
 ];
 const home = { member: 'alex', agents: ['art', 'fern', 'moss'] };
-const threadsData = (rows: object[]) => ({ BoardsThreads: { homeComms: home, commsThreads: rows }, DeskAgentDirectory: directory });
+export const threadsData = (rows: object[]) => ({ BoardsThreads: { homeComms: home, commsThreads: rows }, DeskAgentDirectory: directory });
 
 export const scenes: BrickScenes[] = [
   { brick: 'inbox', scenes: [
