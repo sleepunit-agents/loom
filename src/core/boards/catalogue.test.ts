@@ -5,7 +5,8 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { bricks, catalogue, recordKinds } from './bricks.js';
-import { idShapes } from './bricks/kit.js';
+import { z } from 'zod';
+import { ref, secretName, ticket } from './bricks/kit.js';
 import { bricks as drawn } from '../../../web/src/boards/bricks';
 
 const names = bricks.map((b) => b.name);
@@ -24,13 +25,13 @@ const sharedPageSuite: Record<string, string> = {
 };
 /** Operations whose name is put together where they are registered, so it is not written as
  * `name: '…'`: the file that registers each, and the part of the name that is written there. */
-const composedOperations: Record<string, [file: string, written: string]> = {
+const composedOperations: Record<string, [file: string, ...written: string[]]> = {
   'mind.knowledgeVerify': ['src/pieces/mind/actions.ts', "['knowledgeVerify',"],
   'mind.knowledgeRecheck': ['src/pieces/mind/actions.ts', "['knowledgeRecheck',"],
   'mind.knowledgeAnnotate': ['src/pieces/mind/actions.ts', "['mind.knowledgeAnnotate',"],
-  // Not an operation: the sign-in door's HTTP route that makes a token and hands its bearer back once (a member's,
+  // Not an operation: the sign-in door's two HTTP routes that make a token and hand its bearer back once (a member's,
   // an agent's or a machine's at /api/signin/token, an outside program's at /api/signin/program), for a household owner.
-  'signin.token': ['src/core/signin/shared-links.ts', "routes.post('/api/signin/token',c=>issueForOwner("],
+  'signin.token': ['src/core/signin/shared-links.ts', "routes.post('/api/signin/token',c=>issueForOwner(", "routes.post('/api/signin/program',c=>issueForOwner("],
   'tempo.runNow': ['src/core/tempo/operations.ts', "for (const action of ['stop', 'start', 'runNow'] as const) operations.register(operation({ ...common,\n    name: `tempo.${action}`"],
   'tempo.stop': ['src/core/tempo/operations.ts', "for (const action of ['stop', 'start', 'runNow'] as const) operations.register(operation({ ...common,\n    name: `tempo.${action}`"],
   'tempo.start': ['src/core/tempo/operations.ts', "for (const action of ['stop', 'start', 'runNow'] as const) operations.register(operation({ ...common,\n    name: `tempo.${action}`"],
@@ -65,6 +66,27 @@ describe('the catalogue and the registry are the same bricks', () => {
   });
 });
 
+/** Where an action's detail may hold an id beside a fixed choice, by brick and action, and which of the kit's shapes
+ * (./bricks/kit.ts) each property takes. Nothing else may: an id is a typed name the board and the agent's brief are
+ * told, so each one is a decision, made here. */
+const detailIds: Record<string, Record<string, z.ZodString>> = {
+  'household.token': { label: ref }, // a token's label (the owner's ruling, 2026-11-27)
+  'secrets.setValue': { secret: secretName }, // a secret's name (the owner's ruling, 2026-11-27)
+  'secrets.remove': { secret: secretName },
+};
+type Detail = { additionalProperties?: boolean; properties?: Record<string, { enum?: unknown[]; pattern?: string }> };
+const pattern = (shape: z.ZodType) => (z.toJSONSchema(shape) as { pattern?: string }).pattern;
+/** What is wrong with one action's detail, as the catalogue publishes it. */
+function detailProblems(brick: string, action: string, detail: unknown): string[] {
+  const { additionalProperties, properties = {} } = detail as Detail, ids = detailIds[`${brick}.${action}`] ?? {};
+  const problems = additionalProperties === false ? [] : ['takes properties it does not name'];
+  for (const [name, property] of Object.entries(properties)) {
+    if (Array.isArray(property.enum)) continue;
+    if (!ids[name] || property.pattern === undefined || property.pattern !== pattern(ids[name])) problems.push(`${name}: ${JSON.stringify(property)} is no fixed list and no id declared for it`);
+  }
+  return problems;
+}
+
 describe('every definition (check 20)', () => {
   it('has a schema in which every parameter that is not a reference has a default, and names only known kinds of record', () => {
     for (const b of bricks) {
@@ -81,18 +103,26 @@ describe('every definition (check 20)', () => {
       expect(b.shows.length, b.name).toBeGreaterThan(0);
     }
   });
-  it('lets no action\'s detail hold a sentence: every property of every detail is a fixed list or one of the kit\'s id shapes, and nothing else is taken', () => {
-    for (const brick of catalogue()) for (const [action, detail] of Object.entries(brick.actions) as [string, { additionalProperties?: boolean; properties?: Record<string, { enum?: unknown[]; pattern?: string }> }][]) {
-      expect(detail.additionalProperties, `${brick.name}.${action}`).toBe(false);
-      for (const property of Object.values(detail.properties ?? {})) {
-        if (property.enum) expect(property.enum, `${brick.name}.${action}`).toBeInstanceOf(Array);
-        else expect(idShapes, `${brick.name}.${action}: ${JSON.stringify(property)}`).toContain(property.pattern);
-      }
+  it('lets no action\'s detail hold a sentence: every property of every detail is a fixed list or the id shape declared for it, and nothing else is taken', () => {
+    for (const brick of catalogue()) for (const [action, detail] of Object.entries(brick.actions)) expect(detailProblems(brick.name, action, detail), `${brick.name}.${action}`).toEqual([]);
+    // Every declaration is in use: one a brick no longer needs is removed here.
+    for (const [key, ids] of Object.entries(detailIds)) {
+      const [name, action] = key.split('.'), detail = catalogue().find((b) => b.name === name)?.actions[action] as Detail | undefined;
+      expect(Object.keys(detail?.properties ?? {}), 'a stale entry: ' + key).toEqual(expect.arrayContaining(Object.keys(ids)));
     }
   });
-  it('holds every id shape a detail may take to no blank space, so an id-shaped detail cannot carry a sentence', () => {
-    for (const shape of idShapes) expect(shape, shape).not.toMatch(/ |\\s/);
-    for (const shape of idShapes) expect(new RegExp(shape).test('two words'), shape).toBe(false);
+  it('refuses an id shape no action declared, even one the kit has, and holds every declared shape to no blank space', () => {
+    const typed = (property: z.ZodType) => z.toJSONSchema(z.object({ secret: property, outcome: z.enum(['added']) }).strict());
+    expect(detailProblems('secrets', 'setValue', typed(secretName))).toEqual([]);
+    // The kit's ticket shape is a fine id, but no action declared it: refused.
+    expect(detailProblems('secrets', 'setValue', typed(ticket))).toHaveLength(1);
+    expect(detailProblems('secrets', 'setValue', typed(ref))).toHaveLength(1);
+    expect(detailProblems('secrets', 'allow', typed(secretName))).toHaveLength(1);
+    expect(detailProblems('secrets', 'setValue', typed(z.string()))).toHaveLength(1);
+    for (const ids of Object.values(detailIds)) for (const shape of Object.values(ids)) {
+      expect(pattern(shape), pattern(shape)).not.toMatch(/ |\\s/);
+      expect(shape.safeParse('two words').success, pattern(shape)).toBe(false);
+    }
   });
   it('reports each action for an operation loom registers', () => {
     const sources = (function read(directory: string): string[] {
@@ -104,7 +134,7 @@ describe('every definition (check 20)', () => {
     })('src');
     const registered = (operation: string) => {
       const composed = composedOperations[operation];
-      if (composed) return readFileSync(composed[0], 'utf8').includes(composed[1]);
+      if (composed) { const [file, ...written] = composed, text = readFileSync(file, 'utf8'); return written.every((part) => text.includes(part)); }
       return sources.some((text) => text.includes(`name: '${operation}'`) || text.includes(`name:'${operation}'`));
     };
     const operations = new Set(bricks.flatMap((b) => Object.values(b.actions).map((a) => a.operation)));
