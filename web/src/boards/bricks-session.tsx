@@ -59,7 +59,7 @@ export function Session({ params, form, act, raise }: BodyProps) {
           {tools.length > 0 && <Fact label="Tools"><span className="board-tool-counts">{tools.slice(0, 12).map((t) => <span key={t.name}>{t.name} ×{t.count}</span>)}</span></Fact>}
         </Facts>
       )}
-      {big && handoff && <Section title="Steps"><SessionTrace conversation={conversation} job={job.id} running={running(job.state)} /></Section>}
+      {big && handoff && <Section title="Steps"><SessionTrace key={job.id} conversation={conversation} job={job.id} running={running(job.state)} /></Section>}
       {!big && handoff && <SessionLatestStep conversation={conversation} job={job.id} />}
       {running(job.state) && <div className="board-actions"><Confirm ask="Stop…" yes="Stop this session" no="Keep it running" busy={busy} act={stop} /></div>}
       <Problem>{error}</Problem>
