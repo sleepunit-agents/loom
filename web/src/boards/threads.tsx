@@ -10,7 +10,8 @@ import { threadFields } from '../pieces/comms/thread-fields';
 import { threadRows, type CommsThread } from '../pieces/comms-view/model';
 import { SHORTCUTS, keysOf, onMac, shortcutEngine } from '../shell/shortcuts';
 import { threadPath, useAgentNames, useThreads, type ThreadsReading } from './agents-data';
-import { Action, Asking } from './brick-kit';
+import { bridgeReceiptQuery, type BridgeReceiptData } from '../pieces/comms/conversation-query';
+import { Action, Asking, Time } from './brick-kit';
 
 /** Comms' own search of the member's threads in one folder (`commsThreads(search:)`, as the desktop's Comms asks
  * it), with `unread`. It is asked once each time a search is submitted, by one request (`useDataOnce`), never as a
@@ -200,5 +201,60 @@ export function ThreadHead({ thread, member, visit }: { thread: string; member: 
       )}
       {error && <p role="alert" className="text-destructive">Could not save. Try again.</p>}
     </div>
+  );
+}
+
+/** The boards chat's Stop for the whole conversation: Comms' own thread stop (`comms.change {stop}`, as the desktop's
+ * Comms header sends it), not one job's (`runtime.jobStop`, which the session and agent bricks send). Loom marks the
+ * thread; the job working in it notices, stops its work, and ends as stopped by this member; a job that finishes
+ * first keeps its work and the mark is dropped. It is drawn only while the agent is working in this conversation,
+ * for the member whose conversation it is, and never in a terminal's; it asks first, naming the conversation, and
+ * sends nothing on Keep it. It reads nothing of its own: the open thread's selection (`threadHeadQuery`) is the
+ * header's and the panel's, which says whether the agent is working and whether a Stop is already asked. */
+export function ThreadStop({ thread, member, name }: { thread: string; member: string; /** The agent's name, as the presence says it. */ name: string }) {
+  const read = useDataQuery<{ thread: CommsThread | null }>(threadHeadQuery, { id: thread }, { keep: true });
+  const [asking, setAsking] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const t = read.status === 'live' && read.data?.thread?.id === thread ? read.data.thread : null;
+  if (!t || t.member !== member || t.venue === 'terminal' || !t.working) return null;
+  if (t.stopRequested) return <div className="boards-stop"><Action disabled>Stopping…</Action></div>;
+  const stop = async () => {
+    if (busy) return;
+    setBusy(true); setError('');
+    try { await memberOperation('comms.change', { thread, change: 'stop' }); setAsking(false); }
+    catch (e) { const status = (e as { status?: unknown } | null)?.status; setError(status === 401 || status === 403 ? 'You can’t stop this conversation.' : 'That did not stop it. Try again.'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="boards-stop">
+      {asking
+        ? <Asking label={`Stop conversation ${t.title}`} yes="Stop the conversation" no="Keep it going" busy={busy} onYes={() => void stop()} onNo={() => { setAsking(false); setError(''); }}>{stopQuestion(t.title, name)}</Asking>
+        : <Action label={`Stop ${name} in ${t.title}…`} onClick={() => { setError(''); setAsking(true); }}>Stop…</Action>}
+      {error && <p role="alert" className="text-destructive">{error}</p>}
+    </div>
+  );
+}
+/** The question before a thread stop, naming the conversation and its agent. */
+export const stopQuestion = (title: string, name: string) => `Stop ${name} in “${title}”? What it is doing in this conversation ends now; what it already did stays.`;
+
+/** Which bridge a conversation came in by, in plain words: only Discord and Slack have a receipt. */
+const bridges: Record<string, string> = { discord: 'Discord', slack: 'Slack' };
+/** The bridge receipt, as the desktop's conversation activity draws it (pieces/comms/conversation.tsx): for a
+ * conversation that came in by Discord or Slack, when the member's latest message there arrived, whether the agent
+ * took it up, and whether a reply went back. Read only for such a conversation (`latestBridgeReceipt`, the
+ * desktop's own read, which answers only the member's own messages), at a brick's relaxed pace: it is a receipt,
+ * not the conversation, and a few seconds late is soon enough. Nothing of the bridge itself is shown or linked. */
+export function BridgeReceipt({ thread, agentName }: { thread: string; agentName(id: string): string }) {
+  const head = useDataQuery<{ thread: CommsThread | null }>(threadHeadQuery, { id: thread }, { keep: true });
+  const t = head.status === 'live' && head.data?.thread?.id === thread ? head.data.thread : null;
+  const by = t?.venue ? bridges[t.venue] : undefined;
+  const read = useDataQuery<BridgeReceiptData>(bridgeReceiptQuery, { id: t?.conversation ?? '' }, { pause: !by || !t?.conversation, pace: 'relaxed' });
+  const receipt = by && read.status === 'live' ? read.data?.latestBridgeReceipt : null;
+  if (!by || !receipt) return null;
+  return (
+    <p className="boards-receipt board-note" data-bridge={t!.venue}>
+      Your message by {by} <Time at={receipt.receivedAt} />
+      {' · '}{receipt.acceptedAt ? <>{agentName(receipt.agent)} took it up <Time at={receipt.acceptedAt} /></> : `${agentName(receipt.agent)} has not taken it up yet`}
+      {' · '}{receipt.replied ? 'Reply sent' : 'No reply sent yet'}
+    </p>
   );
 }

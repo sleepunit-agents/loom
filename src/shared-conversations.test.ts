@@ -76,6 +76,23 @@ it('mounts actual shared private reads and cookie writes with metadata-only rece
   expect((await f.query(query)).body.data?.homeComms).toEqual({ member: 'alice', agents: [] });
   expect(f.errors).toEqual([]);
 });
+// The boards chat's Stop for the whole conversation (docs/specs/boards.md, "The page") is Comms' own thread stop,
+// `comms.change {stop}`: the thread's member may ask it, and nobody else, not another member who has the same agent,
+// not the household owner, and not a request with no signed-in account.
+it('refuses a thread stop to anyone but the thread\'s own member, and leaves the thread working', async () => {
+  const f = await fixture();
+  expect((await f.post('comms.open', { thread: 'th:pump', agent: 'art', title: 'Pump' }, 'open')).status).toBe(200);
+  f.root.writes.run(() => f.db.insert(memberAgents).values({ member: 'bob', agent: 'art' }).run());
+  f.root.writes.run(() => f.db.update(threads).set({ working: true }).where(eq(threads.id, 'th:pump')).run());
+  expect((await f.post('comms.change', { thread: 'th:pump', change: 'stop' }, 'bob-stop', 'bob')).status).toBe(403);
+  expect((await f.post('comms.change', { thread: 'th:pump', change: 'stop' }, 'owner-stop', 'owner')).status).toBe(403);
+  const unsigned = await f.root.http.request('/api/comms/change', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ input: { thread: 'th:pump', change: 'stop' }, id: 'nobody-stop' }) });
+  expect([401, 403]).toContain(unsigned.status);
+  expect(f.db.select().from(threads).where(eq(threads.id, 'th:pump')).get()).toMatchObject({ working: true, stopRequested: false });
+  for (const id of ['bob-stop', 'owner-stop', 'nobody-stop']) expect(f.db.select().from(operationResults).where(eq(operationResults.id, id)).all()).toEqual([]);
+  expect((await f.post('comms.change', { thread: 'th:pump', change: 'stop' }, 'alice-stop')).status).toBe(200);
+  expect(f.db.select().from(threads).where(eq(threads.id, 'th:pump')).get()).toMatchObject({ working: true, stopRequested: true });
+});
 it('answers the same private Inbox item through real HTTP and denies other people or stale sessions', async () => {
   const f = await fixture(), comms = f.root.services.comms!;
   const thread = comms.threads.open({ member:'alice',agent:'art',title:'Pump' });
