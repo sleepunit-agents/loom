@@ -93,6 +93,7 @@ export const bricks: Record<string, BrickView> = {
   sharing: { fits: fit([440, 680, 820, 460], 300), title: () => 'Sharing', sub: () => '', ...later(() => import('./bricks-sharing').then((m) => m.Sharing)) },
   tickets: { fits: fit([460, 720, 860, 520], 300), title: () => 'Tickets', sub: (p) => words(p.state).replace('-', ' '), ...later(() => import('./bricks-tickets').then((m) => m.Tickets)) },
   projects: { fits: fit([440, 680, 820, 460], 300), title: () => 'Projects', sub: () => '', ...later(() => import('./bricks-projects').then((m) => m.Projects)) },
+  catchup: { fits: fit([460, 720, 860, 480], 300), title: () => 'Catch-up', sub: (p) => words(p.since).replace('-', ' '), ...later(() => import('./bricks-catchup').then((m) => m.Catchup)) },
 };
 export const brickView = (name: string): BrickView => (Object.hasOwn(bricks, name) ? bricks[name] : unknown(name));
 /** Fetches every brick's body. The suites call it before they draw, so a body draws at once as it does on a page
