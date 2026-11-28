@@ -1317,6 +1317,15 @@ What is left is the eager ten: about 200 statements a commit, half of what all 2
 every commit as before. They are the conversation and the page's own reads, and making them cheaper is item 1
 above (wake a selection only for what it reads), not a pace.
 
+**Checking item 1 before it acts (t-2431).** `LOOM_LIVE_SCOPE=shadow` (`src/core/data/live-scope.ts`) tracks which
+tables each live reading read and each commit wrote, still reads every selection, and checks each answer against
+what scoping would have done. `npm run test:shadow` runs the whole server suite that way. Passing means no test
+produced a reading scoping would have skipped whose answer changed (a violation throws under vitest, and
+`src/test-setup.ts` fails a test that leaves one behind), and that every test still passes with the tracker's own
+statements running beside it. A test that counts a connection's statements leaves those out with
+`trackerStatement` (`src/core/data/table-tracker.ts`). It passes only as far as `npm test` does: a test failing in
+both is not a shadow failure.
+
 ## What goes
 
 Gone from the branch, 2026-11-27: the contexts prototype (`web/src/contexts/` but for Art's portrait), the ticket

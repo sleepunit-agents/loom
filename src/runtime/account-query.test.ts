@@ -16,6 +16,7 @@ import { household, accountCalendarReadings, accountWeekReadings, conversations,
 import { nextData } from '../next-data.js';
 import { modelAccountQueries } from './account-query.js';
 import { readModelAccounts } from '../core/data/model-account-read.js';
+import { trackerStatement } from '../core/data/table-tracker.js';
 import type { Viewer } from '../policy.js';
 import { GraphQLNonNull, GraphQLList, GraphQLUnionType } from 'graphql/index.js';
 const clean: (() => void | Promise<void>)[] = [];
@@ -26,7 +27,8 @@ const selection = `modelAccounts { ... on RuntimeAccount { label level }
   ... on RuntimeAccountDetail { id owner provider usage usageReadAt resetsAt hasRoom signedInOn { id name } windows { window usage resetsAt } } }`;
 function fixture(fields?: Parameters<typeof nextData>[4]) {
   const statements: string[] = [];
-  const client = new Database(':memory:', { verbose: value => statements.push(String(value)) }); clean.push(() => { if (client.open) client.close(); });
+  // The live-scope tracker's own reads (LOOM_LIVE_SCOPE=shadow) are not the statements these counts are about.
+  const client = new Database(':memory:', { verbose: value => { if (!trackerStatement(String(value))) statements.push(String(value)); } }); clean.push(() => { if (client.open) client.close(); });
   const clock = new FakeClock(), now = () => new Date(clock.now()).toISOString(), db = createDataSchema(client, now);
   for (const id of ['alice', 'bob', 'guest', 'house']) db.insert(members).values({ id, role: id === 'house' ? 'owner' : 'member', joinedAt: now() }).run();
   db.insert(agents).values({ id: 'agent', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();

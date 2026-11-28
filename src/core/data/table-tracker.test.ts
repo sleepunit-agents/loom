@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
-import { installTableTracker, recordReads, tableTracker, type WrittenTables } from './table-tracker.js';
+import { installTableTracker, recordReads, tableTracker, trackerStatement, type WrittenTables } from './table-tracker.js';
 import { DataWrites } from './writes.js';
 import { createDataSchema, dataDatabase } from './database.js';
 
@@ -35,6 +35,26 @@ it('installs once per connection and runs no statement doing so', () => {
   expect(installTableTracker(client)).toBe(tracker);
   expect(tableTracker(client)).toBe(tracker);
   expect(statements).toEqual([]);
+});
+
+it('names every statement it runs itself, and only those, for tests that count a connection\'s statements', () => {
+  const statements: string[] = [];
+  const client = new Database(':memory:', { verbose: sql => statements.push(String(sql)) }); clean.push(() => client.close());
+  client.exec('CREATE TABLE things (a, b)');
+  installTableTracker(client);
+  const reads = ["SELECT a FROM things WHERE b = 'x'", 'SELECT lower(a) FROM things', 'WITH n AS (SELECT 1) SELECT * FROM n'];
+  client.prepare('INSERT INTO things VALUES (1, 2)').run();
+  for (const sql of reads) client.prepare(sql).all();
+  client.prepare('EXPLAIN QUERY PLAN SELECT a FROM things').all();
+  const own = statements.filter(trackerStatement), rest = statements.filter(sql => !trackerStatement(sql));
+  // What is left is exactly what this test ran, in order.
+  expect(rest).toEqual(['CREATE TABLE things (a, b)', 'INSERT INTO things VALUES (1, 2)', ...reads, 'EXPLAIN QUERY PLAN SELECT a FROM things']);
+  expect(own).toContain('PRAGMA schema_version');
+  expect(own.some(sql => sql.startsWith('EXPLAIN SELECT a FROM things'))).toBe(true);
+  expect(own.some(sql => sql.startsWith('EXPLAIN INSERT INTO things'))).toBe(true);
+  expect(own.some(sql => /pragma_function_list/.test(sql))).toBe(true);
+  expect(trackerStatement('EXPLAIN QUERY PLAN SELECT 1')).toBe(false);
+  expect(trackerStatement('SELECT type, name FROM sqlite_schema')).toBe(false);
 });
 
 it('reads a view as the tables under it, including through an index', () => {

@@ -12,6 +12,7 @@ import { InboxQueries } from './core/conversations/inbox-query.js';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
+import { trackerStatement } from './core/data/table-tracker.js';
 import { agentKitProjects, agentKitOutsidePeople, projectOutsidePeople, jobs, agents, agentKits, agentKitMembers, agentAccounts, agentBoxes, agentHouseSecrets, conversations, bridgeConnections, bridgeChannels, bridgePeople, household, measuringSettings, secretRuleAgents, secretRules, secrets, agentPeople, agentDeniedTools, agentRunSettings, approvals, approvalRecord, boxAgents, boxes, memberAgents, members, sessions, tokens, projects, projectMembers, projectAgents, projectRepositories, tasks, inbox } from './core/data/schema.js';
 import { OperationError } from './core/operations/index.js';
 import { applyKitChange, kitBefore } from './shared-kit-cards.js';
@@ -23,7 +24,8 @@ const credentials = { sam: 'a'.repeat(64), lee: 'b'.repeat(64), art: 'c'.repeat(
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const visual = { about: 'Fixture agent', markBg: '#000000', markFg: '#ffffff', faceShape: 'pebble' as const, faceEyes: 'dot' as const };
 function fixture(memory?: SharedMemoryOptions, verbose?: (statement:string)=>void, commsKey?:Parameters<typeof sharedRoot>[0]['commsKey']) {
-  const client = new Database(':memory:',{verbose}); clean.push(() => { client.close(); });
+  // The live-scope tracker's own reads (LOOM_LIVE_SCOPE=shadow) are not the statements any test here counts.
+  const client = new Database(':memory:',{verbose:verbose&&(sql=>{if(!trackerStatement(String(sql)))verbose(String(sql));})}); clean.push(() => { client.close(); });
   const clock = new FakeClock(), at = new Date(clock.now()).toISOString(), db = createDataSchema(client, () => new Date(clock.now()).toISOString());
   db.insert(members).values([{ id: 'sam', role: 'owner', joinedAt: at }, { id: 'lee', role: 'member', joinedAt: at }]).run();
   db.insert(agents).values([{ id: 'art', ...visual }, { id: 'mark', ...visual }]).run();
