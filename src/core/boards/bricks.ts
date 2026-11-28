@@ -33,6 +33,7 @@ import question from './bricks/question.js';
 import repository from './bricks/repository.js';
 import session from './bricks/session.js';
 import threads from './bricks/threads.js';
+import tickets from './bricks/tickets.js';
 import ticket from './bricks/ticket.js';
 import trend from './bricks/trend.js';
 import unfiled from './bricks/unfiled.js';
@@ -62,6 +63,7 @@ export const bricks: readonly Brick[] = [
   tempo, trigger,
   account, appearance, secrets,
   machines, subscriptions, usage, bridges, household, sharing,
+  tickets,
 ];
 
 const byName = new Map(bricks.map((b) => [b.name, b]));

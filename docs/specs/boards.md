@@ -650,6 +650,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `bridges` | none | `release {}` and `dismiss {}`, each after `/api/bridges/command` (`bridges.command`) took the review, and each asked first. A reply's words never reach the board. A connection, a channel rule and a person link are changed by asking the agent | none |
 | `household` | none | `revokeToken {}`, by `token.revoke`, and `revokeSession {}`, by `sessions.revoke`, each asked first; `setGrants {}`, by `program.setGrants`. A member, an agent's appearance and accounts and a restore are changed by asking the agent; making a token and changing a portrait stay on the desktop | none |
 | `sharing` | none | none: a project's sharing is changed by asking the agent | none |
+| `tickets` | `state`: `ready`, `in-progress`, `shelved` or `all`, default `ready` (what the desktop's Tasks opens on). No record reference, and no parameter holds words to search for | none: a ticket is acted on in its `ticket` brick | none |
 
 | Brick | Can be big | Flags itself when |
 | --- | --- | --- |
@@ -734,6 +735,28 @@ calls through modules both sides import.
 | `bridges` | yes: every waiting reply with its words, thread and state, with Release (a held one) and Dismiss; for a household owner each connection with its state, activity, filters and the names of its stored secrets, the channel rules and the person links. Small: the first four waiting replies and the connections. Folded: the counts | another reply is held (the count of held replies goes up) |
 | `household` | yes: members with their roles and agents, agents with their owners, description and accounts, removed agents; every token and signed-in browser by label and state, never a value, with revoke and sign out; each outside program's grants, which can be changed. Small: members and agents. Folded: the counts. Anyone who is not a household owner is told it is unavailable | never |
 | `sharing` | yes: up to 60 projects, each with its goal, its members and agents as chips and its repositories as `repository` chips. Small: the first six with who is on them. Folded: the counts. Anyone who is not a household owner is told it is unavailable | never |
+| `tickets` | yes: thirty tickets at a time, each a chip that places its `ticket` brick, with its id, title, project, state and who has it; "Show 30 more", up to 300; chips for the other three states; the search box. Small: as many of the first thirty as fit, and how many more. Folded: the count | never |
+
+**The household's ticket list, 2026-11-27.** `tickets` is the desktop's Tasks list (`pieces/tasks/query.ts`,
+`shared-view.tsx`) across every project the member may read, one state at a time, read through the generated
+`readyTasks` and `tasks` and so by the tasks rule alone (`policy.ts` `task`). `ready` is `readyTasks` (open, no
+unclosed blocker, not an epic, not shelved, decided in SQL); `in-progress` is `tasks` in progress in no project or
+one not retired; `shelved` is `tasks` not closed in a retired project, which is how loom decides shelved
+(`taskShelved`); `all` is every ticket, closed ones included, latest change first. The other three are in the
+desktop's order: priority, position, id. In progress and Shelved first read the projects with loom's word for
+each one's state (`projects { id lifecycle }`) and keep the retired ones; the page never reads the column that says so
+(`src/single-home.contract.test.ts`). The projects rule gives a project to exactly those who may read a
+ticket in it, so this widens nothing and misses nothing. With none retired, Shelved asks nothing. The desktop reads every ticket and
+splits them on the page; the brick asks for thirty and one more, and "Show 30 more" asks for thirty more each time,
+up to 300, past which it says to search. **Reads:** the list and the retired projects are live, relaxed. The search
+(big form only) is one request (`useDataOnce`) on Enter or Search, never while typing, asked again only on "Show 30
+more", and the live list is paused while a search is shown. The words go to that read as a `like` over id, title,
+goal, why, description, project and who has it (each word in turn, case ignored for ASCII). They are never a
+parameter, never told to the board and kept nowhere. Checked: `web/src/boards/bricks-tickets-queries.test.ts` runs
+each state's selection, and the search, against the generated schema under the real tasks and projects rules (a
+member, a household owner and a member on no project); `web/src/boards/bricks-tickets.test.tsx` checks the variables
+asked for each state, rows as `ticket` chips, empty, loading, unavailable, paging to the cap, and the search (once
+on submit, results, nothing matches, unavailable, back to the list, nothing to the board).
 
 **The conversations and agents bricks, 2026-11-27.** Each reads what the desktop's Comms, Home and Agents apps read.
 

@@ -5,6 +5,7 @@ import { scenes as attention } from './attention';
 import { scenes as agents } from './agents';
 import { scenes as knowledge } from './knowledge';
 import { scenes as settings } from './settings';
+import { scenes as tickets } from './tickets';
 
 export const groups: { name: string; bricks: BrickScenes[] }[] = [
   { name: 'Work', bricks: work },
@@ -12,5 +13,6 @@ export const groups: { name: string; bricks: BrickScenes[] }[] = [
   { name: 'Agents', bricks: agents },
   { name: 'Knowledge, people and you', bricks: knowledge },
   { name: 'Household', bricks: settings },
+  { name: 'Tickets', bricks: tickets },
 ];
 export const all: BrickScenes[] = groups.flatMap((g) => g.bricks);
