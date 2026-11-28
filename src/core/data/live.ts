@@ -1,4 +1,5 @@
 import { clearReadDeadline } from './read-lease.js';
+import { outsideReadIn } from './outside-read.js';
 import { ExecutionDrain } from './execution.js';
 import type { LivePace } from './live-pace.js';
 import { recordReads, type ReadRecord, type WrittenTables } from './table-tracker.js';
@@ -127,6 +128,8 @@ export class DataLive {
     const errors = validate(options.schema, document);
     if (errors.length) throw errors[0];
     if (getOperationAST(document, options.operationName)?.operation !== 'query') throw new Error('A live selection must be a query');
+    const outside = outsideReadIn(options.schema, document);
+    if (outside) throw new Error(`A live selection cannot hold ${outside}: it is read from outside loom, once each time it is asked`);
     const guard = options.active;
     const cache = guard && this.transportSchemas.get(guard);
     let schema = cache?.get(options.schema);
