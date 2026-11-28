@@ -370,10 +370,11 @@ button.board-step-line::after { content: ''; grid-column: 3; grid-row: 1; justif
 /* A changed file's patch: code keeps its lines. A line longer than the placement is reached by scrolling the
    patch sideways (the one thing on a board that may), so indentation still reads as structure. The lines are as
    wide as the longest, so an added or removed line's ground runs the whole way. */
-.board-patch { margin: 0; overflow-x: auto; font-family: var(--font-mono); font-size: var(--bk-xs); line-height: 1.55; white-space: pre; tab-size: 2; color: var(--muted-foreground); scrollbar-width: thin; scrollbar-color: var(--surface-edge) transparent; }
-.board-patch:focus-visible { outline: 1.5px solid var(--ring); outline-offset: 1px; }
-.board-patch > code { display: block; width: max-content; min-width: 100%; font: inherit; }
-.board-patch > code > span { display: block; padding-inline: var(--bk-2); }
+/* A long line wraps, and what runs over hangs two characters in from the line's sign, so a wrapped line is never
+   taken for a new one (Jonathan, 2026-11-28: "ok lets wrap"; GitLab wraps a diff's long lines by default). */
+.board-patch { margin: 0; font-family: var(--font-mono); font-size: var(--bk-xs); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2; color: var(--muted-foreground); }
+.board-patch > code { display: block; font: inherit; }
+.board-patch > code > span { display: block; padding-inline: calc(var(--bk-2) + 2ch) var(--bk-2); text-indent: -2ch; }
 .board-patch-add { color: var(--foreground); background: color-mix(in srgb, var(--tone-good) 13%, transparent); }
 .board-patch-remove { color: var(--foreground); background: color-mix(in srgb, var(--tone-bad) 13%, transparent); }
 .board-patch-hunk { margin-block: var(--bk-1); color: var(--muted-foreground); background: var(--wash); }

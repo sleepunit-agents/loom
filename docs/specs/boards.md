@@ -1394,11 +1394,12 @@ Added 2026-11-27 (t-2428). In the `pull` brick's big form each changed file's na
   query" (503) when a commit landed while a read ran (`src/core/data/http.ts`); this read waits on GitHub, so that is
   common. `useDataOnce` asks again once, at once, on exactly that answer; the page read is kept by then, so the
   second ask does not go to GitHub. The door's rule is not loosened for it.
-- **Drawn.** Plain monospaced text in a `pre` (a named region the keyboard can reach), one line to a span, never markup: no `dangerouslySetInnerHTML`, no
+- **Drawn.** Plain monospaced text in a `pre` (a named region), one line to a span, never markup: no `dangerouslySetInnerHTML`, no
   markdown, no links. Added and removed lines keep their `+` and `-` and are marked `board-patch-add` and
-  `board-patch-remove`, hunk headers `board-patch-hunk` (`board-kit.css`). Code keeps its lines (design pass 3,
-  2026-11-28): a line longer than the placement does not wrap, the patch scrolls sideways, the one thing on a board
-  that may, and every line is as wide as the longest so an added or removed line's ground runs the whole way. Loading says
+  `board-patch-remove`, hunk headers `board-patch-hunk` (`board-kit.css`). A line longer than the
+  placement wraps (Jonathan, 2026-11-28, after a pass that scrolled it sideways: "ok lets wrap"; GitLab wraps a diff's
+  long lines by default), and what runs over hangs two characters in from the line's sign, so a wrapped line is never
+  taken for a new one. Nothing on a board scrolls sideways. Loading says
   "Loading…"; `none` says "GitHub has no patch for this file: it may be binary, too large for GitHub to show, renamed
   with no change in it, or empty."; `unlisted` says "GitHub does not list this file for the pull request just now: it
   may have changed since. Close the file and open it again in a moment.";
@@ -1540,8 +1541,8 @@ image per brick, per scene and form, and contact sheets of every side, compact, 
 `npm --prefix web run gallery` serves it for looking. The gallery is no part of `npm --prefix web run build` and no
 shipped page loads it; `src/ui/web-reach.test.ts` names its entry as the one development-only one.
 
-**Design pass 3 (2026-11-28)**, with eyes, over the parts added since pass 2. What it settled: a patch scrolls
-sideways and does not wrap; a part opened on demand is a `Fold`; a row's controls are `RowTools`; the tempo brick's New
+**Design pass 3 (2026-11-28)**, with eyes, over the parts added since pass 2. What it settled: a patch scrolled
+sideways (since changed: it wraps, see "The pull brick's file patches"); a part opened on demand is a `Fold`; a row's controls are `RowTools`; the tempo brick's New
 trigger form is three `Group`s ("When it fires", "Whose it is", "What it does"); a session's report stands in ink
 straight under how it ended; a session's count of steps and "Load earlier steps" share a line; a chip under a row is
 a chip and not a bar; nothing said aloud on the page floats (the shared sheet's shadow on `role="alert"` is taken
