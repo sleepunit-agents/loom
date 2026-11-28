@@ -186,6 +186,76 @@ as lost has no exit code; its log tail says in which state it went silent. When
 a body ends by itself before the worker could hand it its input, the job carries
 the body's own code (for example 16), not the worker's 25.
 
+### Why a job failed
+
+The exit code says where a job failed. Where one of loom's own programs could
+tell, the row also says why (`jobs.failed_reason` and `jobs.failed_detail`,
+read as `JobRecord.failedReason`, `failedWhy` and `failedResetsAt`). A reason
+is one of a small fixed set, and its detail holds only an HTTP status, a
+signal's name from a fixed list, an exit code, a reset time and a limit's name
+from a fixed list. Neither can hold a word of the conversation, which is why
+both are kept for a private conversation's job where the log tail is dropped.
+The list, what a detail may hold, the plain words said for each and what each
+means for the next attempt have one home, `src/runtime/job-failure.ts`.
+
+| Reason | Decided from |
+| --- | --- |
+| `usage-limit` | Claude Code: a `rate_limit_event` whose status is `rejected` (its `resetsAt` becomes the reset time) with an answer whose `error` is `rate_limit`, or an `api_error` of `usage_limit_reached`. Codex: its error message says "usage limit". |
+| `rate-limited` | HTTP 429, or an `error` of `rate_limit`, with no rejected window. |
+| `overloaded` | HTTP 529, or an `error` of `overloaded`. |
+| `api-error` | Any other API error the harness reported, with its HTTP status when it gave one. |
+| `context-too-large` | Claude Code: `api_error` is `message_over_context_limit`, or the result's `terminal_reason` is `prompt_too_long`. Codex: its error message names the context window. |
+| `max-turns` | Claude Code: the result's subtype is `error_max_turns`. |
+| `output-limit` | The body ended the harness because it printed more than the body reads from one run (1 MiB of output and diagnostics together, `outputLimit` in `body-harness.ts`). |
+| `timed-out` | `stream-idle`: the model's answer stopped arriving (`api_error` `stream_idle_timeout`; Codex, a disconnected stream). `output-close`: the harness ended well and something it had started kept its output open for a second more. |
+| `sign-in-needed` | HTTP 401 or 403, or an `error` of `authentication_failed`, `oauth_org_not_allowed`, `account_on_hold`, `verification_required` or `cloud_credential_error`. This is what a sign-in that ends or is cancelled in the middle of a run shows as. |
+| `out-of-memory` | A signal ended the harness and the container's count of processes the memory killer ended (`memory.events`, `oom_kill`) rose during the run. Or a signal ended the body itself and the engine says `State.OOMKilled`, which the worker reads before it removes the container. |
+| `killed` | A signal ended the harness (the body says which) or the body (the worker says which), and the memory killer was not seen. |
+| `harness-crashed` | The harness left with a code other than 0 and said none of the above. |
+| `unknown` | The harness ended and nothing above could be read: for instance it left with 0 and no answer loom could vouch for. A job that failed at "body harness" with no reason on its row is shown as this too. |
+
+The harness's adapter decides the reason, inside the body, from those signals
+only (`src/runtime/harness-failure.ts`). Claude Code reports them as fields of
+its events. Codex reports an error as a message and nothing else, so a few
+fixed phrases of Codex's own are matched in it; the phrase is matched and never
+copied. The body writes the reason as one line of its error output, after its
+one plain line. The worker drops everything else a body prints and keeps that
+line only when it is exactly a failure, and reports it with the exit code
+(`runtime.finish`, `failed`). The door takes the same schema and refuses
+anything else, and so does `Jobs.finish`. A machine's own runner is given no
+say. A worker on a loom from before the field was asked for is refused it and
+reports the job again without it.
+
+What the harness itself last said (its final error text, and the end of its
+diagnostics, cut to 4,000 characters) may hold the conversation's words. It
+never leaves the body as the body's error and is never in `log_tail`. The body
+writes it as the last step of the work, with the tool `Harness` and the state
+`failed`, after the reason in plain words: a sealed step of the session's trace
+for a handed-off job that keeps its steps, and a card in the thread for a job in
+a member's own thread. Any other job (a wake, a bridge's, one on anybody else's
+word) shows it to nobody. The text goes through the same check as every step: a
+text that holds a secret the body was handed, or looks like a credential, is
+replaced by "Output withheld."
+
+The reason also decides the next attempt (`Jobs.finish`):
+
+- `context-too-large`, `max-turns` and `output-limit` are not tried again: the
+  same job would fail the same way. The mail stays with the job, as when a
+  chain is used up, until fresh mail arrives.
+- `sign-in-needed` is tried again like any other failure. Two bodies renewing
+  one sign-in at the same moment can have one refused, and the next attempt
+  reads the sign-in the other just wrote ("Two bodies on one account share one
+  sign-in directory" in [`../accepted-tradeoffs.md`](../accepted-tradeoffs.md)).
+- `usage-limit` or `rate-limited` with a reset time: the next attempt is not
+  claimable before that time, and no later than 24 hours from the failure
+  (`QUEUE_DEADLINE_MS`). It is still one of the chain's three.
+- Anything else, and a failure with no reason: as before.
+
+The parent thread of a handed-off job is told the reason in plain words after
+the stage: "build returned no result for … (body harness: the model's usage
+limit was reached; it resets Nov 27, 7:00 PM)". Times are said in the
+household's time zone.
+
 ### When the worker itself stops
 
 The worker program's own exit code is a different thing from a job's. It prints

@@ -601,7 +601,7 @@ it('keeps why a job failed on its row, for a private conversation too, and only 
   f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image'); f.comms.take(f.conversation.id, job.id); f.comms.confirm(mail.id, job.id);
   expect(f.runtime.finish(job.id, 'worker', 0, '', 'body', { reason: 'overloaded' }).job).toMatchObject({ state: 'done', failedReason: null });
 });
-it.each(['context-too-large', 'max-turns', 'sign-in-needed', 'output-limit'] as const)('does not try again a job that would fail the same way (%s)', reason => {
+it.each(['context-too-large', 'max-turns', 'output-limit'] as const)('does not try again a job that would fail the same way (%s)', reason => {
   const f = fixture(), result = failedRun(f, { reason });
   expect(result.job).toMatchObject({ state: 'failed', failedReason: reason }); expect(result.retry).toBeUndefined();
   // Its mail stays with it, as when a chain runs out of attempts, until fresh mail arrives.
@@ -619,6 +619,6 @@ it('waits for a limit\'s known reset time before the next attempt, never past th
   expect(failedRun(fixture(), { reason: 'rate-limited', status: 429, resetsAt: iso(60_000) }).retry?.retryAt).toBe(iso(60_000));
   expect(failedRun(fixture(), { reason: 'usage-limit', resetsAt: iso(30 * 24 * 3_600_000) }).retry?.retryAt).toBe(iso(QUEUE_DEADLINE_MS));
   // A reset time already past, a limit with none, and every other reason: the usual first wait.
-  for (const failure of [{ reason: 'usage-limit', resetsAt: iso(-60_000) }, { reason: 'usage-limit' }, { reason: 'overloaded', status: 529 }, { reason: 'killed', signal: 'SIGKILL' }, { reason: 'unknown' }, undefined])
+  for (const failure of [{ reason: 'usage-limit', resetsAt: iso(-60_000) }, { reason: 'usage-limit' }, { reason: 'overloaded', status: 529 }, { reason: 'sign-in-needed', status: 401 }, { reason: 'killed', signal: 'SIGKILL' }, { reason: 'unknown' }, undefined])
     expect(failedRun(fixture(), failure).retry?.retryAt).toBe(iso(5_000));
 });

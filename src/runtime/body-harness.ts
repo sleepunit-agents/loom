@@ -8,7 +8,9 @@
  * Mail, identity, secrets, replies, digests and status are the body program's and are the same for all.
  *
  * Every failure is the one plain `Native execution unavailable`: a harness's diagnostics may hold private
- * words and never leave the body.
+ * words and never leave the body as its error. An adapter that can tell why a run failed says so apart from
+ * that line (HarnessFailed): a fixed reason with no words, which the body hands on with its exit code, and
+ * the harness's own last words, which the body shows only to the conversation's own readers.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Writable } from 'node:stream';

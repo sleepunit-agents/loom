@@ -101,6 +101,20 @@ describe('upgrading a household database', () => {
     expect(old.pragma('foreign_key_check')).toEqual([]);
   });
 
+  it('gives every job that ended before schema 54 no reason for its failure, and keeps the rest of its row', () => {
+    const old = household(53);
+    old.function('loom_now', () => at);
+    old.exec(`INSERT INTO agents(id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('art','','#000','#fff','pebble','dot');
+      INSERT INTO jobs(id,agent,title,state,brief,model,started_by_kind,started_by,house_repository,house_file,house_branch,exit_code,exit_by,queued_at,ended_at)
+        VALUES ('job-old','art','Build','failed','','m','agent','art','r','Housefile','next',14,'body','${at}','${at}')`);
+    applyUpgrades(old, 53, () => at, 54);
+    expect(old.prepare('SELECT id,state,exit_code,exit_by,failed_reason,failed_detail FROM jobs').all()).toEqual([{ id: 'job-old', state: 'failed', exit_code: 14, exit_by: 'body', failed_reason: null, failed_detail: null }]);
+    old.exec(`UPDATE jobs SET failed_reason='usage-limit', failed_detail='{"resetsAt":"2026-11-28T01:00:00.000Z"}'`);
+    const pinned = open(); pinned.exec(shipped(54));
+    expect(dataSchemaShape(old)).toEqual(dataSchemaShape(pinned));
+    expect(old.pragma('foreign_key_check')).toEqual([]);
+  });
+
   it('leaves the sign-in diagnosis unknown for preexisting unplaced jobs', () => {
     const old = household(38);
     old.exec(`INSERT INTO agents (id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('art','','','','pebble','dot');

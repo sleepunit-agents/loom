@@ -119,9 +119,12 @@ export function failureLines() {
   };
 }
 
-/** A reason for which the same job would fail the same way: it is not tried again (Jobs.retry). */
+/** A reason for which the same job would fail the same way: it is not tried again (Jobs.retry).
+ * `sign-in-needed` is not one: two bodies renewing one sign-in at the same moment can have one refused, and
+ * the next attempt reads the sign-in the other just wrote (docs/accepted-tradeoffs.md, "Two bodies on one
+ * account share one sign-in directory"). A sign-in that is truly gone spends the chain's attempts, as before. */
 export const failsAgain = (failure: JobFailure | undefined): boolean =>
-  !!failure && (failure.reason === 'context-too-large' || failure.reason === 'max-turns' || failure.reason === 'sign-in-needed' || failure.reason === 'output-limit');
+  !!failure && (failure.reason === 'context-too-large' || failure.reason === 'max-turns' || failure.reason === 'output-limit');
 /** For a limit with a known reset time: when the next attempt may first run. Undefined for anything else. */
 export const retryNotBefore = (failure: JobFailure | undefined): number | undefined =>
   failure && (failure.reason === 'usage-limit' || failure.reason === 'rate-limited') && failure.resetsAt ? Date.parse(failure.resetsAt) : undefined;

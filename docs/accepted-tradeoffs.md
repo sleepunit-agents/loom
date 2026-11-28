@@ -460,7 +460,9 @@ On success the body sends its report alongside settlement. A body with validated
   sign-in at the same moment. When they do, one of them may be refused by the provider (a renewal that
   was already used) and that body's harness fails.
 - **What that failure looks like.** The body ends with its own code for a failed harness (exit 14, "body
-  harness", chosen by the body), and the job is recorded failed. It is tried again by the ordinary chain
+  harness", chosen by the body), and the job is recorded failed. Where the harness reported the refusal as
+  one (HTTP 401 or 403, or its own class for a failed sign-in), the job's row says `sign-in-needed`
+  (docs/runtime/worker.md, "Why a job failed"). It is tried again by the ordinary chain
   when it left mail it had not confirmed: after 5 seconds, 30 seconds and 2 minutes, three times at most.
   The retry reads the sign-in the other program just wrote. A machine that sees this more than rarely
   sets `accountSlots` to 1 for that harness in its worker's configuration, which runs an account's bodies

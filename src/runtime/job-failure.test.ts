@@ -47,7 +47,7 @@ it('reads a job row\'s failure, calls a harness failure with none kept unknown, 
   expect(failureSignal(9)).toBe('SIGKILL'); expect(failureSignal('SIGTERM')).toBe('SIGTERM'); expect(failureSignal(64)).toBeUndefined(); expect(failureSignal('SIGPRIVATE')).toBeUndefined();
 });
 it('knows which reasons the same job would fail on again, and which name a time to wait for', () => {
-  expect(FAILED_REASONS.filter(reason => failsAgain({ reason }))).toEqual(['context-too-large', 'max-turns', 'output-limit', 'sign-in-needed']);
+  expect(FAILED_REASONS.filter(reason => failsAgain({ reason }))).toEqual(['context-too-large', 'max-turns', 'output-limit']);
   expect(failsAgain(undefined)).toBe(false);
   expect(retryNotBefore({ reason: 'usage-limit', resetsAt: '2026-11-28T01:00:00.000Z' })).toBe(Date.parse('2026-11-28T01:00:00.000Z'));
   expect(retryNotBefore({ reason: 'rate-limited', resetsAt: '2026-11-28T01:00:00.000Z' })).toBe(Date.parse('2026-11-28T01:00:00.000Z'));
