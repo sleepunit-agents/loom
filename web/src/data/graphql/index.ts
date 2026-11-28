@@ -118,7 +118,6 @@ export function useDataOnce<T>(document: string, variables: Record<string, unkno
   useEffect(() => {
     if (pause) return;
     const stop = new AbortController();
-    setState({ key, snapshot: { status: 'loading' } });
     void fetch('/graphql', { method: 'POST', credentials: 'same-origin', signal: stop.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: document, variables }) })
       .then(async (response) => {
         if (response.status === 401 || response.status === 403) return { status: 'denied' } as const;

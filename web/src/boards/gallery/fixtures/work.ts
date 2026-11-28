@@ -208,6 +208,14 @@ const pullData = (over: object = {}, parts: { checks?: unknown[]; people?: unkno
     ],
   },
 });
+/** A changed file's patch as the one-shot read answers it, for the scene that opens a file. */
+const farEndPatch = ['@@ -1,9 +1,28 @@', " import { readings } from '../pressure/read';", '-const LIMIT = 0.2;', '+/** Warn when the far end falls below the head by more than a tenth. */',
+  '+const LIMIT = 0.1;', ' ', '-export function farEnd(head: number, far: number) {', '-  return head - far > LIMIT;', '+export function farEnd(line: string) {', '+  const { head, far } = readings(line);',
+  '+  if (head === null || far === null) return false;', '+  return (head - far) / head > LIMIT;', ' }', '@@ -40,4 +59,8 @@ export function alertFor(line: string) {', '   const low = farEnd(line);',
+  "+  // A line with <no far sensor> never warns: see docs/valves/where-each-pressure-sensor-sits-along-the-north-and-south-lines.md", '+  if (!low) return null;', '   return { line, words: `Far end of ${line} is low` };', ' }'].join('\n');
+const pullPatch = (state: 'patch' | 'none', cut = false): Record<string, Answer> => ({
+  BrickPullFilePatch: () => ({ patch: state === 'patch' ? { state, patch: farEndPatch, cut } : { state, patch: null, cut: false } }),
+});
 const openPulls = [
   { number: 39, title: change.title, draft: false, checks: 'passing', review: 'approved', waitingOn: 'you', agent: 'moss' },
   { number: 44, title: 'Sowing calendar: frost dates per bed', draft: true, checks: 'none', review: 'required', waitingOn: 'author', agent: 'fern' },
@@ -279,6 +287,8 @@ export const scenes: BrickScenes[] = [
     { name: 'draft', params: { change: change.id }, only: ['side', 'compact'], data: pullData({ draft: true, checks: 'none', title: 'Sowing calendar: frost dates per bed', project: null, agent: null }, { checks: [], people: [], tasks: [] }) },
     { name: 'merged', params: { change: change.id }, data: pullData({ state: 'merged', checks: 'passing', review: 'approved', mergeable: 'unknown', waitingOn: 'done' }, { checks: [] }) },
     { name: 'flagged', params: { change: change.id }, flag: 'Checks failing', only: ['side', 'compact'], data: pullData() },
+    { name: 'file-opened', params: { change: change.id }, only: ['primary'], press: ['src/alerts/far-end.ts'], data: { ...pullData(), ...pullPatch('patch', true) } },
+    { name: 'file-no-patch', params: { change: change.id }, only: ['primary'], press: ['src/pressure/read.ts'], data: { ...pullData(), ...pullPatch('none') } },
     { name: 'unavailable', params: { change: change.id }, only: ['side'], data: { ...shared, BrickPull: 'offline' } },
   ] },
   { brick: 'repository', scenes: [
