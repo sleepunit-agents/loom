@@ -2,7 +2,6 @@
 import { useEffect, useState } from 'react';
 import { useDataQuery } from '../data/graphql';
 import { memberOperation } from '../data/operation';
-import { Reply } from '../pair/reply';
 import { Chip, Confirm, Excerpt, Fact, Facts, Lead, Loading, Problem, Section, State, Unavailable, useOwnFlag, words, type BodyProps, type Tone } from './brick-kit';
 import { SessionLatestStep, SessionTrace } from './session-trace';
 
@@ -11,9 +10,10 @@ type SessionDetail = { brief: string | null; logTail: string | null; endedNote: 
 const running = (state: string) => state === 'queued' || state === 'starting' || state === 'running';
 const tone = (state: string): Tone => (running(state) ? 'working' : state === 'done' ? 'good' : state === 'stopped' ? 'muted' : 'bad');
 const lasted = (from: string, to: number) => { const m = Math.max(0, Math.round((to - Date.parse(from)) / 60000)); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
-/** One session of agent work, by its conversation: the latest job there. It shows what it was asked, where it
- * stands and which tools it has used; and, for work handed off from the member's own thread, its final report once
- * there is one (the server's sessionReport read) and the steps its body reported, live (session-trace.tsx). */
+/** One session of agent work, by its conversation: the latest job there. It shows where it stands and which tools it
+ * has used, and in the big form reads as a conversation the member was not in (session-trace.tsx): what it was asked,
+ * then, for work handed off from the member's own thread, the words, reasoning and tool steps its body reported, live,
+ * and its final report once there is one (the server's sessionReport read); and why it failed, where it did. */
 export function Session({ params, form, act, raise }: BodyProps) {
   const conversation = words(params.session);
   const read = useDataQuery<{ jobs: SessionJob[]; cv: { agent: string; label: string | null; venue: string } | null }>(
@@ -52,15 +52,12 @@ export function Session({ params, form, act, raise }: BodyProps) {
         {agent && <Chip place={{ brick: 'agent', params: { agent } }}>{agent}</Chip>}
         {span && <span>{span}</span>}
       </div>
-      {big && (
+      {big && (detail?.endedNote || (!running(job.state) && job.state !== 'done' && detail?.logTail)) && (
         <Facts>
-          {detail?.brief && <Fact wide label="Asked"><Reply words={detail.brief} /></Fact>}
           {detail?.endedNote && <Fact wide label="How it ended">{detail.endedNote}</Fact>}
-          {job.state === 'failed' && detail?.failedWhy && <Fact wide label="Why it failed">{detail.failedWhy.charAt(0).toUpperCase() + detail.failedWhy.slice(1)}.</Fact>}
           {!running(job.state) && job.state !== 'done' && detail?.logTail && <Fact wide label="Last output"><pre className="board-tail">{detail.logTail}</pre></Fact>}
         </Facts>
       )}
-      {big && handoff && reported && <Section title="Report"><div className="board-prose"><Reply words={reported} /></div></Section>}
       {big && (
         <Facts>
           <Fact label="Result"><span className="board-note">{job.state === 'done' ? 'Its answer is in the conversation.' : running(job.state) ? 'Its answer will arrive in the conversation.' : 'It gave no answer.'}</span></Fact>
@@ -68,7 +65,13 @@ export function Session({ params, form, act, raise }: BodyProps) {
           {tools.length > 0 && <Fact label="Tools"><span className="board-tool-counts">{tools.slice(0, 12).map((t) => <span key={t.name}>{t.name} ×{t.count}</span>)}</span></Fact>}
         </Facts>
       )}
-      {big && handoff && <Section title="Steps"><SessionTrace key={job.id} conversation={conversation} job={job.id} running={running(job.state)} /></Section>}
+      {big && (
+        <Section title="Conversation">
+          <SessionTrace key={job.id} conversation={conversation} job={job.id} running={running(job.state)} trace={handoff}
+            talk={{ agent, brief: detail?.brief ?? null, briefAt: detail?.claimedAt ?? job.queuedAt, report: handoff ? reported ?? null : null, endedAt: detail?.endedAt ?? null,
+              failure: job.state === 'failed' && detail?.failedWhy ? detail.failedWhy.charAt(0).toUpperCase() + detail.failedWhy.slice(1) + '.' : null }} />
+        </Section>
+      )}
       {!big && handoff && <SessionLatestStep conversation={conversation} job={job.id} />}
       {running(job.state) && <div className="board-actions"><Confirm ask="Stop…" yes="Stop this session" no="Keep it running" busy={busy} act={stop} /></div>}
       <Problem>{error}</Problem>

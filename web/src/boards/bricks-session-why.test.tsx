@@ -1,4 +1,5 @@
-/** The session brick's "Why it failed" fact: the plain words loom built for a failed job's reason (./bricks-session.tsx). */
+/** The session brick's "Why it failed": the plain words loom built for a failed job's reason, the last message of its
+ * conversation (./bricks-session.tsx, ./session-trace.tsx). */
 import { afterEach, expect, it, vi } from 'vitest';
 import { createElement as h } from 'react';
 // @ts-expect-error Renderer has no bundled declarations.
@@ -24,20 +25,22 @@ const draw = async (form = 'primary') => {
   await act(async () => { tree = create(h(brickView('session').Body, { params: { session: 'cv-1' }, form, act: () => {}, raise: () => {} })); });
 };
 const text = (node: Node | string): string => (typeof node === 'string' ? node : node.children.map(text).join(''));
+const failure = () => tree.root.findAll((node: Node & { props: Record<string, unknown> }) => node.props['data-session-failure'] === '' && typeof node.type === 'string').map(text);
 const facts = () => Object.fromEntries(tree.root.findAll((node: Node) => node.type === 'dt').map((label: Node & { parent: Node }) => [text(label), text(label.parent).slice(text(label).length)]));
 
 it('says why a failed session failed, in the words loom built from its reason', async () => {
   f.failedWhy = 'the model\'s usage limit was reached; it resets Nov 27, 7:00 PM';
   await draw();
-  expect(facts()['Why it failed']).toBe('The model\'s usage limit was reached; it resets Nov 27, 7:00 PM.');
+  expect(failure()).toEqual(['Why it failedThe model\'s usage limit was reached; it resets Nov 27, 7:00 PM.']);
+  expect(Object.keys(facts())).not.toContain('Why it failed');
   // Read with the rest of the job's detail, from the read the brick already makes.
   expect(f.asked.find((document) => document.includes('BrickSessionJob'))).toContain('failedWhy');
 });
-it('draws no such fact for a failure with no reason kept, a session that did not fail, or a small form', async () => {
+it('draws no such message for a failure with no reason kept, a session that did not fail, or a small form', async () => {
   for (const [state, failedWhy] of [['failed', null], ['failed', undefined], ['done', 'the session ran out of memory'], ['running', 'the session ran out of memory'], ['stopped', 'the session ran out of memory']] as const) {
     f.state = state; f.failedWhy = failedWhy;
     await draw();
-    expect(Object.keys(facts())).not.toContain('Why it failed');
+    expect(failure()).toEqual([]);
     await act(async () => tree.unmount());
   }
   f.state = 'failed'; f.failedWhy = 'the session ran out of memory';
