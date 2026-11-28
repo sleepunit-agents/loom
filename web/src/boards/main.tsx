@@ -20,7 +20,7 @@ import { PlacementFrame } from './placement';
 import { buildChanged } from './build';
 import { AgentFace, FACE } from './agent-face';
 import { useAgentNames } from './agents-data';
-import { ThreadHead, ThreadSwitch, threadHeadQuery } from './threads';
+import { BridgeReceipt, ThreadHead, ThreadStop, ThreadSwitch, threadHeadQuery } from './threads';
 import { Notify, useNotifyWorker } from './notify';
 import { usePageTitle } from './title';
 import { reducedMotion, wearMotion } from '../access';
@@ -238,7 +238,7 @@ export function Page({ member, thread, agent, at, exists = false }: { member: st
   useEffect(() => { if (stale && !words.trim() && !busy) location.reload(); }, [stale, words, busy]);
   const mood: FaceState = error ? 'error' : !ready || tail.status === 'connecting' ? 'thinking' : tail.working ? 'working' : tail.update ? 'talking' : 'idle';
   const status = error || (!ready ? 'Connecting…' : tail.working ? (tail.tool ? 'Working · ' + tail.tool.split(' → ').at(-1) : 'Working') : tail.update ? 'Has a reply for you' : 'Here when you need me.');
-  const name = useAgentNames()(agent);
+  const names = useAgentNames(), name = names(agent);
   usePageTitle(thread, tail.update);
   useNotifyWorker();
   // The open thread's title, said beside the presence: the same selection the panel's rename and archive read.
@@ -279,12 +279,15 @@ export function Page({ member, thread, agent, at, exists = false }: { member: st
               <span className="boards-where">{title && <span className="boards-thread-title">{title}</span>}<span role="status">{status}</span></span>
             </span>
           </button>
+          {/* Stop for the whole conversation, only while the agent is working in it (./threads.tsx, ThreadStop). */}
+          <ThreadStop thread={thread} member={member} name={name} />
           {/* The one control: the panel it opens holds the conversations, this one's rename and archive, and notifications. */}
           <ThreadSwitch thread={thread} visit={visit}>
             <ThreadHead thread={thread} member={member} visit={visit} />
             <Notify />
           </ThreadSwitch>
         </div>
+        <BridgeReceipt thread={thread} agentName={names} />
         <div className="boards-log" ref={log}>
           <MessageScrollerProvider defaultScrollPosition="end" autoScroll>
             <MessageScroller>
