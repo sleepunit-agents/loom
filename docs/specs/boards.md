@@ -591,7 +591,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `trend` | `project`: project id; `days`: 7, 30 or 90, default 30 | none | none |
 | `ticket` | `ticket`: ticket id | `claim {}`, `unclaim {}`, `close {}`, `reopen {}`, each the `tasks.command` action of that name | the ticket id |
 | `comments` | `ticket`: ticket id | `comment {}`, by `tasks.command` | none |
-| `pull` | `change`: change id, `github:owner/repo#number` | none: a merge is answered through its approval, on the desktop | the change id |
+| `pull` | `change`: change id, `github:owner/repo#number` | `refresh {}`, after `changes.refresh` (`/api/changes/refresh`, the desktop's Refresh of Changes) read GitHub again; a household owner's, as on the desktop. A merge is answered through its approval, on the desktop | the change id |
 | `repository` | `repository`: `owner/repo`, in any spelling `project_repositories` holds (a leading `github:`, capitals and a trailing `.git` are dropped); `project`: project id, optional | none | the repository id |
 | `person` | `person`: `member:<member id>` or `contact:<contact slug>` | none | the same string |
 | `agent` | `agent`: agent id | `stop {}`, by `runtime.jobStop` on one of its running jobs, after asking | the agent id |
@@ -599,7 +599,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `approval` | `approval`: approval id | `approve {}`, `refuse {}`, each after `approvals.answer` took the answer; a reason for denying goes to `approvals.answer` and never to the board. `always {}`, after `approvals.always` took the standing answer | the approval id |
 | `session` | `session`: conversation id | `stop {}`, by `runtime.jobStop` | the conversation id |
 | `inbox` | `folder`: one of `needs`, `alerts`, `answered`, `fyi`, `all`, `errors`, default `needs` (what waits on the member). No record reference | `read {}`, by `inbox.read`; `dismissResult {}`, by `inbox.dismissResult` | none |
-| `approvals` | `state`: `pending` or `answered`, default `pending`. No record reference | none: a request is answered in its `approval` brick | none |
+| `approvals` | `state`: `pending`, `answered`, `rules` (the standing rules) or `notices` (the reported steps), default `pending`. No record reference | none: a request is answered in its `approval` brick, and a standing rule is made, changed or removed by asking the agent | none |
 | `ticket`, added 2026-11-27 | as above | also `edit {}`, `link {type}`, `unlink {type}`, each the `tasks.command` action of that name; `type` is `blocks` or `parent-child` | as above |
 | `lanes`, added 2026-11-27 | as above | `pause {}`, `resume {}`, each after `work.setProjectClaims` took it | none |
 | `new-ticket` | `project`: project id | `create {}`, by `tasks.command` `create` | none |
@@ -634,13 +634,13 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `comments` | yes | a comment arrives from someone else |
 | `person` (a member or a contact) | yes: what People's reader shows (see below) | never |
 | `agent` | yes: everything it is doing and its last thirty jobs | it starts waiting on the member (a question of its own joins the Inbox's "needs you" when none was there) |
-| `pull` | yes: also its branch and author, its failing and running checks by name, the people on it, whether it can be merged, its tickets with their titles, the files it changed with their added and removed lines, each opening in place to its patch (`changeFilePatch`, asked once each time it is opened, not live) | its checks go to failing, it is merged, it is closed |
+| `pull` | yes: also its branch and author, its failing and running checks by name, the people on it, whether it can be merged, its tickets with their titles, the files it changed with their added and removed lines, each opening in place to its patch (`changeFilePatch`, asked once each time it is opened, not live); when loom last read GitHub and whether that read failed, for a household owner; "Cold reviews", whose "Review history" opens in place to each round with its tier, verdict, commit and findings (`changeReviewHistory`, asked only while it is open); and Refresh from GitHub, for the member loom says may use it | its checks go to failing, it is merged, it is closed |
 | `repository` | yes: each open pull request with its title and where it stands | never |
 | `question` | no | never: being on the board is the flag |
 | `approval` | no: the page has a primary form for it, with the record's history, but the catalogue does not let it be big, so a board draws it side or compact | never: being on the board is the flag |
 | `session` | yes: what it was asked, its state, the tools it has used, how it ended, its report once a handed-off session has one, why it failed ("Why it failed": the plain words loom builds from the failed job's fixed reason, `JobRecord.failedWhy`, docs/runtime/worker.md "Why a job failed"), and its steps as they are reported, the last of which, for a failed session, is the `Harness` step holding what the harness itself last said; "Its steps are no longer kept." once they are past their keep time and deleted | it finishes, it fails, it is stopped by someone else |
 | `inbox` | yes: every folder's count, and up to fifty of the folder's items newest first, each with its words as a chip that places its `question` brick, who asked, when, its state, read or unread, and Mark read on an unread one; the outcomes of the member's own actions where the Inbox lists them, each with Dismiss; Newer and Older for a longer folder. Small: the folder's count and its first four items as chips. Folded: one line of counts | more waits on the member than before (the count of `needs` goes up) |
-| `approvals` | yes: every pending request oldest first, or every answered one newest first, each with its title as a chip that places its `approval` brick, its state, kind, agent, project, when it was asked, why, what it allows and, once answered, who answered. Small: the count and the first four as chips. Folded: one line of counts | a new request is waiting (the count of pending goes up) |
+| `approvals` | yes: every pending request oldest first, or every answered one newest first, each with its title as a chip that places its `approval` brick, its state, kind, agent, project, when it was asked, why, what it allows and, once answered, who answered; or every standing rule with what it covers, which kind of request, for whom, its answer and who set it when; or the reported steps newest first, the first fifty, each with the agent, kind, target and when. Small: the count and the first four (as chips where they are requests). Folded: one line of counts | a new request is waiting (the count of pending goes up), in every state |
 | `ticket`, added 2026-11-27 | yes: also its description, its linked tickets with their titles, and the Edit and Links forms; small, its priority, who filed it, why it closed and its links as chips | as above; an edit or a link flags nothing |
 | `lanes`, added 2026-11-27 | yes: also how many of the project's questions wait on the member, and each agent's new claims with pause and resume | never |
 | `project`, added 2026-11-27 | yes: also its name, what each agent calls it, and its repositories | never |
@@ -769,9 +769,32 @@ it in the desktop's words.
   address; and, big, the files it changed, each with its added and removed lines, or a note that they are not known
   yet. `change_files` is kept from the same read of GitHub as the checks (at most the first 100 files GitHub lists)
   and is read with the same rule: seen with its change. Each file's name opens its row in place to that file's patch
-  ("The pull brick's file patches", below). A ticket the member may not read is left out. It has no action. `changes.answer` exists and a
+  ("The pull brick's file patches", below). A ticket the member may not read is left out. `changes.answer` exists and a
   member the household lets answer may call it, but it is a merge approval's answer and needs the approval that is
-  waiting for that commit; it stays on the desktop with the approval.
+  waiting for that commit; it stays on the desktop with the approval. Added later on 2026-11-27, in the big form only:
+  - **When loom last read GitHub.** "Last read from GitHub" and the time, from `changeSync` (`readAt`), and "GitHub's
+    last read failed: this is the last copy that was read." where `failed` is set, as the desktop's Changes says it.
+    `changeSync` is a household owner's read (`src/policy.ts`); anyone else reads no row and nothing is said. It rides
+    on the brick's existing selection, so it adds no selection.
+  - **Cold reviews.** The desktop's own read of a pull request's review rounds (`changeReviewHistory(change)`,
+    `src/pieces/changes/review-query.ts`, under the change's and the review job's rules). It is behind "Review
+    history" (`Opens`), asked only while that is open and live while it is (relaxed, like every brick read), and
+    forgotten, with the opened files, when the brick leaves its big form or its change or head commit moves. Each round:
+    "Round N · tier", the verdict in the desktop's words (Pending, Clear, Blocking, No verdict), "Current commit" or
+    "Earlier commit" with the commit's first seven characters, and its findings as plain text. None: "Loom has not
+    reviewed it."; a read that fails: "Its review history is unavailable."
+  - **Refresh from GitHub.** The desktop's Refresh of Changes (`refreshChanges`, `web/src/data/work-refresh.ts`: one
+    POST to `/api/changes/refresh`, operation `changes.refresh`, `src/shared-work-refresh.ts`), which reads every pull
+    request loom follows again; there is no read of one pull request alone. Its permission is the desktop's and nothing
+    wider: the operation's `may` is `workAnswersAllowed`, a current household owner (`src/shared-work-access.ts`), and
+    the button is drawn only where the desktop draws it, for a member to whom `workChangesRefresh` says yes (loom has a
+    GitHub source and the member is a household owner; `useWorkAccess`, `web/src/data/work-approvals.ts`). Pressed, it
+    says "Refreshing…" and cannot be pressed again; done, "Loom has read GitHub again." and the board is told
+    `refresh` with an empty detail; refused by loom (403, as when the member stopped being an owner since the page drew
+    it), "Loom refused: only a household owner may have it read GitHub again."; any other failure, "GitHub could not
+    be read just now. Try again in a moment." Neither failure tells the board anything, and the button stays.
+    `refreshChanges` now throws a `RefreshError` carrying the door's status so the brick can tell the two apart; the
+    desktop's message is unchanged.
 - `repository`: the open `changes` rows of that repository, in one project when `project` is given, latest first, at
   most 30, each a `pull` chip. Loom gives a member no read of `project_repositories`, so the brick cannot tell a
   repository that is bound to a project and has never had a pull request from one that does not exist: both draw
@@ -845,7 +868,21 @@ it in the desktop's words.
 - `approvals`: the desktop's own selection (`approvalsQuery`) and its rule for the two lists
   (`rows` in `web/src/pieces/approval-view/model.ts`). A household change is listed by its title, reason, state and
   agent; who answered it is not said, as on the desktop for a member with no reading of it. Not on the brick: the
-  search, the standing rules and the reported steps, which are the desktop's other two folders.
+  search. Added later on 2026-11-27, the desktop's other two folders, as two more states:
+  - `rules`: the standing rules (`approvalRules`), in the order loom gives them, each as the desktop's Rules folder
+    says it: its scope (`scopeWord`: Everything, Project <id>, or the pattern), the kind of request (`kindChoice`),
+    "for <person>" where it is for one, its answer (`tierWord`: Ask me, Tell me after, Just do it) and, big, who set it
+    and when. Read only: a rule is made, changed or removed by asking the agent, which the big form says.
+  - `notices`: the reported steps, as the desktop's Reported steps lists them (`approvalSnapshot`,
+    `web/src/data/work-query.ts`): the `approvalNotices` rows (what an agent did under a "tell me after" rule), the
+    steps reported on a request and the answers quoted from a conversation, both from the record, newest first. Big,
+    the first fifty and a line counting the rest; small, as many as fit and "and N more".
+  - **What each state reads.** The desktop's `approvalsQuery` reads the requests, the rules, the notices and the
+    record at once; the brick now reads per state, with the desktop's fields: `pending` and `answered` the requests
+    and the record (no longer the rules and notices they never drew); `rules` the rules, and of the requests only
+    `id` and `state`, for the count of pending it flags itself by; `notices` the notices, the requests and the record,
+    which the desktop's composition of Reported steps needs. One live selection a placement in every state, as
+    before.
 - `person` with `contact:<slug>`: the shared card People opens (`memoryPerson`, id `commons:<slug>`): name, summary,
   how to reach them, linked projects. A member is drawn by their open tickets. Since made fuller: see "What loom
   knows" below.
@@ -1654,7 +1691,25 @@ told when the write fails; the outcomes listed in FYI, All items and Errors only
 change's approval said by its plain title; the flag raised only when the count of `needs` rises.
 `web/src/boards/bricks-approvals.test.tsx`: pending oldest first and answered newest first with what, why, agent,
 target, outcome and who; a household change without its stored words; no control and no handler in any form; the
-three forms; loading and unavailable; the heading rule; the flag raised only when the pending count rises.
+three forms; loading and unavailable; the heading rule; the flag raised only when the pending count rises. Since
+the `rules` and `notices` states (added later on 2026-11-27): each state asks only for the lists it draws, and
+`rules` only `id` and `state` of the requests; the rules with scope, kind, person, answer and who set them, no
+control or handler; the reported steps newest first, the record's reported step and quoted answer among them, the
+first fifty and the rest counted; the small and folded forms, none, loading and unavailable for both; the flag in
+both. `web/src/boards/brick-queries.test.ts`: each state's selection against the generated schema, naming exactly
+its lists. `src/core/boards/bricks/approvals.test.ts`: the four states, `pending` by default, nothing else.
+The pull brick's later additions: `web/src/boards/bricks-pull.test.tsx`: when loom last read GitHub and that it
+failed, in the big form only and only where the row is read; the review history asked only once opened, each round
+drawn, none, loading and unavailable, and forgotten on leaving the big form; Refresh from GitHub drawn only where
+`workChangesRefresh` says yes and never in the small forms (which do not ask it), its one POST, "Refreshing…" with a
+second press dropped, done telling the board `refresh {}`, refused (403) and failed (503, no answer, an answer that
+is not `refreshed`) each saying so and telling the board nothing, and the refusal still said once the button is gone.
+`web/src/data/work-refresh.test.ts`: the error carries the door's status. `src/shared-changes.test.ts`: through the
+real root and door, a member who can read the pull request but is no household owner reads no `changeSync` row and
+a false `workChangesRefresh`, and `/api/changes/refresh` answers 403 with GitHub not read; made an owner, the same
+member may. `src/core/boards/bricks/pull.test.ts`: the action and its empty detail. Not tested: a browser, and a
+real GitHub. The gallery has `owner`, `last-read-failed`, `reviews-opened`, `no-reviews` and `refresh-failed` for the
+pull brick and `rules`, `no-rules`, `notices` and `no-notices` for the approvals brick.
 `web/src/boards/bricks-question-more.test.tsx`: the linked page for a safe address only; what the item is about;
 the plain title; Notify reaching `/api/inbox/volume` and then `boards.act` with the volume, only where the member
 may set it. `model.test.ts` and `operations.test.ts`: the two bricks' parameters refusing anything off their lists,
