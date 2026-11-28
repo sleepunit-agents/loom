@@ -6,7 +6,7 @@ import { checksWord, checkWord, mergeableWord, reviewWord, roleWord, stateWord, 
 import { Chip, Fact, Facts, Lead, Loading, Note, Row, Rows, Section, State, Unavailable, ticketChip, useOwnFlag, words, type Params, type Raise, type Tone } from './brick-kit';
 import type { Form } from './layout';
 
-type Row = Pick<Change, 'id' | 'repository' | 'number' | 'title' | 'state' | 'draft' | 'authorLogin' | 'project' | 'agent' | 'branch' | 'baseBranch' | 'checks' | 'review' | 'mergeable' | 'waitingOn'>;
+type Row = Pick<Change, 'id' | 'repository' | 'number' | 'url' | 'title' | 'state' | 'draft' | 'authorLogin' | 'project' | 'agent' | 'branch' | 'baseBranch' | 'checks' | 'review' | 'mergeable' | 'waitingOn'>;
 type Read = {
   changes: Row[];
   changeChecks: ChangeSnapshot['checks'][number][];
@@ -15,7 +15,7 @@ type Read = {
 };
 /** The fields of the desktop's ChangesView selection, for one change. */
 export const pullQuery = `query BrickPull($id:String!){
-  changes(where:{id:{eq:$id}},limit:1){id repository number title state draft authorLogin project agent branch baseBranch checks review mergeable waitingOn}
+  changes(where:{id:{eq:$id}},limit:1){id repository number url title state draft authorLogin project agent branch baseBranch checks review mergeable waitingOn}
   changeChecks(where:{change:{eq:$id}}){change name state}
   changePeople(where:{change:{eq:$id}}){change login role}
   changeTasks(where:{change:{eq:$id}}){change task taskRow{id title status}}
@@ -24,6 +24,8 @@ export const pullQuery = `query BrickPull($id:String!){
 /** Open, draft, merged or closed: the stored state, with a draft said as one. */
 export const pullState = (c: Pick<Change, 'state' | 'draft'>) => (c.state === 'open' && c.draft ? 'Draft' : stateWord[c.state] ?? c.state);
 const tone = (c: Pick<Change, 'state' | 'draft' | 'waitingOn'>): Tone => (c.state === 'merged' ? 'good' : c.state !== 'open' || c.draft ? 'muted' : c.waitingOn === 'you' ? 'waiting' : 'working');
+/** The pull request's own page on GitHub, and only a GitHub address: anything else draws no link. */
+export const pullHref = (url: string | null | undefined) => (url && /^https:\/\/github\.com\/[^\s]+$/.test(url) ? url : null);
 const checkTone = (state: string): Tone => (state === 'failing' ? 'bad' : state === 'passing' ? 'good' : state === 'running' ? 'working' : 'muted');
 /** What the brick marks itself for: it was merged, it was closed, or its checks went to failing. */
 export function pullFlag(was: string, now: string): string | null {
@@ -56,6 +58,7 @@ export function Pull({ params, form, raise }: { params: Params; form: Form; rais
         {form === 'side' && tickets.map((t) => <span key={t.id} title={t.title}>{ticketChip(t.id)}</span>)}
       </div>
       <Note>{summary(c)}</Note>
+      {pullHref(c.url) && <Note><a href={pullHref(c.url)!} target="_blank" rel="noopener noreferrer">Open on GitHub</a></Note>}
       {form === 'primary' && (
         <>
           <Facts>
