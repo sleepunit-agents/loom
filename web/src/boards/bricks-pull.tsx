@@ -70,7 +70,7 @@ function FilePatch({ change, path }: { change: string; path: string }) {
   return (
     <>
       {/* It scrolls sideways where a line is longer than the placement, so the keyboard can reach it. */}
-      <pre className="board-patch" role="region" tabIndex={0} aria-label={'Patch of ' + path}><code>{p.patch.split('\n').map((line, i) => <span key={i} className={patchLine(line)}>{line + '\n'}</span>)}</code></pre>
+      <pre className="board-patch" role="region" aria-label={'Patch of ' + path}><code>{p.patch.split('\n').map((line, i) => <span key={i} className={patchLine(line)}>{line + '\n'}</span>)}</code></pre>
       {p.cut && <Note>Only the first 200 KB of this patch is shown. The whole of it is on GitHub.</Note>}
     </>
   );
