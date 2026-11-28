@@ -651,6 +651,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `household` | none | `revokeToken {}`, by `token.revoke`, and `revokeSession {}`, by `sessions.revoke`, each asked first; `setGrants {}`, by `program.setGrants`. A member, an agent's appearance and accounts and a restore are changed by asking the agent; making a token and changing a portrait stay on the desktop | none |
 | `sharing` | none | none: a project's sharing is changed by asking the agent | none |
 | `tickets` | `state`: `ready`, `in-progress`, `shelved` or `all`, default `ready` (what the desktop's Tasks opens on). No record reference, and no parameter holds words to search for | none: a ticket is acted on in its `ticket` brick | none |
+| `projects` | none: the words searched for are typed inside the brick and are no parameter | none | none |
 
 | Brick | Can be big | Flags itself when |
 | --- | --- | --- |
@@ -671,7 +672,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `ticket`, added 2026-11-27 | yes: also its description, its linked tickets with their titles, and the Edit and Links forms; small, its priority, who filed it, why it closed and its links as chips | as above; an edit or a link flags nothing |
 | `ticket`, added later on 2026-11-27 | yes: also its pull requests, each a `pull` chip with its title and state; the conversation it was filed from; and two sections opened on a press, Reviews (loom's rounds and GitHub's reviews, newest first) and Story (what agents posted about it, newest first), each read only when opened, thirty at a time; small, its pull requests as `pull` chips by number | as above |
 | `lanes`, added 2026-11-27 | yes: also how many of the project's questions wait on the member, and each agent's new claims with pause and resume | never |
-| `project`, added 2026-11-27 | yes: also its name, what each agent calls it, and its repositories | never |
+| `project`, added 2026-11-27 | yes: also its name, what each agent calls it, and its repositories; and, opened on demand, the agents' notes on it with a search box and each note readable whole | never |
 | `new-ticket` | yes: every field of the desktop's Create task form; small, title, goal and why with that form's defaults; folded, "File a ticket in <project name>" | never |
 | `backlog` | yes: thirty tickets, and each one's priority can be set; small, six | never |
 | `unfiled` | yes: the first fifty, and each can be filed into a project; small, six | never |
@@ -757,6 +758,7 @@ each state's selection, and the search, against the generated schema under the r
 member, a household owner and a member on no project); `web/src/boards/bricks-tickets.test.tsx` checks the variables
 asked for each state, rows as `ticket` chips, empty, loading, unavailable, paging to the cap, and the search (once
 on submit, results, nothing matches, unavailable, back to the list, nothing to the board).
+| `projects` | yes: up to 200 projects by name, each with its goal and where it stands, and a search box. Small: the first six. Folded: the counts | never |
 
 **The conversations and agents bricks, 2026-11-27.** Each reads what the desktop's Comms, Home and Agents apps read.
 
@@ -1012,7 +1014,22 @@ read offered as they type; an id that is not one of them is not sent.
   big form adds its name, each agent's card for it (name, goal, summary) and the repositories that card names
   (`memoryProject`), each a `repository` chip in this project. Loom still gives a member no read of
   `project_repositories`, so a repository bound to the project that no agent's card names is not shown. It has no
-  action; the desktop's project discussion and notes are not on it.
+  action; the desktop's project discussion is not on it. **Its agents' notes (2026-11-27)**: the big form has
+  "Agents' notes", closed until the member opens it, and nothing of it is read before then. Opened, it asks once, in
+  one request, each agent's card for the project (`memoryProject`) for its Memories section: the previews loom gives a
+  project's card (its latest twenty notes and its ten most used, each the title and the start of the words), with
+  how many there are in all. The search box filters those previews on Enter or Search (every word, in any case); the
+  words stay in the box. A note opened is read once by `memoryProjectMemory` and shows its whole words. Loom has no
+  read that searches all of an agent's notes on a project, and none was added: a note outside the previews is not
+  found. What may be read is the server's: an agent's notes answer a household owner and a member with that agent on
+  their own list (`maySee`, `type: 'memory'`), and a card or note anyone else asks for answers nothing. Closing the
+  section, the brick leaving its big form or its project changing drops what was read.
+- `projects`: the desktop's Work project directory (`projects`, ordered by name; `workHomeQuery`), one live read of
+  the first 200 and one more to know there are more, each a row placing the `project` brick, with its lifecycle and,
+  big, its goal. The table's own rule decides what is listed: every project for a household owner, the projects a
+  member is in for anyone else, so unlike `sharing` it is not an owner's brick. Big, a search box filters the rows
+  read, on Enter or Search, by every word in the name, id or goal; the words are never sent. Past 200 it says the
+  rest are not listed or searched.
 
 **Still not drawn, 2026-11-27.** No brick has a hover form. Writing a brick in words as `[label](loom:<brick>/<key>)`
 is not built; only a bare ticket id becomes a chip. A merge cannot be answered from its `pull` brick; its approval can, from the `approval` brick.
