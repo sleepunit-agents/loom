@@ -4,7 +4,7 @@
 import { expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 // The root's graphql, the one the generated schema is built with (web/ has its own copy).
-import { graphql } from '../../../node_modules/graphql/index.js';
+import { GraphQLObjectType, GraphQLSchema, graphql, parse, validate } from '../../../node_modules/graphql/index.js';
 import { sql } from 'drizzle-orm';
 import { createDataSchema } from '../../../src/core/data/database.js';
 import { dataQueries, type QueryVisibility } from '../../../src/core/data/queries.js';
@@ -16,6 +16,10 @@ import { backlogQuery, inBacklog } from './bricks-backlog';
 import { newTicketQuery } from './bricks-new-ticket';
 import { projectQuery } from './bricks-project';
 import { ticketChoicesQuery, ticketMoreQuery } from './bricks-ticket-edit';
+import { ticketGithubReviewsQuery, ticketPostsQuery, ticketRoundsQuery, ticketSourceQuery } from './bricks-ticket-history';
+import { changeReviewFields } from '../../../src/pieces/changes/review-query.js';
+import { agentPostFields } from '../../../src/core/conversations/agent-post-query.js';
+import type { WordsKey } from '../../../src/core/conversations/words.js';
 
 it('reads a ticket\'s facts and links, a backlog, the unfiled tickets and the choices with selections the generated schema answers', async () => {
   const client = new Database(':memory:');
@@ -36,7 +40,11 @@ it('reads a ticket\'s facts and links, a backlog, the unfiled tickets and the ch
       { ...task, id: 't-7', title: 'Unfiled', project: null },
     ] as (typeof s.tasks.$inferInsert)[]).run();
     db.insert(s.taskLinks).values([{ task: 't-2', dependsOn: 't-1', type: 'parent-child' }, { task: 't-2', dependsOn: 't-3', type: 'blocks' }, { task: 't-4', dependsOn: 't-2', type: 'blocks' }]).run();
-    const tables = ['tasks', 'taskLinks', 'projects', 'projectMembers', 'agents', 'members'] as const;
+    // The ticket's pull requests and the conversation it was filed from (./bricks-ticket-history.tsx).
+    db.insert(s.changes).values({ id: 'github:acme/app#12', repository: 'acme/app', number: 12, title: 'Oil the hinge', body: '', url: 'https://github.com/acme/app/pull/12', state: 'open', draft: true,
+      authorLogin: 'art', branch: 'art/hinge', headCommit: 'a'.repeat(40), baseBranch: 'next', checks: 'none', review: 'required', mergeable: 'unknown', waitingOn: 'ci', openedAt: at, updatedAt: at } as typeof s.changes.$inferInsert).run();
+    db.insert(s.changeTasks).values({ change: 'github:acme/app#12', task: 't-2' }).run();
+    const tables = ['tasks', 'taskLinks', 'projects', 'projectMembers', 'agents', 'members', 'changes', 'changeTasks', 'conversations'] as const;
     const schema = dataQueries(client, { tables, visibility: Object.fromEntries(tables.map(name => [name, () => sql`true`])) as QueryVisibility });
     const read = async (source: string, variableValues: Record<string, unknown> = {}) => {
       const result = await graphql({ schema, source, variableValues });
@@ -47,6 +55,8 @@ it('reads a ticket\'s facts and links, a backlog, the unfiled tickets and the ch
     expect(more).toMatchObject({ id: 't-2', status: 'open', title: 'Second by position', description: 'Words', priority: 1, project: 'pond', createdAt: at, createdBy: 'sam', closedAt: null, closeReason: null });
     expect(more.taskLinksByTask).toEqual(expect.arrayContaining([{ dependsOn: 't-1', type: 'parent-child', dependsOnRow: { id: 't-1', title: 'Epic' } }, { dependsOn: 't-3', type: 'blocks', dependsOnRow: { id: 't-3', title: 'First by position' } }]));
     expect(more.taskLinksByDependsOn).toEqual([{ task: 't-4', type: 'blocks', taskRow: { id: 't-4', title: 'Most urgent' } }]);
+    expect(more).toMatchObject({ sourceKind: null, sourceId: null, changeTasksByTask: [{ changeRow: { id: 'github:acme/app#12', number: 12, title: 'Oil the hinge', state: 'open', draft: true } }] });
+    expect((await read(ticketSourceQuery, { id: 'cv-none' })).source).toBeNull();
     expect((await read(ticketMoreQuery, { id: 't-5' })).ticket).toMatchObject({ status: 'closed', closedAt: at, closeReason: 'Done with it' });
     expect((await read(ticketMoreQuery, { id: 't-404' })).ticket).toBeNull();
     expect((await read(ticketChoicesQuery)).tasks.map((t: { id: string }) => t.id)).toEqual(['t-5', 't-6', 't-4', 't-3', 't-2', 't-7', 't-1']);
@@ -61,5 +71,15 @@ it('reads a ticket\'s facts and links, a backlog, the unfiled tickets and the ch
     expect((await read(projectQuery, { id: 'pond' })).project).toEqual({ name: 'Pond', goal: null, lifecycle: 'active', projectMembersByProject: [{ member: 'sam' }] });
     expect((await read(workUnfiledQuery, { offset: 0 })).unfiled.map((t: { id: string }) => t.id)).toEqual(['t-7']);
     expect(await read(taskChoicesQuery)).toMatchObject({ projects: [{ id: 'pond', name: 'Pond', projectMembersByProject: [{ member: 'sam' }] }], agents: [{ id: 'art' }], members: [{ id: 'sam' }] });
+  } finally { client.close(); }
+});
+
+it('asks a ticket\'s reviews and story with the fields the desktop asks of loom\'s own reads, which the server\'s fields answer', () => {
+  const client = new Database(':memory:');
+  try {
+    const db = createDataSchema(client, () => '2026-11-14T00:00:00.000Z');
+    // Only the documents are checked against the fields; nothing is resolved, so the words key is never used.
+    const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: { ...changeReviewFields(db), ...agentPostFields(db, {} as WordsKey, () => sql`true`) } }) });
+    for (const query of [ticketRoundsQuery, ticketGithubReviewsQuery, ticketPostsQuery]) expect(validate(schema, parse(query)), query).toEqual([]);
   } finally { client.close(); }
 });
