@@ -13,6 +13,7 @@ const reviewPage = z.object({
 });
 const fields=`number title url state isDraft createdAt updatedAt closedAt mergedAt author { login ... on User { name } } headRefName headRefOid baseRefName bodyText mergeable reviewDecision
  reviews(first:10){${reviewConnection}}
+ files(first:100){nodes{path additions deletions}}
  reviewRequests(first:10){nodes{requestedReviewer{... on User{login name} ... on Team{slug name}}}}
  latestReviews(first:10){nodes{state author{login ... on User{name}}}} assignees(first:5){nodes{login name}} participants(first:15){nodes{login name}}
  commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}}`;
@@ -20,6 +21,14 @@ const query=`query($owner:String!,$name:String!,$states:[PullRequestState!],$aft
 const failed=new Set(['FAILURE','TIMED_OUT','CANCELLED','ACTION_REQUIRED','STARTUP_FAILURE','ERROR']);
 // GitHub JSON is untrusted; pick normalized fields, then validate at the boundary.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+/** The files GitHub lists, each once, with whole non-negative counts; a malformed entry is left out. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const files=(connection:any)=>{const out=new Map<string,{path:string;additions:number;deletions:number}>();
+ for(const f of Array.isArray(connection?.nodes)?connection.nodes:[]){
+  if(typeof f?.path!=='string'||!f.path||f.path.length>1000||![f.additions,f.deletions].every(n=>Number.isInteger(n)&&n>=0))continue;
+  out.set(f.path,{path:f.path,additions:f.additions,deletions:f.deletions});
+ }
+ return [...out.values()].slice(0,100);};
 export function normalize(repo:string,n:any):Change {
  repo=repoId(repo);
  if(!n||!['OPEN','MERGED','CLOSED'].includes(n.state)) throw new Error('Invalid GitHub state');
@@ -35,7 +44,7 @@ export function normalize(repo:string,n:any):Change {
  // eslint-disable-next-line @typescript-eslint/no-explicit-any
  const person=(p:any,role:string)=>{const login=p?.login??p?.slug;if(login&&!people.some(x=>x.login===login && x.role===role)) people.push({login,...(p.name?{name:p.name}:{}),role});};
  person(n.author,'author');for(const r of reviews) person(r?.author,'reviewer');for(const r of n.reviewRequests?.nodes??[]) person(r?.requestedReviewer,'requested');for(const p of n.assignees?.nodes??[]) person(p,'assignee');for(const p of n.participants?.nodes??[]) person(p,'commenter');
- return changeSchema.parse({id:`${repo}#${n.number}`,repo,number:n.number,page:`c/github/${repo.slice(7)}/${n.number}`,title:(n.title??'').slice(0,300),url:n.url?.startsWith('https://github.com/')?n.url:'',state:{OPEN:'open',MERGED:'merged',CLOSED:'closed'}[n.state as string],draft:!!n.isDraft,author:{login:n.author?.login??'ghost',...(n.author?.name?{name:n.author.name}:{})},created:n.createdAt??null,updated:n.updatedAt??null,closed:n.mergedAt??n.closedAt??null,head:{ref:n.headRefName??'',id:(n.headRefOid??'').toLowerCase()},base:{ref:n.baseRefName??''},body:(n.bodyText??'').replaceAll('\r\n','\n').trim().slice(0,12000),checks,review:{state:({APPROVED:'approved',CHANGES_REQUESTED:'changes_requested',REVIEW_REQUIRED:'required'} as Record<string,string>)[n.reviewDecision]??'not_required',by:reviews.filter((r:{state:string})=>r?.state==='APPROVED').map((r:{author?:{name?:string;login:string}})=>r.author?.name??r.author?.login).filter(Boolean).slice(0,8)},mergeable:n.mergeable==='MERGEABLE'?'yes':n.mergeable==='CONFLICTING'?'no':'unknown',conflicts:n.mergeable==='CONFLICTING',people:people.slice(0,20)});
+ return changeSchema.parse({id:`${repo}#${n.number}`,repo,number:n.number,page:`c/github/${repo.slice(7)}/${n.number}`,title:(n.title??'').slice(0,300),url:n.url?.startsWith('https://github.com/')?n.url:'',state:{OPEN:'open',MERGED:'merged',CLOSED:'closed'}[n.state as string],draft:!!n.isDraft,author:{login:n.author?.login??'ghost',...(n.author?.name?{name:n.author.name}:{})},created:n.createdAt??null,updated:n.updatedAt??null,closed:n.mergedAt??n.closedAt??null,head:{ref:n.headRefName??'',id:(n.headRefOid??'').toLowerCase()},base:{ref:n.baseRefName??''},body:(n.bodyText??'').replaceAll('\r\n','\n').trim().slice(0,12000),checks,review:{state:({APPROVED:'approved',CHANGES_REQUESTED:'changes_requested',REVIEW_REQUIRED:'required'} as Record<string,string>)[n.reviewDecision]??'not_required',by:reviews.filter((r:{state:string})=>r?.state==='APPROVED').map((r:{author?:{name?:string;login:string}})=>r.author?.name??r.author?.login).filter(Boolean).slice(0,8)},mergeable:n.mergeable==='MERGEABLE'?'yes':n.mergeable==='CONFLICTING'?'no':'unknown',conflicts:n.mergeable==='CONFLICTING',people:people.slice(0,20),...(n.files?{files:files(n.files)}:{})});
 }
 export function githubReader(secrets:Secrets, request:typeof fetch=fetch) {
  return async(repo:string,now:number):Promise<Change[]>=>{

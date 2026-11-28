@@ -17,7 +17,6 @@ const sharedPageSuite: Record<string, string> = {
   trend: 'bricks.test.tsx', // its forms and its chart; its counting is in trend.test.ts
   ticket: 'bricks.test.tsx', // its forms and commands; its edit and link forms are in bricks-ticket-edit.test.tsx
   comments: 'bricks.test.tsx',
-  pull: 'bricks-drawn.test.tsx',
   repository: 'bricks-drawn.test.tsx',
   question: 'bricks-drawn.test.tsx', // its volume and what else it shows are in bricks-question-more.test.tsx
   agents: 'bricks-agent.test.tsx',

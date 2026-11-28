@@ -170,6 +170,7 @@
     "changes",
     "change_checks",
     "change_people",
+    "change_files",
     "change_tasks",
     "change_sync"
   ]

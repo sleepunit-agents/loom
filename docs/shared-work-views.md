@@ -17,7 +17,7 @@ produces no task reference in the snapshot. Tasks are deduplicated by id.
 The outside composition must authenticate each viewer and expose explicit
 tables with current SQL visibility. Approvals require `approvals`,
 `approvalRules`, `approvalNotices`, `approvalRecord`; Changes require
-`changes`, `changeChecks`, `changePeople`, `changeTasks`, `changeSync`, `tasks`.
+`changes`, `changeChecks`, `changePeople`, `changeFiles`, `changeTasks`, `changeSync`, `tasks`.
 Use the reviewed `workVisibility` and `taskVisibility` policies on every table
 and connected read. Never expose whole tables to make these selections work.
 Global rules/sync may be owner-only under those policies.

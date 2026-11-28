@@ -44,7 +44,7 @@ import { JobSummaries, jobSummaryFields, nextTerminalDeadline } from './runtime/
 // One explicit public read projection, shared by the outside doors and programme catalogue.
 export const sharedQueryTables = ['boxes', 'boxAgents', 'boxFacts', 'boxReadings', 'boxAlertSettings', 'agentRunSettings', 'agentBoxes', 'agentHousePorts', 'agentHouseSecrets', 'agentPeople', 'agentDeniedTools', 'tasks', 'taskComments', 'taskLinks', 'projects', 'projectMembers', 'agents', 'agentStatus', 'agentModels',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
-      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', 'members', 'memberAgents', ...bridgeSecretsTables, ...conversationTables,
+      'changes', 'changeChecks', 'changePeople', 'changeFiles', 'changeTasks', 'changeSync', 'memberPreferences', 'members', 'memberAgents', ...bridgeSecretsTables, ...conversationTables,
       'timingDays', 'measuringSettings', 'triggers', 'triggerLog', 'triggerEdits', 'agentPauses'] as const;
 /** The longest a last-seen style time waits before open selections are read again for it:
  * docs/accepted-tradeoffs.md, "A last-seen time reaches an open window up to a minute late". */

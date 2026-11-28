@@ -31,7 +31,7 @@ describe('the approved data model', () => {
       if (column && current) expected[current].push(...column[1].split(', '));
       if (line.trim().endsWith(')]),')) current = undefined;
     }
-    expect(Object.keys(expected)).toHaveLength(87);
+    expect(Object.keys(expected)).toHaveLength(88);
     const columnsOf = (table: Parameters<typeof getTableColumns>[0]) => Object.values(getTableColumns(table)).map(c => c.name)
       .filter(n => n !== 'singleton' || getTableName(table) === 'box_alert_settings');
     const actual = Object.fromEntries(Object.values(tables).map(table => [getTableName(table), columnsOf(table)]));

@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createDataSchema, type DataDatabase } from '../core/data/database.js';
-import { agents, agentAccounts, projects, projectRepositories, tasks } from '../core/data/schema.js';
+import { eq } from 'drizzle-orm';
+import { agents, agentAccounts, changeFiles, projects, projectRepositories, tasks } from '../core/data/schema.js';
 import { changeService } from './changes.js';
 import type { Change, Rule } from '../pieces/changes/model.js';
 
@@ -95,4 +96,16 @@ it('replaces only complete batches of submitted forge reviews, preserving distin
  expect(read()).toHaveLength(2);
  service.put({...input,submittedReviews:[]});
  expect(read()).toEqual([]);
+});
+
+it('keeps the files a read lists, replacing them on the next read that lists them and keeping them on one that does not', () => {
+  const stored = () => db.select().from(changeFiles).where(eq(changeFiles.change, change().id)).all().sort((a, b) => a.path.localeCompare(b.path));
+  service.put({ ...change(), files: [{ path: 'src/a.ts', additions: 4, deletions: 1 }, { path: 'src/b.ts', additions: 0, deletions: 7 }] });
+  expect(stored()).toEqual([{ change: change().id, path: 'src/a.ts', additions: 4, deletions: 1 }, { change: change().id, path: 'src/b.ts', additions: 0, deletions: 7 }]);
+  service.put(change());
+  expect(stored()).toHaveLength(2);
+  service.put({ ...change(), files: [{ path: 'src/c.ts', additions: 2, deletions: 2 }] });
+  expect(stored()).toEqual([{ change: change().id, path: 'src/c.ts', additions: 2, deletions: 2 }]);
+  service.put({ ...change(), files: [] });
+  expect(stored()).toEqual([]);
 });
