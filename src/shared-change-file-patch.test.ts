@@ -121,9 +121,22 @@ it('cuts a patch over 200 KB at its last whole line, or inside a line longer tha
   expect(wide.patch).toBe('+' + 'é'.repeat(PATCH_BYTES_MAX / 2 - 1));
   expect(wide.patch).not.toContain('�');
   expect(capPatch(patch)).toEqual({ patch, cut: false });
+  // What GitHub really gives for a minified file: a hunk header, then lines longer than the cap. Not the header alone.
+  const minified = capPatch('@@ -1 +1 @@\n-' + 'a'.repeat(300_000) + '\n+' + 'b'.repeat(300_000));
+  expect(minified.cut).toBe(true);
+  expect(Buffer.byteLength(minified.patch)).toBe(PATCH_BYTES_MAX);
+  expect(minified.patch.startsWith('@@ -1 +1 @@\n-aaaa')).toBe(true);
 });
 
-it('gives the patch text exactly as GitHub does, never searched for credentials', async () => {
+it('replaces the credential it read GitHub with where a pull request itself holds it', async () => {
+  const f = fixture();
+  f.list([{ filename: 'src/pump.ts', patch: `+GITHUB_TOKEN=${GITHUB_TOKEN}\n+other = 1` }, { filename: GITHUB_TOKEN + '.txt', patch: '+x' }]);
+  const got = await f.query('src/pump.ts', alice);
+  expect(answer(got)).toEqual({ state: 'patch', patch: '+GITHUB_TOKEN=[redacted]\n+other = 1', cut: false });
+  expect(JSON.stringify(got)).not.toContain(GITHUB_TOKEN);
+});
+
+it('gives the patch text as GitHub does, never searched for the shape of a credential', async () => {
   const f = fixture();
   // Words that look like a token pattern are source code, and stay as they are.
   const code = '+const highs_and_lows = weighs_in(x)\n+const sample = "ghp_example"\n+const pat = "github_pat_fixture"';

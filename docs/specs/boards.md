@@ -1136,17 +1136,24 @@ Added 2026-11-27 (t-2428). In the `pull` brick's big form each changed file's na
   name and asks that it be followed ("Best practices for using the REST API"); one is followed, only to
   `https://api.github.com/repositories/{id}/pulls/{number}/files` with the same page, anything else is a failed read.
 - **Token.** It goes only into the authorization header of these requests: never into an address, a body, an error,
-  a log or an answer. So nothing read from GitHub is searched for it, and a patch is given exactly as GitHub gives
-  it (searching source code for token shapes would turn `weighs_in` into `wei[redacted]`). Every failure is one bare
-  error. The poll's own reads (`githubReader`) still redact as before.
+  a log or an answer. A pull request can itself hold that token (a committed `.env`, a pasted log), so its exact
+  value is replaced by `[redacted]` in what GitHub answers before anything is parsed. Nothing is replaced by shape:
+  searching source code for token shapes would turn `weighs_in` into `wei[redacted]`. Every failure is one bare
+  error. The poll's own reads (`githubReader`) still redact by value and by shape as before.
 - **Bounds.** At most 2 GitHub requests from this read at once, across every change and viewer; at most 8 pages wait
   for one, and past that an ask is `unavailable` at once, with nothing sent and nothing kept. A page's body is read
   only to 8 MiB (more fails the page, unread past it); each page has 20 s from its request to its last byte. One
   answer takes at most 20 s, waiting included: past that it is `unavailable`, and a page still being read finishes
-  on its own limit and is kept for the next ask.
+  on its own limit and is kept for the next ask. One page's read holds its place at most 25 s, the read of the
+  credential included; past that the place is given up and the page is a failed read. The two places and eight
+  waiting are shared by everybody: one member opening many pull requests at once can make another's open
+  `unavailable` until those reads end (not divided by member; a household is a few people).
+- **Over the socket.** A one-shot read over the socket is answered, but the socket closes a client whose answer a
+  commit landed during ("Data changed; reconnect"), and this read waits on GitHub, so that is likely. The page asks
+  over POST and retries once instead.
 - **Cap.** At most 200 KB (204,800 UTF-8 bytes) of patch text an answer. A longer patch is cut at its last whole line
-  within that, or inside its line where one line is longer than that (a minified file), a character the cut splits
-  left out whole, and `cut` is true; the page says "This patch is longer than 200 KB: only its first part is shown.
+  within that, or inside a line where cutting at a line end would keep less than half of it (a minified file: a hunk
+  header, then one very long line), a character the cut splits left out whole, and `cut` is true; the page says "This patch is longer than 200 KB: only its first part is shown.
   The whole of it is on GitHub."
 - **Kept.** In memory, one page of the files list keyed by repository, number, the change's stored head commit and
   page number, so a new push (a new `head_commit` from the poll) is read afresh. Patches are kept already cut. At

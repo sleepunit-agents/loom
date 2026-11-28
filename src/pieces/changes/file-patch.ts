@@ -12,7 +12,8 @@ import { sqlVisibility } from '../../policy-sql.js';
 import type { ListingReader } from './github.js';
 
 /** The most patch text one answer carries, in UTF-8 bytes (200 KB). A longer patch is cut at the last whole line
- * within it, or inside its line where one line is longer than that, and said to be cut. */
+ * within it, or inside a line where cutting at a line end would keep less than half of that (a minified file), and
+ * said to be cut. */
 export const PATCH_BYTES_MAX = 200 * 1024;
 /** Pages of GitHub's files list asked for at most, a hundred files each, before a file is taken as not listed.
  * `change_files` holds the first hundred files of the same pull request, so it is nearly always on the first. */
@@ -26,6 +27,12 @@ export const UNAVAILABLE_KEEP_MS = 30_000;
 /** How much kept pages hold at most, counted as JavaScript holds text (two bytes a character): 32 MiB, the oldest
  * page dropped first. One page holds at most a hundred patches already cut to `PATCH_BYTES_MAX`. */
 export const LISTING_KEEP_BYTES = 32 * 1024 * 1024;
+/** How many pages are kept at most, whatever they hold (a failed read and an empty list count no bytes): 512, the
+ * oldest dropped first. */
+export const LISTING_KEEP_PAGES = 512;
+/** The longest one page's read holds one of the `GITHUB_AT_ONCE` places, the read of the credential included: the
+ * page's own 20 s and 5 s more. Past that the place is given up and the page is a failed read. */
+export const GITHUB_PLACE_MS = 25_000;
 /** GitHub requests this read makes at once, across every change and viewer: 2. */
 export const GITHUB_AT_ONCE = 2;
 /** Pages waiting for one of those at most; past that, an ask is `unavailable` at once and nothing is sent. */
@@ -54,8 +61,10 @@ export function capPatch(patch: string): { patch: string; cut: boolean } {
   if (bytes.byteLength <= PATCH_BYTES_MAX) return { patch, cut: false };
   // A streaming decode holds back a character the cut splits instead of writing U+FFFD for it.
   const head = new TextDecoder().decode(bytes.subarray(0, PATCH_BYTES_MAX), { stream: true });
+  // A minified file is a short hunk header and then one line longer than the cap: cutting at the last whole line
+  // would leave the header alone, so the cut falls at a line end only where that keeps at least half of what fits.
   const line = head.lastIndexOf('\n');
-  return { patch: line > 0 ? head.slice(0, line) : head, cut: true };
+  return { patch: line >= head.length / 2 ? head.slice(0, line) : head, cut: true };
 }
 
 /** One page of the files list as kept: each listed path with its cut patch or none, and whether a next page may hold more. */
@@ -81,7 +90,7 @@ export function changeFilePatches(db: DataDatabase, read: ListingReader | undefi
   const drop = (key: string) => { const was = kept.get(key); if (was) { keptBytes -= was.bytes; kept.delete(key); } };
   const keep = (key: string, value: Kept) => {
     drop(key); kept.set(key, value); keptBytes += value.bytes;
-    while (keptBytes > LISTING_KEEP_BYTES && kept.size > 1) drop(kept.keys().next().value!);
+    while ((keptBytes > LISTING_KEEP_BYTES || kept.size > LISTING_KEEP_PAGES) && kept.size > 1) drop(kept.keys().next().value!);
   };
   /** One page of one pull request at one head commit: kept, being read for another ask, or read now. Shared by every
    * path and viewer, so a hundred paths of one pull request cost one request a page. */
@@ -91,7 +100,12 @@ export function changeFilePatches(db: DataDatabase, read: ListingReader | undefi
     if (hit) drop(key);
     const pending = asking.get(key);
     if (pending) return pending;
-    const asked = limit(() => read!(repository, number, n)).then((entries): Listing | 'unavailable' => {
+    const asked = limit(() => {
+      // The reader's own limit starts once it holds the credential; this one covers the wait for that too.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const stuck = new Promise<never>((_, fail) => { timer = setTimeout(() => fail(new Error('GitHub read too slow')), GITHUB_PLACE_MS); timer.unref?.(); });
+      return Promise.race([read!(repository, number, n), stuck]).finally(() => clearTimeout(timer));
+    }).then((entries): Listing | 'unavailable' => {
       const files: Listing['files'] = new Map();
       let bytes = 0;
       for (const entry of entries) {
@@ -150,8 +164,8 @@ export function changeFilePatchFields(service: ReturnType<typeof changeFilePatch
   const text = new GraphQLNonNull(GraphQLString);
   const type = new GraphQLObjectType({ name: 'ChangeFilePatch', fields: {
     state: { type: text, description: '`patch`; `none` (GitHub lists the file with no patch: binary, too large for GitHub, a rename with no change, or empty); `unlisted` (GitHub\'s list does not have the file just now); or `unavailable` (GitHub could not be read).' },
-    patch: { type: GraphQLString, description: 'The patch text exactly as GitHub gives it, at most 200 KB; null unless the state is `patch`.' },
-    cut: { type: new GraphQLNonNull(GraphQLBoolean), description: 'The patch was longer than 200 KB and is cut: at its last whole line within it, or inside a line longer than that.' },
+    patch: { type: GraphQLString, description: 'The patch text as GitHub gives it (only the credential loom read it with, should the text hold it, is replaced), at most 200 KB; null unless the state is `patch`.' },
+    cut: { type: new GraphQLNonNull(GraphQLBoolean), description: 'The patch was longer than 200 KB and is cut: at its last whole line within it, or inside a line where that would keep less than half.' },
   } });
   // Read from GitHub each time it is asked: refused as a live selection (core/data/outside-read.ts).
   return { changeFilePatch: outsideRead({

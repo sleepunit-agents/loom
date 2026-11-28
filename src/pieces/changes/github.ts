@@ -142,8 +142,9 @@ async function boundedText(response: Response): Promise<string> {
  * to the same list by the repository's id (/repositories/{id}/pulls/{number}/files); any other is a failed read.
  *
  * The token goes only into the authorization header of these requests. It is never put in an address, a body, an
- * error or an answer, so nothing read from GitHub is searched for it: a patch is source code, given as GitHub gives
- * it (redaction would turn `weighs_in` into `wei[redacted]`). Every failure is the same bare error. */
+ * error or an answer. A pull request can itself hold that token (a committed .env, a pasted log), so its exact value
+ * is replaced in what GitHub answers before anything is parsed. Nothing is replaced by shape: a patch is source code,
+ * and the poll's shape pattern would turn `weighs_in` into `wei[redacted]`. Every failure is the same bare error. */
 export function githubListingReader(secrets:Secrets, request:typeof fetch=fetch): ListingReader {
  return async(repo,number,page)=>{
   repo=repoId(repo);const [owner,name]=repo.slice(7).split('/');
@@ -161,7 +162,7 @@ export function githubListingReader(secrets:Secrets, request:typeof fetch=fetch)
     response=await request(to.href,init);
    }
    if(!response.ok){await response.body?.cancel();throw new Error('GitHub read failed');}
-   return z.array(fileEntry).max(100).parse(JSON.parse(await boundedText(response))).map(f=>({filename:f.filename,patch:f.patch??null}));
+   return z.array(fileEntry).max(100).parse(JSON.parse((await boundedText(response)).split(token).join('[redacted]'))).map(f=>({filename:f.filename,patch:f.patch??null}));
   });} catch {throw new Error('GitHub read unavailable');} // Never persist/log an upstream exception or credential.
  };
 }
