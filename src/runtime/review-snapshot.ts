@@ -109,8 +109,10 @@ export async function snapshotFingerprint(root: string): Promise<string> {
 /** Write a frozen review's copy into `directory` (which must not exist): the commit's files in SNAPSHOT_TREE, the diff
  * from `base` to `head` in SNAPSHOT_DIFF, and what they are in SNAPSHOT_FACTS. `credential` is the job's house fetch
  * credential, given to git's fetch and nowhere else; the body never sees it. Returns the copy's fingerprint. */
-export async function writeReviewSnapshot(input: { source: HouseSource; directory: string; review: ReviewSource; credential?: Uint8Array; signal: AbortSignal }): Promise<string> {
-  const { source, review, signal } = input, house = reviewHouse(review.repository);
+export async function writeReviewSnapshot(input: { source: HouseSource; directory: string; review: ReviewSource; credential?: Uint8Array; signal: AbortSignal;
+  /** Where the repository is fetched from: GitHub unless a test of the copy names a repository of its own. */
+  house?: House }): Promise<string> {
+  const { source, review, signal } = input, house = input.house ?? reviewHouse(review.repository);
   if (!source.diff) throw new ReviewSnapshotError('This worker cannot write a review diff');
   // Both commits by their full ids: the copy is of what loom pinned, wherever the branches have gone since.
   if (await source.fetch(house, input.credential, signal, review.base) !== review.base) throw new ReviewSnapshotError('Review base differs from its pin');
