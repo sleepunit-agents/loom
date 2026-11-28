@@ -514,6 +514,10 @@ area("changes", "Changes",
     ("change", "id", "The change.", "changes"),
     ("login", "text", "Their GitHub login.", ""),
     ("role", "choice(author, reviewer, requested, assignee, commenter)", "Their part in it.", "")]),
+  T("change_files", "The files a change touches, as GitHub counted them: at most the first 100.", [
+    ("change", "id", "The change.", "changes"),
+    ("path", "text", "The file's path.", ""),
+    ("additions, deletions", "number", "Lines added and removed in it.", "")]),
   T("change_tasks", "Tasks a change mentions.", [
     ("change", "id", "The change.", "changes"),
     ("task", "id", "A task it names.", "tasks")]),

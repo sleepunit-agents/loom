@@ -34,7 +34,8 @@ it('reads a pull request and a repository with selections the generated schema a
     db.insert(s.changeTasks).values({ change: 'github:acme/app#1', task: 't-1' }).run();
     db.insert(s.changeChecks).values([{ change: 'github:acme/app#1', name: 'build', state: 'failing' }, { change: 'github:acme/app#3', name: 'unit', state: 'running' }]).run();
     db.insert(s.changePeople).values({ change: 'github:acme/app#1', login: 'sam', role: 'author' }).run();
-    const tables = ['changes', 'changeChecks', 'changePeople', 'changeTasks', 'tasks'] as const;
+    db.insert(s.changeFiles).values([{ change: 'github:acme/app#1', path: 'src/a.ts', additions: 4, deletions: 1 }, { change: 'github:acme/app#3', path: 'src/b.ts', additions: 2, deletions: 0 }]).run();
+    const tables = ['changes', 'changeChecks', 'changePeople', 'changeFiles', 'changeTasks', 'tasks'] as const;
     const schema = dataQueries(client, { tables, visibility: Object.fromEntries(tables.map(name => [name, () => sql`true`])) as QueryVisibility });
     const read = async (source: string, variableValues: Record<string, string>) => {
       const result = await graphql({ schema, source, variableValues });
@@ -45,6 +46,7 @@ it('reads a pull request and a repository with selections the generated schema a
     expect(pull.changes).toMatchObject([{ id: 'github:acme/app#1', number: 1, state: 'open', checks: 'failing', waitingOn: 'author', project: 'pond', agent: 'art' }]);
     expect(pull.changeChecks).toEqual([{ change: 'github:acme/app#1', name: 'build', state: 'failing' }]);
     expect(pull.changePeople).toEqual([{ change: 'github:acme/app#1', login: 'sam', role: 'author' }]);
+    expect(pull.changeFiles).toEqual([{ change: 'github:acme/app#1', path: 'src/a.ts', additions: 4, deletions: 1 }]);
     expect(pull.changeTasks).toEqual([{ change: 'github:acme/app#1', task: 't-1', taskRow: { id: 't-1', title: 'A ticket', status: 'open' } }]);
     expect((await read(pullQuery, { id: 'github:acme/app#9' })).changes).toEqual([]);
     // A repository's open pull requests, latest first; in one project when one is named; nothing for one loom has not read.

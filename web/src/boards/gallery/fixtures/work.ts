@@ -186,15 +186,21 @@ const unfiledRows = [
 const unfiledData = (unfiled: unknown[], over: Record<string, Answer> = {}): Record<string, Answer> => ({ ...shared, WorkUnfiled: { unfiled }, ...over });
 
 // ── pull, repository ───────────────────────────────────────────────────────────────────────────────────────────
-const change = { id: 'github:hollow-lane/irrigation-controller#39', repository: 'hollow-lane/irrigation-controller', number: 39,
+const change = { id: 'github:hollow-lane/irrigation-controller#39', repository: 'hollow-lane/irrigation-controller', number: 39, url: 'https://github.com/hollow-lane/irrigation-controller/pull/39',
   title: 'Read line pressure at both ends and warn when the far end falls below the head by more than a tenth', state: 'open', draft: false, authorLogin: 'moss-bot',
   project: 'garden', agent: 'moss', branch: 'moss/pressure-both-ends', baseBranch: 'main', checks: 'failing', review: 'required', mergeable: 'unknown', waitingOn: 'author' };
-const pullData = (over: object = {}, parts: { checks?: unknown[]; people?: unknown[]; tasks?: unknown[] } = {}): Record<string, Answer> => ({
+const pullData = (over: object = {}, parts: { checks?: unknown[]; people?: unknown[]; tasks?: unknown[]; files?: unknown[] } = {}): Record<string, Answer> => ({
   ...shared,
   BrickPull: {
     changes: [{ ...change, ...over }],
     changeChecks: parts.checks ?? [{ change: change.id, name: 'unit', state: 'running' }, { change: change.id, name: 'build (linux, arm64)', state: 'failing' }, { change: change.id, name: 'lint', state: 'failing' }],
     changePeople: parts.people ?? [{ change: change.id, login: 'moss-bot', role: 'author' }, { change: change.id, login: 'sam', role: 'requested' }, { change: change.id, login: 'alex', role: 'reviewer' }, { change: change.id, login: 'robin', role: 'commenter' }],
+    changeFiles: parts.files ?? [
+      { change: change.id, path: 'src/pressure/read.ts', additions: 84, deletions: 12 },
+      { change: change.id, path: 'src/pressure/read.test.ts', additions: 61, deletions: 0 },
+      { change: change.id, path: 'src/alerts/far-end.ts', additions: 23, deletions: 4 },
+      { change: change.id, path: 'docs/valves/where-each-pressure-sensor-sits-along-the-north-and-south-lines.md', additions: 9, deletions: 2 },
+    ],
     changeTasks: parts.tasks ?? [
       { change: change.id, task: 't-3', taskRow: { id: 't-3', title: title('t-3'), status: 'in_progress' } },
       { change: change.id, task: 't-12', taskRow: { id: 't-12', title: title('t-12'), status: 'open' } },

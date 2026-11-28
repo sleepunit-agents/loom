@@ -11,7 +11,7 @@ import * as s from './schema.js';
 
 let client: Database.Database, db: DataDatabase;
 const at = '2026-11-14T00:00:00.000Z';
-const tables = ['approvals', 'approvalRecord', 'approvalNotices', 'approvalRules', 'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'tasks'] as const;
+const tables = ['approvals', 'approvalRecord', 'approvalNotices', 'approvalRules', 'changes', 'changeChecks', 'changePeople', 'changeFiles', 'changeTasks', 'changeSync', 'tasks'] as const;
 function schema(viewer: Viewer) { return dataQueries(client, { tables, visibility: { ...taskVisibility(viewer), ...workVisibility(viewer) } }); }
 async function read(viewer: Viewer, source: string) {
   const result = await graphql({ schema: schema(viewer), source });
@@ -37,6 +37,7 @@ beforeEach(() => {
     db.insert(s.changes).values({ id, repository: 'house/test', number: ['project','agent','hidden','unlabelled'].indexOf(id), title: id, body: id, url: '', state: 'open', draft: false, authorLogin: 'login', project, agent, branch: 'branch', headCommit: 'a'.repeat(40), baseBranch: 'next', checks: 'running', review: 'required', mergeable: 'unknown', waitingOn: 'ci', openedAt: at, updatedAt: at }).run();
     db.insert(s.changeChecks).values({ change: id, name: id, state: 'running' }).run();
     db.insert(s.changePeople).values({ change: id, login: id, role: 'reviewer' }).run();
+    db.insert(s.changeFiles).values({ change: id, path: id + '.ts', additions: 3, deletions: 1 }).run();
   }
   for (const id of ['visible', 'hidden']) db.insert(s.tasks).values({ id, title: id, project: id === 'visible' ? 'pond' : 'secret', ownerKind: 'household', createdByKind: 'agent', createdBy: 'art', createdAt: at, changedAt: at }).run();
   db.insert(s.changeTasks).values([{ change: 'project', task: 'visible' }, { change: 'project', task: 'hidden' }, { change: 'hidden', task: 'visible' }]).run();
@@ -70,6 +71,15 @@ it('filters child roots and nested selections, requiring both task-link ends bef
   const privateResult = await read({kind:'member',id:'sam'}, '{ approvals { id approvalRecordByApproval { note } } }');
   expect(ids(privateResult.approvals)).toEqual(['agent','mine','project']);
   for (const row of privateResult.approvals) expect(row.approvalRecordByApproval).toEqual([{note:row.id}]);
+});
+it('reads a change\'s files with the same rule as the change itself, at the root and nested', async () => {
+  const query = '{ changeFiles { change path additions deletions } changes { id changeFilesByChange { path } } }';
+  const sam = await read({kind:'member',id:'sam'}, query);
+  expect(sam.changeFiles.map((r:{change:string})=>r.change).sort()).toEqual(['agent','project']);
+  expect(sam.changeFiles.find((r:{change:string})=>r.change==='project')).toEqual({change:'project',path:'project.ts',additions:3,deletions:1});
+  for (const row of sam.changes) expect(row.changeFilesByChange).toEqual([{path:row.id+'.ts'}]);
+  expect((await read({kind:'member',id:'lee'}, query)).changeFiles).toEqual([]);
+  expect((await read({kind:'member',id:'owner'}, query)).changeFiles.map((r:{change:string})=>r.change).sort()).toEqual(['agent','hidden','project','unlabelled']);
 });
 it('keeps retained schemas current across project, agent and household owner revocation', async () => {
   const retained = schema({kind:'member',id:'sam'});

@@ -6,5 +6,5 @@ import type { QueryVisibility } from './queries.js';
  * The rules are stated in policy.ts; `approvals` is the labelled-record rule, which the
  * conversation, job and inbox reads also use. */
 export function workVisibility(viewer: Viewer): QueryVisibility {
-  return sqlVisibility(viewer, ['approvals', 'approvalRecord', 'approvalNotices', 'approvalRules', 'changeSync', 'changes', 'changeChecks', 'changePeople', 'changeTasks']);
+  return sqlVisibility(viewer, ['approvals', 'approvalRecord', 'approvalNotices', 'approvalRules', 'changeSync', 'changes', 'changeChecks', 'changePeople', 'changeFiles', 'changeTasks']);
 }

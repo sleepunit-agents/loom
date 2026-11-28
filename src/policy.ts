@@ -54,7 +54,7 @@ const entry = <T>(map: Record<string, T>, id: string): T | undefined => Object.h
 export type TableWithRule = 'tasks' | 'taskComments' | 'taskLinks' | 'projects' | 'projectMembers'
   | 'agents' | 'agentStatus' | 'agentPauses' | 'agentModels' | 'agentRunSettings' | 'agentBoxes' | 'agentHousePorts' | 'agentHouseSecrets' | 'agentPeople' | 'agentDeniedTools'
   | 'members' | 'memberAgents' | 'memberPreferences'
-  | 'approvals' | 'approvalRecord' | 'approvalNotices' | 'approvalRules' | 'changeSync' | 'changes' | 'changeChecks' | 'changePeople' | 'changeTasks'
+  | 'approvals' | 'approvalRecord' | 'approvalNotices' | 'approvalRules' | 'changeSync' | 'changes' | 'changeChecks' | 'changePeople' | 'changeFiles' | 'changeTasks'
   | 'conversations' | 'conversationPeople' | 'turns' | 'digests' | 'conversationDays' | 'findings' | 'digestItems' | 'jobs' | 'inbox'
   | 'bridgeConnections' | 'bridgeChannelFilters' | 'bridgeChannels' | 'bridgePeople' | 'bridgeIncoming' | 'bridgeSends'
   | 'secrets' | 'secretGrants' | 'secretRequests' | 'secretRules' | 'secretRuleAgents' | 'secretUses' | 'secretChanges'
@@ -315,6 +315,7 @@ export const tableRules: Readonly<Record<TableWithRule, Rule>> = {
   changes: any(householdOwner, inProject('project'), ownsAgent('agent')),
   changeChecks: seenWith('changes', 'change'),
   changePeople: seenWith('changes', 'change'),
+  changeFiles: seenWith('changes', 'change'),
   changeTasks: all(seenWith('changes', 'change'), seenWith('tasks', 'task')),
   conversations: conversation,
   conversationPeople: seenWith('conversations', 'conversation'),

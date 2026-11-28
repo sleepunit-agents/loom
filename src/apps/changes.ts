@@ -1,7 +1,7 @@
 import { mergeTargetFor } from './merge-target.js';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentAccounts, changes, githubReviews, changeChecks, changePeople, changeTasks, changeSync, projectRepositories, tasks, approvals } from '../core/data/schema.js';
+import { agentAccounts, changes, githubReviews, changeChecks, changeFiles, changePeople, changeTasks, changeSync, projectRepositories, tasks, approvals } from '../core/data/schema.js';
 import { lastApprovalAnswer } from './approval-answer.js';
 import { changeSchema, repoId, repositoryKey, tasksCited, waitsOn, type Change, type Rule } from '../pieces/changes/model.js';
 
@@ -80,6 +80,11 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
     for (const name of c.checks.running) checks.set(name, 'running');
     for (const name of c.checks.failing) checks.set(name, 'failing');
     for (const [name, state] of checks) db.insert(changeChecks).values({ change: id, name, state }).run();
+    // A read that did not ask for the files keeps those stored.
+    if (c.files !== undefined) {
+      db.delete(changeFiles).where(eq(changeFiles.change, id)).run();
+      for (const f of c.files) db.insert(changeFiles).values({ change: id, ...f }).run();
+    }
     db.delete(changePeople).where(eq(changePeople.change, id)).run();
     const roles = changePeople.role.enumValues;
     for (const p of [...c.people, { login: c.author.login, role: 'author' }]) {
