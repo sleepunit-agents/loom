@@ -949,6 +949,17 @@ export const changePeople = sqliteTable('change_people', {
   check('change_people_role_choice', sql`${t.role} in ('author', 'reviewer', 'requested', 'assignee', 'commenter')`),
 ]);
 
+/** The files a change touches, as GitHub counted them: at most the first 100 it lists (pieces/changes/github.ts). */
+export const changeFiles = sqliteTable('change_files', {
+  change: text('change').notNull().references((): AnySQLiteColumn => changes.id),
+  path: text('path').notNull(),
+  additions: integer('additions').notNull(),
+  deletions: integer('deletions').notNull(),
+}, t => [
+  primaryKey({ columns: [t.change, t.path] }),
+  check('change_files_counts', sql`${t.additions} >= 0 and ${t.deletions} >= 0`),
+]);
+
 /** Tasks a change mentions. */
 export const changeTasks = sqliteTable('change_tasks', {
   change: text('change').notNull().references((): AnySQLiteColumn => changes.id),
@@ -1891,6 +1902,11 @@ export const changesRelations = relations(changes, ({ one, many }) => ({
   changeChecksByChange: many(changeChecks, { relationName: 'change_checks_change' }),
   changePeopleByChange: many(changePeople, { relationName: 'change_people_change' }),
   changeTasksByChange: many(changeTasks, { relationName: 'change_tasks_change' }),
+  changeFilesByChange: many(changeFiles, { relationName: 'change_files_change' }),
+}));
+
+export const changeFilesRelations = relations(changeFiles, ({ one }) => ({
+  changeRow: one(changes, { fields: [changeFiles.change], references: [changes.id], relationName: 'change_files_change' }),
 }));
 
 export const changeChecksRelations = relations(changeChecks, ({ one }) => ({
@@ -2712,6 +2728,7 @@ export const tables = {
   tempoSettings,
   changes,
   changeChecks,
+  changeFiles,
   changePeople,
   changeTasks,
   changeSync,
@@ -2796,6 +2813,7 @@ export const schema = { ...tables, ...plumbing,
   agentPausesRelations,
   changesRelations,
   changeChecksRelations,
+  changeFilesRelations,
   changePeopleRelations,
   changeTasksRelations,
   boxesRelations,

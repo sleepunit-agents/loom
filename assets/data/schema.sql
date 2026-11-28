@@ -831,6 +831,16 @@ CREATE TABLE `change_checks` (
 	CONSTRAINT "change_checks_state_choice" CHECK("change_checks"."state" in ('failing', 'running'))
 );
 
+CREATE TABLE `change_files` (
+	`change` text NOT NULL,
+	`path` text NOT NULL,
+	`additions` integer NOT NULL,
+	`deletions` integer NOT NULL,
+	PRIMARY KEY(`change`, `path`),
+	FOREIGN KEY (`change`) REFERENCES `changes`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "change_files_counts" CHECK("change_files"."additions" >= 0 and "change_files"."deletions" >= 0)
+);
+
 CREATE TABLE `change_people` (
 	`change` text NOT NULL,
 	`login` text NOT NULL,

@@ -38,6 +38,8 @@ export const changeSchema = z.object({
   checks: z.object({ state: z.enum(changes.checks.enumValues), failing: z.array(z.string()), running: z.array(z.string()), total: z.number().int().nonnegative() }),
   review: z.object({ state: z.enum(changes.review.enumValues), by: z.array(z.string()) }),
   submittedReviews: z.array(submittedReviewSchema).optional(),
+  /** The files it touches with their added and removed lines, at most 100; absent where the reader did not ask. */
+  files: z.array(z.object({ path: z.string().min(1).max(1000), additions: z.number().int().nonnegative(), deletions: z.number().int().nonnegative() })).max(100).optional(),
   mergeable: z.enum(changes.mergeable.enumValues), conflicts: z.boolean(),
   people: z.array(z.object({ login: z.string(), name: z.string().optional(), role: z.string() })),
 });
