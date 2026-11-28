@@ -78,7 +78,7 @@ function FilePatch({ change, path }: { change: string; path: string }) {
 
 /** The desktop's read of a pull request's cold reviews (web/src/data/work-views.tsx). Asked only while the brick's
  * "Loom's reviews" is opened, and live while it is. */
-export const reviewHistoryQuery = 'query ChangeReviewHistory($change: String!) { changeReviewHistory(change: $change) { change job headCommit tier round verdict findings } }';
+export const reviewHistoryQuery = 'query ChangeReviewHistory($change: String!) { changeReviewHistory(change: $change) { change job headCommit tier round verdict findings conversation } }';
 /** A round's verdict in the desktop's words. */
 export const verdictWord = (v: ReviewRound['verdict']) => (v === null ? 'Pending' : v === 'NONE' ? 'No verdict' : v === 'CLEAR' ? 'Clear' : 'Blocking');
 const verdictTone = (v: ReviewRound['verdict']): Tone => (v === null ? 'working' : v === 'CLEAR' ? 'good' : v === 'BLOCKING' ? 'bad' : 'muted');
@@ -91,7 +91,8 @@ function ReviewHistory({ change, head }: { change: string; head: string }) {
   return (
     <Rows label="Loom's reviews" beside>{rounds.map((r) => (
       <Row key={r.job} title={`Round ${r.round} · ${r.tier}`} end={<State tone={verdictTone(r.verdict)}>{verdictWord(r.verdict)}</State>}
-        meta={<>{r.headCommit === head ? 'Current commit' : 'Earlier commit'} <span className="font-mono">{r.headCommit.slice(0, 7)}</span></>}>
+        meta={<>{r.headCommit === head ? 'Current commit' : 'Earlier commit'} <span className="font-mono">{r.headCommit.slice(0, 7)}</span>
+          {r.conversation && <> <Chip place={{ brick: 'session', params: { session: r.conversation } }}>Session</Chip></>}</>}>
         {r.findings ? <Facts><Fact wide label="Findings"><pre className="board-tail">{r.findings}</pre></Fact></Facts> : undefined}
       </Row>
     ))}</Rows>

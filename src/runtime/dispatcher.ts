@@ -2,7 +2,7 @@
  * from the authenticated runner; installed callers use this directly. Nothing
  * here executes a process, opens credentials or invents another transport. */
 import { PAIR_THREAD } from './pair-thread.js';
-import { jobMatchesConversation, reviewThread, reviewRequest, reviewBriefExpired, REVIEW_ROLE_CHANGED } from '../core/conversations/review-place.js';
+import { frozenReview, jobMatchesConversation, reviewThread, reviewRequest, reviewBriefExpired, REVIEW_ROLE_CHANGED } from '../core/conversations/review-place.js';
 import { handoffDeadline } from '../core/conversations/handoff-words.js';
 import { commsKeepDays } from '../core/data/comms-days.js';
 import {eligibleModels,roleRevision,type WorkRole} from './work-roles.js';
@@ -31,6 +31,8 @@ export class Dispatcher {
   // A protocol handshake belongs to the connected worker. Owner labels describe machines and cannot supply it.
   private readonly pairingBoxes = new Set<string>();
   private readonly coldReviewBoxes = new Set<string>();
+  /** Boxes whose worker gives a frozen review its read-only copy (runtime/review-snapshot.ts). Only they take one. */
+  private readonly frozenReviewBoxes = new Set<string>();
   private readonly reviewBoxes = new Set<string>();
   private readonly programBoxes = new Set<string>();
   /** `cannotRun` answers whether a harness would refuse a job with this room (harnessCannotRun in
@@ -40,17 +42,19 @@ export class Dispatcher {
     private readonly cannotRun: (harness: string, policy: WorkerRunPolicy | undefined) => boolean, private readonly workRoles:readonly WorkRole[] = [], private readonly nativeHarnesses:ReadonlySet<string> = new Set()) {
     this.jobs = new Jobs(db, now); this.machines = new Machines(db, now);
   }
-  availableWorkRoles(agent:string,id?:string) {
+  /** `frozen`: whether a worker that gives a frozen review its read-only copy can take the role's work now. */
+  availableWorkRoles(agent:string,id?:string,frozen=false) {
+    const boxes=frozen?new Set([...this.reviewBoxes].filter(box=>this.frozenReviewBoxes.has(box))):this.reviewBoxes;
     return this.workRoles.filter(role=>role.agent===agent && (id===undefined || role.id===id)).map(role=>({
       id:role.id,description:role.description,revision:roleRevision(role),
-      ...this.reviewAvailability(agent,eligibleModels(role,this.roles(),this.nativeHarnesses)),
+      ...this.reviewAvailability(agent,eligibleModels(role,this.roles(),this.nativeHarnesses),boxes),
     }));
   }
-  reviewAvailability(agent:string, models=this.roles().filter(role=>role.harness==='codex')) {
+  reviewAvailability(agent:string, models=this.roles().filter(role=>role.harness==='codex'), boxes:ReadonlySet<string>=this.reviewBoxes) {
     const settings=this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,agent)).get();
     if (!settings) return {available:false};
     const decision=decidePlacement(this.db,{agent,now:this.now(),roles:models,
-      eligibleBoxes:this.reviewBoxes,needs:settings.gpu?['gpu']:[]});
+      eligibleBoxes:boxes,needs:settings.gpu?['gpu']:[]});
     if (decision.placement) return {available:true};
     return decision.quotaWaitReason ? {available:false,reason:decision.quotaWaitReason} : {available:false};
   }
@@ -65,7 +69,8 @@ export class Dispatcher {
    * `ended` is given the id of each job this poll ended as one no harness can hold. The caller tells of those
    * ends once the write is committed, as of any job's end: one job holds one asker's mail, so another asker's
    * mail may be waiting behind such a job for a job of its own. */
-  next(box: string, facts?: readonly string[], ended?: string[], slots?: number, programs = false, poll?: { stampOnly?: boolean }, reviewResults = false, coldReviews = false, pairEvents = false) {
+  next(box: string, facts?: readonly string[], ended?: string[], slots?: number, programs = false, poll?: { stampOnly?: boolean }, reviewResults = false, coldReviews = false, pairEvents = false, frozenReviews = false) {
+    if(frozenReviews)this.frozenReviewBoxes.add(box);else this.frozenReviewBoxes.delete(box);
     if(pairEvents)this.pairingBoxes.add(box);else this.pairingBoxes.delete(box);
     const { stampOnly } = this.machines.report(box, facts, slots ?? null), written = rowsWritten(this.db);
     if (coldReviews) this.coldReviewBoxes.add(box); else this.coldReviewBoxes.delete(box);
@@ -86,7 +91,11 @@ export class Dispatcher {
       const queued = this.db.select({ job: jobs, round: { change: changeReviewRounds.change, headCommit: changeReviewRounds.headCommit }, source: { repository: changes.repository, branch: changes.branch } }).from(jobs)
         .leftJoin(changeReviewRounds, eq(jobs.id, changeReviewRounds.job)).leftJoin(changes, eq(changeReviewRounds.change, changes.id)).where(eq(jobs.state, 'queued')).orderBy(asc(jobs.queuedAt), asc(jobs.id)).all();
       let sharing: ReturnType<typeof sharedSharing> | undefined;
-      for (const { job, round, source } of queued) {
+      for (const { job, round: filed, source } of queued) {
+        // A frozen review's round (conversation.review): its body is an ordinary handed-off body, placed below. Any
+        // other round is a cold review, for a worker's own review executor.
+        const filedIn = filed && job.conversation ? this.db.select({ venue: conversations.venue, place: conversations.place }).from(conversations).where(eq(conversations.id, job.conversation)).get() : undefined;
+        const round = filed && !(filedIn && frozenReview(filedIn)) ? filed : null;
         if (round && (!source || !this.coldReviewBoxes.has(box) || job.startedByKind === 'program')) continue;
         if (job.retryAt && job.retryAt > at) continue;
         const needs = this.db.select().from(jobNeeds).where(eq(jobNeeds.job, job.id)).all().map(row => row.need);
@@ -118,6 +127,10 @@ export class Dispatcher {
             continue;
           }
         }
+        // A frozen review goes only to a worker that gives it its read-only copy: any other would start the body
+        // without one. It waits for such a worker, like a job no machine can take yet.
+        const frozen=review?.target;
+        if (frozen && !this.frozenReviewBoxes.has(box)) continue;
         const selected=review?.role;
         const workRole=selected && this.workRoles.find(role=>role.agent===job.agent && role.id===selected.id && roleRevision(role)===selected.revision);
         if(selected && !workRole){
@@ -133,7 +146,7 @@ export class Dispatcher {
           continue;
         }
         const policy = jobRoom(this.db, job);
-        const candidates:Parameters<typeof decidePlacement>[1] = { agent: job.agent, now: at, eligibleBoxes: round ? this.coldReviewBoxes : review ? this.reviewBoxes : undefined, roles: workRole ? eligibleModels(workRole,roles,this.nativeHarnesses) : review ? roles.filter(role=>role.harness==='codex') : roles, needs, prefers: job.prefers ?? [], wants: this.wants(job.conversation),
+        const candidates:Parameters<typeof decidePlacement>[1] = { agent: job.agent, now: at, eligibleBoxes: round ? this.coldReviewBoxes : frozen ? new Set([...this.reviewBoxes].filter(one => this.frozenReviewBoxes.has(one))) : review ? this.reviewBoxes : undefined, roles: workRole ? eligibleModels(workRole,roles,this.nativeHarnesses) : review ? roles.filter(role=>role.harness==='codex') : roles, needs, prefers: job.prefers ?? [], wants: this.wants(job.conversation),
           cannotRun: harness => this.cannotRun(harness, policy) };
         // Prefer an eligible runner that can publish native work events for this room.
         const pairing = cv?.venue==='loom' && PAIR_THREAD.test(cv.place||'') && this.pairingBoxes.size
@@ -166,7 +179,7 @@ export class Dispatcher {
         if(thread)new Threads(this.db,this.now,lateMailWaits).working(thread.id,true);
 
         const venue=cv?.venue;
-        return { ...(review && {review:true}), venue:venue??null, ...(cv?.venue==='discord' && { venueDescription: describePlace(this.db, cv) }), thread:thread?.id ?? null, run: { nestedContainers: settings?.nestedContainers ?? false, gpu: settings?.gpu ?? false, ports, policy }, id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
+        return { ...(review && {review:true}), ...(frozen && {frozenReview:{repository:frozen.repository,head:frozen.head,base:frozen.base}}), venue:venue??null, ...(cv?.venue==='discord' && { venueDescription: describePlace(this.db, cv) }), thread:thread?.id ?? null, run: { nestedContainers: settings?.nestedContainers ?? false, gpu: settings?.gpu ?? false, ports, policy }, id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
           model: placement.model, account: placement.account, accountChoices: this.accountChoices(box, placement.account), harness: placement.harness,
           brief: this.jobs.workerBrief(claimed.id), house: { repository: claimed.houseRepository ?? '',
             file: claimed.houseFile ?? '', branch: claimed.houseBranch ?? '' } };

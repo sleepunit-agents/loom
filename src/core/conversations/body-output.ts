@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { and,eq } from 'drizzle-orm';
 import type { Viewer } from '../../policy.js';
 import { operation, OperationError, type Operations } from '../operations/index.js';
-import { agentStatus, messages,threads,turns } from '../data/schema.js';
+import { agentStatus, changeReviewRounds, messages,threads,turns } from '../data/schema.js';
 import { conversationBodyScope, requireBodyScope, bodyOperationDefaults, type BodyProof } from './body-scope.js';
 import type { CommsMessages } from './messages.js';
 import { MESSAGE_WORDS_MAX } from './words.js';
@@ -107,6 +107,8 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
    const child=traced(ctx.viewer,input.kind);
    if(child){const step=(prepared as ()=>{seq:number})();ctx.changed('job_trace',child.cv.id);return {saved:true as const,seq:step.seq};}
    const found=replyTarget(ctx.viewer,input.kind),message=(prepared as ()=>{seq:number})();
+   // A frozen review's reply filed its round (review-result.ts): the pull request's readers are told.
+   if(input.kind==='reply'&&found.cv.venue==='handoff'){const round=db.select({change:changeReviewRounds.change}).from(changeReviewRounds).where(eq(changeReviewRounds.job,found.job.id)).get();if(round)ctx.changed('change',round.change);}
    // A reply answers the mail this job took: both are saved together (ConversationMail.settle). A card is progress, not an answer.
    if(input.kind==='reply'&&input.progressId&&!db.select({seq:turns.seq}).from(turns).where(and(
      eq(turns.conversation,found.cv.id),eq(turns.run,found.job.id),eq(turns.kind,'reply'))).get()){

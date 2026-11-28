@@ -1,4 +1,5 @@
 import type { ColdReviewReport } from './cold-review-report.js';
+import type { ReviewTreeReport } from './review-snapshot-report.js';
 import type { HouseProgram, ProgramResult } from './house-program.js';
 import { eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { WORKER_EXIT, type WorkerExitBy } from './job-exit.js';
@@ -39,6 +40,9 @@ export interface WorkerAssignment {
   venueDescription?: string;
   review?: true;
   coldReview?: { change: string; headCommit: string };
+  /** A frozen review (conversation.review): the repository on GitHub (`owner/name`), the commit under review and
+   * the commit its diff is taken against. The worker gives the body a read-only copy of them (review-snapshot.ts). */
+  frozenReview?: { repository: string; head: string; base: string };
   model: string;
   account: string;
   /** How many accounts of this job's provider are signed in on this machine, the placed one included.
@@ -60,7 +64,7 @@ export interface WorkerBody {
    * the executor's word for that (WORKER_EXIT.killed) and not the body's. */
   /** `failure` is why it failed, as one of the fixed reasons (job-failure.ts): the body program's own word, read
    * from the one line it writes for that, or the executor's for a body a signal ended. Never text. */
-  exited: Promise<{ exitCode: number; logTail: string; own?: boolean; signalled?: boolean; failure?: JobFailure; programResult?: ProgramResult; coldReview?: ColdReviewReport }>;
+  exited: Promise<{ exitCode: number; logTail: string; own?: boolean; signalled?: boolean; failure?: JobFailure; programResult?: ProgramResult; coldReview?: ColdReviewReport; reviewTree?: ReviewTreeReport }>;
   /** Releases the brief only after loom acknowledges running. */
   /** Only explicit fixed-child adapters receive a private credential. */
   acceptsBootstrap?: boolean;
@@ -99,7 +103,7 @@ export interface WorkerControl {
   heartbeat(id: string, state: 'starting' | 'running', signal?: AbortSignal): Promise<boolean>;
   /** `by` says whose code it is (job-exit.ts): this worker's own, or the program it ran. */
   /** `failure` says why a failed job failed, where loom's body program or this worker could tell (job-failure.ts). */
-  finish(id: string, exitCode: number, logTail: string, by: WorkerExitBy, programResult?: ProgramResult, coldReview?: ColdReviewReport, failure?: JobFailure): Promise<void>;
+  finish(id: string, exitCode: number, logTail: string, by: WorkerExitBy, programResult?: ProgramResult, coldReview?: ColdReviewReport, failure?: JobFailure, reviewTree?: ReviewTreeReport): Promise<void>;
 }
 export interface WorkerSchedule {
   every(ms: number, callback: () => void): () => void;
@@ -229,9 +233,11 @@ export async function workOnce(input: {
   const dispose = (input.schedule ?? schedule).every(interval, pulse);
   // The body has ended and been reaped, so a report loom did not answer leaves nothing to undo here.
   // The job goes silent and the sweep ends it; this worker goes on to its next poll.
-  const report = async (exitCode: number, logTail: string, by: WorkerExitBy, result?: ProgramResult, review?: ColdReviewReport, failure?: JobFailure): Promise<WorkerResult> => {
+  const report = async (exitCode: number, logTail: string, by: WorkerExitBy, result?: ProgramResult, review?: ColdReviewReport, failure?: JobFailure, tree?: ReviewTreeReport): Promise<WorkerResult> => {
     try {
       if (assignment.coldReview) await control.finish(assignment.id, exitCode, '', by, undefined, review);
+      // Only a loom that sent a frozen review is told of its copy: it is the loom that asks.
+      else if (tree) await control.finish(assignment.id, exitCode, logTail, by, undefined, undefined, failure, tree);
       else if (result) await control.finish(assignment.id, exitCode, logTail, by, result);
       else if (failure) await control.finish(assignment.id, exitCode, logTail, by, undefined, undefined, failure);
       else await control.finish(assignment.id, exitCode, logTail, by);
@@ -355,7 +361,7 @@ export async function workOnce(input: {
     // Why it failed is said only for loom's own body program, or by this worker for a body a signal ended: a
     // machine's own runner is given no say, and neither is a body that reported success.
     const failure = !failed && result.exitCode !== 0 && (by === 'body' || by === 'worker' && result.signalled && bootstrap) ? result.failure : undefined;
-    return await report(result.exitCode, bootstrap && !failed ? '' : logTail(result.logTail), by, undefined, result.coldReview, failure);
+    return await report(result.exitCode, bootstrap && !failed ? '' : logTail(result.logTail), by, undefined, result.coldReview, failure, assignment.frozenReview ? result.reviewTree : undefined);
   } finally {
     eraseBootstrap(bootstrap); eraseProgramInputs();
     clearTimeout(probeTimer!); clearTimeout(expiryTimer!);

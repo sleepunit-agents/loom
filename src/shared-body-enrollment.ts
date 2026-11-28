@@ -1,4 +1,4 @@
-import { hasChangeReview } from './apps/change-reviews.js';
+import { coldReviewJob } from './apps/change-reviews.js';
 /** Canonical metadata-only enrollment for the locally generated body credential.
  * Only the current assigned starting worker can bind a fingerprint to its job, and only while the job has no
  * live body token: the same fingerprint again is a repeat, another one is refused.
@@ -23,7 +23,7 @@ export function registerSharedBodyEnrollment(operations:Operations,db:DataDataba
  const target=(viewer:Viewer,value:z.infer<typeof input>)=>{
   const proof=options.runnerEnrollment(viewer);if(!proof||!liveWorker(db,viewer,proof))return;
   const job=db.select().from(jobs).where(eq(jobs.id,value.job)).get();
-  if(!job||job.startedByKind==='program'||job.state!=='starting'||job.box!==proof.box||hasChangeReview(db,job.id))return;
+  if(!job||job.startedByKind==='program'||job.state!=='starting'||job.box!==proof.box||coldReviewJob(db,job.id))return;
   const old=db.select().from(tokens).where(eq(tokens.fingerprint,value.fingerprint)).get();
   const at=Date.parse(options.now());
   if(old&&(old.kind!=='agent'||old.agent!==job.agent||old.job!==job.id||old.member!==null||old.box!==null

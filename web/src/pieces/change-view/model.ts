@@ -15,6 +15,8 @@ export interface ReviewRound {
   tier: 'medium' | 'high';
   round: number;
   verdict: 'CLEAR' | 'BLOCKING' | 'NONE' | null;
+  /** The session that reviewed it (a frozen review's handoff conversation); none for a cold review. */
+  conversation?: string | null;
   findings: string | null;
 }
 export interface ChangeSnapshot {

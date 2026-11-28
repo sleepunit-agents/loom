@@ -84,7 +84,7 @@ import { registerConversationSessions } from './shared-conversation-sessions.js'
 import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
 import {pullCheckReader} from './pieces/changes/check-runs.js';
 import { sharedChangesReader,sharedForgeSecrets } from './shared-changes-reader.js';
-import { githubListingReader, type ListingReader } from './pieces/changes/github.js';
+import { githubListingReader, githubReviewBase, type ListingReader } from './pieces/changes/github.js';
 import { changeFilePatches, changeFilePatchFields } from './pieces/changes/file-patch.js';
 import { pollChanges } from './apps/changes-polling.js';
 import { registerWorkRefresh,registerPullChecks } from './shared-work-refresh.js';
@@ -152,7 +152,9 @@ export function sharedRoot(options: {
   memoryEmbedding?:()=>EmbeddingProvider;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
-  changes?: {rule?:MergeRuleReader} & ({read:PullRequestReader;patch?:ListingReader} | {github:Parameters<typeof sharedChangesReader>[0]});
+  changes?: {rule?:MergeRuleReader} & ({read:PullRequestReader;patch?:ListingReader;
+    /** A frozen review's base commit (conversation.review); left out with `read`, no frozen review runs. */
+    reviewBase?:(repository:string,head:string,branch?:string)=>Promise<string>} | {github:Parameters<typeof sharedChangesReader>[0]});
   tempo?: SharedTempoOptions;
   /** Explicit authenticated private holder and stable private retry key. */
   secretWrites?: {holder:RecoverableSecretMutations;fingerprintKey:Uint8Array};
@@ -403,7 +405,7 @@ export function sharedRoot(options: {
   if (options.commsKey) registerTerminalSession(operations, db, options.commsKey, credentials.terminalMachine, now);
   registerJobUsage(operations, db, credentials.body, now);
   if(sessions)registerConversationSessions(operations,db,sessions,bodyScope,words=>options.commsKey!.hash(words));
-  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,{...selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),ownerWork:work=>jobWord(db,work.job).woke==='owners',codexAvailability:agent=>dispatcher.reviewAvailability(agent),workRoles:(agent,id)=>dispatcher.availableWorkRoles(agent,id)},{privateDecision:(work,q)=>privateDecisionAccount(db,work,q),question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job),maySendProgress},reply=>{pushes?.reply(reply);});
+  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,{...selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),ownerWork:work=>jobWord(db,work.job).woke==='owners',codexAvailability:agent=>dispatcher.reviewAvailability(agent),workRoles:(agent,id,frozen)=>dispatcher.availableWorkRoles(agent,id,frozen),...(options.changes && 'github' in options.changes?{reviewBase:githubReviewBase(sharedForgeSecrets(options.changes.github),options.changes.github.request)}:options.changes && 'read' in options.changes && options.changes.reviewBase?{reviewBase:options.changes.reviewBase}:{})},{privateDecision:(work,q)=>privateDecisionAccount(db,work,q),question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job),maySendProgress},reply=>{pushes?.reply(reply);});
   // How machines and agents are set up. Installed code calls these directly, inside a write;
   // anything outside goes through household.propose and a household owner's Allow.
   const recount = () => queueMicrotask(() => { try { tempo?.capacityChanged(); } catch (error) { report(error); } });

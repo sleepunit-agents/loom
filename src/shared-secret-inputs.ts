@@ -1,4 +1,4 @@
-import { hasChangeReview } from './apps/change-reviews.js';
+import { frozenReviewOf, hasChangeReview } from './apps/change-reviews.js';
 import {SECRET_USE_ID} from './pieces/secrets/use-id.js';
 import {startupRequestId,repositoryRequestId} from './pieces/secrets/requests.js';
 /** Private effect door, separate from common operation/result serialization.
@@ -53,11 +53,14 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
  // secret here, at start or on request, whatever was granted. Asked of the job, by the mail it is offered
  // (shared-place-mail.ts, jobHeld), each time, so a body program that asked anyway gets nothing.
  const standing=(caller:ReturnType<typeof actor>)=>!caller.body||standingSecretAnswerServes(caller.auth.viewer,sharedSharing(db));
- const target=(caller:ReturnType<typeof actor>,id?:string)=>{
+ const target=(caller:ReturnType<typeof actor>,id?:string,houseFetch=false)=>{
   if(caller.body&&id!==undefined||!caller.body&&!id)throw new PrivateInputError('denied');
   const job=db.select().from(jobs).where(eq(jobs.id,caller.body?.job??id!)).get();
   const valid=()=>!!job&&!caller.signal.aborted&&caller.auth.valid()&&options.available()&&itself(caller)&&!(caller.body&&jobHeld(db,job))&&(caller.body?job.agent===caller.body.agent&&job.state==='running':job.box===caller.runner?.box&&job.state==='starting');
-  if(!valid()||hasChangeReview(db,job!.id))throw new PrivateInputError('denied');
+  // A review is handed no secret. A cold review, none at all. A frozen review (conversation.review), none at start
+  // and none on request; only its house's own fetch credential goes to its worker, which gives it to one git fetch
+  // and never to the body (runtime/house-source.ts), as for every job.
+  if(!valid()||hasChangeReview(db,job!.id)&&!frozenReviewOf(db,job!.id)||frozenReviewOf(db,job!.id)&&!houseFetch)throw new PrivateInputError('denied');
   const stamp=binding(job!);
   return {job:job!,current:()=>{
    if(caller.signal.aborted||!caller.auth.valid()||!options.available()||!itself(caller))return false;
@@ -81,7 +84,7 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
   const input=parsed.data;
   const forWorker = input.kind==='program' || input.kind==='repository';
   if(forWorker?!caller.runner:!caller.body)throw new PrivateInputError('denied');
-  const selected=target(caller,forWorker?input.job:undefined),job=selected.job;
+  const selected=target(caller,forWorker?input.job:undefined,input.kind==='repository'),job=selected.job;
   let secret:string,attempt:string,request:string|undefined,current=selected.current;
   if(input.kind==='request'){secret=input.secret;attempt='request:'+input.id;}
   else if(input.kind==='program'){

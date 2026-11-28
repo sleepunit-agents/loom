@@ -16,6 +16,7 @@ import { CONTACT_PROBE_MS, SILENCE_MS, WORKER_REQUEST_MAX_MS } from './silence.j
 import { mintBodyToken } from './body-token.js';
 import { DOOR_REQUEST_BYTES } from '../core/data/door-limit.js';
 import { boundedReviewReport, coldReviewReport } from './cold-review-report.js';
+import { COMMIT } from '../apps/merge-target.js';
 import { houseProgramSchema } from './house-program.js';
 export const workerAssignment = z.object({
   id: z.string().min(1), box: z.string().min(1), agent: z.string().min(1),
@@ -31,6 +32,7 @@ export const workerAssignment = z.object({
   }).optional(),
   program: houseProgramSchema.optional(),
   coldReview: coldReviewReport.pick({ change: true, headCommit: true }).optional(),
+  frozenReview: z.object({ repository: z.string().regex(/^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/), head: z.string().regex(COMMIT), base: z.string().regex(COMMIT) }).strict().optional(),
   house: z.object({ repository: z.string(), file: z.string(), branch: z.string() }),
 });
 export interface WorkerHttpOptions {
@@ -214,7 +216,9 @@ export function workerSignIn(input: WorkerHttpOptions) {
     done: async (done: { id: string; signedIn: boolean; why?: SignInReason }) => { await call('signInDone', done, saved); },
   };
 }
-export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly string[]; slots?: number; programs?: boolean; pairEvents?: boolean }): WorkerControl {
+export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly string[]; slots?: number; programs?: boolean; pairEvents?: boolean;
+  /** This worker gives a frozen review its read-only copy (a container worker). */
+  frozenReviews?: boolean }): WorkerControl {
   const facts = input.facts === undefined ? undefined : machineFacts.parse(input.facts);
   const call = operationCaller(input);
   const ack = z.object({ ok: z.literal(true) });
@@ -251,7 +255,9 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
     },
     next: async coldReviews => {
       const poll = {execution:'container',facts,slots:input.slots,programs:input.programs || undefined};
-      const versions = coldReviews ? [{ reviewResults: true, coldReviews: true }, { reviewResults: true }] : [{ reviewResults: true }];
+      const base: Record<string, true>[] = coldReviews ? [{ reviewResults: true, coldReviews: true }, { reviewResults: true }] : [{ reviewResults: true }];
+      // A loom from before frozen reviews refuses the field: asked again without it, it sends none.
+      const versions: Record<string, true>[] = input.frozenReviews ? [{ ...base[0], frozenReviews: true }, ...base] : base;
       for (const capabilities of input.pairEvents ? [{...versions[0],pairEvents:true},...versions] : versions) {
         try { return (await call('next', { ...poll, ...capabilities }, workerAssignment.nullable())) ?? undefined; }
         catch (error) {
@@ -273,9 +279,9 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
     // The body has already ended, so nothing is lost by asking again, and one dropped reply should not turn
     // finished work into a lost job. Every try carries the same operation id: if loom saved the first one,
     // it answers the next from that receipt and the job is finished once.
-    finish: async (job, exitCode, logTail, exitBy, programResult, coldReview, failure) => {
+    finish: async (job, exitCode, logTail, exitBy, programResult, coldReview, failure, reviewTree) => {
       const review = coldReview && boundedReviewReport(coldReview);
-      const send = (failed?: typeof failure) => reportWithRetry(input, 'finish', (id, remaining) => call('finish', { job, exitCode, logTail, exitBy, programResult, coldReview: review, ...(failed ? { failed } : {}) }, ack, undefined, id, remaining));
+      const send = (failed?: typeof failure) => reportWithRetry(input, 'finish', (id, remaining) => call('finish', { job, exitCode, logTail, exitBy, programResult, coldReview: review, ...(failed ? { failed } : {}), ...(reviewTree ? { reviewTree } : {}) }, ack, undefined, id, remaining));
       // A loom from before a failure's reason was asked for refuses the field: the job is finished without it.
       try { await send(failure); }
       catch (error) { if (!failure || !(error instanceof WorkerOperationFailure && error.schemaRefusal)) throw error; await send(); }

@@ -304,7 +304,7 @@ export async function workerProgram(input: {
       if (config.reportOnly) { loginChecks = watchLogins(); machineChecks = watchMachine(config.state); await diagnostics; return 0; }
     }
     const silenceExpired = (ms: number) => input.error(`Worker abandoned a job after Loom was unreachable for ${ms} ms\n`);
-    const control = (input.control ?? httpWorkerControl)({ ...remote, slots, ...(config.container && { programs: true, pairEvents:true }), silenceExpired, ...(config.facts === undefined ? {} : { facts: config.facts }) });
+    const control = (input.control ?? httpWorkerControl)({ ...remote, slots, ...(config.container && { programs: true, pairEvents:true, frozenReviews: true }), silenceExpired, ...(config.facts === undefined ? {} : { facts: config.facts }) });
     // The executor holds the state directory from here, and refuses it when another worker is alive on it.
     const state = config.state ?? defaultWorkerState(config.box);
     const container = config.container!; // Required before token read for every worker taking jobs.

@@ -1,3 +1,4 @@
+import { reviewJob } from './apps/change-reviews.js';
 /** Which kits this agent has on the current word of a credential-bound job. The
  * person comes from admitted mail. Project membership is independent of the job's project. */
 import { createHash } from 'node:crypto';
@@ -63,6 +64,8 @@ export function currentKitJob(db:DataDatabase, credentials:Pick<ReturnType<typeo
   const job = db.select().from(jobs).where(and(eq(jobs.id,body.job),eq(jobs.agent,body.agent),
     eq(jobs.box,body.box),eq(jobs.state,'running'))).get();
   if (!job || !db.select({id:agents.id}).from(agents).where(and(eq(agents.id,body.agent),isNull(agents.removedAt))).get()) return;
+  // A review, cold or frozen, uses no kit: a kit holds credentials, and a reviewer is handed none.
+  if (reviewJob(db, job.id)) return;
   const {word,room} = kitRoom(db,job), denials=deniedTools({...room,word:word.woke});
   const access=kitAccess(db,job.agent,word);
   const tools = access.kits.flatMap(({kit,tools,reasons})=>tools.filter(tool=>!kitToolDenied(tool.name,denials,kit)).map(tool=>({

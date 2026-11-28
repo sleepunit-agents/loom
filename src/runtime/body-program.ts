@@ -140,7 +140,10 @@ export async function bodyProgram(input: {
     // A job on anybody else's word runs with loom's tools only (policy.ts, loomToolsOnly): no secret is asked
     // for and none enters its environment. The word is the one loom read at claim; loom's door refuses such a
     // job the same secrets, so a body program that asked anyway would get nothing.
-    if(!hasGuest(job.run?.policy)) await (input.startup ?? secrets.startup)(job, bootstrap, signal);
+    // A frozen review (conversation.review) asks for none either: it is handed no secret, and loom's door refuses one
+    // (shared-secret-inputs.ts), so the reviewer's environment holds no credential that could push.
+    const frozen=!!job.frozenReview;
+    if(!hasGuest(job.run?.policy)&&!frozen) await (input.startup ?? secrets.startup)(job, bootstrap, signal);
     if (signal.aborted) throw new Error();
     work='Working on accepted mail';
     exit=BODY_EXIT.mail;
@@ -231,7 +234,9 @@ export async function bodyProgram(input: {
       const lessons = result.ok ? z.string().nullable().parse(result.value) : null;
       if (lessons) context.push('Lessons recorded by earlier runs of this trigger:\n' + lessons);
     }
-    const memory=await (input.loadMemory?input.loadMemory(job.agent,signal):bodyMemoryIdentity(memoryClient,job.agent,job.venue));
+    // A frozen reviewer starts with no memory or identity: what it reviews against is the brief loom wrote, and the
+    // agent's memory may hold the author's own reasoning about the change (core/conversations/review-brief.ts).
+    const memory=frozen?null:await (input.loadMemory?input.loadMemory(job.agent,signal):bodyMemoryIdentity(memoryClient,job.agent,job.venue));
     if(signal.aborted)throw new Error();
     // A bridge channel's rule may name a brief: one more of the agent's role pages, for conversations there.
     // A brief that cannot be found is never a reason to fail: the work goes on and loom tells the owners.
@@ -305,6 +310,7 @@ export async function bodyProgram(input: {
         'Submit conversation.handoff through the same tool. Give the command a stable id. In input, include exactly one of role (a listed role), agent (a listed peer), or harness "codex", plus label, words and a clientId unique to the brief. Reuse both IDs and the same input when retrying that brief.',
         'When the work is for one or more tickets, also give tickets, a list of their ids such as ["t-17"]: loom records the session against each so the ticket can show the work done for it later. An id you cannot read refuses the handoff. Loom never reads ticket ids out of words.',
         'Make words self-contained. Include the repository and commit for repository work. To schedule a role or Codex job, supply notBefore as a UTC timestamp within the private brief retention period.',
+        'To have a pull request or a commit reviewed, use conversation.review, not a role handoff: input {"clientId":"…","label":"…","target":{"change":"owner/repo#7"} or {"repository":"owner/repo","commit":"<full 40-character id>"},"contract":"…"}. Loom pins the exact commit and its diff, gives the reviewer a read-only copy and no credential that can push, and returns its answer here with the verdict it filed. In contract give only what to review against (the ticket, the spec section, the acceptance criteria), never your own reasoning about the change.',
         'Role and Codex results return to this thread. Check progress with conversation.handoffStatus, passing value.conversation from the receipt as input.conversation. To cancel a scheduled handoff before it gets a job, call conversation.handoffCancel with the same child conversation. For help inside this job, use native subagents when your harness provides them.',
       ].join(' ');
       context.unshift(delegation);continued.unshift(delegation);

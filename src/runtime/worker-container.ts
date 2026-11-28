@@ -21,6 +21,7 @@ import {KIT_SOCKET} from './body-kit-tools.js';
 import {deniedTools} from './harness-traits.js';
 import { randomUUID } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { dirname,join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,6 +39,8 @@ import { holdAlone, type Alone, type HoldAlone } from './worker-alone.js';
 import { keyPart } from './worker-mounts.js';
 import { containerExit } from './job-exit.js';
 import { HOUSE_ENTRYPOINT, HOUSE_ENV, HOUSE_HOME, HOUSE_REPOSITORY, houseBodyFile, houseOverlap, houseSessions } from './house-layout.js';
+import { removeReviewSnapshot, snapshotFingerprint, writeReviewSnapshot } from './review-snapshot.js';
+import { REVIEW_MOUNT } from '../core/conversations/review-brief.js';
 import { bodyMounts, BODY_PROGRAM, HOUSE_CLI_FILE, type AccountLogins, type AgentMounts, type BodyMount } from './worker-mounts.js';
 
 /** The names the worker may send as the engine's runtime. The operator states which one their engine has;
@@ -276,6 +279,11 @@ export function containerWorkerExecutor(config: {
   const left = fixed.state === undefined ? undefined : (dependencies.left ?? workerLeft)(fixed.state);
   const source = dependencies.source ?? houseSource({ directory: join(fixed.state ?? defaultWorkerState(fixed.box), 'houses'),
     started: pid => left ? left.note(pid, { job: 'house-fetch' }) : () => {} });
+  /** Frozen reviews' copies (review-snapshot.ts), by job: written by `build`, mounted read-only by `start`, fingerprinted
+   * again and removed when the body has ended, or removed by `discard` for a job that never starts one. */
+  const reviews = join(fixed.state ?? defaultWorkerState(fixed.box), 'reviews');
+  const snapshots = new Map<string, { path: string; before: string; head: string }>();
+  const forget = (job: string) => { const copy = snapshots.get(job); snapshots.delete(job); return copy ? removeReviewSnapshot(copy.path).catch(() => {}) : Promise.resolve(); };
   /** The builds under way, by image, a core house's among them: one at a time for one image, and every job
    * that wants it waits on the one. A build is the worker's and not a job's: it has the build limit of its own, and a job that is
    * cancelled only stops waiting. */
@@ -366,6 +374,8 @@ export function containerWorkerExecutor(config: {
     async endLeft(signal) {
       // First of all: a worker that is not alone on its engine ends nothing there and takes no work.
       await alone();
+      // A previous worker's frozen review copies: no body of this worker has one yet.
+      await removeReviewSnapshot(reviews);
       const processes = left ? { unverified: (await left.reap()).unverified } : { unverified: 0 };
       const filters = encodeURIComponent(JSON.stringify({ label: ['loom.job', `loom.box=${fixed.box}`] }));
       for (let round = 0; ; round++) {
@@ -421,17 +431,29 @@ export function containerWorkerExecutor(config: {
           if (removal) await Promise.race([removal.over, ended]);
           shared = built(house, commit, image);
           await Promise.race([shared.done, ended]);
+          // A frozen review's copy: the reviewed commit and its diff, fetched with the house's own fetch credential,
+          // which goes to git and nowhere else. A job id is loom's, checked here before it names a directory.
+          const frozen = job.frozenReview;
+          if (frozen) {
+            if (!/^[A-Za-z0-9_-]{1,200}$/.test(job.id)) throw new Error('Invalid job identity');
+            await forget(job.id);
+            const path = join(reviews, job.id);
+            await removeReviewSnapshot(path); await mkdir(reviews, { recursive: true, mode: 0o700 });
+            const before = await Promise.race([writeReviewSnapshot({ source, directory: path, review: frozen, credential: repositoryInput, signal: limit.signal }), ended]);
+            snapshots.set(job.id, { path, before, head: frozen.head });
+          }
           held = undefined;
           return image;
         } catch {
-          // Whatever went wrong, this job will not use the image.
+          // Whatever went wrong, this job will not use the image, nor its copy.
           if (held !== undefined) hold(held, -1);
+          if (job.frozenReview) await forget(job.id);
           throw ranOut || shared?.ranOut ? new BuildTimeError('Worker build ran out of time') : new Error('Worker build failed');
         } finally { clearTimeout(timer); signal.removeEventListener('abort', cancel); }
       })();
     },
     /** A job that was given this image and will start no body from it. */
-    discard(_job, image) { hold(image, -1); },
+    discard(job, image) { hold(image, -1); void forget(job.id); },
     start(job, image, signal): WorkerBody {
       const assignment = structuredClone(job);
       // The image is this job's until its body has ended, or was never made.
@@ -449,7 +471,12 @@ export function containerWorkerExecutor(config: {
           runtime:fixed.container.runtime, podmanHelperSubid:fixed.container.podmanHelperSubid, setupTimeoutMs:setupMs, cleanupTimeoutMs:cleanupMs,
         },letGo);
         prepareHouseCli(fixed.state ?? defaultWorkerState(fixed.box));
-        mounts = engineMounts(mountsFor(assignment)); bindings = portBindings(assignment);
+        // A frozen review is given its copy read-only, and none of its agent's own fixed mounts: a reviewer is handed
+        // nothing of the agent's but what every body is (the program, the house's tool, its sign-in).
+        const copy = assignment.frozenReview ? snapshots.get(assignment.id) : undefined;
+        if (assignment.frozenReview && (!copy || copy.head !== assignment.frozenReview.head)) throw new Error('Review copy unavailable');
+        mounts = engineMounts([...mountsFor(assignment, { agentMounts: !assignment.frozenReview }),
+          ...(copy ? [{ source: copy.path, target: REVIEW_MOUNT, readOnly: true }] : [])]); bindings = portBindings(assignment);
         name = `loom-${(dependencies.name ?? randomUUID)()}`;
         if (!/^loom-[A-Za-z0-9_-]+$/.test(name)) throw new Error('Invalid container name');
       } catch (error) { letGo(); throw error; }
@@ -473,7 +500,8 @@ export function containerWorkerExecutor(config: {
           houseId=canonicalKitImage(house.id);
           // A body on a machine that lends out its engine can inspect other containers there.
           // Such a machine never receives kit secrets. A new socket belongs to one job only.
-          if(houseId&&dependencies.kitAccess){
+          // A review uses no kit (shared-kit-access.ts refuses one too): no socket is made for it.
+          if(houseId&&dependencies.kitAccess&&!assignment.frozenReview){
             kit=await kitSocket(fixed.state??defaultWorkerState(fixed.box),()=>broker,abort.signal,(transport,signal)=>reportKits?.(transport,signal)??Promise.resolve([])).catch(()=>undefined);
             if(kit)mounts=[...mounts,{Type:'bind',Source:kit.path,Target:KIT_SOCKET,ReadOnly:true}];
           }
@@ -503,7 +531,7 @@ export function containerWorkerExecutor(config: {
         } finally { clearTimeout(setupTimer); }
       })();
       void setup.catch(() => {});
-      const exited = (async () => {
+      const ran = (async () => {
         await setup;
         const waited = engine.json('POST', `/containers/${id}/wait?condition=not-running`, undefined, abort.signal);
         // Either side ending starts a bounded drain/wait period for the other.
@@ -526,6 +554,12 @@ export function containerWorkerExecutor(config: {
           return { exitCode, logTail: logs!.tail(), signalled: true, failure };
         } finally { if (drainTimer) clearTimeout(drainTimer); void both.catch(() => {}); }
       })();
+      void ran.catch(() => {});
+      // A frozen review's copy, fingerprinted again now the body has ended: the report says whether it changed.
+      const exited = assignment.frozenReview ? ran.then(async result => {
+        const copy = snapshots.get(assignment.id), after = copy && await snapshotFingerprint(copy.path).catch(() => undefined);
+        return copy && after ? { ...result, reviewTree: { head: copy.head, before: copy.before, after } } : result;
+      }) : ran;
       void exited.catch(() => {});
       // The program is loom's own body program, so it takes the body's private credential.
       return { acceptsBootstrap: true, spawned: setup, exited,
@@ -536,7 +570,7 @@ export function containerWorkerExecutor(config: {
           if (bootstrap) logs!.discard();
           const payload = bodyInput(assignment, image, bootstrap, true);
           let kitUnavailable:KitUnavailable[]=[],kitReportFailed=false;
-          if(dependencies.kitAccess&&payload.bootstrap){
+          if(dependencies.kitAccess&&payload.bootstrap&&!assignment.frozenReview){
             const post=kitPrivateClient({url:dependencies.kitAccess.url,runner:dependencies.kitAccess.runner,body:payload.bootstrap.token,job:assignment.id});
             const pin=houseId ? {repository:assignment.house.repository,commit:houseCommit(image),image:houseId} : undefined;
             reportKits=async(transport,signal)=>{
@@ -579,6 +613,7 @@ export function containerWorkerExecutor(config: {
               if (cleanup.signal.aborted) throw new Error('Container cleanup uncertain');
             } finally {
               clearTimeout(timer); signal.removeEventListener('abort', cancel); letGo();
+              if (assignment.frozenReview) await exited.catch(() => {}).then(() => forget(assignment.id));
             }
           });
           return stopping;

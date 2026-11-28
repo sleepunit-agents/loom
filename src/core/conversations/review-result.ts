@@ -3,10 +3,21 @@ import { and, eq, gte, inArray, like } from 'drizzle-orm';
 import { commsKeepDays } from '../data/comms-days.js';
 import { conversations, jobs, messages } from '../data/schema.js';
 import type { CommsMessages } from './messages.js';
+import { MESSAGE_WORDS_MAX } from './words.js';
 import { jobMatchesConversation,reviewRequest,reviewThread,reviewBriefExpired,REVIEW_ROLE_CHANGED } from './review-place.js';
 import { exitStage, LOOM_EXIT } from '../../runtime/job-exit.js';
 import { failureOf, failureWords } from '../../runtime/job-failure.js';
 import { householdTimezone } from '../data/household-settings.js';
+import { frozenReview } from './review-place.js';
+import { changeReviewStore, replyVerdict } from '../../apps/change-reviews.js';
+
+/** The line a frozen review's relayed answer starts with: what was reviewed and the verdict loom read from it, so the
+ * thread says the same as the round. A reply with no final verdict line is a failed review, never a clear one. */
+export function frozenReviewLine(target: { repository: string; head: string }, reply: string): string {
+  const verdict = replyVerdict(reply);
+  const what = `${target.repository}@${target.head.slice(0, 12)}`;
+  return verdict ? `Frozen review of ${what}: VERDICT ${verdict}.` : `Frozen review of ${what} FAILED: the reviewer's answer has no final VERDICT line, so loom recorded no verdict.`;
+}
 
 /** Seal the thread reply before entering the operation transaction. Retries and concurrent
  * attempts use one result per child. Only the originating private thread can receive it. */
@@ -14,14 +25,18 @@ export async function prepareReviewResult(service: CommsMessages, cv: typeof con
   run: string, words: string, model?: string) {
   const { db } = service, thread = reviewThread(db, cv);
   if (!thread || !cv.member) throw Error('Review destination unavailable');
-  const clientId = 'review:' + cv.id;
+  const clientId = 'review:' + cv.id, frozen = frozenReview(cv);
+  // Bounded like the reply itself: the line is short, and the reply is cut by its end, never the line.
+  const relayed = frozen ? (frozenReviewLine(frozen, words) + '\n\n' + words).slice(0, MESSAGE_WORDS_MAX) : words;
   const message = await service.prepareSend({thread: thread.id, kind: 'reply', sender: cv.agent,
-    run, clientId, words, turn: {model}});
+    run, clientId, words: relayed, turn: {model}});
   return () => {
     if (reviewThread(db, cv)?.id !== thread.id) throw Error('Review destination changed');
     const prior = db.select().from(messages).where(and(eq(messages.thread, thread.id), eq(messages.sender, cv.agent), eq(messages.clientId, clientId))).get();
     if (prior) return prior;
     const row = message();
+    // Filed in the same write as the relay: the round and the thread cannot disagree.
+    if (frozen) changeReviewStore(db, service.now).fileReply(run, words);
     const item=service.threads.conversations.send({conversation:thread.conversation,toKind:'agent',to:cv.agent,
       source:'handoff',sourceId:clientId,fromKind:'agent',fromId:cv.agent,onWordKind:'member',onWord:cv.member!,thread:thread.id,messageSeq:row.seq});
     return service.attach(row,item);
