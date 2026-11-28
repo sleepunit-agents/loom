@@ -17,6 +17,17 @@ export function readCommsPage(db:DataDatabase,thread:string,allowed:SQL,before:n
     return scope?[{...row,conversation:scope.id,agent:scope.agent,project:scope.project,member:scope.member}]:[];
   }).reverse();
 }
+/** One message found by its sender's client id, as a metadata row shaped like readCommsPage's: one statement on
+ * messages_client_id_unique (thread, sender, client_id), under the same conversation authority. */
+export function readCommsByClientId(db:DataDatabase,thread:string,sender:string,clientId:string,allowed:SQL){
+  const row=db.query.messages.findFirst({columns:{words:false,archivedStepWords:false},
+    with:{threadRow:{columns:{conversation:true},with:{conversationRow:{columns:{id:true,agent:true,project:true,member:true}}}}},
+    where:f=>and(eq(f.thread,thread),eq(f.sender,sender),eq(f.clientId,clientId),sql`${{getSQL:()=>visibleThread(sql`${f.thread}`,allowed)}}`),
+  }).sync();
+  if(!row)return;
+  const {threadRow,...message}=row,scope=threadRow?.conversationRow;
+  return scope?{...message,conversation:scope.id,agent:scope.agent,project:scope.project,member:scope.member}:undefined;
+}
 /** A private message read set lives only for one selection. Both reads use
  * the same current SQL authority; compare again after every decrypt batch. */
 export function readCommsSet(db:DataDatabase,thread:string,seqs:number[],allowed:SQL,words:boolean,stepWords=false){
