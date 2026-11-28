@@ -190,10 +190,12 @@ it('takes an agent\'s face choices from the schema, and the app draws the same o
   for (const faceShape of agents.faceShape.enumValues) for (const faceEyes of agents.faceEyes.enumValues)
     expect(agentInput.safeParse({ ...agent, faceShape, faceEyes }).success).toBe(true);
   expect(agentInput.safeParse({ ...agent, faceShape: 'square', faceEyes: 'dot' }).success).toBe(false);
-  const face = text('web/src/face.tsx');
-  const list = (name: string) => JSON.parse((new RegExp(`export const ${name}: \\w+\\[\\] = (\\[[^\\]]*\\])`).exec(face)?.[1] ?? '[]').replaceAll("'", '"'));
-  expect(list('SHAPES')).toEqual([...agents.faceShape.enumValues]);
-  expect(list('EYES')).toEqual([...agents.faceEyes.enumValues]);
+  // The faces the boards page draws (web/src/boards/agent-face.tsx) are the shapes and eyes in face-data.json.
+  const face = JSON.parse(text('web/src/face-data.json')) as { families: Record<string, unknown>; faces: Record<string, unknown> };
+  expect(Object.keys(face.families)).toEqual([...agents.faceShape.enumValues]);
+  expect(Object.keys(face.faces)).toEqual([...agents.faceEyes.enumValues]);
+  expect(text('web/src/face-model.ts')).toContain(`export type FaceShape = ${agents.faceShape.enumValues.map(v => `'${v}'`).join(' | ')};`);
+  expect(text('web/src/face-model.ts')).toContain(`export type FaceEyes = ${agents.faceEyes.enumValues.map(v => `'${v}'`).join(' | ')};`);
 });
 
 it('names the door\'s request limit once', () => {
@@ -555,9 +557,7 @@ it('writes the number of a named limit in that limit\'s home and nowhere else', 
     { value: MESSAGE_WORDS_MAX, homes: { 'src/core/conversations/words.ts': 'MESSAGE_WORDS_MAX' }, others: {
       'src/runtime/claude-body.ts': 'how many tokens one tool answer may have, a setting of the harness',
       'src/runtime/kit-container.ts': 'the CPU period for a Podman helper, in microseconds',
-      'web/src/components/ui/code-block.tsx': 'the longest code the app colours',
-      'web/src/pair/highlight.tsx': 'the longest code the boards page colours; its build may not load the app\'s code block',
-      'web/src/lib/cojeev-motion/use-morph.ts': 'arithmetic in a hash' } },
+      'web/src/pair/highlight.tsx': 'the longest code the boards page colours' } },
     { value: GRANT_MINUTES_MAX, homes: { 'src/pieces/secrets/input.ts': 'GRANT_MINUTES_MAX' }, others: {} },
   ];
   expect([SECRET_VALUE_BYTES, MEMORY_CONTENT_MAX, LOG_TAIL_MAX, MESSAGE_WORDS_MAX, GRANT_MINUTES_MAX]).toEqual([65536, 65536, 16384, 100000, 525600]);

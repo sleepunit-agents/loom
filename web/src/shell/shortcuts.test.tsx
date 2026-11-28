@@ -1,26 +1,5 @@
-import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
-import {createElement as h,Fragment,lazy,type ReactNode} from 'react';
-// @ts-expect-error Renderer has no bundled declarations.
-import {act,create} from 'react-test-renderer';
-vi.mock('../app-icon',()=>({AppIcon:()=>null}));
-vi.mock('@radix-ui/react-dialog',()=>({
- Root:({open,children}:{open:boolean;children:ReactNode})=>open?h(Fragment,null,children):null,
- Portal:({children}:{children:ReactNode})=>h(Fragment,null,children),
- Overlay:()=>null,Content:({children}:{children:ReactNode})=>h('section',{'data-launcher':true},children),
- Title:({children}:{children:ReactNode})=>h('h2',null,children),Close:({children}:{children:ReactNode})=>h('button',null,children),
-}));
-vi.mock('../kit',()=>({Loading:()=>null,Error:()=>null,Empty:()=>null,Button:({children,variant:_v,size:_s,...props}:{children?:ReactNode;variant?:string;size?:string})=>h('button',props,children)}));
-vi.mock('../tiling/menu',()=>({ContextMenu:()=>null}));
-vi.mock('./member-preferences',()=>({useMemberPreferences:()=>({status:'loading',records:[]})}));
-vi.mock('../haptic',()=>({buzz:()=>{},HapticLabel:()=>null,useHaptics:()=>false}));
-vi.mock('../components/ui/dock',()=>({Dock:({items}:{items:{value:string;onSelect():void}[]})=>h('nav',null,items.map(item=>h('button',{key:item.value,'data-dock':item.value,onClick:item.onSelect})))}));
-import Shell,{type RegisteredApp} from './index';
-import Launcher from './launcher';
+import {beforeEach,describe,expect,it} from 'vitest';
 import {SHORTCUTS,TAP_GAP_MS,TAP_HELD_MS,keysOf,recency,shortcutEngine,shortcutHints,type Switching} from './shortcuts';
-
-const fit={min:[320,280] as [number,number],ideal:520,max:null,big:false,why:'Fixture app'};
-const Screen=lazy(async()=>({default:()=>null}));
-const apps:RegisteredApp[]=['Tasks','Inbox','Notes','Clock'].map(title=>({id:title.toLowerCase(),title,path:'/'+title.toLowerCase(),icon:'circle',fit,Screen}));
 
 /** A key as the page sees it. `typed` is what a text field would take from it: nothing once it is prevented. */
 type Mods={ctrlKey?:boolean;shiftKey?:boolean;altKey?:boolean;metaKey?:boolean;repeat?:boolean};
@@ -47,21 +26,10 @@ describe('the declared list',()=>{
    if(chord.code==='Space'&&chord.meta)expect((chord as {shift?:boolean}).shift).toBe(true);
   }
  });
- it('the launcher’s hint line lists every declared shortcut, for the platform',async()=>{
-  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);vi.stubGlobal('document',{activeElement:null});
-  for(const mac of [false,true]){
-   vi.stubGlobal('navigator',{platform:mac?'MacIntel':'Linux x86_64'});
-   let tree!:ReturnType<typeof create>;
-   await act(async()=>{tree=create(h(Launcher,{apps,open:true,onOpenChange:()=>{},launch:()=>{}}));});
-   const line=tree.root.findByProps({className:'loom-launcher__foot loom-launcher__keys'});
-   const shown=line.findAllByType('kbd').map((k:{props:{children:string}})=>k.props.children);
-   expect(shown).toEqual(expect.arrayContaining(SHORTCUTS.map(s=>keysOf(s,mac))));expect(shown).toHaveLength(SHORTCUTS.length);
-   expect(shown.some((k:string)=>k.startsWith('Ctrl+'))).toBe(!mac);
-   expect(shortcutHints(mac).flatMap(hint=>hint.keys)).toEqual(shown);
-   await act(async()=>tree.unmount());
-  }
-  vi.unstubAllGlobals();
+ it('the hints list every declared shortcut, for the platform',()=>{
+  for(const mac of [false,true])expect(shortcutHints(mac).flatMap(hint=>hint.keys)).toEqual(expect.arrayContaining(SHORTCUTS.map(s=>keysOf(s,mac))));
  });
+
 });
 
 describe('most recently used',()=>{
@@ -173,124 +141,5 @@ describe('the keys alone',()=>{
  it('selecting with Shift+arrows never opens the launcher',()=>{
   for(let i=0;i<3;i++){down('ShiftLeft','Shift',SHIFT);down('ArrowLeft','ArrowLeft',SHIFT);up('ArrowLeft','ArrowLeft',SHIFT);up('ShiftLeft','Shift');wait(30);}
   expect(toggles).toBe(0);
- });
-});
-
-describe('in the shell',()=>{
- type Listener=(e:unknown)=>void;
- let tree:ReturnType<typeof create>,listeners:{target:string;type:string;fn:Listener;capture:boolean}[],field:{value:string;closest():unknown},page:{visibilityState:string};
- const target=(name:string)=>({
-  addEventListener:(type:string,fn:Listener,capture?:boolean)=>{listeners.push({target:name,type,fn,capture:!!capture});},
-  removeEventListener:(type:string,fn:Listener,capture?:boolean)=>{listeners=listeners.filter(l=>!(l.target===name&&l.type===type&&l.fn===fn&&l.capture===!!capture));},
- });
- let tiles:Record<string,{focus():void;contains(el:unknown):boolean}>;
- /** Capture listeners first; a stopped event reaches nobody after. */
- function send(type:string,event:{stopped?:boolean}={}) {
-  for(const l of [...listeners].filter(l=>l.type===type).sort((a,b)=>Number(b.capture)-Number(a.capture))){if(event.stopped)break;l.fn(event);}
- }
- async function key(type:'keydown'|'keyup',code:string,k:string,mods:Mods={}) {
-  const e=keyEvent(code,k,mods);e.target=field;
-  await act(async()=>send(type,e));
-  if(type==='keydown'&&!e.defaultPrevented&&k.length===1&&!e.ctrlKey&&!e.metaKey&&!e.altKey)field.value+=k;
-  return e;
- }
- const press=async(code:string,k:string,mods:Mods={})=>{await key('keydown',code,k,mods);wait(20);await key('keyup',code,k,mods);wait(20);};
- const hold=()=>key('keydown','ControlLeft','Control',CTRL);
- const release=()=>key('keyup','ControlLeft','Control');
- const tick=(mods:Mods=CTRL)=>press('Backquote','`',mods);
- const shiftTap=async()=>{await key('keydown','ShiftLeft','Shift',SHIFT);wait(50);await key('keyup','ShiftLeft','Shift');wait(50);};
- const launcherOpen=()=>tree.root.findAllByProps({'data-launcher':true}).length>0;
- const options=()=>tree.root.findAllByProps({role:'option'});
- const offered=()=>options().map((o:{props:{id:string}})=>o.props.id.replace('next-switch-',''));
- const selected=()=>options().filter((o:{props:{'aria-selected':boolean}})=>o.props['aria-selected']).map((o:{props:{id:string}})=>o.props.id.replace('next-switch-',''));
- const front=()=>tree.root.findAll((n:{type:unknown;props:Record<string,unknown>})=>n.type==='section'&&!!n.props['data-focused']).map((n:{props:Record<string,string>})=>n.props['data-tile']);
- const dock=(id:string)=>act(async()=>tree.root.findByProps({'data-dock':id}).props.onClick());
- const click=(id:string)=>act(async()=>tree.root.findByProps({'data-tile':id}).props.onPointerDown());
- async function launch(title:string){await dock('launcher');await act(async()=>tree.root.find((n:{type:unknown;props:{className?:string};findByProps(props:object):{props:{children:string}}})=>n.type==='button'&&n.props.className==='loom-lapp'&&n.findByProps({className:'loom-lapp__nm'}).props.children===title).props.onClick());}
- /** The order the switcher offers, read without switching. */
- async function recent(){await hold();await tick();const order=offered();await key('keydown','Escape','Escape',CTRL);await release();return order;}
-
- beforeEach(async()=>{
-  now=1000;listeners=[];tiles={};field={value:'',closest(){return field;}};page={visibilityState:'visible'};
-  const location={href:'http://loom/'};
-  const history={state:null as unknown,pushState(state:unknown,_:string,url:string){this.state=state;location.href='http://loom'+url;},replaceState(state:unknown,_:string,url:string){this.state=state;location.href='http://loom'+url;}};
-  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);
-  const win=target('window');vi.stubGlobal('window',{...win,location,history,setTimeout,clearTimeout});
-  vi.stubGlobal('addEventListener',win.addEventListener);vi.stubGlobal('removeEventListener',win.removeEventListener);
-  vi.stubGlobal('document',{...target('document'),get visibilityState(){return page.visibilityState;},querySelector:(selector:string)=>tiles[selector]??null,documentElement:{dataset:{}},activeElement:null});
-  vi.stubGlobal('innerWidth',2400);vi.stubGlobal('innerHeight',1200);
-  vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}});
-  await act(async()=>{tree=create(h(Shell,{apps}),{createNodeMock:()=>({focus(){},getBoundingClientRect:()=>({width:2300,height:1000}),querySelectorAll:()=>[]})});});
- });
- afterEach(async()=>{await act(async()=>tree?.unmount());expect(listeners.filter(l=>l.capture&&l.type.startsWith('key')||['pointerdown','blur','visibilitychange'].includes(l.type))).toEqual([]);vi.unstubAllGlobals();});
- const openThree=async()=>{await dock('tasks');await dock('inbox');await dock('notes');};
-
- it('Ctrl+Space opens and closes the launcher from a text field and types nothing; Space and Shift+Space still type',async()=>{
-  await press('KeyH','h');await press('Space',' ');await press('Space',' ',SHIFT);expect(field.value).toBe('h  ');expect(launcherOpen()).toBe(false);
-  await key('keydown','ControlLeft','Control',CTRL);await press('Space',' ',CTRL);await key('keyup','ControlLeft','Control');expect(launcherOpen()).toBe(true);
-  await key('keydown','ControlLeft','Control',CTRL);await press('Space',' ',CTRL);await key('keyup','ControlLeft','Control');expect(launcherOpen()).toBe(false);
-  expect(field.value).toBe('h  ');
- });
- it('the older Ctrl+Shift+Space and Cmd+Shift+Space still toggle it',async()=>{
-  await press('Space',' ',{ctrlKey:true,shiftKey:true});expect(launcherOpen()).toBe(true);
-  await press('Space',' ',{metaKey:true,shiftKey:true});expect(launcherOpen()).toBe(false);expect(field.value).toBe('');
- });
- it('a double tap of Shift opens the launcher and another closes it; a capital letter does neither',async()=>{
-  await key('keydown','ShiftLeft','Shift',SHIFT);await press('KeyA','A',SHIFT);await key('keyup','ShiftLeft','Shift');
-  await key('keydown','ShiftLeft','Shift',SHIFT);await press('KeyB','B',SHIFT);await key('keyup','ShiftLeft','Shift');expect(launcherOpen()).toBe(false);expect(field.value).toBe('AB');
-  await shiftTap();await shiftTap();expect(launcherOpen()).toBe(true);
-  wait(1000);await shiftTap();await shiftTap();expect(launcherOpen()).toBe(false);
-  wait(1000);await shiftTap();wait(TAP_GAP_MS);await shiftTap();expect(launcherOpen()).toBe(false);
- });
- it('one tap of Ctrl+` and a release goes to the previous app, and again goes back',async()=>{
-  await openThree();expect(front()).toEqual(['notes']);
-  await hold();await tick();expect(offered()).toEqual(['notes','inbox','tasks']);expect(selected()).toEqual(['inbox']);
-  const list=tree.root.findByProps({role:'listbox'});expect(list.props['aria-activedescendant']).toBe('next-switch-inbox');
-  expect(tree.root.findByProps({role:'status','aria-live':'assertive'}).props.children).toContain('Inbox, 2 of 3');
-  await release();expect(options()).toEqual([]);expect(front()).toEqual(['inbox']);
-  await hold();await tick();await release();expect(front()).toEqual(['notes']);expect(field.value).toBe('');
- });
- it('three taps move three along and wrap, Shift reverses, Escape stays put',async()=>{
-  await openThree();await dock('clock');
-  await hold();await tick();await tick();await tick();expect(selected()).toEqual(['tasks']);await tick();expect(selected()).toEqual(['clock']);
-  await tick({ctrlKey:true,shiftKey:true});expect(selected()).toEqual(['tasks']);await release();expect(front()).toEqual(['tasks']);
-  await hold();await tick();await tick();expect(selected()).toEqual(['notes']);
-  expect((await key('keydown','Escape','Escape',CTRL)).defaultPrevented).toBe(true);expect(options()).toEqual([]);await release();expect(front()).toEqual(['tasks']);
- });
- it('losing the window while Control is held closes the switcher without switching, and a backtick then types',async()=>{
-  await openThree();
-  await hold();await tick();expect(options()).toHaveLength(3);await act(async()=>send('blur'));expect(options()).toEqual([]);expect(front()).toEqual(['notes']);
-  await press('Backquote','`');expect(field.value).toBe('`');expect(options()).toEqual([]);
-  await hold();await tick();expect(options()).toHaveLength(3);page.visibilityState='hidden';await act(async()=>send('visibilitychange'));expect(options()).toEqual([]);
-  page.visibilityState='visible';await press('Backquote','`');expect(field.value).toBe('``');expect(front()).toEqual(['notes']);
- });
- it('with one app open, or none, Ctrl+` shows nothing, and a plain backtick is typed',async()=>{
-  await hold();await tick();expect(options()).toEqual([]);await release();
-  await dock('tasks');await hold();await tick();expect(options()).toEqual([]);await release();expect(front()).toEqual(['tasks']);
-  await press('Backquote','`');expect(field.value).toBe('`');
- });
- it('keeps most-recently-used order through a click on a tile, the launcher, the dock and the switcher',async()=>{
-  await openThree();expect(await recent()).toEqual(['notes','inbox','tasks']);
-  await click('tasks');expect(front()).toEqual(['tasks']);expect(await recent()).toEqual(['tasks','notes','inbox']);
-  await launch('Inbox');expect(front()).toEqual(['inbox']);expect(await recent()).toEqual(['inbox','tasks','notes']);
-  await launch('Clock');expect(await recent()).toEqual(['clock','inbox','tasks','notes']);
-  await hold();await tick();await tick();await tick();await release();expect(front()).toEqual(['notes']);expect(await recent()).toEqual(['notes','clock','inbox','tasks']);
-  await hold();await tick();await act(async()=>tree.root.findByProps({id:'next-switch-tasks'}).props.onClick());expect(options()).toEqual([]);await release();
-  expect(front()).toEqual(['tasks']);expect(await recent()).toEqual(['tasks','notes','clock','inbox']);
-  await act(async()=>tree.root.findByProps({'aria-label':'Close Notes'}).props.onClick());expect(await recent()).toEqual(['tasks','clock','inbox']);
- });
- it('takes no focus while open, and a landing puts it where it last was in that app, or on the app',async()=>{
-  await openThree();const focus=vi.fn(),caret={isConnected:true,focus:()=>focus('inbox caret')};
-  for(const id of ['tasks','inbox','notes'])tiles[`[data-tile="${id}"]`]={focus:()=>focus(id),contains:el=>id==='inbox'&&el===caret};
-  const inbox=tree.root.findByProps({'data-tile':'inbox'});await act(async()=>inbox.props.onFocusCapture({target:caret,currentTarget:{}}));
-  await click('tasks');await hold();await tick();expect(selected()).toEqual(['inbox']);expect(focus).not.toHaveBeenCalled();
-  await release();expect(focus.mock.calls).toEqual([['inbox caret']]);
-  await hold();await tick();await release();expect(front()).toEqual(['tasks']);expect(focus.mock.calls).toEqual([['inbox caret'],['tasks']]);
-  await hold();await tick();await key('keydown','Escape','Escape',CTRL);await release();expect(focus).toHaveBeenCalledTimes(2);
- });
- it('opening the switcher takes the launcher out of the way, and a cancel puts it back',async()=>{
-  await openThree();await dock('launcher');expect(launcherOpen()).toBe(true);
-  await hold();await tick();expect(launcherOpen()).toBe(false);await key('keydown','Escape','Escape',CTRL);await release();expect(launcherOpen()).toBe(true);
-  await hold();await tick();await release();expect(launcherOpen()).toBe(false);expect(front()).toEqual(['inbox']);
  });
 });

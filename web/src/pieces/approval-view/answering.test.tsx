@@ -1,5 +1,5 @@
-/** Every branch of how an approval is read and answered (./answering.ts), with no view over it. The desktop's view
- * and the board's brick draw from these and add no decision of their own. */
+/** Every branch of how an approval is read and answered (./answering.ts), with no view over it. The board's brick
+ * draws from these and adds no decision of its own. */
 import { afterEach, expect, it, vi } from 'vitest';
 import { createElement as h } from 'react';
 // @ts-expect-error Renderer does not ship declarations.
@@ -9,8 +9,6 @@ import { answerable, answerFailed, answerKey, approvalReading, cautionWords, for
 import type { Approval, Record as ApprovalRecord } from './model';
 import { tempoChangeWords } from '../tempo/change';
 import { measuringChangeWords } from '../measuring/change';
-import { renderTempoChange } from '../tempo/settings';
-import { renderMeasuringChange } from '../measuring/settings';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const base: Approval = { id: 'a-1', kind: 'command', target: 'pond/pump', operation: null, what: 'Drain the pond', why: 'The liner leaks.', agent: 'art', project: 'pond', member: 'sam',
@@ -151,15 +149,12 @@ it('says a checked Tempo or Measuring change as before and after, exactly where 
   expect(measuringChangeWords(measuring)).toEqual({ label: 'Measuring settings change', heading: 'Change Measuring settings', note: 'Allow applies these settings. Deny keeps the current settings.',
     before: [{ label: 'Measuring', value: 'Off' }, { label: 'Outside monitoring tool', value: 'Do not send measurements' }, { label: 'Monitoring address', value: 'None', long: true }, { label: 'Local history', value: '90 days' }],
     after: [{ label: 'Measuring', value: 'On' }, { label: 'Outside monitoring tool', value: 'Send measurements' }, { label: 'Monitoring address', value: on.outside_address, long: true }, { label: 'Local history', value: 'No local history' }] });
-  // A card that is not exactly such a change has no checked words, in the pure reading and in the desktop's drawing alike.
+  // A card that is not exactly such a change has no checked words.
   const not = [{ ...tempo, kind: 'command' }, { ...tempo, target: 'tempo:agent:mark' }, { ...tempo, changeSummary: 'Tempo, roughly' }, { ...tempo, details: 'not json' }, { ...tempo, details: JSON.stringify({ who: { kind: 'agent', id: 'art' }, before: timings }) },
     { ...measuring, kind: 'dangerous' }, { ...measuring, target: 'measuring:other' }, { ...measuring, changeSummary: 'Measuring, roughly' }, { ...measuring, details: '{}' }];
   for (const card of not) {
     expect(tempoChangeWords(card) ?? measuringChangeWords(card), JSON.stringify(card)).toBeNull();
-    expect(renderTempoChange(card) ?? renderMeasuringChange(card), JSON.stringify(card)).toBeNull();
   }
-  expect(renderTempoChange(tempo)).not.toBeNull();
-  expect(renderMeasuringChange(measuring)).not.toBeNull();
 });
 
 /** The hook, read through a component that draws nothing. */

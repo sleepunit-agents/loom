@@ -216,12 +216,6 @@ describe('agent: its activity posts', () => {
       return options?.pause ? { status: 'loading' } : { status: 'live', data: (answerOf as (v: unknown) => unknown)(variables) };
     });
   };
-  it('reads the desktop\'s own selections, word for word', async () => {
-    const desktop = await import('../pieces/attention/live-agent-posts');
-    const brick = await import('./bricks-agent');
-    expect(brick.agentFeedQuery).toBe(desktop.agentFeedQuery);
-    expect(brick.agentHistoryQuery).toBe(desktop.agentHistoryQuery);
-  });
   it('the big form lists its threads of posts, newest first, each with its latest post as plain words; the small forms read none', async () => {
     answer(world({ AgentActivityFeed: { agentActivityFeed: threads } }));
     await draw('agent', { agent: 'art' }, 'side');
