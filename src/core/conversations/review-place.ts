@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
+import { COMMIT } from '../../apps/merge-target.js';
 import { conversations, jobs, threads } from '../data/schema.js';
 
 export const REVIEW_ROLE_CHANGED = 'The requested work role changed or was removed.';
@@ -17,7 +18,7 @@ export function jobMatchesConversation(job: ConversationScope, cv: ConversationS
  * diff is taken against (a pull request's merge base with its base branch, or a commit's first parent), the pull
  * request loom follows when it is one (`changes.id`, the round is filed on it), and the round's tier. */
 export interface ReviewTarget { repository: string; head: string; base: string; change: string | null; tier: 'medium' | 'high' }
-const SHA = /^[0-9a-f]{40}$/, REPOSITORY = /^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/;
+const SHA = COMMIT, REPOSITORY = /^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/;
 export function reviewTarget(value: unknown): ReviewTarget | undefined {
   if (!value || typeof value !== 'object') return;
   const v = value as Record<string, unknown>;

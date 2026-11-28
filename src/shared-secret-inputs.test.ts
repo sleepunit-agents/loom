@@ -307,7 +307,7 @@ it('hands the assigned worker only the frozen program alias with its current sta
  expect((await read('KIT_TOKEN')).status).toBe(409);
  expect(f.client.serialize().includes(Buffer.from('PRIVATE_SOURCE_VALUE'))).toBe(false);
 });
-it('hands a frozen review no secret at start or on request, whatever is granted, and only its house fetch credential to its worker',async()=>{
+it('hands a frozen review no secret at start or on request, whatever is granted or its brief asks, and only its house fetch credential to its worker',async()=>{
  const f=fixture();f.rule();f.rule('REPO');f.grant();
  // A GitHub token the agent's house would read at start (Art's bin/git-credential-art reads such an alias).
  f.db.insert(agentHouseSecrets).values({agent:'art',alias:'LOOM_SECRET_GITHUB_ART_E_FISH_TOKEN',secret:'TOKEN'}).run();

@@ -2,6 +2,7 @@ import {slug} from '../../slug.js';
 import {reviewRequest,reviewPlace,reviewThread,type ReviewTarget} from './review-place.js';
 import {changes,conversations,jobs,memberAgents,tasks,threads} from '../data/schema.js';
 import {reviewBrief} from './review-brief.js';
+import {COMMIT} from '../../apps/merge-target.js';
 import {sqlVisibility} from '../../policy-sql.js';
 import {linkHandoffTickets} from './handoff-tickets.js';
 import {taskVisibility} from '../data/visibility.js';
@@ -51,7 +52,7 @@ export interface HandoffToSelf{
 }
 /** The work role conversation.review runs in unless it names another. */
 export const REVIEW_ROLE='review';
-const COMMIT_SHA=/^[0-9a-f]{40}$/;
+const COMMIT_SHA=COMMIT;
 const reviewInput=z.object({
  role:slug(64).optional().describe('The work role the reviewer runs in; "review" when left out.'),
  clientId:z.string().min(1).max(200),label:threadTitle,
