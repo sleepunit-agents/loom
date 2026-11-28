@@ -104,6 +104,11 @@ const trendRows = (counts: number[], from: number) => counts.flatMap((n, daysBac
   return { id: `t-${100 + k}`, title: titles[k % titles.length][1], at: ago(daysBack * 1440 + 30 + i * 7) };
 }));
 const trendData = { opened: trendRows(openedPerDay, 0), closed: trendRows(closedPerDay, 3) };
+/** The trend's backlog history over its 30 days (bricks-trend.tsx): the counts, and a group's tickets when one is picked. */
+const backlogCounts = { start: 14, end: 17, originalEverClosed: 6, originalClosed: 5, originalMovedOut: 1, addedOpen: 9, created: 4, arrivalsClosed: 1, reopened: 2, movedIn: 3, movedOut: 1 };
+const backlogWindow = (v: Record<string, unknown>) => ({ projectBacklogWindow: { coverage: ago(60 * 24 * 200), from: ago(60 * 24 * 29), until: ago(0),
+  counts: Object.entries(backlogCounts).map(([key, total]) => ({ key, total })),
+  tickets: v.group === 'created' ? (['t-2', 't-4', 't-5', 't-9'] as const).map((id) => ({ id, title: title(id) })) : [] } });
 
 // ── ticket ─────────────────────────────────────────────────────────────────────────────────────────────────────
 const ticketBase = {
@@ -313,6 +318,11 @@ export const scenes: BrickScenes[] = [
     { name: 'week', params: { project: 'garden', days: 7 }, only: ['primary', 'side'], data: { ...shared, BrickTrend: trendData } },
     { name: 'empty', params: { project: 'greenhouse', days: 30 }, data: { ...shared, BrickTrend: { opened: [], closed: [] } } },
     { name: 'unavailable', params: { project: 'garden', days: 30 }, only: ['side'], data: { ...shared, BrickTrend: 'offline' } },
+    { name: 'backlog-closed', params: { project: 'garden', days: 30 }, only: ['primary'], data: { ...shared, BrickTrend: trendData, BrickBacklogWindow: backlogWindow } },
+    { name: 'backlog-opened', params: { project: 'garden', days: 30 }, only: ['primary'], press: ['Show the backlog history'], data: { ...shared, BrickTrend: trendData, BrickBacklogWindow: backlogWindow } },
+    { name: 'backlog-group', params: { project: 'garden', days: 30 }, only: ['primary'], press: ['Show the backlog history', 'Choose', 'Tickets created here · 4'], data: { ...shared, BrickTrend: trendData, BrickBacklogWindow: backlogWindow } },
+    { name: 'backlog-empty', params: { project: 'greenhouse', days: 7 }, only: ['primary'], press: ['Show the backlog history'], data: { ...shared, BrickTrend: { opened: [], closed: [] }, BrickBacklogWindow: { projectBacklogWindow: { coverage: ago(60 * 24 * 3), from: ago(60 * 24 * 3), until: ago(0), counts: [], tickets: [] } } } },
+    { name: 'backlog-unavailable', params: { project: 'garden', days: 30 }, only: ['primary'], press: ['Show the backlog history'], data: { ...shared, BrickTrend: trendData, BrickBacklogWindow: { projectBacklogWindow: null } } },
   ] },
   { brick: 'ticket', scenes: [
     { name: 'default', params: { ticket: 't-3' }, data: ticketData() },

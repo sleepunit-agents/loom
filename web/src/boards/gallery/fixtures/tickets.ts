@@ -1,6 +1,7 @@
 /** Gallery fixtures for the `tickets` brick (development only; ../scenes.ts): the household's tickets across its
  * projects, a state at a time. The same household as ./work.ts: garden is in use, pond is retired. */
 import type { Answer, BrickScenes } from '../scenes';
+import { ago } from './time';
 
 const row = (id: string, title: string, over: Record<string, unknown> = {}) => ({ id, title, status: 'open', closeReason: null, priority: 2, project: 'garden', projectRow: { name: 'Garden' },
   assigneeKind: null, assignee: null, isReady: true, isShelved: false, ...over });
@@ -30,6 +31,25 @@ const data = (over: Record<string, Answer> = {}): Record<string, Answer> => ({
   BrickTicketsOpen: (v: Record<string, unknown>) => ({ rows: JSON.stringify(v.where).includes('"inArray"') ? shelved : working }), ...over,
 });
 
+// ── catchup: the same household's moves today, as the desktop's catch-up reads them ─────────────────────────────
+const moved = (id: string, title: string, minutes: number, over: Record<string, unknown> = {}) => ({ id, title, changedAt: ago(minutes), createdAt: ago(60 * 24 * 20),
+  startedAt: null, closedAt: null, status: 'open', closeReason: null, ask: null, taskCommentsByTask: [], ...over });
+const catchupProjects = [
+  { id: 'garden', name: 'Garden', lifecycle: 'active', tasksByProject: [
+    moved('t-8', 'Fix the gate latch', 12, { status: 'closed', closedAt: ago(12), closeReason: 'done' }),
+    moved('t-3', 'Work out why the drip line on the south fence loses pressure after the third emitter, and replace whatever is clogged', 40, { status: 'in_progress', startedAt: ago(40) }),
+    moved('t-13', 'Test the soil pH in every bed and write the numbers into the garden notes', 95, { taskCommentsByTask: [{ at: ago(95), actor: 'sam', text: 'Kit is in the shed; the east beds first.' }] }),
+    moved('t-7', 'Mulch the fruit trees', 180, { createdAt: ago(180) }),
+  ] },
+  { id: 'greenhouse', name: 'Greenhouse', lifecycle: 'active', tasksByProject: [moved('t-16', 'Clear the bindweed from behind the greenhouse', 220, { ask: 'Burn it or bag it?' })] },
+  { id: 'pond', name: 'Pond', lifecycle: 'retired', tasksByProject: [] },
+];
+const catchupPosts = [
+  { project: 'pond', task: 't-31', title: 'Fit the pond pump timer', id: '41', at: ago(25), agent: 'moss', words: 'The timer is in; it runs the pump from six to nine. I will check the float switch tomorrow before closing this.' },
+  { project: 'garden', task: 't-12', title: 'Replace the pump filter', id: '39', at: ago(70), agent: 'fern', words: 'Ordered the 40 mm filter; it arrives Thursday.' },
+];
+const catchup = (over: Record<string, Answer> = {}): Record<string, Answer> => ({ BrickCatchUp: { projects: catchupProjects }, BrickCatchUpPosts: { projectActivityHighlights: catchupPosts }, ...over });
+
 export const scenes: BrickScenes[] = [
   { brick: 'tickets', scenes: [
     { name: 'default', params: { state: 'ready' }, data: data() },
@@ -41,5 +61,14 @@ export const scenes: BrickScenes[] = [
     { name: 'none-retired', params: { state: 'shelved' }, only: ['side'], data: data({ BrickTicketsRetired: { retired: [{ id: 'garden', lifecycle: 'active' }] } }) },
     { name: 'unavailable', params: { state: 'ready' }, only: ['side', 'primary'], data: data({ BrickTicketsReady: 'offline' }) },
     { name: 'loading', params: { state: 'ready' }, only: ['side'], data: data({ BrickTicketsReady: 'loading' }) },
+  ] },
+  { brick: 'catchup', scenes: [
+    { name: 'default', params: { since: 'today' }, data: catchup() },
+    { name: 'week', params: { since: '7-days' }, data: catchup() },
+    { name: 'three-days', params: { since: '3-days' }, only: ['side', 'compact'], data: catchup() },
+    { name: 'empty', params: { since: 'today' }, data: catchup({ BrickCatchUp: { projects: [] }, BrickCatchUpPosts: { projectActivityHighlights: [] } }) },
+    { name: 'no-updates', params: { since: 'today' }, only: ['primary', 'side'], data: catchup({ BrickCatchUpPosts: 'offline' }) },
+    { name: 'unavailable', params: { since: 'today' }, only: ['side'], data: catchup({ BrickCatchUp: 'offline' }) },
+    { name: 'loading', params: { since: 'today' }, only: ['side'], data: catchup({ BrickCatchUp: 'loading' }) },
   ] },
 ];
