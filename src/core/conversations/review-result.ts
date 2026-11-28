@@ -46,6 +46,12 @@ export function frozenReviewWords(target: Pick<ReviewTarget,'repository'|'head'>
   return words.slice(0, MESSAGE_WORDS_MAX);
 }
 
+/** What the worker reported of a frozen review's copy at the end of its body (runtime.finish, shared-runtime.ts): its two
+ * fingerprints the same, different, or not reported. Kept for the review's ending; this module is the table's one writer. */
+export function recordFrozenReviewTree(db: CommsMessages['db'], job: string, tree: 'same' | 'changed' | 'unreported') {
+  db.insert(frozenReviewResults).values({ job, tree }).onConflictDoUpdate({ target: frozenReviewResults.job, set: { tree } }).run();
+}
+
 /** A frozen review's reply (conversation.message, body-output.ts): the body program's final answer, under the one
  * clientId it is sent with. It is no verdict yet: it is sealed and held, and filed and relayed only once the job has
  * ended (reportFrozenReviewEnd). Held once: another answer for the same job is refused. */

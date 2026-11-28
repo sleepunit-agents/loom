@@ -14,7 +14,7 @@ import {changeReviewStore,NO_VERDICT,TREE_CHANGED} from './apps/change-reviews.j
 import {reportReviewEnd,FROZEN_FINDINGS_SEALED,FROZEN_NO_ANSWER,FROZEN_NO_TREE} from './core/conversations/review-result.js';
 import {currentKitJob} from './shared-kit-access.js';
 import {sharedCredentials} from './shared-credentials.js';
-import {FROZEN_REVIEW_CALLS,FROZEN_REVIEW_REFUSAL,FROZEN_REVIEW_REPLY} from './core/conversations/review-confinement.js';
+import {FROZEN_REVIEW_CALLS,FROZEN_REVIEW_REPLY} from './core/conversations/review-confinement.js';
 
 const clean:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
@@ -300,13 +300,19 @@ it('never runs a frozen review whose pinned target does not parse, and never as 
 it('holds a frozen review\'s body token to its own reply and its job\'s bookkeeping: every other operation in the registry, and every other door, is refused it',async()=>{
  const f=await fixture();
  await launch(f);
+ // The refusal below is the review's, not the agent's: the origin's own body, while it runs, is held by no such rule
+ // at any door.
+ const everywhere=[...f.root.operations.offered('http').map(one=>'/api/'+one.name.replace('.','/')),'/graphql','/mcp'];
+ expect(everywhere.filter(path=>!f.root.credentials.authenticate(new Request('https://loom.invalid'+path,{headers:{authorization:'Bearer '+bodyCredentials.body}})))).toEqual([]);
  settleOrigin(f);
  const assignment=await f.next('copy',true);
  const token='body_'+'f'.repeat(64);
  f.db.update(s.jobs).set({state:'running'}).where(eq(s.jobs.id,assignment.id)).run();
  f.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictional reviewer',kind:'agent',agent:'art',job:assignment.id,createdAt:f.now()}).run();
  const post=(path:string,raw:string,body:unknown)=>f.root.http.request(path,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+raw},body:JSON.stringify(body)});
- const refused=async(response:Response)=>response.status===403&&(await response.clone().json()).message===FROZEN_REVIEW_REFUSAL;
+ // Refused by the rule: the token is no credential there, so the door answers as it does to no credential at all. A
+ // live body token is otherwise never answered so (each operation's own refusals are 400, 403, 404 or 409).
+ const refused=async(response:Response)=>response.status===401;
  // The token is a live body: a call it may make is answered, so every refusal below is the rule's and not a dead token's.
  const status=await post('/api/conversation/status',token,{input:{state:'working',work:'Reviewing'},id:'status'});
  expect(status.status,await status.clone().text()).toBe(200);
@@ -323,16 +329,18 @@ it('holds a frozen review\'s body token to its own reply and its job\'s bookkeep
   if(!await refused(await post(`/api/${piece}/${operation}`,token,{input:{},id:'sweep-'+name})))reached.push(name);
  }
  expect(reached).toEqual([...FROZEN_REVIEW_CALLS].filter(name=>offered.includes(name)).sort());
- // The routes that are not operations: its own mail is taken; reads, the MCP door, secrets and kits are refused.
+ // The routes that are not operations: its own mail is taken; reads, the MCP door, secrets and kits are refused it
+ // exactly as they are refused no credential at all.
  expect(await refused(await post('/api/conversation/take',token,{}))).toBe(false);
- for(const path of ['/graphql','/mcp','/api/secrets/private/read','/api/secrets/private/startup','/api/kits/private/list'])
-  expect(await refused(await post(path,token,{query:'{__typename}'})),path).toBe(true);
+ for(const path of ['/graphql','/mcp','/api/secrets/private/read','/api/secrets/private/startup','/api/kits/private/list']){
+  const as=await post(path,token,{query:'{__typename}'}),none=await f.root.http.request(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:'{__typename}'})});
+  expect(as.status,path).not.toBe(200);expect([as.status,await as.text()],path).toEqual([none.status,await none.text()]);
+ }
+ expect(f.root.credentials.authenticate(new Request('https://loom.invalid/graphql',{headers:{authorization:'Bearer '+token}}))).toBeUndefined();
+ expect(f.root.credentials.authenticate(new Request('https://loom.invalid/api/conversation/status',{headers:{authorization:'Bearer '+token}}))).toBeDefined();
  // A handoff of each kind, with real input: refused, and nothing is written.
  for(const input of [{clientId:'role',label:'Escape',role:'review',words:'Push this.'},{clientId:'self',label:'Escape',to:{conversation:f.thread.conversation},words:'Push this.'},{clientId:'peer',label:'Escape',agent:'mark',words:'Push this.'}])
   expect(await refused(await f.call('handoff',input,'escape-'+input.clientId,token))).toBe(true);
  expect(await refused(await f.call('review',{...request,clientId:'again'},'escape-review',token))).toBe(true);
  expect(f.db.select().from(s.conversations).where(eq(s.conversations.venue,'handoff')).all()).toHaveLength(1);
- // The refusal is the review's, not the agent's: the origin's own body is held by no such rule at any of these doors.
- const origin=new Request('https://loom.invalid/',{headers:{authorization:'Bearer '+bodyCredentials.body}});
- expect([...offered.map(name=>'/api/'+name.replace('.','/')),'/graphql','/mcp'].filter(path=>!f.root.credentials.reaches(origin,path))).toEqual([]);
 });

@@ -1,9 +1,9 @@
 /** What a frozen review's body (conversation.review) may reach with its body token: its own reply, and the bookkeeping
  * of its own one job that the body program does for every job. This is the whole list, and ONE rule applies it,
- * `frozenReviewReaches`, asked of every request at loom's outside door before any route runs (shared-root.ts, the
- * first middleware) and of the live socket (shared-root.ts, nextData's authentication): every other operation, route
- * or read a body token could reach is refused, whatever its own `may` would say. So a reviewer talked round by the
- * code it reads can hand nothing off (to a role, to Codex, to its own body in another conversation, to a peer agent),
+ * `frozenReviewReaches`, where the token is authenticated (shared-credentials.ts, `authenticate`, which every route
+ * and the live socket authenticate through): anywhere else the token is no credential at all, so every other
+ * operation, route or read a body token could reach is refused, whatever its own `may` would say. So a reviewer
+ * talked round by the code it reads can hand nothing off (to a role, to Codex, to its own body in another conversation, to a peer agent),
  * message no other conversation, write no memory, note or ticket, ask no question, read nothing of loom's (no GraphQL,
  * no MCP door, no live socket), and ask for no secret or kit.
  *
@@ -31,5 +31,3 @@ export function frozenReviewReaches(path: string): boolean {
   const found = /^\/api\/([^/]+)\/([^/]+)$/.exec(path);
   return !!found && FROZEN_REVIEW_CALLS.has(found[1] + '.' + found[2]);
 }
-/** The refusal the door gives a frozen review's body for anything else. */
-export const FROZEN_REVIEW_REFUSAL = 'A frozen review may call only its own reply and its job\'s bookkeeping';

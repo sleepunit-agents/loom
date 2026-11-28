@@ -56,6 +56,10 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
       if(grants&&(options.programs==='deny'||session||token.kind!=='owner'||!token.member))return;
       const bound = token.job ? bodyJob(token) : undefined;
       if (token.job && !bound) return;
+      // A frozen review's body is authenticated only where it may reach: its own reply and its job's bookkeeping, by
+      // the one rule (core/conversations/review-confinement.ts). Everywhere else, every route and the live socket, its
+      // token is no credential at all. A job's conversation, and so whether it is one, never changes.
+      if (token.job && frozenReviewOf(db, token.job) && !frozenReviewReaches(new URL(request.url).pathname)) return;
       const valid = () => {
         // Stop before any SQL when the root has closed admission.
         if (!admitted() || !auth.valid() || !admitted()) return false;
@@ -87,14 +91,6 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
     },
     program(viewer:Viewer):Readonly<ProgramGrants>|undefined{return proofs.get(viewer)?.grants;},
     allows(viewer:Viewer,operation:string):boolean{const found=proof(viewer);return !!found&&(!found.grants||(!isReservedProgramOperation(operation)&&found.grants.operations.includes(operation)));},
-    /** Whether this credential may reach this path of loom's outside door at all, by the one rule for a frozen review's
-     * body (review-confinement.ts, frozenReviewReaches). Asked of every request, before any route, and of the live
-     * socket; any other credential is held by nothing here. */
-    reaches(request:Request,path:string):boolean{
-      const raw=presentedCredential(request)?.bearer;if(!raw)return true;
-      const token=readIdentity.get({tokenId:credentialFingerprint(raw)});
-      return !token?.job||!frozenReviewOf(db,token.job)||frozenReviewReaches(path);
-    },
     receiptScope(viewer:Viewer):string|undefined{const found=proofs.get(viewer);return found?.grants?found.token.fingerprint:undefined;},
     browser(viewer: Viewer): Readonly<{ session: string }> | undefined {
       const found = proof(viewer);

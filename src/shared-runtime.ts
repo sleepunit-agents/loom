@@ -7,7 +7,8 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
-import { jobs, conversations, changeReviewRounds, frozenReviewResults } from './core/data/schema.js';
+import { jobs, conversations, changeReviewRounds } from './core/data/schema.js';
+import { recordFrozenReviewTree } from './core/conversations/review-result.js';
 import { canonical as canonicalJson, OperationError, type Operations } from './core/operations/index.js';
 import type { Viewer } from './policy.js';
 import type { WorkRole } from './runtime/work-roles.js';
@@ -166,7 +167,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
       if (input.reviewTree && (!frozen || input.reviewTree.head !== frozen.head)) throw new OperationError('invalid', 'Report does not match a frozen review');
       if (frozen) {
         const tree = !input.reviewTree ? 'unreported' as const : input.reviewTree.before === input.reviewTree.after ? 'same' as const : 'changed' as const;
-        db.insert(frozenReviewResults).values({ job: input.job, tree }).onConflictDoUpdate({ target: frozenReviewResults.job, set: { tree } }).run();
+        recordFrozenReviewTree(db, input.job, tree);
       }
       if (input.coldReview && (!round || job.state !== 'running' || input.coldReview.change !== round.change ||
           input.coldReview.headCommit !== round.headCommit))

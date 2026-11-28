@@ -329,22 +329,22 @@ it('hands a frozen review\'s worker the forge credential bound to the reviewed r
  const f=fixture({acme:'FORGE'});f.rule('REPO');f.rule('FORGE');
  const review=(id:string,repository:string)=>f.root.services.conversations.open({agent:'art',venue:'handoff',place:reviewPlace('parent',id,{id:'review',revision:'r'.repeat(64)},{repository,head:'1'.repeat(40),base:'2'.repeat(40),change:null,tier:'medium'}),label:'Frozen review'}).id;
  // An ordinary job's worker is never given it.
- expect((await f.post('read',{kind:'review',job:'build'},raw.runner)).status).toBe(403);
+ expect((await f.post('read',{kind:'reviewFetch',job:'build'},raw.runner)).status).toBe(403);
  f.db.update(jobs).set({conversation:review('one','acme/app')}).where(eq(jobs.id,'build')).run();
  // Only the job's own worker asks: not its body, not another machine.
- for(const credential of [raw.body,raw.foreign,raw.owner])expect((await f.post('read',{kind:'review',job:'build'},credential)).status).toBe(403);
+ for(const credential of [raw.body,raw.foreign,raw.owner])expect((await f.post('read',{kind:'reviewFetch',job:'build'},credential)).status).toBe(403);
  expect(f.source.read).not.toHaveBeenCalled();
- const given=await f.post('read',{kind:'review',job:'build'},raw.runner);expect(given.status).toBe(200);
+ const given=await f.post('read',{kind:'reviewFetch',job:'build'},raw.runner);expect(given.status).toBe(200);
  expect(f.source.read).toHaveBeenCalledExactlyOnceWith('FORGE');
  expect(f.db.select().from(secretUses).all()).toMatchObject([{secret:'FORGE',job:'build'}]);
  // A repository whose owner no binding names: no credential at all, the house's included, so no copy and no review.
  const g=fixture({acme:'FORGE'});g.rule('REPO');g.rule('FORGE');
  g.db.update(jobs).set({conversation:g.root.services.conversations.open({agent:'art',venue:'handoff',place:reviewPlace('parent','two',{id:'review',revision:'r'.repeat(64)},{repository:'other/app',head:'1'.repeat(40),base:'2'.repeat(40),change:null,tier:'medium'}),label:'Frozen review'}).id}).where(eq(jobs.id,'build')).run();
- expect((await g.post('read',{kind:'review',job:'build'},raw.runner)).status).toBe(403);
+ expect((await g.post('read',{kind:'reviewFetch',job:'build'},raw.runner)).status).toBe(403);
  expect(g.source.read).not.toHaveBeenCalled();
  // A binding the household has given no rule for: asked of an owner like the house's, never handed unasked.
  const h=fixture({acme:'FORGE'});
  h.db.update(jobs).set({conversation:h.root.services.conversations.open({agent:'art',venue:'handoff',place:reviewPlace('parent','three',{id:'review',revision:'r'.repeat(64)},{repository:'acme/app',head:'1'.repeat(40),base:'2'.repeat(40),change:null,tier:'medium'}),label:'Frozen review'}).id}).where(eq(jobs.id,'build')).run();
- expect((await h.post('read',{kind:'review',job:'build'},raw.runner)).status).toBe(403);
+ expect((await h.post('read',{kind:'reviewFetch',job:'build'},raw.runner)).status).toBe(403);
  expect(h.source.read).not.toHaveBeenCalled();
 });

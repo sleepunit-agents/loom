@@ -2111,10 +2111,11 @@ tickets, as for a handoff. The receipt is `{conversation, item, commit, base}`.
   for the body (`src/runtime/house-source.ts`): the house's, for the house's
   image as for every job, and the owner's bound one, for the reviewed commits.
 - **What its body may call.** Its own reply and its job's bookkeeping, nothing
-  else: one rule at loom's door, asked of every request before any route runs and
-  of the live socket (`frozenReviewReaches`,
-  `src/core/conversations/review-confinement.ts`, which lists each operation and
-  why it reaches nobody). It hands nothing off, messages no other conversation,
+  else: one rule where its token is authenticated, which every route and the live
+  socket authenticate through (`frozenReviewReaches`, in `authenticate` of
+  `src/shared-credentials.ts`; the list, each operation and why it reaches nobody,
+  is `src/core/conversations/review-confinement.ts`). Anywhere else its token is
+  no credential at all. It hands nothing off, messages no other conversation,
   writes no memory, note or ticket, asks no question, reads nothing through
   GraphQL, MCP or the live socket, and asks for no secret or kit. Its model is
   served none of loom's tools.
