@@ -1,5 +1,6 @@
 /** An agent's animated portrait, changed from the `household` brick's agent rows (big form) as the desktop's Household
- * setup changes it (pieces/household/portrait.tsx, whose reader, limits and words are imported here): two files
+ * setup changes it (pieces/household/portrait.tsx; its reader, limits and words are in pieces/household/portrait-request.ts,
+ * imported here): two files
  * chosen in the brick, a PixelLab PNG sheet and its PixelLab animation JSON, each checked before anything is sent
  * (the sheet `image/png` and at most `SPRITE_MAX_BYTES`, the JSON a `.json` or `application/json` file of at most
  * `DOOR_REQUEST_BYTES` that reads as a PixelLab sheet's), then sent from the page straight to the desktop's member
@@ -15,7 +16,7 @@ import { useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type { portraitOutcomes } from '../../../src/core/boards/bricks/household';
 import { MemberOperationError, memberOperation } from '../data/operation';
 import { newId } from '../data/id';
-import { METADATA_LIMIT_WORDS, SHEET_LIMIT_WORDS, portraitRefusal, readPortraitFiles, type PortraitInput } from '../pieces/household/portrait';
+import { METADATA_LIMIT_WORDS, SHEET_LIMIT_WORDS, portraitRefusal, readPortraitFiles, type PortraitInput } from '../pieces/household/portrait-request';
 import { Action, Actions, Note, Opened, Opens, Problem, Row, type Act } from './brick-kit';
 
 type Request = { id: string; input: PortraitInput };

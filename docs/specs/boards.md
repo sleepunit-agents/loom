@@ -1877,8 +1877,8 @@ search over each field and that it reaches no read, request, report, address or 
 household brick's agent rows (big form) each have Portrait, opening Household setup's portrait change under the row.
 **Chosen** by two file inputs in the brick, the desktop's: "PixelLab sprite sheet" (`accept="image/png"`) and
 "PixelLab animation JSON" (`accept=".json,application/json"`). **Bounded** before anything is sent, by the desktop's
-own reader and limits, imported and not copied (`readPortraitFiles` in `web/src/pieces/household/portrait.tsx`, which
-the desktop's form calls too): the sheet must be `image/png` and at most `SPRITE_MAX_BYTES` (4 MiB,
+own reader and limits, imported and not copied (`readPortraitFiles` in `web/src/pieces/household/portrait-request.ts`, a module with no component that
+the desktop's form, `portrait.tsx`, calls too): the sheet must be `image/png` and at most `SPRITE_MAX_BYTES` (4 MiB,
 `src/desk-sprite-layout.ts`), the JSON a `.json` or `application/json` file of at most `DOOR_REQUEST_BYTES` (1 MiB,
 `src/core/data/door-limit.ts`) that `manifestFromPixelLab` reads as a PixelLab sheet's; the type check is the brick's
 (the desktop leaves it to its `accept`), the rest is the desktop's. Anything else is refused in the desktop's words
