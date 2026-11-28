@@ -69,7 +69,12 @@ export class DataLive {
     clearReadDeadline(context);
     if (context && typeof context === 'object') this.readVersions.set(context, this.version);
   }
-  readVersion(context: unknown): number | undefined {
+  /** A reading whose answer is known to hold at the current version (scope `on`: nothing committed since it began
+   * wrote what it read). Its read deadline is kept. */
+  private current(context: unknown): void {
+    if (context && typeof context === 'object' && this.readVersions.has(context)) this.readVersions.set(context, this.version);
+  }
+    readVersion(context: unknown): number | undefined {
     return context && typeof context === 'object' ? this.readVersions.get(context) : undefined;
   }
   currentRead(version: number | undefined): boolean { return !this.stopped && version !== undefined && version === this.version; }
@@ -222,7 +227,13 @@ export class DataLive {
             cancellation,
           ]);
           // On: a commit while it read makes it stale only if it wrote what this reading read.
-          if (inFlight) { inFlight = false; if (during !== undefined && !wouldSkip(record, during)) dirty = true; during = undefined; }
+          // One that wrote only elsewhere leaves the answer current as of now, and it is published as such: the
+          // socket drops (and reconnects for) a frame read at an older version than loom's (./socket.ts).
+          if (inFlight) {
+            inFlight = false;
+            if (during !== undefined) { if (!wouldSkip(record, during)) dirty = true; else this.current(options.contextValue); }
+            during = undefined;
+          }
           const accepted = () => { if (tracking) depends = record; };
           const rejected = () => { if (shadow) { const later = written; written = since; wrote(later); } };
           cancel = undefined;

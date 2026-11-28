@@ -283,7 +283,8 @@ describe('on', () => {
       } },
     } }) });
     const underWay = () => new Promise<void>(resolve => { reading = resolve; });
-    const stream = live.watch({ schema, query: '{ thing }', valid: () => true }); clean.push(() => { void stream.return?.(); });
+    const context = {};
+    const stream = live.watch({ schema, query: '{ thing }', valid: () => true, contextValue: context }); clean.push(() => { void stream.return?.(); });
     let paused = underWay();
     const first = stream.next();
     await paused; paused = underWay();
@@ -291,6 +292,8 @@ describe('on', () => {
     release!();
     expect((await first).value).toEqual({ revision: 1, patches: [{ path: [], value: { thing: '1' } }] });
     expect(readings).toBe(1);
+    // Its answer holds at the version after that commit, so the socket publishes it rather than reconnecting.
+    expect(live.currentRead(live.readVersion(context))).toBe(true);
     writes.run(() => client.prepare('UPDATE things SET x = 2').run());
     const second = stream.next();
     await paused; paused = underWay();
