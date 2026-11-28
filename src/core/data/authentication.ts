@@ -107,8 +107,8 @@ function currentHolder(db: DataDatabase, found: { token: typeof tokens.$inferSel
   if (token.kind === 'agent' && token.agent) {
     if (!found.agent) return;
     if (token.job) {
-      const job = db.select({ agent: jobs.agent, box: jobs.box, state: jobs.state, member: jobs.member, source: jobs.startedByKind }).from(jobs).where(eq(jobs.id, token.job)).get();
-      if (!job || job.source === 'terminal' || job.agent !== token.agent || !job.box || !jobClaimed(job.state)) return;
+      const job = db.select({ ...tokenJobColumns, member: jobs.member }).from(jobs).where(eq(jobs.id, token.job)).get();
+      if (!job || !jobTokenCurrent(token, job)) return;
       if (!machineCurrent(db, job.box)) return;
       // A body is its agent narrowed to the member its job is for (policy.ts, Viewer.workingFor). It is said
       // here, where the job row is read, so no door can meet a body's token as the whole agent.
@@ -128,6 +128,15 @@ function currentHolder(db: DataDatabase, found: { token: typeof tokens.$inferSel
     return { token, viewer: { kind: 'runner' as const, id: token.box } };
   }
 }
+/** What of a job decides whether the token bound to it is still good: the columns jobTokenCurrent reads. */
+export const tokenJobColumns = { agent: jobs.agent, box: jobs.box, state: jobs.state, source: jobs.startedByKind };
+export type TokenJob = { agent: string; box: string | null; state: typeof jobs.$inferSelect.state; source: string };
+/** Is the job a body's token is bound to still that token's to work under? Only while the job is this agent's,
+ * was not started at a terminal, is on a machine and is claimed (jobClaimed). When its job has ended, a body's token
+ * is never good again, whatever its own row says. This is the one statement of it: currentHolder (every sign-in
+ * and every door) asks it, and Setup's listing (household-read.ts) asks it to say a token ended with its job. */
+export const jobTokenCurrent = (token: { agent: string | null }, job: TokenJob | undefined): job is TokenJob & { box: string } =>
+  !!job && job.source !== 'terminal' && job.agent === token.agent && !!job.box && jobClaimed(job.state);
 /** A browser session that has not run out, on a token that is current. `ends` is when it stops. */
 export function currentSession(db: DataDatabase, id: string, now: number) {
   const found = credentialReadsFor(db).session.get({ key: id });
