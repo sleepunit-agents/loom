@@ -9,6 +9,7 @@ const { feed, once, op } = vi.hoisted(() => ({ feed: vi.fn(), once: vi.fn(), op:
 vi.mock('../data/graphql', () => ({ useDataQuery: feed, useDataOnce: once }));
 vi.mock('../data/operation', () => ({ memberOperation: op }));
 import { brickView, loadBricks, type Params } from './bricks';
+import { Here } from './brick-kit';
 import type { Form } from './layout';
 
 // A brick's body is fetched when it is first drawn (./bricks.tsx). Here they are all fetched first, so each draws at once.
@@ -156,6 +157,29 @@ describe('pin, unpin and delete, in the primary form', () => {
     expect(buttons().filter((b) => ['Delete conversation', 'Keep it'].includes(said(b))).map((b) => [said(b), !!b.props.disabled])).toEqual([['Delete conversation', false], ['Keep it', false]]);
     expect(tree!.root.findAll((n) => n.props.role === 'group' && n.props['aria-label'] === 'Delete conversation The gate')).toHaveLength(1);
     expect(reported).not.toHaveBeenCalled();
+  });
+});
+
+describe('the conversation open on the page', () => {
+  const drawHere = async (thread: string) => { await act(async () => { tree?.unmount(); tree = create(h(Here.Provider, { value: { thread } }, h(brickView('threads').Body, { params: { scope: 'open' }, form: 'primary', act: reported, raise: raised }))); }); };
+  it('has no Delete on its own row: deleting it would leave the page on a thread that is gone; the other rows keep theirs', async () => {
+    answer();
+    await drawHere('th:new');
+    expect(buttons().map((b) => b.props['aria-label'] ?? said(b))).toEqual(['Search', 'Unpin Standing orders', 'Delete Standing orders…', 'Pin The pond', 'Pin The gate', 'Delete The gate…']);
+    // It can still be pinned; and it is still a link, marked as the one open.
+    await press('Pin The pond');
+    expect(op.mock.calls).toEqual([['comms.change', { thread: 'th:new', change: 'pin', pinned: true }]]);
+    await press('Delete The gate…'); await press('Delete conversation');
+    expect(op.mock.calls[1]).toEqual(['comms.change', { thread: 'th:old', change: 'delete' }]);
+    expect(op.mock.calls.some(([, input]) => input.thread === 'th:new' && input.change === 'delete')).toBe(false);
+  });
+  it('has no Delete on its row among search results either', async () => {
+    answer();
+    once.mockImplementation((_q: string, _v: unknown, o?: { pause?: boolean }) => (o?.pause ? { status: 'loading' } : { status: 'live', data: { homeComms: { member: 'sam' }, commsThreads: [row('th:new', { title: 'The pond' }), row('th:old', { title: 'The gate' })] } }));
+    await drawHere('th:new');
+    await act(async () => tree!.root.findAll((n) => n.type === 'input' && n.props['aria-label'] === 'Search conversations')[0].props.onChange({ target: { value: 'the' } }));
+    await act(async () => tree!.root.findAll((n) => n.type === 'form' && n.props.role === 'search')[0].props.onSubmit({ preventDefault() {} }));
+    expect(buttons().map((b) => b.props['aria-label'] ?? said(b)).filter((l) => l.startsWith('Delete'))).toEqual(['Delete The gate…']);
   });
 });
 

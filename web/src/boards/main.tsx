@@ -14,7 +14,7 @@ import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } fro
 import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerProvider, MessageScrollerViewport } from '../pair/ui/message-scroller';
 import { emptyTail, threadId, TranscriptPage, type ThreadTail } from '../pair/transcript';
 import { brickView, type Params, type Place } from './bricks';
-import { Loading } from './brick-kit';
+import { Here, Loading } from './brick-kit';
 import { layout, type Slot } from './layout';
 import { PlacementFrame } from './placement';
 import { buildChanged } from './build';
@@ -178,6 +178,8 @@ export function Page({ member, thread, agent, at, exists = false }: { member: st
     return () => clearTimeout(late);
   }, [onScreen.leaving, onScreen.shown, arrived]);
   const answers = useMemo(() => rememberedFor(member), [member]);
+  // The conversation this page is open on, for the bricks that must not treat it as any other (./brick-kit.tsx, Here).
+  const here = useMemo(() => ({ thread }), [thread]);
   // A tab that was hidden and is seen again asks for its bricks' data now. A board that comes back on screen needs
   // no asking: its bricks open their reads anew, and a selection's first answer never waits.
   useEffect(() => {
@@ -256,13 +258,13 @@ export function Page({ member, thread, agent, at, exists = false }: { member: st
       {drawn.length > 0 && (
         <section className="boards-stage" aria-label="Board">
           <div className="boards-trail" style={{ transform: `translateX(${-100 * Math.max(0, column)}%)` }} onTransitionEnd={(e) => { if (e.target === e.currentTarget) arrived(); }}>
-            <Remembered.Provider value={answers}>
+            <Remembered.Provider value={answers}><Here.Provider value={here}>
             {drawn.map((b) => (
               <BoardView key={b.id} board={b} live={b.id === shown?.id || b.id === onScreen.leaving} onRemove={(id) => void change(b.id, [{ change: 'remove', placement: id }])}
                 onMaximize={(id) => void change(b.id, [{ change: 'maximize', placement: id }])}
                 onClose={() => void memberOperation('boards.close', { board: b.id }).catch(() => {})} onLost={newer} />
             ))}
-            </Remembered.Provider>
+            </Here.Provider></Remembered.Provider>
           </div>
           {drawn.length > 1 && <div className="boards-dots" aria-hidden="true">{drawn.map((b) => <i key={b.id} data-on={b.id === shown?.id} />)}</div>}
         </section>

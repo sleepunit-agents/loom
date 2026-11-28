@@ -52,6 +52,10 @@ export const Frame = createContext<{ body?: RefObject<HTMLElement | null>; maxim
 /** Whether the brick is drawn from an answer the page remembered and the fresh one has not arrived yet. A brick whose
  * controls must never act on old data (an approval's answer, a secret's) waits for this to be false. */
 export const useSettling = () => !!useContext(Frame).settling;
+/** The page a brick is drawn on: the conversation open on it right now (./main.tsx). A brick never acts on that
+ * conversation as if it were any other (the `threads` brick offers no Delete for it). Drawn alone, it is no thread. */
+export const Here = createContext<{ thread?: string }>({});
+export const useHereThread = () => useContext(Here).thread;
 
 /** "and N more": what a list left out, said quietly. Where the placement can be the big one, the words are the
  * control that makes it so (the frame's own maximize); anywhere else they are a line. */
