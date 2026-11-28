@@ -672,7 +672,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `comments` | yes | a comment arrives from someone else |
 | `person` (a member or a contact) | yes: what People's reader shows (see below) | never |
 | `agent` | yes: everything it is doing, its last thirty jobs, and its activity posts (its five latest threads of posts, each opening to its posts 25 a page) | it starts waiting on the member (a question of its own joins the Inbox's "needs you" when none was there) |
-| `pull` | yes: also its branch and author, its failing and running checks by name, the people on it, whether it can be merged, its tickets with their titles, the files it changed with their added and removed lines, each opening in place to its patch (`changeFilePatch`, asked once each time it is opened, not live); when loom last read GitHub and whether that read failed, for a household owner; "Cold reviews", whose "Review history" opens in place to each round with its tier, verdict, commit and findings (`changeReviewHistory`, asked only while it is open); and Refresh from GitHub, for the member loom says may use it | its checks go to failing, it is merged, it is closed |
+| `pull` | yes: also its branch and author, its failing and running checks by name, the people on it, whether it can be merged, its tickets with their titles, the files it changed with their added and removed lines, each opening in place to its patch (`changeFilePatch`, asked once each time it is opened, not live); when loom last read GitHub and whether that read failed, for a household owner; "Loom's reviews", a heading that opens in place to each round with its tier, verdict, commit and findings (`changeReviewHistory`, asked only while it is open); and "Read GitHub again", for the member loom says may use it | its checks go to failing, it is merged, it is closed |
 | `repository` | yes: each open pull request with its title and where it stands | never |
 | `question` | no | never: being on the board is the flag |
 | `approval` | no: the page has a primary form for it, with the record's history, but the catalogue does not let it be big, so a board draws it side or compact | never: being on the board is the flag |
@@ -770,7 +770,7 @@ asked for each state, rows as `ticket` chips, empty, loading, unavailable, pagin
 on submit, results, nothing matches, unavailable, back to the list, nothing to the board).
 | `projects` | yes: up to 200 projects by name, each with its goal and where it stands, and a search box. Small: the first six. Folded: the counts | never |
 | `catchup` | yes: every project with something since `since`, by name, its three newest moved tickets, each a `ticket` chip with what moved it (an agent's update with the agent's chip, a comment, closed, started, opened) and when, the project's chip, and chips for the other two times. Small: as many moved tickets as fit across projects, newest first, with their project. Folded: how many tickets moved in how many projects | never |
-| `trend`, added later on 2026-11-27 | yes: also "Backlog history", opened on a press: what was open at the start and the end of the chart's window, and the desktop's groups with their counts, a picked group's tickets as `ticket` chips with their titles, fifty at most | as above |
+| `trend`, added later on 2026-11-27 | yes: also "Backlog history", opened on a press: what was open at the start and the end of the chart's window, and the desktop's groups with their counts, a picked group's tickets as rows that place the `ticket` brick, each its title and id, fifty at most | as above |
 
 **The catch-up and the backlog history, 2026-11-27 (t-2428).** `catchup` is the desktop's Work catch-up
 (`pieces/work/catch-up.tsx`) across every project the member may read, through the desktop's two reads, by the brick's
@@ -807,7 +807,8 @@ picked group, and forgetting on a change.
 - `threads`: the list the page's own switcher reads (`commsThreads` for the member, one folder, with `unread`), each
   row an ordinary link to `/app/t/<thread id>` with the agent's name and "Working" and "Unread". Side: the first six
   and how many more. Compact: one line of counts. Primary (2026-11-27): each row has Pin or Unpin and Delete…, named
-  for the row, by `comms.change` (pin with `pinned`, or `delete`), the operation and permission Comms' More menu
+  for the row and quiet (the kit's `RowTools`, at the row's end before its time: seen when the row is pointed at or
+  holds the keyboard, always seen where nothing can point, never out of the tab order), by `comms.change` (pin with `pinned`, or `delete`), the operation and permission Comms' More menu
   uses: the thread's member and nobody else (`src/shared-conversations.ts`). Delete asks first in place of the
   row's controls, naming the conversation by its title, and sends nothing until answered yes. The board is told
   `pin`, `unpin` or `delete` with an empty detail, after the change saved; a refused or failed one says so under
@@ -886,24 +887,25 @@ it in the desktop's words.
   ("The pull brick's file patches", below). A ticket the member may not read is left out. `changes.answer` exists and a
   member the household lets answer may call it, but it is a merge approval's answer and needs the approval that is
   waiting for that commit; it stays on the desktop with the approval. Added later on 2026-11-27, in the big form only:
-  - **When loom last read GitHub.** "Last read from GitHub" and the time, from `changeSync` (`readAt`), and "GitHub's
-    last read failed: this is the last copy that was read." where `failed` is set, as the desktop's Changes says it.
+  - **When loom last read GitHub.** The brick's last quiet line (`board-foot`): "Last read from GitHub" and the time,
+    from `changeSync` (`readAt`), and "The last read failed: this is the copy from before it." where `failed` is set;
+    "Read GitHub again" stands on the same line.
     `changeSync` is a household owner's read (`src/policy.ts`); anyone else reads no row and nothing is said. It rides
     on the brick's existing selection, so it adds no selection.
-  - **Cold reviews.** The desktop's own read of a pull request's review rounds (`changeReviewHistory(change)`,
-    `src/pieces/changes/review-query.ts`, under the change's and the review job's rules). It is behind "Review
-    history" (`Opens`), asked only while that is open and live while it is (relaxed, like every brick read), and
+  - **Loom's reviews.** The desktop's own read of a pull request's review rounds (`changeReviewHistory(change)`,
+    `src/pieces/changes/review-query.ts`, under the change's and the review job's rules). It is behind the
+    heading "Loom's reviews" (`Fold`), asked only while that is open and live while it is (relaxed, like every brick read), and
     forgotten, with the opened files, when the brick leaves its big form or its change or head commit moves. Each round:
     "Round N · tier", the verdict in the desktop's words (Pending, Clear, Blocking, No verdict), "Current commit" or
     "Earlier commit" with the commit's first seven characters, and its findings as plain text. None: "Loom has not
-    reviewed it."; a read that fails: "Its review history is unavailable."
-  - **Refresh from GitHub.** The desktop's Refresh of Changes (`refreshChanges`, `web/src/data/work-refresh.ts`: one
+    reviewed it."; a read that fails: "Loom's reviews are unavailable. Close them and open them again to try again."
+  - **Read GitHub again.** The desktop's Refresh of Changes (`refreshChanges`, `web/src/data/work-refresh.ts`: one
     POST to `/api/changes/refresh`, operation `changes.refresh`, `src/shared-work-refresh.ts`), which reads every pull
     request loom follows again; there is no read of one pull request alone. Its permission is the desktop's and nothing
     wider: the operation's `may` is `workAnswersAllowed`, a current household owner (`src/shared-work-access.ts`), and
     the button is drawn only where the desktop draws it, for a member to whom `workChangesRefresh` says yes (loom has a
     GitHub source and the member is a household owner; `useWorkAccess`, `web/src/data/work-approvals.ts`). Pressed, it
-    says "Refreshing…" and cannot be pressed again; done, "Loom has read GitHub again." and the board is told
+    says "Reading GitHub…" and cannot be pressed again; done, "Loom has read GitHub again." and the board is told
     `refresh` with an empty detail; refused by loom (403, as when the member stopped being an owner since the page drew
     it), "Loom refused: only a household owner may have it read GitHub again."; any other failure, "GitHub could not
     be read just now. Try again in a moment." Neither failure tells the board anything, and the button stays.
@@ -1349,7 +1351,7 @@ Added 2026-11-27 (t-2428). In the `pull` brick's big form each changed file's na
   over POST and retries once instead.
 - **Cap.** At most 200 KB (204,800 UTF-8 bytes) of patch text an answer. A longer patch is cut at its last whole line
   within that, or inside a line where cutting at a line end would keep less than half of it (a minified file: a hunk
-  header, then one very long line), a character the cut splits left out whole, and `cut` is true; the page says "This patch is longer than 200 KB: only its first part is shown.
+  header, then one very long line), a character the cut splits left out whole, and `cut` is true; the page says "Only the first 200 KB of this patch is shown.
   The whole of it is on GitHub."
 - **Kept.** In memory, one page of the files list keyed by repository, number, the change's stored head commit and
   page number, so a new push (a new `head_commit` from the poll) is read afresh. Patches are kept already cut. At
@@ -1362,14 +1364,16 @@ Added 2026-11-27 (t-2428). In the `pull` brick's big form each changed file's na
   query" (503) when a commit landed while a read ran (`src/core/data/http.ts`); this read waits on GitHub, so that is
   common. `useDataOnce` asks again once, at once, on exactly that answer; the page read is kept by then, so the
   second ask does not go to GitHub. The door's rule is not loosened for it.
-- **Drawn.** Plain monospaced text in a `pre`, one line to a span, never markup: no `dangerouslySetInnerHTML`, no
+- **Drawn.** Plain monospaced text in a `pre` (a named region the keyboard can reach), one line to a span, never markup: no `dangerouslySetInnerHTML`, no
   markdown, no links. Added and removed lines keep their `+` and `-` and are marked `board-patch-add` and
-  `board-patch-remove`, hunk headers `board-patch-hunk` (`board-kit.css`); long lines wrap. Loading says
-  "Loading…"; `none` says "GitHub shows no patch for this file: it may be binary, a change too large for GitHub to
-  show, a rename with no change in it, or an empty file."; `unlisted` says "GitHub's list of this pull request's
-  files does not have this file just now: it may have changed since. Close it and open it again in a moment.";
-  `unavailable` says "GitHub could not be read for this file just now. Close it and open it again in a moment to try
-  again."; a failed request or a null answer says "This file's patch could not be read. Close it and open it again
+  `board-patch-remove`, hunk headers `board-patch-hunk` (`board-kit.css`). Code keeps its lines (design pass 3,
+  2026-11-28): a line longer than the placement does not wrap, the patch scrolls sideways, the one thing on a board
+  that may, and every line is as wide as the longest so an added or removed line's ground runs the whole way. Loading says
+  "Loading…"; `none` says "GitHub has no patch for this file: it may be binary, too large for GitHub to show, renamed
+  with no change in it, or empty."; `unlisted` says "GitHub does not list this file for the pull request just now: it
+  may have changed since. Close the file and open it again in a moment.";
+  `unavailable` says "GitHub could not be read for this file. Close the file and open it again to try
+  again."; a failed request or a null answer says "This file's patch could not be read. Close the file and open it again
   to try again." Closing the row drops the answer; opening it again asks again (answered from the kept page while it
   is kept). The opened files belong to one change at one head commit in the big form: leaving the big form, or a
   new change or head commit, forgets them before anything is drawn, so coming back asks nothing and no patch stays
@@ -1429,7 +1433,7 @@ again by its own placement after 0.7 s and again after 2.5 s, saying only "Getti
 is not kept, so each try asks for the module again. The rest of the board stays drawn. If it still fails the
 placement says "Sorry, this brick didn't load." with "Try again"; the page meanwhile looks for a newer build and
 takes it as "A restart" says, once nothing typed would be lost, and until then the placement says loom was updated
-and also offers "Reload now". The
+and also offers "Reload now" (the kit's `Fetching` and `Lost`: a quiet line and the kit's own actions). The
 page's first script holds no brick and nothing only a brick needs. The bundle guard (`web/vite.boards.config.ts`)
 reads every chunk, the fetched ones too.
 
@@ -1467,6 +1471,11 @@ face made from the agent's colours.
 | `Few`, `More`, `Excerpt` | What makes a small form fit: as many rows as there is room for, the quiet "and N more" that maximizes, and prose cut to its first lines with a fade. |
 | `Confirm`, `Asking`, `Asks`, `AskRow` | Asking before acting, drawn one way: `Confirm` opens a question; `Asking` is the question alone, for a brick that keeps its own asking (the trigger's, the secrets' remove, the approval's second yes and standing answer, whose steps stay the shared ones). |
 | `Opens`, `Opened` | A row's name as the control that opens the rest of it under the row. |
+| `Fold` | A section that is read only once it is opened: its heading is the control and says which way it stands (`aria-expanded`). One name for the part, open or closed ("Reviews", "Story", "Loom's reviews", "Backlog history", "Agents' notes"), never "Show…" and "Hide…"; what could not be read says "Close it and open it again to try again." |
+| `RowTools` | A row's own controls at its end: unseen until the row is pointed at or holds the keyboard, always seen where nothing can point (a phone), always in the tab order, and keeping their room so nothing moves. |
+| `Group` | A few fields of a long form under one small heading (a `fieldset`); where the placement is wide its short fields stand two to a row, and a choice stands like a field, its label over it. |
+| `Lost`, `Fetching` | A placement whose brick did not load: "Getting this brick again…", then sorry with "Try again" (and "Reload now" where loom serves a newer page). |
+| `board-prose`, `board-foot` | Prose that is the thing itself (a session's report), in ink; and a brick's last quiet line (when it was last read, and the control that reads it again). |
 | `Actions`, `Action` | A brick's controls, last in the form. One `primary` at most; `quiet` steps back; `danger` cannot be undone. |
 | `Confirm` | Asking before acting, the same everywhere: the control ("Stop…") opens the act in full ("Stop this session") beside the way back. |
 | `Field` | A field of words under its label; `board-form` stacks them. |
@@ -1492,6 +1501,16 @@ every read answers. `node web/scripts/gallery-shots.mjs <dir>` photographs the b
 image per brick, per scene and form, and contact sheets of every side, compact, primary and phone-width form.
 `npm --prefix web run gallery` serves it for looking. The gallery is no part of `npm --prefix web run build` and no
 shipped page loads it; `src/ui/web-reach.test.ts` names its entry as the one development-only one.
+
+**Design pass 3 (2026-11-28)**, with eyes, over the parts added since pass 2. What it settled: a patch scrolls
+sideways and does not wrap; a part opened on demand is a `Fold`; a row's controls are `RowTools`; the tempo brick's New
+trigger form is three `Group`s ("When it fires", "Whose it is", "What it does"); a session's report stands in ink
+straight under how it ended; a session's count of steps and "Load earlier steps" share a line; a chip under a row is
+a chip and not a bar; nothing said aloud on the page floats (the shared sheet's shadow on `role="alert"` is taken
+off inside a placement and the chat); the chat's Stop asks on a line of its own under the presence; the bridge
+receipt is one small line in the header's margins; in the panel the list scrolls and this conversation's controls
+stay in view under it. The gallery draws these page parts too (`?brick=page`, `gallery/fixtures/page.ts`), and
+`gallery-shots.mjs --tall yes` photographs a primary form whole.
 
 ## Live reads and their cost
 
@@ -1858,9 +1877,9 @@ first fifty and the rest counted; the small and folded forms, none, loading and 
 both. `web/src/boards/brick-queries.test.ts`: each state's selection against the generated schema, naming exactly
 its lists. `src/core/boards/bricks/approvals.test.ts`: the four states, `pending` by default, nothing else.
 The pull brick's later additions: `web/src/boards/bricks-pull.test.tsx`: when loom last read GitHub and that it
-failed, in the big form only and only where the row is read; the review history asked only once opened, each round
-drawn, none, loading and unavailable, and forgotten on leaving the big form; Refresh from GitHub drawn only where
-`workChangesRefresh` says yes and never in the small forms (which do not ask it), its one POST, "Refreshing…" with a
+failed, in the big form only and only where the row is read; loom's reviews asked only once opened, each round
+drawn, none, loading and unavailable, and forgotten on leaving the big form; "Read GitHub again" drawn only where
+`workChangesRefresh` says yes and never in the small forms (which do not ask it), its one POST, "Reading GitHub…" with a
 second press dropped, done telling the board `refresh {}`, refused (403) and failed (503, no answer, an answer that
 is not `refreshed`) each saying so and telling the board nothing, and the refusal still said once the button is gone.
 `web/src/data/work-refresh.test.ts`: the error carries the door's status. `src/shared-changes.test.ts`: through the
