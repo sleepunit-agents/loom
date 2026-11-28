@@ -494,6 +494,9 @@ const upgrades: readonly (readonly string[])[] = [
   // Jobs ended before have neither: nothing recorded why they failed.
   ["ALTER TABLE jobs ADD COLUMN failed_reason text",
    "ALTER TABLE jobs ADD COLUMN failed_detail text"],
+  // 55: what a session's step is: a tool step, the agent's own words, or its readable reasoning (docs/specs/boards.md,
+  // "A session's steps"). Every step kept before is a tool step, which is what it was.
+  [`ALTER TABLE job_trace ADD COLUMN kind text DEFAULT 'tool' NOT NULL CONSTRAINT "job_trace_kind_choice" CHECK("job_trace"."kind" in ('tool', 'words', 'reasoning'))`],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

@@ -57,6 +57,14 @@ const envelope = z.object({ kitSocket:z.literal(true).optional(), kitUnavailable
 /** What a body reports after a Stop, before leaving with BODY_EXIT.stopped. It does not take the Stop itself:
  * loom takes it when the worker reports that exit (Jobs.finish) and records the job as stopped. */
 const left={state:'idle',work:''} as const;
+/** A handed-off session's own words and reasoning, as the body keeps them (docs/specs/boards.md, "A session's steps"):
+ * one step's text is cut at TRACE_TEXT_STEP_MAX characters and says so; one job keeps TRACE_TEXT_JOB_MAX characters
+ * of them in all, and then one step in loom's words says the rest is not kept. Tool steps keep their own bound
+ * (16,000 characters a step) and are not counted against these. */
+export const TRACE_TEXT_STEP_MAX = 8_000;
+export const TRACE_TEXT_JOB_MAX = 200_000;
+export const TRACE_TEXT_CUT = '\n\n[Cut here: loom keeps 8,000 characters of one step]';
+export const TRACE_TEXT_FULL = 'This session\'s words and reasoning reached 200,000 characters, the most loom keeps for one job. Later words and reasoning are not recorded; tool steps still are, and the work itself is not affected.';
 export async function bodyProgram(input: {
   args: readonly string[]; read: (path: string) => Promise<string>;
   stdin: () => Promise<Uint8Array>; env: NodeJS.ProcessEnv; signal: AbortSignal;
@@ -394,8 +402,23 @@ export async function bodyProgram(input: {
     // The one disclosure check for anything this body shows of its harness's work: a step, and the harness's last error.
     const sensitive=(value:string)=>!(tools??secrets).allowsReply(value)||privateValues.some(v=>value.includes(v))||
       /(?:Bearer\s+[A-Za-z0-9_.+/=-]{12,}|-----BEGIN [^\n]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{16,})/i.test(value);
+    // Words and reasoning are a handed-off session's alone: a pairing thread's cards are tool steps, as they were.
+    const session = traced && job.venue==='handoff';
+    let textKept = 0, textFull = false;
     const pairOutput = traced
       ? pairEvents(step=>{
+          const kind = step.kind ?? 'tool';
+          if(kind!=='tool'){
+            if(!session||textFull)return;
+            let words=sensitive(step.words)?'Output withheld.':step.words;
+            if(words.length>TRACE_TEXT_STEP_MAX)words=words.slice(0,TRACE_TEXT_STEP_MAX)+TRACE_TEXT_CUT;
+            const full=textKept+words.length>TRACE_TEXT_JOB_MAX;
+            if(full)textFull=true;else textKept+=words.length;
+            const card=full?{tool:'Session',words:TRACE_TEXT_FULL,cardState:'done' as const,clientId:'session-text-full'}
+              :{tool:kind==='words'?'Words':'Reasoning',words,cardState:'done' as const,stepKind:kind,clientId:(kind==='words'?'say.':'think.')+randomUUID()};
+            posted=posted.then(async()=>{if(!signal.aborted)await client!.card(card)}).catch(()=>{});
+            return;
+          }
           // One clean line, as loom takes a step's tool (core/line-name.ts): a refused step would be lost.
           const tool=sensitive(step.tool)?'Tool':cleanLineOf(step.tool).slice(0,180)||'Tool';
           const words=sensitive(step.words)?'Output withheld.':step.words.length>16000?step.words.slice(0,16000)+'\n[Output truncated]':step.words;

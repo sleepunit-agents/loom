@@ -26,7 +26,15 @@ import { reviewParent, reviewThread } from './review-place.js';
 import type { WordsKey } from './words.js';
 
 type Step = typeof jobTrace.$inferSelect;
-export type TraceCard = Pick<Step, 'clientId' | 'tool' | 'cardState'> & { words: string };
+/** What a step is (schema 55). `tool`: a tool call or its result, as every step was before. `words`: what the agent
+ * said between its tool calls, its own message text. `reasoning`: its reasoning, where the harness gives it readably.
+ * All three are sealed, kept, swept and read alike: the kind changes how a step is drawn and nothing else. */
+export type TraceKind = Step['kind'];
+export const TRACE_KINDS = ['tool', 'words', 'reasoning'] as const satisfies readonly TraceKind[];
+/** The tool line a step that is not a tool's carries. loom writes it, never the body, so a tool of the same name is
+ * still told apart by its kind. */
+export const TRACE_KIND_TOOL: Readonly<Record<Exclude<TraceKind, 'tool'>, string>> = Object.freeze({ words: 'Words', reasoning: 'Reasoning' });
+export type TraceCard = Pick<Step, 'clientId' | 'tool' | 'cardState'> & { words: string; kind?: TraceKind };
 const NO_TRACE = 'Current conversation has no Comms thread';
 /** The most steps loom keeps for one job, and for one handoff conversation over all its jobs. A step past either is
  * refused and nothing is stored; the body goes on working (runtime/body-program.ts drops a refused step). A step's
@@ -48,7 +56,8 @@ export async function prepareJobTrace(service: CommsMessages, cv: typeof convers
   const origin = () => cv.venue === 'handoff' && cv.member
     && db.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.id, job), eq(jobs.conversation, cv.id))).get() ? reviewThread(db, cv) : undefined;
   if (!origin()) throw new OperationError('not-found', NO_TRACE);
-  if (card.tool.length > TRACE_TOOL_MAX || !isCleanLine(card.tool)) throw new OperationError('invalid', `A step's tool is one line of at most ${TRACE_TOOL_MAX} characters, with no control or invisible formatting characters.`);
+  const kind = card.kind ?? 'tool', tool = kind === 'tool' ? card.tool : TRACE_KIND_TOOL[kind];
+  if (tool.length > TRACE_TOOL_MAX || !isCleanLine(tool)) throw new OperationError('invalid', `A step's tool is one line of at most ${TRACE_TOOL_MAX} characters, with no control or invisible formatting characters.`);
   const clientId = job + ':' + card.clientId;
   const saved = () => db.select({ seq: jobTrace.seq }).from(jobTrace).where(and(eq(jobTrace.conversation, cv.id), eq(jobTrace.clientId, clientId))).get();
   const room = () => {
@@ -69,7 +78,7 @@ export async function prepareJobTrace(service: CommsMessages, cv: typeof convers
     room();
     const at = service.now();
     const seq = (db.select({ seq: max(jobTrace.seq) }).from(jobTrace).where(eq(jobTrace.conversation, cv.id)).get()?.seq ?? 0) + 1;
-    db.insert(jobTrace).values({ conversation: cv.id, seq, job, at, tool: card.tool, cardState: card.cardState, clientId, words, keepUntil: traceKeepUntil(at) }).run();
+    db.insert(jobTrace).values({ conversation: cv.id, seq, job, at, tool, cardState: kind === 'tool' ? card.cardState : 'done', clientId, words, keepUntil: traceKeepUntil(at), kind }).run();
     return { seq };
   };
 }
@@ -115,16 +124,18 @@ export class JobTraceQueries {
    * latest steps before that one, oldest first, so a reader can page back to earlier steps. The viewer must be the
    * member the handoff conversation belongs to, under the same conversation rule every Comms read uses; anybody
    * else, and any other venue, reads nothing. */
-  steps(viewer: Viewer, input: { conversation: string; job?: string | null; limit?: number | null; after?: number | null; before?: number | null }): Step[] {
+  steps(viewer: Viewer, input: { conversation: string; job?: string | null; kind?: string | null; limit?: number | null; after?: number | null; before?: number | null }): Step[] {
     const page = input.limit ?? TRACE_PAGE_DEFAULT, after = input.after ?? null, before = input.before ?? null;
     if (!Number.isInteger(page) || page < 1 || page > TRACE_PAGE_MAX) throw new Error('Invalid trace page size');
     if (after !== null && (!Number.isInteger(after) || after < 0)) throw new Error('Invalid trace position');
     if (before !== null && (!Number.isInteger(before) || before < 1)) throw new Error('Invalid trace position');
     if (after !== null && before !== null) throw new Error('Ask for steps after one or before one, not both');
+    const kind = input.kind ?? null;
+    if (kind !== null && !(TRACE_KINDS as readonly string[]).includes(kind)) throw new Error('Invalid trace step kind');
     if (viewer.kind !== 'member') return [];
     const found = this.db.select(getTableColumns(jobTrace)).from(jobTrace).innerJoin(conversations, eq(conversations.id, jobTrace.conversation))
       .where(and(eq(jobTrace.conversation, input.conversation), input.job ? eq(jobTrace.job, input.job) : undefined,
-        after === null ? undefined : gt(jobTrace.seq, after), before === null ? undefined : lt(jobTrace.seq, before), this.mine(viewer, input.conversation)));
+        kind === null ? undefined : eq(jobTrace.kind, kind as TraceKind), after === null ? undefined : gt(jobTrace.seq, after), before === null ? undefined : lt(jobTrace.seq, before), this.mine(viewer, input.conversation)));
     return after === null ? found.orderBy(desc(jobTrace.seq)).limit(page).all().reverse() : found.orderBy(asc(jobTrace.seq)).limit(page).all();
   }
 
@@ -170,16 +181,18 @@ export function jobTraceFields(service: JobTraceQueries): GraphQLFieldConfigMap<
   const text = { type: new GraphQLNonNull(GraphQLString) };
   const step = new GraphQLObjectType<Step & { text?: string | null }, { viewer: Viewer }>({ name: 'SessionTraceStep', fields: {
     conversation: text, job: text, at: text, tool: text, cardState: text, clientId: text,
+    kind: { type: new GraphQLNonNull(GraphQLString), description: 'tool, words (the agent\'s own words between its tool calls) or reasoning (its reasoning, where the harness gave it readably). Every step before schema 55 is tool.' },
     seq: { type: new GraphQLNonNull(GraphQLInt) },
     words: { type: GraphQLString, resolve: row => row.text ?? null },
     wordsKeepUntil: { type: GraphQLString, resolve: row => service.keepUntil(row) },
   } });
   return {
     sessionTrace: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(step))),
-      args: { conversation: text, job: { type: GraphQLString }, limit: { type: GraphQLInt, defaultValue: TRACE_PAGE_DEFAULT },
+      args: { conversation: text, job: { type: GraphQLString },
+        kind: { type: GraphQLString, description: 'Only steps of this kind: tool, words or reasoning.' }, limit: { type: GraphQLInt, defaultValue: TRACE_PAGE_DEFAULT },
         after: { type: GraphQLInt, description: 'Only steps after this seq, earliest first. A stored step never changes, so a reader that has some asks only for newer ones.' },
         before: { type: GraphQLInt, description: 'Only steps before this seq: the latest page of them, oldest first. How a reader loads earlier steps.' } },
-      resolve: (_row, args: { conversation: string; job?: string | null; limit?: number | null; after?: number | null; before?: number | null }, context, info) =>
+      resolve: (_row, args: { conversation: string; job?: string | null; kind?: string | null; limit?: number | null; after?: number | null; before?: number | null }, context, info) =>
         selectedQueryFields(info).has('words') ? service.opened(context.viewer, args, until => keepReadUntil(context, until)) : service.steps(context.viewer, args) },
     sessionTraceCount: { type: new GraphQLNonNull(GraphQLInt), args: { conversation: text, job: { type: GraphQLString } },
       description: 'How many steps the trace holds in all; nought for anybody who may not read it.',
