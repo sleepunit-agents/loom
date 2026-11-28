@@ -88,7 +88,7 @@ function operationCaller(input: WorkerHttpOptions) {
       } catch (error) { throw new WorkerOperationFailure(name, true, !signal.aborted && connectionRefused(error)); }
       // Only a parsed refusal from Loom says this worker has lost authority. A gateway
       // can return its own page (including a 403) while Loom is starting.
-      if (!response.ok && !((name === 'next' || name === 'machineReadings') && response.status === 400) && !(name === 'heartbeat' && (response.status === 401 || response.status === 403))) {
+      if (!response.ok && !((name === 'next' || name === 'finish' || name === 'machineReadings') && response.status === 400) && !(name === 'heartbeat' && (response.status === 401 || response.status === 403))) {
         throw new WorkerOperationFailure(name, response.status === 408 || response.status === 429 || response.status >= 500);
       }
       if (!response.body) throw new WorkerOperationFailure(name, false);

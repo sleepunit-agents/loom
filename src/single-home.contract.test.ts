@@ -926,3 +926,20 @@ it('writes a day in milliseconds once', () => {
   // The two others hand one harness a timeout as text, in that harness's own setting.
   expect(sources('src').filter(file => copy.test(text(file))).sort()).toEqual(['src/core/day.ts', 'src/runtime/body-secret-tools.ts', 'src/runtime/claude-body.ts']);
 });
+
+it('keeps the reasons a job may fail for, and the words said for each, in one place', async () => {
+  const { FAILED_REASONS, FAILURE_LIMITS, FAILURE_SIGNALS, jobFailure } = await import('./runtime/job-failure.js');
+  expect(FAILED_REASONS).toEqual(['usage-limit', 'rate-limited', 'overloaded', 'api-error', 'context-too-large', 'max-turns', 'output-limit', 'timed-out', 'sign-in-needed', 'out-of-memory', 'killed', 'harness-crashed', 'unknown']);
+  expect(FAILURE_LIMITS).toEqual(['stream-idle', 'output-close']); expect(FAILURE_SIGNALS).toContain('SIGKILL');
+  expect(Object.keys(jobFailure.shape).sort()).toEqual(['exitCode', 'limit', 'reason', 'resetsAt', 'signal', 'status']);
+  // The worker's door and the job's record take the one schema; neither lists reasons of its own.
+  expect(text('src/shared-runtime.ts')).toContain('failed: jobFailure.optional()');
+  expect(text('src/runtime/jobs.ts')).toContain('jobFailure.safeParse(failure)');
+  // Who may name a reason (the plainest three words apart, which other lists use for things of their own): the home, the adapters' reader, the body (the memory killer) and the container worker (a signal).
+  const named = new RegExp(`['"\`](?:${FAILED_REASONS.filter(reason => !['unknown', 'killed', 'timed-out'].includes(reason)).join('|')})['"\`]`);
+  const namers = [...sources('src'), ...sourcesOf('web/src', /\.tsx?$/)].filter(file => named.test(text(file)));
+  expect(namers.sort()).toEqual(['src/runtime/body-program.ts', 'src/runtime/harness-failure.ts', 'src/runtime/job-failure.ts', 'src/runtime/worker-container.ts']);
+  // The plain words are built on the server and nowhere else: the page shows what it is given.
+  const worded = [...sources('src'), ...sourcesOf('web/src', /\.tsx?$/)].filter(file => /usage limit was reached|ran out of memory/.test(text(file)));
+  expect(worded).toEqual(['src/runtime/job-failure.ts']);
+});

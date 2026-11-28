@@ -812,3 +812,34 @@ it('ends a lost review with no verdict or ordinary successor', async () => {
   expect(reviews.history(row.id)).toMatchObject([{ verdict: 'NONE', completedAt: expect.any(String) }]);
   expect(f.db.select().from(jobs).where(eq(jobs.retryOf, job.id)).all()).toEqual([]);
 });
+it('takes a failed job\'s reason at the worker\'s door only as one of the fixed reasons with bounded detail, and shows it with the job', async () => {
+  const f = fixture(), queued = f.send();
+  expect((await f.call('next', { execution: 'container' }, 'claim')).status).toBe(200); expect((await f.call('started', { job: queued.id, build: 'image' }, 'start')).status).toBe(200);
+  const finish = { job: queued.id, exitCode: 14, logTail: 'PRIVATE OUTPUT', exitBy: 'body' };
+  // No free text reaches the row by this field: each of these is refused whole, and the job is still running.
+  for (const [n, failed] of [{ reason: 'the model said PRIVATE WORDS' }, { reason: 'unknown', note: 'PRIVATE WORDS' }, { reason: 'api-error', status: 9_999 }, { reason: 'usage-limit', resetsAt: 'PRIVATE WORDS' },
+    { reason: 'killed', signal: 'PRIVATE' }, 'usage-limit'].entries()) expect((await f.call('finish', { ...finish, failed }, 'bad-' + n)).status).toBe(400);
+  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()?.state).toBe('running');
+  const failed = { reason: 'usage-limit', resetsAt: new Date(f.clock.now() + 3_600_000).toISOString() };
+  expect((await f.call('finish', { ...finish, failed }, 'finish')).status).toBe(200);
+  // The thread is private: its output is dropped, the reason is kept, and the next attempt waits for the reset.
+  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()).toMatchObject({ state: 'failed', exitCode: 14, exitBy: 'body', logTail: null, failedReason: 'usage-limit', failedDetail: { resetsAt: failed.resetsAt } });
+  expect(f.db.select().from(jobs).where(eq(jobs.retryOf, queued.id)).get()).toMatchObject({ state: 'queued', retryAt: failed.resetsAt, failedReason: null });
+  // A replay of the same report is answered from its receipt; another reason under the same id is not the same report.
+  expect((await f.call('finish', { ...finish, failed }, 'finish')).status).toBe(200);
+  expect((await f.call('finish', { ...finish, failed: { reason: 'overloaded' } }, 'finish')).status).toBe(409);
+  expect(JSON.stringify(f.db.select().from(operationResults).all().map(row => ({ ...row, result: row.result.toString('utf8') })))).not.toContain('PRIVATE');
+  // Read with the job, by whoever may read the job, in plain words.
+  const read = async (bearer: string) => (await (await f.root.http.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + bearer },
+    body: JSON.stringify({ query: `{ jobHistory(agent:"art", id:"${queued.id}") { id exitStage failedReason failedWhy failedResetsAt } }` }) })).json() as { data?: { jobHistory: Record<string, unknown>[] } }).data?.jobHistory;
+  expect(await read(ownerCredential)).toEqual([{ id: queued.id, exitStage: 'body harness', failedReason: 'usage-limit', failedResetsAt: failed.resetsAt, failedWhy: expect.stringMatching(/^the model's usage limit was reached; it resets [A-Z][a-z]{2} \d+, \d+:\d\d [AP]M/) }]);
+});
+it('finishes a job without its reason on a loom from before reasons were asked for', async () => {
+  const sent: Record<string, unknown>[] = [];
+  const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+    const input = JSON.parse(String(init?.body)).input as Record<string, unknown>; sent.push(input);
+    return 'failed' in input ? Response.json({ ok: false, code: 'invalid', message: 'Input does not match operation schema' }, { status: 400 }) : Response.json({ ok: true, value: { ok: true } });
+  });
+  await httpWorkerControl({ url: 'https://loom.example', token: credential, signal: new AbortController().signal, fetch: fetcher }).finish('j', 14, '', 'body', undefined, undefined, { reason: 'max-turns' });
+  expect(sent).toEqual([{ job: 'j', exitCode: 14, logTail: '', exitBy: 'body', failed: { reason: 'max-turns' } }, { job: 'j', exitCode: 14, logTail: '', exitBy: 'body' }]);
+});
