@@ -1697,13 +1697,15 @@ is `on` when unset, and `off` or `shadow` when set so; anything else stops loom 
 - *What it saves.* The cost harness above, `LOOM_LIVE_SCOPE=off` against `on`, same build, the board of ten
   (28 selections, 10 eager) as the page is now:
 
-  | Case | off: readings, statements, processor | on: readings, statements, processor |
+  | Case (two runs each) | off: readings, statements, processor | on: readings, statements, processor |
   |---|---|---|
-  | One commit to a table no brick reads (a machine's name) | 28, 421, 60 ms | 8, 184, 37 ms |
-  | 20 such commits, 300 ms apart | 264, 4,645, 396 ms | 80, 2,314, 268 ms |
-  | A session reporting 30 steps over 10 s | 354, 6,378, 550 ms | 100, 3,205, 396 ms |
-  | One click (claim a ticket) and the 6.5 s after it | 56, 1,341, 129 ms | 56, 1,401, 146 ms |
+  | One commit to a table no brick reads (a machine's name) | 28, 421, 60 to 134 ms | 8, 184, 37 to 38 ms |
+  | 20 such commits, 300 ms apart | 264, 4,645 to 4,651, 396 to 871 ms | 80, 2,308 to 2,314, 268 to 302 ms |
+  | A session reporting 30 steps over 10 s | 354 to 364, 6,378 to 6,582, 550 to 638 ms | 100, 3,205 to 3,220, 396 to 424 ms |
+  | One click (claim a ticket) and the 6.5 s after it | 56 to 66, 1,341 to 1,514, 129 to 314 ms | 56, 1,401 to 1,404, 146 to 156 ms |
 
+  The processor figures include the writes themselves and vary from run to run; readings and statements are the
+  steady measure. A click costs what it did: what it writes is what the bricks on screen read.
   The eight still read for an unrelated commit are the unscoped ones: the agent directory (memory), the running
   session's steps (its expiry flag), the session brick (a virtual table), the desk's doing list (the clock) and
   four reads of the inbox, whose fields are not yet inspected. Inspecting those is the next saving.
