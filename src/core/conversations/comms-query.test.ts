@@ -272,7 +272,7 @@ it('executes the shipped Work queries against the generated current-policy task 
   const f = await fixture();
   const { tasks } = await import('../data/schema.js');
   const { dataQueries } = await import('../data/queries.js');
-  const { sourceQuery, taskQuery } = await import('../../../web/src/pieces/comms/work-query.js');
+  const { sourceQuery, taskQuery } = await import('../../ui/desk-queries.fixture.js');
   for (const [id, owner, sourceId] of [['t-10','alice',f.thread.conversation], ['t-11','bob',f.thread.conversation], ['t-12','alice','elsewhere']]) {
     f.db.insert(tasks).values({ id, title: id, ownerKind: 'member', owner, createdByKind: 'member', createdBy: owner, createdAt: '2026-11-14T18:00:00Z', changedAt: '2026-11-14T18:00:00Z', sourceKind: 'conversation', sourceId }).run();
   }
@@ -345,28 +345,26 @@ it('orders Home by instant across timestamp precision and ignores replies from a
   expect(f.service.home(alice)?.summaries[0]).toMatchObject({ unread: 2, last: { thread: newer.id }, first: { thread: newer.id } });
 });
 
-it('executes the actual shipped Comms selection over the shared read group', async () => {
+it('executes the removed desktop\'s Comms selection over the shared read group', async () => {
   const f = await fixture(); f.db.insert(memberAgents).values({ member: 'alice', agent: 'art' }).run();
-  const { commsSelection, commsThreadSelection } = await import('../../../web/src/pieces/comms/shared-query.js');
+  const { commsQuery, commsThreadQuery } = await import('../../ui/desk-queries.fixture.js');
   const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: commsQueryFields(f.service) }) });
-  const selection = commsSelection(false, '', 0);
-  const result = await graphql({ schema, source: selection.query, variableValues: selection.variables, contextValue: { viewer: alice } });
+  const result = await graphql({ schema, source: commsQuery, variableValues: { archived: false, search: '', offset: 0 }, contextValue: { viewer: alice } });
   expect(result.errors).toBeUndefined();
-  const detail = commsThreadSelection(f.thread.id);
-  const opened = await graphql({ schema, source: detail.query, variableValues: detail.variables, contextValue: { viewer: alice } });
+  const opened = await graphql({ schema, source: commsThreadQuery, variableValues: { id: f.thread.id, before: null, earlier: false }, contextValue: { viewer: alice } });
   expect(opened.errors).toBeUndefined();
-  const picked = detail.decode(opened.data as Record<string, unknown>);
-  const value = selection.decode(result.data as Record<string, unknown>);
-  expect(value.home).toEqual({ member: 'alice', agents: ['art'] }); expect(picked.thread?.id).toBe(f.thread.id);
-  expect(picked.messages.map(row => row.words)).toEqual(['Find t-1','Answer t-2','Search done']);
-  expect(picked.messages[0].wordsKeepUntil).toBe('2026-11-28T18:00:00.000Z');
-  expect(value.folders).toEqual({ threads: 1, archived: 0 });
+  const picked = opened.data as { commsThread: { id: string } | null; commsMessages: { words: string | null; wordsKeepUntil: string | null }[] };
+  const value = result.data as { homeComms: unknown; commsFolders: unknown };
+  expect(value.homeComms).toEqual({ member: 'alice', agents: ['art'] }); expect(picked.commsThread?.id).toBe(f.thread.id);
+  expect(picked.commsMessages.map(row => row.words)).toEqual(['Find t-1','Answer t-2','Search done']);
+  expect(picked.commsMessages[0].wordsKeepUntil).toBe('2026-11-28T18:00:00.000Z');
+  expect(value.commsFolders).toEqual({ threads: 1, archived: 0 });
 });
 
 it('pages the actual source-work query past fifty rows after current visibility filtering', async () => {
   const f = await fixture(), { tasks } = await import('../data/schema.js');
   const { dataQueries } = await import('../data/queries.js');
-  const { sourceQuery } = await import('../../../web/src/pieces/comms/work-query.js');
+  const { sourceQuery } = await import('../../ui/desk-queries.fixture.js');
   for (let n=0;n<51;n++) f.db.insert(tasks).values({id:`t-${String(n).padStart(3,'0')}`,title:`Task ${n}`,ownerKind:'member',owner:'alice',createdByKind:'member',createdBy:'alice',createdAt:'2026-11-14T18:00:00Z',changedAt:'2026-11-14T18:00:00Z',sourceKind:'conversation',sourceId:f.thread.conversation}).run();
   const schema=withQueryFields(dataQueries(f.db.$client,{tables:['tasks'],visibility:{tasks:fields=>eq(fields.owner,'alice')}}),conversationWorkFields(f.db));
   const first=await graphql({schema,source:sourceQuery,variableValues:{conversation:f.thread.conversation,offset:0},contextValue:{viewer:alice}});
@@ -377,7 +375,7 @@ it('pages the actual source-work query past fifty rows after current visibility 
 it('loads the mentioned pull-request card through current generated Changes visibility', async () => {
   const f=await fixture(), { changes, memberAgents }=await import('../data/schema.js');
   const { dataQueries }=await import('../data/queries.js'), { workVisibility }=await import('../data/work-visibility.js');
-  const { changeQuery }=await import('../../../web/src/pieces/comms/work-query.js');
+  const { changeQuery }=await import('../../ui/desk-queries.fixture.js');
   const id='github:house/loom#7';
   f.db.insert(memberAgents).values({member:'alice',agent:'art'}).run();
   f.db.insert(changes).values({id,repository:'house/loom',number:7,title:'Current PR',body:'',url:'https://github.com/house/loom/pull/7',state:'open',draft:false,authorLogin:'art',agent:'art',branch:'fix',headCommit:'a'.repeat(40),baseBranch:'next',checks:'running',review:'required',mergeable:'unknown',waitingOn:'ci',openedAt:'2026-11-14T18:00:00Z',updatedAt:'2026-11-14T18:00:00Z'}).run();

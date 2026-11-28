@@ -1,5 +1,5 @@
 // Legacy app classes are grandfathered by file and selector. New app structure belongs in the kit.
-// The boards page may not import the desktop kit (web/vite.boards.config.ts) and has its own, for bricks:
+// The boards page has its own kit, for bricks (web/vite.boards.config.ts guards what it loads):
 // web/src/boards/brick-kit.tsx, styled by boards/board-kit.css. That one sheet is a kit too, and is not scanned.
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { Snapshot } from '../../data';
+import type { Snapshot } from '../../data/snapshot';
 import { useDataQuery, type DataQuerySnapshot } from '../../data/graphql';
 import type { AgentPerson } from './home-model';
 

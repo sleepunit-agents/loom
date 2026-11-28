@@ -5,7 +5,7 @@ import { expect, it } from 'vitest';
 import { createDataSchema } from './database';
 import { dataQueries } from './queries';
 import { agents, members, secrets, bridgeConnections } from './schema';
-import { deskBridgesQuery } from '../../../web/src/pieces/attention/bar-stats';
+import { deskBridgesQuery } from '../../ui/desk-queries.fixture.js';
 
 it('reads minimal bridge configuration, observes enablement and reapplies current fixture visibility', async () => {
   const client = new Database(':memory:');

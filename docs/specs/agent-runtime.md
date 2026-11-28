@@ -306,8 +306,9 @@ Who may do what, in one place:
     agent's and still asked about by exactly that card.
     Nothing an owner decides is a command for him to type: a body files the approval (or the piece does), never hands
     him a command. `wake vouch` and `loom runtime principal --reset` at a terminal stay as the fallback.
-  - **Where to see them.** The authority's page `permissions` is the household owner's Permissions app (the launcher's
-    System section), and `permissions/<agent>` is one agent's, linked from its window as "What <Agent> can use".
+  - **Where to see them.** The authority's page `permissions` was the household owner's Permissions app on the
+    desktop (removed 2026-11-28, t-2428), and `permissions/<agent>` one agent's; the boards page has no brick for
+    them yet.
 - **Relay pairing,** as above.
 - **Secrets:** the runtime says *where* a secret lands in a house (the repo's house description). The secrets piece
   decides *whether* an agent may have it, through its own `run` path: `may <agent> <name>` answers allowed, denied or

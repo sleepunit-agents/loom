@@ -1,8 +1,0 @@
-import { useDataQuery } from './graphql';
-import { deskTimeQuery, type DeskTimeData } from '../pieces/attention/desk-time';
-/** The household's zone, from the desk's own clock reading (the same request the top bar makes). Every app's
- * times are said in it (kit/time.ts); until it is read, and where it cannot be, they are said in the device's own. */
-export function useHouseholdZone(): string | undefined {
-  const reading = useDataQuery<DeskTimeData>(deskTimeQuery);
-  return reading.status === 'live' ? reading.data?.deskTime?.timezone ?? undefined : undefined;
-}

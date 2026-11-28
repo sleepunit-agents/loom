@@ -135,7 +135,7 @@ it('returns Ask after an exact owner No even when a standing rule says Do',async
 });
 
 it('validates the exact conversation approval selection through the shared query door for its private member',async()=>{
- const {conversationApprovalsQuery}=await import('../web/src/pieces/comms/work-query.js');
+ const {conversationApprovalsQuery}=await import('./ui/desk-queries.fixture.js');
  const f=await fixture(),id=await f.ask();
  // A settings card filed in this conversation, as a proposal would file it.
  const setting=f.root.services.approvals.request({kind:'setting',operation:'household.change',target:'household:tempoTimings:person alice',details:'{}',changeSummary:'Tempo timings for person alice: before → after',what:'Change Tempo timings',ask:'Change Tempo timings for person alice?',ifYes:'Make the change shown on this card.',ifNo:'Leave it as it is.',agent:'art',askedFrom:f.thread.conversation,actingFor:'alice',project:'pond',member:'alice',conversation:f.thread.conversation,why:'Requested here'});

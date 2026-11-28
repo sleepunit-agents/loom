@@ -395,7 +395,7 @@ Entries are grouped by the part of the program they belong to.
   - a **long run**: a piece between characters that are not letters or digits of 32 or more characters, with at
     least four digits, in at least two groups, and either both letter cases or digits making a fifth of it.
 
-  A stored secret whose name already has that shape (made on the desktop) can still be replaced or removed from
+  A stored secret whose name already has that shape (made on the desktop, while there was one, or by a command) can still be replaced or removed from
   the brick, and the board is not told of it.
 - **What still passes** (told as a name):
   - a value of no known prefix shorter than 32 characters (`hunter2`), and a longer one broken up by `-`, `_`,
@@ -421,7 +421,7 @@ Entries are grouped by the part of the program they belong to.
   two forms all read it.
 - **Why accepted.** The owner, 2026-11-27: the agent should learn "we saved a new key in this-key-place but
   never saw the key itself", and a name that is really a pasted value is the residual risk, to be stated and
-  reduced, not a reason to tell the agent nothing. The desktop takes the same name without any check.
+  reduced, not a reason to tell the agent nothing. The desktop, while there was one, took the same name without any check.
 - **What would change the answer.** A mis-pasted value seen in a brief; or a reason for the agent not to know
   the name, after which the report would go back to telling nothing.
 

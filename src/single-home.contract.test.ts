@@ -98,18 +98,6 @@ it('writes the slug pattern once, and keeps each length with its name', () => {
   expect(secretAgent).toBe(householdId);
 });
 
-it('shows the same slug rule in the app\'s forms as the program enforces', () => {
-  for (const file of ['web/src/pieces/household/index.tsx', 'web/src/pieces/sharing/index.tsx']) {
-    // The form's pattern is a hint to the person typing; the program decides. A cap, where a form gives one, is the id's.
-    const fields = [...text(file).matchAll(/pattern="(\[a-z0-9\][^"]*)"(?: maxLength=\{(\d+)\})?/g)];
-    expect(fields.length, file).toBeGreaterThan(0);
-    for (const [, pattern, cap] of fields) {
-      expect(pattern, file).toBe(SLUG.source.slice(1, -1));
-      if (cap !== undefined) expect(Number(cap), file).toBe(HOUSEHOLD_ID_MAX);
-    }
-  }
-});
-
 it('reads how long Comms keeps words in one place, with the database\'s own default', () => {
   const client = new Database(':memory:');
   try {
@@ -202,10 +190,12 @@ it('takes an agent\'s face choices from the schema, and the app draws the same o
   for (const faceShape of agents.faceShape.enumValues) for (const faceEyes of agents.faceEyes.enumValues)
     expect(agentInput.safeParse({ ...agent, faceShape, faceEyes }).success).toBe(true);
   expect(agentInput.safeParse({ ...agent, faceShape: 'square', faceEyes: 'dot' }).success).toBe(false);
-  const face = text('web/src/face.tsx');
-  const list = (name: string) => JSON.parse((new RegExp(`export const ${name}: \\w+\\[\\] = (\\[[^\\]]*\\])`).exec(face)?.[1] ?? '[]').replaceAll("'", '"'));
-  expect(list('SHAPES')).toEqual([...agents.faceShape.enumValues]);
-  expect(list('EYES')).toEqual([...agents.faceEyes.enumValues]);
+  // The faces the boards page draws (web/src/boards/agent-face.tsx) are the shapes and eyes in face-data.json.
+  const face = JSON.parse(text('web/src/face-data.json')) as { families: Record<string, unknown>; faces: Record<string, unknown> };
+  expect(Object.keys(face.families)).toEqual([...agents.faceShape.enumValues]);
+  expect(Object.keys(face.faces)).toEqual([...agents.faceEyes.enumValues]);
+  expect(text('web/src/face-model.ts')).toContain(`export type FaceShape = ${agents.faceShape.enumValues.map(v => `'${v}'`).join(' | ')};`);
+  expect(text('web/src/face-model.ts')).toContain(`export type FaceEyes = ${agents.faceEyes.enumValues.map(v => `'${v}'`).join(' | ')};`);
 });
 
 it('names the door\'s request limit once', () => {
@@ -434,8 +424,6 @@ it('states how long a secret grant may last, and what an agent sends to ask for 
   const asked = { id: '3f2b8c1e-9d4a-4b6f-8a1c-0e5d7f9b2a34', secret: 'TOKEN', why: 'To push', minutes: GRANT_MINUTES_MAX };
   expect(agentSecretRequest.parse(asked)).toEqual({ ...asked, scope: 'job' });
   expect(secretRuleInput.safeParse({ secret: 'TOKEN', answer: 'auto', minutes: GRANT_MINUTES_MAX + 1, agents: [] }).success).toBe(false);
-  // The form's limit is a hint to the person typing, and the same number.
-  expect(/name="minutes" type="number" min=\{1\} max=\{(\d+)\}/.exec(text('web/src/pieces/settings/controls.tsx'))?.[1]).toBe(String(GRANT_MINUTES_MAX));
 });
 
 it('takes a secret\'s standing answers from the columns, and writes the household\'s default in one place', () => {
@@ -569,12 +557,8 @@ it('writes the number of a named limit in that limit\'s home and nowhere else', 
     { value: MESSAGE_WORDS_MAX, homes: { 'src/core/conversations/words.ts': 'MESSAGE_WORDS_MAX' }, others: {
       'src/runtime/claude-body.ts': 'how many tokens one tool answer may have, a setting of the harness',
       'src/runtime/kit-container.ts': 'the CPU period for a Podman helper, in microseconds',
-      'web/src/pieces/comms/composer.tsx': 'the message bar\'s hint, held to MESSAGE_WORDS_MAX below',
-      'web/src/components/ui/code-block.tsx': 'the longest code the app colours',
-      'web/src/pair/highlight.tsx': 'the longest code the boards page colours; its build may not load the app\'s code block',
-      'web/src/lib/cojeev-motion/use-morph.ts': 'arithmetic in a hash' } },
-    { value: GRANT_MINUTES_MAX, homes: { 'src/pieces/secrets/input.ts': 'GRANT_MINUTES_MAX' }, others: {
-      'web/src/pieces/settings/controls.tsx': 'the form\'s hint, held to GRANT_MINUTES_MAX above' } },
+      'web/src/pair/highlight.tsx': 'the longest code the boards page colours' } },
+    { value: GRANT_MINUTES_MAX, homes: { 'src/pieces/secrets/input.ts': 'GRANT_MINUTES_MAX' }, others: {} },
   ];
   expect([SECRET_VALUE_BYTES, MEMORY_CONTENT_MAX, LOG_TAIL_MAX, MESSAGE_WORDS_MAX, GRANT_MINUTES_MAX]).toEqual([65536, 65536, 16384, 100000, 525600]);
   const files = [...sources('src'), ...sourcesOf('web/src', /\.tsx?$/)].map(file => [file, numbersIn(file)] as const);
@@ -586,9 +570,6 @@ it('writes the number of a named limit in that limit\'s home and nowhere else', 
   // The same two sizes written as a sum: a Knowledge page's body, and a private key file read whole.
   expect(sources('src').filter(file => /\b(64|16) \* 1024\b/.test(text(file)))).toEqual(['src/backends/knowledge-verification.ts', 'src/pieces/secrets/local-holder.ts']);
   expect(MAX_PAGE_BODY_LENGTH).toBe(65536);
-  // The app's one message bar (under a thread in Comms and on an agent's card on Home) shows the program's number.
-  for (const file of ['web/src/pieces/comms/composer.tsx'])
-    expect([...text(file).matchAll(/<Textarea[^>]*? maxLength=\{(\d+)\}/g)].map(found => Number(found[1])), file).toEqual([MESSAGE_WORDS_MAX]);
 });
 
 it('holds a secret\'s value to one size and one shape of write, from the door to the key holder', () => {
@@ -793,8 +774,9 @@ it('takes these choices from the columns that check them too', () => {
   // When a secret is handed over is still written out beside its column: that file was being changed
   // elsewhere when the others were rolled up. It is to read `secretRuleAgents.when.enumValues`.
   expect(holders(/'on_request',\s*'at_start'/)).toEqual([]);
-  // The app does not import the program; its Notify choices are the column's choices, in the column's order.
-  expect(/\(\[([^\]]*)\] as const\)\.map\(value => <option/.exec(text('web/src/pieces/inbox-view/index.tsx'))?.[1].replaceAll("'", '').split(', ')).toEqual([...inbox.volume.enumValues]);
+  // The app does not import the program; its Notify choices (the boards page's question brick) are the column's
+  // choices, in the column's order.
+  expect(/volumeWords: Record<InboxItem\['volume'\], string> = \{ ([^}]*) \}/.exec(text('web/src/pieces/inbox-view/model.ts'))?.[1].split(', ').map(pair => pair.split(':')[0])).toEqual([...inbox.volume.enumValues]);
 });
 
 it('reads a review of a held reply with one shape at the door and in the service', () => {

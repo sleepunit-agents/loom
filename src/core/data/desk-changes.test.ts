@@ -5,7 +5,7 @@ import { expect, it } from 'vitest';
 import { createDataSchema } from './database';
 import { dataQueries } from './queries';
 import { changes } from './schema';
-import { deskChangesQuery } from '../../../web/src/pieces/attention/bar-stats';
+import { deskChangesQuery } from '../../ui/desk-queries.fixture.js';
 
 it('selects only open change IDs and check states and reapplies current fixture visibility', async () => {
   const client = new Database(':memory:');

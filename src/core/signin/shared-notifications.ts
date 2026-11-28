@@ -19,7 +19,7 @@ import type {DataWrites} from '../data/writes.js';
 import {sessions,notificationDevices,notificationQueue,notificationReplies,inbox,threads,conversations,messages} from '../data/schema.js';
 import {OperationError,type Operations} from '../operations/index.js';
 import {pushTransport,type PushTransport} from './push-transport.js';
-import {NOTIFICATION_DEVICE_REF,boardsThreadPath,desktopThreadPath} from '../../ui/notification-target.js';
+import {NOTIFICATION_DEVICE_REF,BOARDS_HOME,boardsThreadPath} from '../../ui/notification-target.js';
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
 const ref=(endpoint:string)=>hash(NOTIFICATION_DEVICE_REF+endpoint);
 const hosts=[/^fcm\.googleapis\.com$/,/^updates\.push\.services\.mozilla\.com$/,/(^|\.)push\.apple\.com$/,/(^|\.)notify\.windows\.com$/];
@@ -45,8 +45,8 @@ export function sharedNotifications(options:{db:DataDatabase;clock:Clock;writes:
  };
  const visible=(member:string,id:string)=>db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.id,id),eq(inbox.toKind,'person'),eq(inbox.to,member),eq(inbox.state,'waiting'),eq(inbox.volume,'full'),sql`not ${neverPushed(inbox)}`,sql`(${inbox.quietUntil} is null or ${inbox.quietUntil} <= ${new Date(clock.now()).toISOString()})`,options.visible({kind:'member',id:member},getTableColumns(inbox)))).get();
  // The item's thread on the boards page, when it has one and that thread is this member's own. An id, never words.
- // The desktop's address is always sent and is what opens unless the device chose boards (ui/notification-target.ts).
- const boardOf=(member:string,id:string)=>{const found=db.select({thread:threads.id}).from(inbox).innerJoin(threads,eq(threads.id,inbox.thread)).innerJoin(conversations,eq(conversations.id,threads.conversation)).where(and(eq(inbox.id,id),eq(conversations.member,member))).get();return found?{board:boardsThreadPath(found.thread)}:{};};
+ // Otherwise the boards page's home (ui/notification-target.ts).
+ const boardOf=(member:string,id:string)=>{const found=db.select({thread:threads.id}).from(inbox).innerJoin(threads,eq(threads.id,inbox.thread)).innerJoin(conversations,eq(conversations.id,threads.conversation)).where(and(eq(inbox.id,id),eq(conversations.member,member))).get();return found?{url:boardsThreadPath(found.thread),board:boardsThreadPath(found.thread)}:{url:BOARDS_HOME};};
  const remove=(endpoint:string)=>{db.delete(notificationQueue).where(eq(notificationQueue.device,endpoint)).run();db.delete(notificationReplies).where(eq(notificationReplies.device,endpoint)).run();db.delete(notificationDevices).where(eq(notificationDevices.endpoint,endpoint)).run();};
  // An agent's reply the member has not read: the message is that thread's agent's own reply, the thread is a loom
  // thread of this member's alone and is not archived, and the member's read mark is before the reply.
@@ -56,7 +56,7 @@ export function sharedNotifications(options:{db:DataDatabase;clock:Clock;writes:
   wanted:target=>visible(target.member,row.item),
   drop:()=>{db.delete(notificationQueue).where(eq(notificationQueue.id,row.id)).run();},
   claim:()=>db.update(notificationQueue).set({attempts:1}).where(and(eq(notificationQueue.id,row.id),eq(notificationQueue.attempts,0))).run().changes,
-  payload:target=>({title:'loom',body:'',tag:'loom-inbox',url:'/p/inbox-preview',...boardOf(target.member,row.item)}),
+  payload:target=>({title:'loom',body:'',tag:'loom-inbox',...boardOf(target.member,row.item)}),
   sent:()=>{db.update(notificationQueue).set({sentAt:new Date(clock.now()).toISOString()}).where(eq(notificationQueue.id,row.id)).run();}});
  // The row is the device's and the thread's, and a later reply takes it over: every change names the reply it was made for.
  const fromReply=(row:typeof notificationReplies.$inferSelect):Delivery=>{
@@ -67,8 +67,8 @@ export function sharedNotifications(options:{db:DataDatabase;clock:Clock;writes:
    // Given up, not forgotten: the row stays as the newest reply this device was considered for.
    drop:()=>{claim();},claim,
    // No words and no title: a tag of the thread's own, so a later reply replaces an earlier one on the device, and
-   // the thread's two addresses, which hold its id and nothing else.
-   payload:()=>({title:'loom',body:'',tag:'loom-reply-'+hash(row.thread).slice(0,32),url:desktopThreadPath(row.thread),board:boardsThreadPath(row.thread)}),
+   // the thread's boards address (both fields, ui/notification-target.ts), which holds its id and nothing else.
+   payload:()=>({title:'loom',body:'',tag:'loom-reply-'+hash(row.thread).slice(0,32),url:boardsThreadPath(row.thread),board:boardsThreadPath(row.thread)}),
    sent:()=>{db.update(notificationReplies).set({sentAt:new Date(clock.now()).toISOString()}).where(mine(1)).run();}};
  };
  async function deliver(job:Delivery){

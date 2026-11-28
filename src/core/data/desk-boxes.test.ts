@@ -6,7 +6,7 @@ import { createDataSchema } from './database';
 import { boxVisibility } from './box-visibility';
 import { dataQueries } from './queries';
 import { agents, boxAgents, boxes, boxReadings, members } from './schema';
-import { deskBoxesQuery } from '../../../web/src/pieces/attention/bar-stats';
+import { deskBoxesQuery } from '../../ui/desk-queries.fixture.js';
 
 it('executes the minimal enrollment selection and reapplies current visibility without exposing machine details', async () => {
   const client = new Database(':memory:');
