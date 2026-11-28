@@ -837,6 +837,25 @@ it('takes a failed job\'s reason at the worker\'s door only as one of the fixed 
     body: JSON.stringify({ query: `{ jobHistory(agent:"art", id:"${queued.id}") { id exitStage failedReason failedWhy failedResetsAt } }` }) })).json() as { data?: { jobHistory: Record<string, unknown>[] } }).data?.jobHistory;
   expect(await read(ownerCredential)).toEqual([{ id: queued.id, exitStage: 'body harness', failedReason: 'usage-limit', failedResetsAt: failed.resetsAt, failedWhy: expect.stringMatching(/^the model's usage limit was reached; it resets [A-Z][a-z]{2} \d+, \d+:\d\d [AP]M/) }]);
 });
+it('takes how an unknown failure ended at the worker\'s door as counts, fixed choices and yes or no, keeps it on the row, and refuses anything else', async () => {
+  const f = fixture(), queued = f.send();
+  expect((await f.call('next', { execution: 'container' }, 'claim')).status).toBe(200); expect((await f.call('started', { job: queued.id, build: 'image' }, 'start')).status).toBe(200);
+  const finish = { job: queued.id, exitCode: 14, logTail: 'PRIVATE OUTPUT', exitBy: 'body' };
+  const detail = { exitCode: 0, result: 'success', isError: false, resultEmpty: true, stopReason: 'end_turn', finalText: false, numTurns: 88, toolCalls: 0, stdoutBytes: 9_000_000, stdoutLines: 412, unparsedLines: 0,
+    partialLine: false, quietMs: 2_900, compacted: true, refusal: 'empty', events: { assistant: 230, user: 177, system: 3, result: 1, rateLimit: 1, stream: 0, other: 0 } };
+  for (const [n, bad] of [{ result: 'PRIVATE WORDS' }, { stopReason: 'PRIVATE WORDS' }, { refusal: 'PRIVATE WORDS' }, { isError: 'PRIVATE WORDS' }, { numTurns: 'PRIVATE WORDS' }, { stdoutBytes: -1 }, { quietMs: 1.5 },
+    { events: { assistant: 1, note: 'PRIVATE WORDS' } }, { events: { assistant: 'PRIVATE WORDS' } }, { lastLine: 'PRIVATE WORDS' }].entries())
+    expect((await f.call('finish', { ...finish, failed: { reason: 'unknown', ...detail, ...bad } }, 'bad-' + n)).status).toBe(400);
+  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()?.state).toBe('running');
+  expect((await f.call('finish', { ...finish, failed: { reason: 'unknown', ...detail } }, 'finish')).status).toBe(200);
+  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()).toMatchObject({ state: 'failed', exitCode: 14, exitBy: 'body', logTail: null, failedReason: 'unknown', failedDetail: detail });
+  expect((await f.call('finish', { ...finish, failed: { reason: 'unknown', ...detail } }, 'finish')).status).toBe(200);
+  expect((await f.call('finish', { ...finish, failed: { reason: 'unknown', ...detail, quietMs: 3_000 } }, 'finish')).status).toBe(409);
+  expect(JSON.stringify(f.db.select().from(operationResults).all().map(row => ({ ...row, result: row.result.toString('utf8') })))).not.toContain('PRIVATE');
+  const read = (await (await f.root.http.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + ownerCredential },
+    body: JSON.stringify({ query: `{ jobHistory(agent:"art", id:"${queued.id}") { id failedReason failedWhy } }` }) })).json() as { data?: { jobHistory: Record<string, unknown>[] } }).data?.jobHistory;
+  expect(read).toEqual([{ id: queued.id, failedReason: 'unknown', failedWhy: 'the harness exited 0 with a final result loom could not take as an answer (an empty one) after 0 tool calls' }]);
+});
 it('finishes a job without its reason on a loom from before reasons were asked for', async () => {
   const sent: Record<string, unknown>[] = [];
   const fetcher = vi.fn<typeof fetch>(async (_url, init) => {

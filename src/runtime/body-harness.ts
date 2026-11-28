@@ -70,6 +70,11 @@ export interface Harness extends HarnessTraits {
   leftovers?(scratch: string, env: Readonly<Record<string, string | undefined>>): void;
 }
 
+/** What a run's answer says when the harness ended well, having done work, and the model's last turn held no
+ * words: Claude Code then reports a success whose text is empty. The work is done and its steps are the record,
+ * so the job is done too. What the model last said before its final steps follows this line when it said anything. */
+export const SILENT_ENDING = 'The session ended without a final message. Its steps, and anything it opened or changed, are the record of what it did.';
+export const SILENT_ENDING_LAST = 'The last thing it said, before its final steps:';
 export const harnessUnavailable = () => new Error('Native execution unavailable');
 /** A run that failed, with what the adapter could tell of it (harness-failure.ts). Its message is the same one
  * plain line as every other failure. `why` is one of the fixed reasons and holds no words: the body may hand it
@@ -85,6 +90,8 @@ export interface HarnessEnd {
   aborted: boolean;
   /** The end of what it wrote as diagnostics, bounded. May hold the conversation's words. */
   stderr: string;
+  /** Milliseconds from the last thing it printed (or its start, having printed nothing) to its process ending. */
+  quietMs?: number;
 }
 /** What runHarnessChild rejects with once the process was started: the one plain line, and how it ended. */
 export class HarnessExit extends Error { constructor(readonly end: HarnessEnd) { super('Native execution unavailable'); } }
@@ -151,6 +158,8 @@ export async function runHarnessChild(input: {
   /** Sees each piece of output as it arrives, for a harness that must note something before the process ends. */
   onOutput?: (chunk: Buffer) => void;
   onFailedOutput?: (output: Buffer) => void;
+  /** Told how a process that ended well ended, before its output is returned: a run that fails has the same in HarnessExit. */
+  onEnd?: (end: HarnessEnd) => void;
 }): Promise<Buffer> {
   const control = input.control;
   const command = control ? '/bin/bash' : input.command;
@@ -162,6 +171,8 @@ export async function runHarnessChild(input: {
   const chunks: Buffer[] = [];
   let bytes = 0, failed = false, drain: ReturnType<typeof setTimeout> | undefined;
   let exitCode: number | null = null, exitSignal: string | null = null, cut: HarnessEnd['cut'], diagnostics: Buffer = Buffer.alloc(0);
+  let heardAt = performance.now(), quietMs: number | undefined;
+  const ended = () => { quietMs ??= Math.max(0, Math.round(performance.now() - heardAt)); };
   const reportFailure = () => {
     if (!input.onFailedOutput || !chunks.length || bytes > outputLimit) return;
     const output = Buffer.concat(chunks);
@@ -189,10 +200,12 @@ export async function runHarnessChild(input: {
       // A leader may leave a descendant holding the pipes; end it so the worker can reap the group.
       child.once('exit', (code: number | null, signal: string | null) => {
         if (typeof code === 'number') exitCode = code; if (typeof signal === 'string') exitSignal = signal;
+        ended();
         drain = setTimeout(() => { if (!failed && code === 0) cut = 'pipes'; stop(); }, 1_000);
       });
       child.once('close', (code: number | null, signal: string | null) => {
         if (exitCode === null && typeof code === 'number') exitCode = code; if (exitSignal === null && typeof signal === 'string') exitSignal = signal;
+        ended();
         if (code === 0 && !failed && !input.signal.aborted) resolve();
         else reject(harnessUnavailable());
       });
@@ -201,6 +214,7 @@ export async function runHarnessChild(input: {
         const chunk = Buffer.from(data);
         if (Buffer.isBuffer(data)) data.fill(0);
         if (failed) { chunk.fill(0); return; }
+        if (quietMs === undefined) heardAt = performance.now();
         bytes += chunk.length;
         if (bytes > outputLimit) { chunk.fill(0); cut = 'output'; stop(); } else { chunks.push(chunk); try { input.onOutput?.(chunk); } catch { stop(); } }
       });
@@ -216,10 +230,11 @@ export async function runHarnessChild(input: {
       if (!failed) child.stdin.end(input.words);
     });
     if (input.signal.aborted || failed) throw harnessUnavailable();
+    try { input.onEnd?.({ exitCode, signal: exitSignal, aborted: false, stderr: '', ...(quietMs !== undefined ? { quietMs } : {}) }); } catch { /* Measurement is best effort. */ }
     return Buffer.concat(chunks);
   } catch {
     if (!failed) reportFailure();
-    throw new HarnessExit({ exitCode, signal: exitSignal, ...(cut ? { cut } : {}), aborted: input.signal.aborted, stderr: diagnostics.toString('utf8') });
+    throw new HarnessExit({ exitCode, signal: exitSignal, ...(cut ? { cut } : {}), aborted: input.signal.aborted, stderr: diagnostics.toString('utf8'), ...(quietMs !== undefined ? { quietMs } : {}) });
   }
   finally { diagnostics.fill(0); control?.fill(0); pipe?.destroy(); if (drain) clearTimeout(drain); input.signal.removeEventListener('abort', stop); for (const chunk of chunks) chunk.fill(0); }
 }

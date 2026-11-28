@@ -5,7 +5,7 @@ import type {ChildProcessWithoutNullStreams} from 'node:child_process';
 import { expect, it, vi } from 'vitest';
 import { HarnessFailed, HarnessResumeUnavailable, type HarnessEnd, type HarnessSpawn } from './body-harness.js';
 import { bodyHarness } from './body-harnesses.js';
-import { claudeFailure, codexFailure, exitFailure, FAILURE_SAID_MAX, streamRows } from './harness-failure.js';
+import { claudeEnding, claudeFailure, codexFailure, exitFailure, FAILURE_SAID_MAX, streamRows } from './harness-failure.js';
 import { jobFailure } from './job-failure.js';
 import {nativeClaudeFixture} from '../../test/fixtures/native-claude.js';
 import type { WorkerAssignment } from './worker.js';
@@ -119,4 +119,35 @@ it('gives a failed Codex run its reason from its error event', async () => {
   child.stderr.end('diagnostic'); setImmediate(() => { child.emit('exit', 1, null); child.emit('close', 1, null); });
   const error = await run.then(() => new Error('answered'), (caught: Error) => caught) as HarnessFailed;
   expect(why(error)).toEqual({ reason: 'usage-limit' }); expect(error.said).toContain(PRIVATE);
+});
+
+// How a run ended, counted (job-failure.ts, FailureEnding): what an `unknown` failure carries.
+const lines = (rows: unknown[], tail = '\n') => Buffer.from(rows.map(row => JSON.stringify(row)).join('\n') + tail);
+const worked = [{ type: 'system', subtype: 'init' }, { type: 'rate_limit_event', rate_limit_info: { status: 'allowed' } },
+  { type: 'assistant', parent_tool_use_id: null, message: { model: 'm', content: [{ type: 'text', text: PRIVATE }] } },
+  { type: 'assistant', parent_tool_use_id: null, message: { model: 'm', content: [{ type: 'tool_use', name: 'Bash', input: { command: PRIVATE } }] } },
+  { type: 'assistant', parent_tool_use_id: 'helper', message: { model: 'm', content: [{ type: 'tool_use', name: 'Read' }] } },
+  { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', content: PRIVATE }] } },
+  { type: 'system', subtype: 'compact_boundary' }, { type: 'stream_event', event: {} }, { type: PRIVATE }];
+it('counts how a Claude Code run ended and keeps no word of it', () => {
+  const found = claudeEnding(lines([...worked, { type: 'result', subtype: 'success', is_error: false, result: '', stop_reason: 'end_turn', num_turns: 88 }]));
+  expect(found).toEqual({ result: 'success', isError: false, resultEmpty: true, stopReason: 'end_turn', numTurns: 88, finalText: false, toolCalls: 1, stdoutBytes: expect.any(Number), stdoutLines: 10,
+    unparsedLines: 0, partialLine: false, compacted: true, events: { assistant: 3, user: 1, system: 2, result: 1, rateLimit: 1, stream: 1, other: 1 } });
+  expect(JSON.stringify(found)).not.toContain('PRIVATE'); expect(jobFailure.safeParse({ reason: 'unknown', ...found }).success).toBe(true);
+  // No result, a foreign line in the middle, and a last line cut off.
+  const cut = claudeEnding(Buffer.concat([lines(worked.slice(0, 3)), Buffer.from(PRIVATE + '\n{"type":"result","subtype":"succ')]));
+  expect(cut).toMatchObject({ result: 'none', finalText: true, toolCalls: 0, stdoutLines: 5, unparsedLines: 1, partialLine: true, compacted: false });
+  expect(cut).not.toHaveProperty('isError'); expect(cut).not.toHaveProperty('stopReason'); expect(JSON.stringify(cut)).not.toContain('PRIVATE');
+  // A subtype, a stop reason and a count loom does not know are said as such, never copied.
+  expect(claudeEnding(lines([{ type: 'result', subtype: PRIVATE, is_error: PRIVATE, result: PRIVATE, stop_reason: PRIVATE, num_turns: PRIVATE }])))
+    .toMatchObject({ result: 'other', resultEmpty: false, stopReason: 'other' });
+  expect(claudeEnding(lines([{ type: 'result', subtype: 'error_during_execution', is_error: true, stop_reason: null, num_turns: 3 }]))).toMatchObject({ result: 'error_during_execution', isError: true, resultEmpty: true, stopReason: 'none', numTurns: 3 });
+  expect(claudeEnding(Buffer.alloc(0))).toMatchObject({ result: 'none', stdoutBytes: 0, stdoutLines: 0, partialLine: false });
+});
+it('gives an unknown failure how the run ended, and gives a failure with a reason none of it', () => {
+  const ending = claudeEnding(lines(worked));
+  expect(why(claudeFailure(worked, exit({ exitCode: 0, quietMs: 2_345.4 }), { ...ending, refusal: 'no-result' }))).toEqual({ reason: 'unknown', ...ending, refusal: 'no-result', exitCode: 0, quietMs: 2_345 });
+  expect(why(claudeFailure(worked, exit({ exitCode: null }), ending))).toEqual({ reason: 'unknown', ...ending });
+  expect(why(claudeFailure(worked, exit({ exitCode: 3 }), ending))).toEqual({ reason: 'harness-crashed', exitCode: 3 });
+  expect(why(claudeFailure([...worked, result({ api_error_status: 529 })], exit({ exitCode: 0 }), ending))).toEqual({ reason: 'overloaded', status: 529 });
 });

@@ -192,8 +192,9 @@ The exit code says where a job failed. Where one of loom's own programs could
 tell, the row also says why (`jobs.failed_reason` and `jobs.failed_detail`,
 read as `JobRecord.failedReason`, `failedWhy` and `failedResetsAt`). A reason
 is one of a small fixed set, and its detail holds only an HTTP status, a
-signal's name from a fixed list, an exit code, a reset time and a limit's name
-from a fixed list. Neither can hold a word of the conversation, which is why
+signal's name from a fixed list, an exit code, a reset time, a limit's name
+from a fixed list and, for `unknown`, how the run ended as counted facts (see
+"An unknown failure says how it ended" below). Neither can hold a word of the conversation, which is why
 both are kept for a private conversation's job where the log tail is dropped.
 The list, what a detail may hold, the plain words said for each and what each
 means for the next attempt have one home, `src/runtime/job-failure.ts`.
@@ -206,13 +207,61 @@ means for the next attempt have one home, `src/runtime/job-failure.ts`.
 | `api-error` | Any other API error the harness reported, with its HTTP status when it gave one. |
 | `context-too-large` | Claude Code: `api_error` is `message_over_context_limit`, or the result's `terminal_reason` is `prompt_too_long`. Codex: its error message names the context window. |
 | `max-turns` | Claude Code: the result's subtype is `error_max_turns`. |
-| `output-limit` | The body ended the harness because it printed more than the body reads from one run (1 MiB of output and diagnostics together, `outputLimit` in `body-harness.ts`). |
+| `output-limit` | The body ended the harness because it printed more than the body reads from one run (64 MiB of output and diagnostics together, `HARNESS_OUTPUT_BYTES` in `body-harness.ts`). |
 | `timed-out` | `stream-idle`: the model's answer stopped arriving (`api_error` `stream_idle_timeout`; Codex, a disconnected stream). `output-close`: the harness ended well and something it had started kept its output open for a second more. |
 | `sign-in-needed` | HTTP 401 or 403, or an `error` of `authentication_failed`, `oauth_org_not_allowed`, `account_on_hold`, `verification_required` or `cloud_credential_error`. This is what a sign-in that ends or is cancelled in the middle of a run shows as. |
 | `out-of-memory` | A signal ended the harness and the container's count of processes the memory killer ended (`memory.events`, `oom_kill`) rose during the run. Or a signal ended the body itself and the engine says `State.OOMKilled`, which the worker reads before it removes the container. |
 | `killed` | A signal ended the harness (the body says which) or the body (the worker says which), and the memory killer was not seen. |
 | `harness-crashed` | The harness left with a code other than 0 and said none of the above. |
 | `unknown` | The harness ended and nothing above could be read: for instance it left with 0 and no answer loom could vouch for. A job that failed at "body harness" with no reason on its row is shown as this too. |
+
+#### An unknown failure says how it ended
+
+`unknown` used to say nothing more. Now, for Claude Code, its detail carries
+how the run ended, so that the next one is decided by what was seen. Every
+field is a bounded whole number, a choice from a fixed list, or yes or no
+(`FailureEnding` in `job-failure.ts`; read from the output by `claudeEnding`
+in `harness-failure.ts`). No field holds a word the harness printed: a value
+that is not in its list is recorded as `other`.
+
+| Field | What it says |
+| --- | --- |
+| `exitCode`, `signal` | How the harness's process left. |
+| `result` | The final `result` event: `none` when there was none, its `subtype` when that is `success`, `error_during_execution`, `error_max_turns`, `error_max_budget_usd` or `error_max_structured_output_retries`, else `other`. |
+| `isError`, `resultEmpty`, `stopReason`, `numTurns` | The result's own `is_error`; whether its text was empty; its `stop_reason` (`end_turn`, `max_tokens`, `stop_sequence`, `tool_use`, `pause_turn`, `refusal`, `model_context_window_exceeded`, `tool_deferred`, `none`, `other`); its `num_turns`. |
+| `finalText` | Whether the model's last message of its own had words. |
+| `toolCalls` | The tools the model called itself, outside any helper it started. |
+| `stdoutBytes`, `stdoutLines`, `unparsedLines`, `partialLine` | How much it printed; how many whole lines were no event; whether the output ended in the middle of a line that is no event. |
+| `events` | How many events of each kind: `assistant`, `user`, `system`, `result`, `rateLimit`, `stream`, `other`. |
+| `quietMs` | Milliseconds from the last thing it printed to its process ending (`runHarnessChild`). |
+| `compacted` | Whether a `compact_boundary` event was seen. |
+| `refusal` | The step at which the adapter refused a run that left with 0: `decode` (not UTF-8), `line` (a line is not JSON), `event` (no type or session), `session` (another session's event), `message` (an answer not shaped like one), `second-result`, `result` (not a success with text), `no-result`, `no-message` (the model said nothing of its own), `empty` (an empty result of a run that called no tool), `mismatch` (the result is not the model's last words). |
+
+The plain words say the short of it: "the harness exited 0 with no final
+result after 177 tool calls". The facts travel as the reason does: on the
+body's one failure line (now at most 1,200 characters), through
+`runtime.finish` and `Jobs.finish`, each of which takes this schema and
+refuses anything else. A loom from before these fields refuses them like any
+field it does not know, and the worker reports the job again with no reason.
+
+#### A session that did its work and said nothing at the end is done
+
+Claude Code takes its result's text from the last block of the model's last
+message. When the model's last turn holds no words (it said what it had to
+say before its final tool calls, or only thought), the result is a `success`
+with empty text and the process leaves with 0. The adapter used to require the
+result to equal the model's last words, so such a run was failed as `unknown`
+though all its work was done; two long build sessions ended so on 2026-11-27.
+Now a run whose result is a success with empty text, whose last message of the
+model's own had no words, and which called at least one tool, is answered:
+the answer is loom's fixed line ("The session ended without a final message.
+Its steps, and anything it opened or changed, are the record of what it
+did."), then, under "The last thing it said, before its final steps:", the
+model's last words of its own from that run, if it said any
+(`SILENT_ENDING` in `body-harness.ts`). The answer goes through the same
+checks and the same path as any other. A run that called no tool and said
+nothing still fails as `unknown` (`refusal` `empty`), and so does an empty
+result after a last message that had words (`mismatch`).
 
 The harness's adapter decides the reason, inside the body, from those signals
 only (`src/runtime/harness-failure.ts`). Claude Code reports them as fields of

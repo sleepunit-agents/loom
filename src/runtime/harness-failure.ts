@@ -9,7 +9,7 @@
  * Codex reports an error as a message and nothing else, so its reasons are read from a few fixed phrases of
  * Codex's own in that message; the phrase is matched, never copied. */
 import { HarnessFailed, harnessUnavailable, type HarnessEnd } from './body-harness.js';
-import { failureSignal, type JobFailure } from './job-failure.js';
+import { ENDING_RESULTS, ENDING_STOP_REASONS, failureSignal, type FailureEnding, type JobFailure } from './job-failure.js';
 
 type Row = Record<string, unknown>;
 const object = (value: unknown): Row => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Row : {};
@@ -19,14 +19,45 @@ const status = (value: unknown) => typeof value === 'number' && Number.isInteger
 export const FAILURE_SAID_MAX = 4_000;
 const cut = (parts: string[]) => { const whole = parts.map(part => part.trim()).filter(Boolean).join('\n'); return whole.length > FAILURE_SAID_MAX ? whole.slice(0, FAILURE_SAID_MAX) + '\n[Cut]' : whole; };
 
-/** The events of a stream that may have been cut anywhere: every whole line that is one, and nothing else. */
-export function streamRows(output: Uint8Array): unknown[] {
-  const rows: unknown[] = [];
-  for (const line of Buffer.from(output.buffer, output.byteOffset, output.byteLength).toString('utf8').split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    try { rows.push(JSON.parse(line)); } catch { /* a cut or foreign line is no event */ }
+/** A stream that may have been cut anywhere, read once: every whole line that is an event, and how many lines
+ * there were, how many were no event, and whether it ended in the middle of one that is none. */
+function readStream(output: Uint8Array) {
+  const rows: unknown[] = [], lines = Buffer.from(output.buffer, output.byteOffset, output.byteLength).toString('utf8').split(/\r?\n/);
+  let count = 0, unparsed = 0, partial = false;
+  lines.forEach((line, index) => {
+    if (!line.trim()) return;
+    count++;
+    try { rows.push(JSON.parse(line)); } catch { /* a cut or foreign line is no event */ if (index === lines.length - 1) partial = true; else unparsed++; }
+  });
+  return { rows, lines: count, unparsed, partial };
+}
+export const streamRows = (output: Uint8Array): unknown[] => readStream(output).rows;
+const most = (value: number) => Math.min(Math.max(0, Math.round(value)), 1_000_000_000);
+const oneOf = <T extends string>(list: readonly T[], value: unknown, none: T, other: T): T => value === null || value === undefined ? none : list.find(item => item === value) ?? other;
+
+/** How a Claude Code run ended, as counted facts and nothing else (job-failure.ts, FailureEnding): for a failure
+ * no reason explains. Read from what it printed; no word of it is kept. */
+export function claudeEnding(output: Uint8Array): FailureEnding {
+  const read = readStream(output), events = { assistant: 0, user: 0, system: 0, result: 0, rateLimit: 0, stream: 0, other: 0 };
+  let result: Row | undefined, finalText = false, toolCalls = 0, compacted = false;
+  for (const row of read.rows.map(object)) {
+    const kind = row.type === 'assistant' || row.type === 'user' || row.type === 'system' || row.type === 'result' ? row.type : row.type === 'rate_limit_event' ? 'rateLimit' : row.type === 'stream_event' ? 'stream' : 'other';
+    events[kind]++;
+    if (row.type === 'result') result = row;
+    if (row.type === 'system' && row.subtype === 'compact_boundary') compacted = true;
+    if (row.type === 'assistant' && row.parent_tool_use_id == null && !row.agent_id) {
+      const content = object(row.message).content, parts = Array.isArray(content) ? content.map(object) : [];
+      finalText = parts.some(part => part.type === 'text' && !!text(part.text));
+      toolCalls += parts.filter(part => part.type === 'tool_use').length;
+    }
   }
-  return rows;
+  const turns = result?.num_turns;
+  return { result: result ? oneOf(ENDING_RESULTS, result.subtype, 'other', 'other') : 'none',
+    ...(result ? { ...(typeof result.is_error === 'boolean' ? { isError: result.is_error } : {}), resultEmpty: !text(result.result),
+      stopReason: oneOf(ENDING_STOP_REASONS, result.stop_reason, 'none', 'other'),
+      ...(typeof turns === 'number' && Number.isSafeInteger(turns) && turns >= 0 ? { numTurns: most(turns) } : {}) } : {}),
+    finalText, toolCalls: most(toolCalls), stdoutBytes: most(output.byteLength), stdoutLines: most(read.lines), unparsedLines: most(read.unparsed), partialLine: read.partial, compacted,
+    events: { assistant: most(events.assistant), user: most(events.user), system: most(events.system), result: most(events.result), rateLimit: most(events.rateLimit), stream: most(events.stream), other: most(events.other) } };
 }
 
 /** What the process's own ending says, when the stream said nothing. */
@@ -56,8 +87,9 @@ const CLAUDE_SIGN_IN = new Set(['authentication_failed', 'oauth_org_not_allowed'
 const CLAUDE_USAGE = new Set(['usage_limit_reached', 'model_requires_usage_credits', 'long_context_credits_required']);
 /** Why a Claude Code run failed. Read from: the final `result` (subtype, is_error, api_error_status, api_error,
  * terminal_reason); an `assistant` event that wraps an API error (error, api_error_status, api_error); a
- * `rate_limit_event` whose status is rejected (resetsAt); the last `api_retry`; then the process. */
-export function claudeFailure(rows: readonly unknown[], end?: HarnessEnd): Error {
+ * `rate_limit_event` whose status is rejected (resetsAt); the last `api_retry`; then the process. `ending` is how
+ * the run ended as counted facts (claudeEnding, and the step the adapter refused it at): kept only with `unknown`. */
+export function claudeFailure(rows: readonly unknown[], end?: HarnessEnd, ending?: FailureEnding): Error {
   let rejected: { resetsAt?: string } | undefined, kind = '', code: number | undefined, detail = '', subtype = '', terminal = '', retried: number | undefined;
   const said: string[] = [];
   for (const row of rows.map(object)) {
@@ -95,7 +127,11 @@ export function claudeFailure(rows: readonly unknown[], end?: HarnessEnd): Error
     : limited && (end?.exitCode ?? 0) !== 0 && !end?.signal ? limited
     : retried && !end?.signal && !end?.cut ? byStatus(retried)
     : processFailure(end);
-  return failed(why, said, end);
+  // Nothing explains it: the reason carries how the run ended, counted, for whoever reads the next one.
+  const known = why.reason === 'unknown' && ending ? { ...why, ...ending,
+    ...(end && end.exitCode !== null && end.exitCode >= 0 && end.exitCode <= 255 ? { exitCode: end.exitCode } : {}),
+    ...(end?.quietMs !== undefined ? { quietMs: most(end.quietMs) } : {}) } : why;
+  return failed(known, said, end);
 }
 
 /** Why a Codex run failed. Its `error` and `turn.failed` events carry a message only; a few phrases of Codex's

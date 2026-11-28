@@ -934,7 +934,14 @@ it('keeps the reasons a job may fail for, and the words said for each, in one pl
   const { FAILED_REASONS, FAILURE_LIMITS, FAILURE_SIGNALS, jobFailure } = await import('./runtime/job-failure.js');
   expect(FAILED_REASONS).toEqual(['usage-limit', 'rate-limited', 'overloaded', 'api-error', 'context-too-large', 'max-turns', 'output-limit', 'timed-out', 'sign-in-needed', 'out-of-memory', 'killed', 'harness-crashed', 'unknown']);
   expect(FAILURE_LIMITS).toEqual(['stream-idle', 'output-close']); expect(FAILURE_SIGNALS).toContain('SIGKILL');
-  expect(Object.keys(jobFailure.shape).sort()).toEqual(['exitCode', 'limit', 'reason', 'resetsAt', 'signal', 'status']);
+  // After the reason and its few numbers, how an `unknown` failure ended: counts, choices from the lists here, and yes or no.
+  expect(Object.keys(jobFailure.shape).sort()).toEqual(['compacted', 'events', 'exitCode', 'finalText', 'isError', 'limit', 'numTurns', 'partialLine', 'quietMs', 'reason', 'refusal', 'resetsAt', 'result', 'resultEmpty',
+    'signal', 'status', 'stdoutBytes', 'stdoutLines', 'stopReason', 'toolCalls', 'unparsedLines']);
+  // No field of a failure is free text: each is a number, a yes or no, a choice, a time, or a record of numbers.
+  const kinds = (shape: Record<string, { unwrap?: () => { type: string }; type: string }>) => Object.values(shape).map(field => (field.unwrap ? field.unwrap() : field).type);
+  expect([...new Set(kinds(jobFailure.shape as never))].sort()).toEqual(['boolean', 'enum', 'number', 'object', 'string']);
+  expect(Object.entries(jobFailure.shape).filter(([, field]) => (field as unknown as { unwrap?: () => { type: string } }).unwrap?.().type === 'string').map(([name]) => name)).toEqual(['resetsAt']);
+  expect([...new Set(kinds((jobFailure.shape.events.unwrap() as unknown as { shape: never }).shape))]).toEqual(['number']);
   // The worker's door and the job's record take the one schema; neither lists reasons of its own.
   expect(text('src/shared-runtime.ts')).toContain('failed: jobFailure.optional()');
   expect(text('src/runtime/jobs.ts')).toContain('jobFailure.safeParse(failure)');

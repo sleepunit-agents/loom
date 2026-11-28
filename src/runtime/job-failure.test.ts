@@ -29,7 +29,7 @@ it('carries a failure from the body to the worker as one line that can hold noth
   expect(failureLine(failure)).toBe('loom-job-failure {"reason":"rate-limited","status":429}\n');
   expect(readFailureLine(failureLine(failure).trimEnd())).toEqual(failure);
   expect(() => failureLine({ reason: 'PRIVATE' } as never)).toThrow();
-  for (const line of ['loom-job-failure {"reason":"unknown","words":"PRIVATE"}', 'loom-job-failure PRIVATE', ' loom-job-failure {"reason":"unknown"}', 'loom-job-failure {"reason":"unknown"}' + ' '.repeat(400), 'PRIVATE'])
+  for (const line of ['loom-job-failure {"reason":"unknown","words":"PRIVATE"}', 'loom-job-failure PRIVATE', ' loom-job-failure {"reason":"unknown"}', 'loom-job-failure {"reason":"unknown"}' + ' '.repeat(1_200), 'PRIVATE'])
     expect(readFailureLine(line)).toBeUndefined();
   const lines = failureLines();
   lines.write('PRIVATE ' + 'x'.repeat(5_000)); lines.write(' loom-job-failure {"reason":"max-turns"}\nloom-job-fail'); expect(lines.failure()).toBeUndefined();
@@ -62,4 +62,32 @@ it('tells the parent thread why in plain words after the stage, from the reason 
   expect(reviewEndReason({ ...job, exitCode: WORKER_EXIT.build, exitBy: 'worker' }, 'UTC')).toBe('worker build');
   expect(reviewEndReason({ ...job, state: 'lost', failedReason: 'api-error' }, 'UTC')).toBe('worker contact was lost');
   expect(reviewEndReason({ ...job, exitBy: null }, 'UTC')).toBe('the job ended without returning findings');
+});
+
+// How an `unknown` failure ended, counted (FailureEnding): the most a run can say of itself, with every field at its longest.
+const ending = { reason: 'unknown', exitCode: 0, signal: 'SIGTERM', result: 'error_max_structured_output_retries', isError: false, resultEmpty: true, stopReason: 'model_context_window_exceeded', finalText: false,
+  numTurns: 1_000_000_000, toolCalls: 1_000_000_000, stdoutBytes: 1_000_000_000, stdoutLines: 1_000_000_000, unparsedLines: 1_000_000_000, partialLine: false, quietMs: 1_000_000_000, compacted: false, refusal: 'second-result',
+  events: { assistant: 1_000_000_000, user: 1_000_000_000, system: 1_000_000_000, result: 1_000_000_000, rateLimit: 1_000_000_000, stream: 1_000_000_000, other: 1_000_000_000 } } as const;
+it('admits how an unknown failure ended as counts, fixed choices and yes or no, and nothing else', () => {
+  expect(jobFailure.parse(ending)).toEqual(ending);
+  // The fullest one still travels from the body to the worker as its one line, and is read back from a row.
+  expect(readFailureLine(failureLine(ending).trimEnd())).toEqual(ending);
+  const { reason, ...detail } = ending;
+  expect(storedFailure({ failedReason: reason, failedDetail: detail })).toEqual(ending);
+  for (const bad of [{ result: 'PRIVATE' }, { stopReason: 'PRIVATE' }, { refusal: 'PRIVATE' }, { isError: 'PRIVATE' }, { resultEmpty: 'yes' }, { finalText: 1 }, { partialLine: 'PRIVATE' }, { compacted: 'PRIVATE' },
+    { numTurns: 'PRIVATE' }, { numTurns: -1 }, { numTurns: 1.5 }, { toolCalls: 1_000_000_001 }, { stdoutBytes: '12' }, { stdoutLines: -3 }, { unparsedLines: null }, { quietMs: 'PRIVATE' },
+    { events: { assistant: 1, note: 'PRIVATE' } }, { events: { assistant: 'PRIVATE' } }, { events: 'PRIVATE' }, { events: { PRIVATE: 1 } }, { lastLine: 'PRIVATE' }, { said: 'PRIVATE' }])
+    expect(jobFailure.safeParse({ reason: 'unknown', ...bad }).success, JSON.stringify(bad)).toBe(false);
+});
+it('says an unknown failure by what was counted of its ending, where that is known', () => {
+  expect(failureWords({ reason: 'unknown', exitCode: 0, result: 'none', toolCalls: 177 })).toBe('the harness exited 0 with no final result after 177 tool calls');
+  expect(failureWords({ reason: 'unknown', exitCode: 0, result: 'none', toolCalls: 1, partialLine: true })).toBe('the harness exited 0 with no final result after 1 tool call, its last line cut off');
+  expect(failureWords({ reason: 'unknown', exitCode: 0, result: 'success', resultEmpty: true, toolCalls: 0 })).toBe('the harness exited 0 with a final result loom could not take as an answer (an empty one) after 0 tool calls');
+  expect(failureWords({ reason: 'unknown', exitCode: 0, result: 'success', isError: true, resultEmpty: true })).toBe('the harness exited 0 with a final result loom could not take as an answer (an error)');
+  expect(failureWords({ reason: 'unknown', exitCode: 0, result: 'success', toolCalls: 12 })).toBe('the harness exited 0 with a final result loom could not take as an answer (a success) after 12 tool calls');
+  expect(failureWords({ reason: 'unknown', result: 'error_during_execution' })).toBe('the harness ended with a final result loom could not take as an answer (error during execution)');
+  expect(failureWords({ reason: 'unknown', result: 'other' })).toBe('the harness ended with a final result loom could not take as an answer (of a kind loom does not know)');
+  expect(failureWords({ reason: 'unknown', exitCode: 0 })).toBe('the harness ended without an answer and gave no reason loom could read');
+  const job = { state: 'failed' as const, exitCode: BODY_EXIT.harness as number | null, exitBy: 'body' as const, failedReason: 'unknown', failedDetail: { exitCode: 0, result: 'none', toolCalls: 177 } };
+  expect(reviewEndReason(job, 'UTC')).toBe('body harness: the harness exited 0 with no final result after 177 tool calls');
 });
