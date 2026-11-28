@@ -1,6 +1,7 @@
-/** The selections the pull and repository bricks wrote for themselves, run against the schema loom generates
- * from its tables (as src/core/data/work-query.test.ts runs the desktop's): every field, filter and order they
- * name exists. The question, approval and contact bricks use the desktop's own selections, which have their suites. */
+/** The selections the pull, repository and approvals bricks wrote for themselves, run against the schema loom
+ * generates from its tables (as src/core/data/work-query.test.ts runs the desktop's): every field, filter and order
+ * they name exists. The question, approval and contact bricks use the desktop's own selections, which have their
+ * suites; so do the pull brick's review history and refresh right (`changeReviewHistory`, `WorkAnswerOwner`). */
 import { expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 // The root's graphql, the one the generated schema is built with (web/ has its own copy).
@@ -11,6 +12,7 @@ import { dataQueries, type QueryVisibility } from '../../../src/core/data/querie
 import * as s from '../../../src/core/data/schema.js';
 import { repositoryKey as storedKey } from '../../../src/pieces/changes/model.js';
 import './bricks';
+import { approvalsQueries } from './bricks-approvals';
 import { pullQuery } from './bricks-pull';
 import { repositoryKey, repositoryQuery } from './bricks-repository';
 
@@ -57,5 +59,20 @@ it('reads a pull request and a repository with selections the generated schema a
     expect(pond.open.map(c => c.number)).toEqual([1]);
     expect(await read(repositoryQuery(false), { repository: 'acme/none' })).toEqual({ open: [], known: [] });
     for (const raw of ['github:Acme/App.git', 'acme/app', 'Acme/App', 'github:acme/app']) expect(repositoryKey(raw)).toBe(storedKey(raw));
+  } finally { client.close(); }
+});
+
+it("reads each of the approvals brick's four states with a selection the generated schema answers", async () => {
+  const client = new Database(':memory:');
+  try {
+    createDataSchema(client, () => '2026-11-14T00:00:00.000Z');
+    const tables = ['approvals', 'approvalRules', 'approvalNotices', 'approvalRecord'] as const;
+    const schema = dataQueries(client, { tables, visibility: Object.fromEntries(tables.map(name => [name, () => sql`true`])) as QueryVisibility });
+    const expected = { pending: ['approvals', 'approvalRecord'], answered: ['approvals', 'approvalRecord'], rules: ['approvals', 'approvalRules'], notices: ['approvals', 'approvalNotices', 'approvalRecord'] };
+    for (const [state, source] of Object.entries(approvalsQueries)) {
+      const result = await graphql({ schema, source });
+      expect(result.errors, state).toBeUndefined();
+      expect(Object.keys(result.data ?? {}), state).toEqual(expected[state as keyof typeof expected]);
+    }
   } finally { client.close(); }
 });

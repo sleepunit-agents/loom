@@ -22,17 +22,24 @@ const card = (id: string, over: object = {}) => ({ id, kind: 'command', target: 
   member: null, conversation: null, state: 'pending', ask: `What of ${id}?`, ifYes: 'yes', ifNo: 'no', details: '', changeSummary: null, askedAt: '2026-11-14T15:00:00Z', decidedBy: null, expiresAt: null, ...over });
 const household = card('a-house', { kind: 'setting', operation: 'household.change', what: 'A household change', ask: 'stored ask', ifYes: 'stored yes', ifNo: 'stored no', target: 'stored-target', project: null, askedAt: '2026-11-13T15:00:00Z',
   details: JSON.stringify({ change: 'members.role', member: 'robin', role: 'owner' }) });
-const world = { status: 'live', approvals: [] as ReturnType<typeof card>[], record: [] as object[] };
+const world = { status: 'live', approvals: [] as ReturnType<typeof card>[], record: [] as object[], rules: [] as object[], notices: [] as object[] };
+/** The reads the brick made, by their operation's name. */
+const reads = () => feed.mock.calls.map((call) => /^query (\w+)/.exec(call[0])![1]);
 beforeEach(() => {
   feed.mockReset(); sent.mockReset(); reported.mockReset(); raised.mockReset();
-  Object.assign(world, { status: 'live', record: [{ seq: 4, at: '2026-11-11T16:00:00Z', event: 'deny', approval: 'a-no', agent: 'art', note: 'Denied by Sam in Slack' }],
+  Object.assign(world, { status: 'live', rules: [], notices: [], record: [{ seq: 4, at: '2026-11-11T16:00:00Z', event: 'deny', approval: 'a-no', agent: 'art', note: 'Denied by Sam in Slack' }],
     approvals: [card('a-2', { askedAt: '2026-11-14T16:00:00Z', kind: 'merge', target: 'github:acme/app#12@abc' }), card('a-1'), household,
       card('a-yes', { state: 'allowed', decidedBy: 'sam', askedAt: '2026-11-10T15:00:00Z' }), card('a-no', { state: 'denied', decidedBy: 'sam', askedAt: '2026-11-11T15:00:00Z' }),
       { ...household, id: 'a-house-done', state: 'allowed', decidedBy: 'lee', askedAt: '2026-11-09T15:00:00Z' }] });
+  // Answers each read with only the lists it names, as loom would; the requests with only the fields it names.
   feed.mockImplementation((query: string) => {
     const name = /^query (\w+)/.exec(query)![1];
-    if (name !== 'ApprovalsView') throw new Error('A read the approvals brick should not make: ' + name);
-    return world.status === 'live' ? { status: 'live', data: { approvals: world.approvals, approvalRules: [], approvalNotices: [], approvalRecord: world.record } } : { status: world.status };
+    if (!['BrickApprovals', 'BrickApprovalRules', 'BrickApprovalNotices'].includes(name)) throw new Error('A read the approvals brick should not make: ' + name);
+    if (world.status !== 'live') return { status: world.status };
+    const fields = /approvals \{([^}]*)\}/.exec(query)![1].trim().split(/\s+/);
+    const lists: Record<string, unknown[]> = { approvals: world.approvals.map((a) => Object.fromEntries(fields.map((f) => [f, (a as Record<string, unknown>)[f]]))),
+      approvalRules: world.rules, approvalNotices: world.notices, approvalRecord: world.record };
+    return { status: 'live', data: Object.fromEntries(Object.entries(lists).filter(([list]) => new RegExp(`\\b${list} \\{`).test(query))) };
   });
   vi.stubGlobal('fetch', async (url: string) => { sent(url); return { ok: false, status: 500, json: async () => ({ ok: false }) }; });
 });
@@ -120,7 +127,7 @@ it('draws loading until the list answers and unavailable when the member may not
 });
 
 it('heads the brick by its name and shows the state only in the small line', () => {
-  for (const state of ['pending', 'answered']) {
+  for (const state of ['pending', 'answered', 'rules', 'notices']) {
     expect(bricks.approvals.title({ state })).toBe('Approvals');
     expect(bricks.approvals.sub({ state })).toBe(state);
   }
@@ -138,4 +145,113 @@ it('flags itself when a new request is waiting, and not when one is answered', a
   }
   expect(sent).not.toHaveBeenCalled();
   expect(reported).not.toHaveBeenCalled();
+});
+
+// ── The standing rules and the reported steps ────────────────────────────────────────────────────────────────────
+const rule = (over: object = {}) => ({ kind: 'merge', scope: 'project:pond', person: '', tier: 'do', setBy: 'sam', setAt: '2026-11-12T15:00:00Z', ...over });
+const notice = (id: string, at: string, over: object = {}) => ({ id, agent: 'art', kind: 'command', target: 'pond/pump', what: `Did ${id}`, at, ...over });
+
+it('reads, in each state, only what that state draws', async () => {
+  const lists = (query: string) => ['approvals', 'approvalRules', 'approvalNotices', 'approvalRecord'].filter((list) => new RegExp(`\\b${list} \\{`).test(query));
+  const asked: Record<string, string[]> = {};
+  for (const state of ['pending', 'answered', 'rules', 'notices']) {
+    feed.mockClear();
+    await draw({ state }, 'primary');
+    asked[state] = lists(feed.mock.calls[0][0]);
+  }
+  expect(asked).toEqual({
+    pending: ['approvals', 'approvalRecord'], answered: ['approvals', 'approvalRecord'],
+    rules: ['approvals', 'approvalRules'], notices: ['approvals', 'approvalNotices', 'approvalRecord'],
+  });
+  // Of the requests, the rules read only their ids and states: enough to count those pending.
+  feed.mockClear();
+  await draw({ state: 'rules' }, 'primary');
+  expect(/approvals \{([^}]*)\}/.exec(feed.mock.calls.at(-1)![0])![1].trim()).toBe('id state');
+  expect(new Set(reads())).toEqual(new Set(['BrickApprovalRules']));
+});
+
+it('lists the standing rules with what, which kind, for whom, the answer and who set it, and changes none of them', async () => {
+  world.rules = [rule(), rule({ kind: 'command', scope: '*', person: 'robin', tier: 'ask', setBy: 'lee' }), rule({ kind: 'setting', scope: 'pond/*', tier: 'tell' })];
+  await draw({ state: 'rules' }, 'primary');
+  expect(text()).toMatch(/^3 standing rules/);
+  const [pond, all, pattern] = rowsDrawn();
+  for (const words of ['Project pond', 'Merging a pull request', 'set by Sam', 'Nov 12', 'Just do it']) expect(pond, words).toContain(words);
+  expect(pond).not.toContain(' · for ');
+  for (const words of ['Everything', 'Running a command on a machine', 'for Robin', 'set by Lee', 'Ask me']) expect(all, words).toContain(words);
+  for (const words of ['pond/*', 'Changing a setting', 'Tell me after']) expect(pattern, words).toContain(words);
+  expect(text()).toContain('A standing rule is made, changed or removed by asking the agent.');
+  expect(controls()).toEqual([]);
+  expect(handlers()).toEqual([]);
+  expect(chips('approval')).toEqual([]);
+});
+
+it('draws the rules small as the count and the first few, compact as one line, and says when there are none', async () => {
+  world.rules = [1, 2, 3, 4, 5, 6].map((n) => rule({ scope: 'project:p' + n }));
+  await draw({ state: 'rules' }, 'side');
+  expect(rowsDrawn()).toHaveLength(4);
+  expect(text()).toContain('and 2 more');
+  expect(text()).not.toContain('set by');
+  expect(text()).not.toContain('asking the agent');
+  await draw({ state: 'rules' }, 'compact');
+  expect(text()).toBe('6 standing rules · 3 pending');
+  world.rules = [rule()];
+  await draw({ state: 'rules' }, 'compact');
+  expect(text()).toBe('1 standing rule · 3 pending');
+  world.rules = [];
+  for (const form of ['primary', 'side'] as const) {
+    await draw({ state: 'rules' }, form);
+    expect(text(), form).toContain('0 standing rules');
+    expect(text(), form).toContain('No standing rules.');
+  }
+});
+
+it('lists the reported steps newest first, with the answers and steps the desktop takes from the record, and does nothing', async () => {
+  world.notices = [notice('n-old', '2026-11-01T15:00:00Z'), notice('n-new', '2026-11-13T15:00:00Z', { agent: 'moss', kind: 'setting', target: 'measuring' })];
+  world.approvals = [...world.approvals, card('a-told', { state: 'used', member: 'sam', target: 'pond/heater' })];
+  world.record = [...world.record, { seq: 9, at: '2026-11-12T15:00:00Z', event: 'use', approval: 'a-told', agent: 'art', note: 'Reported step: Heater holds 8 °C' }];
+  await draw({ state: 'notices' }, 'primary');
+  expect(text()).toMatch(/^4 reported steps/);
+  const drawn = rowsDrawn();
+  // n-new; the reported step on a-told; the answer quoted from Slack on a-no; n-old.
+  expect(drawn).toHaveLength(4);
+  for (const words of ['Did n-new', 'Moss · setting · measuring', 'Nov 13']) expect(drawn[0], words).toContain(words);
+  for (const words of ['Heater holds 8 °C', 'Art · command · pond/heater']) expect(drawn[1], words).toContain(words);
+  expect(drawn[2]).toContain('Denied by Sam in Slack');
+  expect(drawn[3]).toContain('Did n-old');
+  expect(controls()).toEqual([]);
+  expect(handlers()).toEqual([]);
+});
+
+it('draws the reported steps small as the first few and compact as one line, says when there are none, and counts those past fifty', async () => {
+  world.record = [];
+  world.notices = Array.from({ length: 53 }, (_, i) => notice('n-' + String(i).padStart(2, '0'), `2026-11-01T15:${String(i).padStart(2, '0')}:00Z`));
+  await draw({ state: 'notices' }, 'primary');
+  expect(rowsDrawn()).toHaveLength(50);
+  expect(rowsDrawn()[0]).toContain('Did n-52');
+  expect(text()).toContain('and 3 earlier, not shown here');
+  await draw({ state: 'notices' }, 'side');
+  expect(rowsDrawn()).toHaveLength(4);
+  expect(text()).toContain('and 49 more');
+  await draw({ state: 'notices' }, 'compact');
+  expect(text()).toBe('53 reported steps · 3 pending');
+  world.notices = [];
+  await draw({ state: 'notices' }, 'primary');
+  expect(text()).toBe('0 reported stepsNo reported steps.');
+});
+
+it('flags itself for a new request in the rules and the steps too, and draws loading and unavailable as the lists do', async () => {
+  for (const state of ['rules', 'notices']) {
+    await draw({ state }, 'side');
+    raised.mockReset();
+    world.approvals = [...world.approvals, card('a-new-' + state)];
+    await again({ state }, 'side');
+    expect(raised.mock.calls, state).toEqual([['New approval']]);
+    for (const status of ['loading', 'offline', 'denied']) {
+      world.status = status;
+      await draw({ state }, 'primary');
+      expect(text(), state + status).toBe(status === 'loading' ? 'Loading…' : 'This list of approvals is unavailable.');
+    }
+    world.status = 'live';
+  }
+  expect(sent).not.toHaveBeenCalled();
 });

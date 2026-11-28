@@ -2,7 +2,7 @@
  * pull and repository (development only; ../scenes.ts). One household throughout: alex owns it, sam and robin
  * live there; fern, moss and art are its agents; garden, pond and greenhouse are its projects. */
 import type { Answer, BrickScenes } from '../scenes';
-import { ago } from './time';
+import { ago, ahead } from './time';
 
 const zone = { deskTime: { at: Date.now(), timezone: 'Europe/Amsterdam' } };
 const taskChoices = {
@@ -189,7 +189,7 @@ const unfiledData = (unfiled: unknown[], over: Record<string, Answer> = {}): Rec
 const change = { id: 'github:hollow-lane/irrigation-controller#39', repository: 'hollow-lane/irrigation-controller', number: 39, url: 'https://github.com/hollow-lane/irrigation-controller/pull/39',
   title: 'Read line pressure at both ends and warn when the far end falls below the head by more than a tenth', state: 'open', draft: false, authorLogin: 'moss-bot',
   project: 'garden', agent: 'moss', branch: 'moss/pressure-both-ends', headCommit: '4f9c2e1a7b3d5f60819a2b3c4d5e6f708192a3b4', baseBranch: 'main', checks: 'failing', review: 'required', mergeable: 'unknown', waitingOn: 'author' };
-const pullData = (over: object = {}, parts: { checks?: unknown[]; people?: unknown[]; tasks?: unknown[]; files?: unknown[] } = {}): Record<string, Answer> => ({
+const pullData = (over: object = {}, parts: { checks?: unknown[]; people?: unknown[]; tasks?: unknown[]; files?: unknown[]; sync?: unknown[] } = {}): Record<string, Answer> => ({
   ...shared,
   BrickPull: {
     changes: [{ ...change, ...over }],
@@ -206,8 +206,20 @@ const pullData = (over: object = {}, parts: { checks?: unknown[]; people?: unkno
       { change: change.id, task: 't-12', taskRow: { id: 't-12', title: title('t-12'), status: 'open' } },
       { change: change.id, task: 't-99', taskRow: null },
     ],
+    changeSync: parts.sync ?? [],
   },
 });
+/** A household owner's view: when loom last read GitHub, and the right to have it read GitHub again. */
+const pullOwner = (failed = false): Record<string, Answer> => ({
+  ...pullData({}, { sync: [{ readAt: ago(3), failed, nextAt: ahead(2) }] }),
+  WorkAnswerOwner: { workAnswerOwner: true, workChangesRefresh: true, members: [] },
+});
+/** Its cold reviews, as the desktop's changeReviewHistory answers them, for the scene that opens them. */
+const pullReviews: Record<string, Answer> = { ChangeReviewHistory: { changeReviewHistory: [
+  { change: change.id, job: 'j-review-1', headCommit: '1d2e3f405162738495a6b7c8d9e0f1a2b3c4d5e6', tier: 'medium', round: 1, verdict: 'BLOCKING',
+    findings: '1. far-end.ts compares absolute bar, so a line with a low head never warns.\n2. read.ts drops a reading of exactly 0 as missing.' },
+  { change: change.id, job: 'j-review-2', headCommit: change.headCommit, tier: 'high', round: 2, verdict: 'CLEAR', findings: null },
+] } };
 /** A changed file's patch as the one-shot read answers it, for the scene that opens a file. */
 const farEndPatch = ['@@ -1,9 +1,28 @@', " import { readings } from '../pressure/read';", '-const LIMIT = 0.2;', '+/** Warn when the far end falls below the head by more than a tenth. */',
   '+const LIMIT = 0.1;', ' ', '-export function farEnd(head: number, far: number) {', '-  return head - far > LIMIT;', '+export function farEnd(line: string) {', '+  const { head, far } = readings(line);',
@@ -289,6 +301,12 @@ export const scenes: BrickScenes[] = [
     { name: 'flagged', params: { change: change.id }, flag: 'Checks failing', only: ['side', 'compact'], data: pullData() },
     { name: 'file-opened', params: { change: change.id }, only: ['primary'], press: ['src/alerts/far-end.ts'], data: { ...pullData(), ...pullPatch('patch', true) } },
     { name: 'file-no-patch', params: { change: change.id }, only: ['primary'], press: ['src/pressure/read.ts'], data: { ...pullData(), ...pullPatch('none') } },
+    { name: 'owner', params: { change: change.id }, only: ['primary'], data: pullOwner() },
+    { name: 'last-read-failed', params: { change: change.id }, only: ['primary'], data: pullOwner(true) },
+    { name: 'reviews-opened', params: { change: change.id }, only: ['primary'], press: ['Review history'], data: { ...pullData(), ...pullReviews } },
+    { name: 'no-reviews', params: { change: change.id }, only: ['primary'], press: ['Review history'], data: { ...pullData(), ChangeReviewHistory: { changeReviewHistory: [] } } },
+    // The gallery answers every write with an empty value, which Refresh does not take as done: this is its failure.
+    { name: 'refresh-failed', params: { change: change.id }, only: ['primary'], press: ['Refresh from GitHub'], data: pullOwner() },
     { name: 'unavailable', params: { change: change.id }, only: ['side'], data: { ...shared, BrickPull: 'offline' } },
   ] },
   { brick: 'repository', scenes: [
