@@ -1,7 +1,6 @@
 /** Whole shared listener on fictional declared files and current shared facts. */
 import {afterAll,afterEach,beforeAll,expect,it,vi} from 'vitest';
 import {memoryQueries} from '../web/src/memory/queries.js';
-import {memoryCall} from '../web/src/memory/commands.js';
 import {GraphQLString} from 'graphql/index.js';
 import Database from 'better-sqlite3';
 import {createHash} from 'node:crypto';
@@ -84,7 +83,7 @@ it('signs in on the actual shared listener and converges Memory writes, changed 
  const observe=()=>waitMessage(ws,()=>ws.send(JSON.stringify({type:'subscribe',id:'memory',payload:{query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query}}})));
  const first=await observe();
  expect(first.payload.data.observe.patches[0].value).toEqual(await read());
- const added=await waitMessage(ws,async()=>{const command=memoryCall('mind.knowledgeAdd',{title:'Fictional pump',domain:'fiction',body:'Fictional pump words',source:''},(path,init)=>fetch(app.url+path,{...init,headers:{...init.headers,cookie,origin:app.url}}));expect((await command.result).ok).toBe(true);});
+ const added=await waitMessage(ws,async()=>{const response=await fetch(app.url+'/api/mind/knowledgeAdd',{method:'POST',headers:{'content-type':'application/json',cookie,origin:app.url},body:JSON.stringify({input:{title:'Fictional pump',domain:'fiction',body:'Fictional pump words',source:''},id:crypto.randomUUID()})});expect(response.ok).toBe(true);expect((await response.json()).ok).toBe(true);});
  expect(JSON.stringify(added)).toContain('Fictional pump');
  const retiredRead=await request('/api/mind/knowledgeRead',{input:{slug:'fictional-pump'}},headers);expect(retiredRead.status).toBe(404);
  expect((await fetch(app.url+'/live',{headers})).status).toBe(404);

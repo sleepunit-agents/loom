@@ -4,7 +4,7 @@ import { graphql } from 'graphql/index.js';
 import { expect, it } from 'vitest';
 import { createDataSchema } from './database';
 import { dataQueries } from './queries';
-import { deskTempoQuery } from '../../../web/src/pieces/attention/bar-stats';
+import { deskTempoQuery } from '../../ui/desk-queries.fixture.js';
 
 it('executes the ticker selection, bounds the latest event and reapplies current SQL visibility', async () => {
   const db = new Database(':memory:');

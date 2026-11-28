@@ -6,7 +6,7 @@
  * the expression of its state. An agent whose look cannot be read has no face. */
 import { lazy, Suspense } from 'react';
 import data from '../face-data.json';
-import type { FaceEyes, FaceShape, FaceState } from '../face';
+import type { FaceEyes, FaceShape, FaceState } from '../face-model';
 import { Portrait } from '../contexts/portrait';
 import { useDeskAgentDisplays } from '../pieces/attention/agent-displays';
 

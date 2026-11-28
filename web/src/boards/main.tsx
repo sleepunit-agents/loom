@@ -9,7 +9,7 @@ import { memberOperation } from '../data/operation';
 import { useCommsDraft } from '../pieces/comms/drafts';
 import { useSession } from '../signin/use-session';
 import { gateFor } from '../signin/gate-address';
-import type { FaceState } from '../face';
+import type { FaceState } from '../face-model';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '../pair/ui/input-group';
 import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerProvider, MessageScrollerViewport } from '../pair/ui/message-scroller';
 import { emptyTail, threadId, TranscriptPage, type ThreadTail } from '../pair/transcript';

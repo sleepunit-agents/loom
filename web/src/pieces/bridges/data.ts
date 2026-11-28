@@ -1,5 +1,33 @@
 import type { DataQuerySnapshot } from '../../data/graphql';
-import type { BridgesSnapshot } from '../bridges-view';
+
+export interface BridgeConnectionRow {
+  id: string; platform: 'discord' | 'slack'; agent: string; workspace: string;
+  botUser: string; tokenSecret: string; appSecret: string | null; enabled: boolean;
+  state: 'connecting' | 'connected' | 'backoff' | 'disconnected'; stateAt: string;
+}
+export interface BridgeChannelRow {
+  platform: string; workspace: string; channel: string; answers: string; botsMayTalk: boolean;
+}
+export interface BridgePersonRow { platform: string; workspace: string; user: string; member: string }
+export interface BridgeSendRow {
+  id: string; incoming: string; connection: string; channel: string; thread: string | null;
+  text: string; state: 'pending' | 'held' | 'sending' | 'sent' | 'uncertain' | 'dismissed';
+  createdAt: string;
+}
+export type BridgeFolder = 'connections' | 'channels' | 'people' | 'sends';
+export interface BridgeSelection { folder: BridgeFolder; id: string }
+export interface BridgesSnapshot {
+  status: 'loading' | 'live' | 'offline' | 'error';
+  /** Scope is the authenticated query principal. All rows must belong to it.
+   * The root must replace rows together when authentication changes. */
+  member: string;
+  connections: readonly BridgeConnectionRow[];
+  filters: readonly { connection: string; channel: string; rule: 'only' | 'ignore' }[];
+  channels: readonly BridgeChannelRow[];
+  people: readonly BridgePersonRow[];
+  sends: readonly BridgeSendRow[];
+  activity: readonly { connection: string; received: number; delivered: number; held: number }[];
+}
 
 /** The shared root resolves the reader from its authenticated executor. */
 export const bridgesQuery = `query Bridges {

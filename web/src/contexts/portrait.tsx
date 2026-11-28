@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { createPlayer, type IdleTiming } from './portrait-player';
-import type { FaceState } from '../face';
+import type { FaceState } from '../face-model';
 import { motionQuery } from '../access';
 import { checkSpriteLayout } from '../../../src/desk-sprite-layout';
 import manifest from './manifest.json';

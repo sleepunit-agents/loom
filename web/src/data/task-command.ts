@@ -1,6 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { useMemo } from 'react';
-import type { TaskCommand } from '../pieces/tasks/shared-form';
+import type { TaskCommand } from '../pieces/tasks/model';
 
 type PendingIntents = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 /** What tasks.command answers: the task it made or changed, or the tasks a move took. */

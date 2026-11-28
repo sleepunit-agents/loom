@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { Snapshot, LiveRecord } from '../../data';
+import type { Snapshot, LiveRecord } from '../../data/snapshot';
 import { useDataQuery, type DataQuerySnapshot } from '../../data/graphql';
 
 export interface AgentProfile extends LiveRecord { agent:string; description?:string; requestedAt?:string }
