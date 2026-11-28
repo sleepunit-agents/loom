@@ -116,6 +116,8 @@ async function draw(boards: unknown[], at: { path?: string; area?: { w: number; 
 const articles = () => tree!.root.findAllByType('article');
 const forms = () => articles().map((a) => a.props['data-form']);
 const chips = () => tree!.root.findAll((n) => n.props.className === 'boards-folded')[0].findAll((n) => n.props.className === 'board-chip');
+/** The header row's notices of one kind (./board-head.tsx). */
+const notices = (kind: string) => tree!.root.findAll((n) => n.props.className === 'boards-notice' && n.props['data-notice'] === kind);
 const called = (name: string) => f.op.mock.calls.filter(([op]) => op === name).map(([, input]) => input);
 async function click(found: Record<string, unknown>, keys: object = {}) {
   const event = { target: new f.Element(found), metaKey: false, ctrlKey: false, preventDefault: vi.fn(), ...keys };
@@ -227,10 +229,11 @@ describe('remove, close and a closed board', () => {
     await act(async () => remove[1][0].props.onClick());
     expect(called('boards.change')).toEqual([{ board: 'b-1', changes: [{ change: 'remove', placement: small.id }] }]);
   });
-  it('an open board has Close, which closes it, and its bricks respond', async () => {
+  it('an open board has Close, an icon named "Close board", which closes it, and its bricks respond', async () => {
     const root = await one([lanes({ big: true }), ticket()]);
     const head = root.findAll((n) => n.type === 'header' && n.findAllByType('h1').length > 0)[0];
-    expect(head.findAllByType('button').map(text)).toEqual(['Close']);
+    expect(head.findAllByType('button').map((b) => [b.props['aria-label'], b.props.title, text(b)])).toEqual([['Close board', 'Close board', '']]);
+    expect(head.findAllByType('button')[0].findAllByType('svg')).toHaveLength(1);
     await act(async () => head.findAllByType('button')[0].props.onClick());
     expect(called('boards.close')).toEqual([{ board: 'b-1' }]);
     expect(articles().map((a) => (a.children[1] as Node).props.inert)).toEqual([false, false]);
@@ -272,7 +275,10 @@ describe('flags', () => {
   it('focus inside a flagged placement counts as looking', async () => {
     const flagged = ticket({ flagged: true });
     await one([lanes({ big: true }), flagged]);
-    await act(async () => articles()[1].props.onFocus());
+    // The placement itself focused is no looking: only an attention chip of the header row focuses it (see "the header row").
+    await act(async () => articles()[1].props.onFocus({ target: 'the placement', currentTarget: 'the placement' }));
+    expect(called('boards.seen')).toEqual([]);
+    await act(async () => articles()[1].props.onFocus({ target: 'a control inside it', currentTarget: 'the placement' }));
     expect(called('boards.seen')).toEqual([{ board: 'b-1', placement: flagged.id }]);
   });
   it('a brick\'s own flag marks the placement, and looking clears it without a call', async () => {
@@ -772,8 +778,10 @@ describe('a body that has not arrived', () => {
     await type('half a thought');
     brickRetryMs.splice(0);
     await feed({ boards: [board('b-1', [lanes({ big: true }), placed('gone', { ticket: 't-7' })])] });
-    expect(text(articles()[1].children[1] as Node)).toContain('loom was updated while this page was open');
-    expect(articles()[1].findAll((node) => node.type === 'button').map((node) => text(node))).toEqual(expect.arrayContaining(['Try again', 'Reload now']));
+    // That loom was updated is said once, in the header row; the placement says only its own sorry and Try again.
+    expect(text(articles()[1].children[1] as Node)).toBe('Sorry, this brick didn’t load.Try againError: 404');
+    expect(articles()[1].findAll((node) => node.type === 'button').map((node) => text(node))).not.toContain('Reload now');
+    expect(notices('update').map(text)).toEqual(['loom was updated: the page reloads when your message is sent or clearedReload now']);
     expect(f.reload).not.toHaveBeenCalled();
     await type('');
     expect(f.reload).toHaveBeenCalledTimes(1);
@@ -895,7 +903,9 @@ describe('a token asked for from the household brick, when its body goes away wh
     await one([mine, other]);
     await ask('pump-laptop');
     await feed({ boards: [board('b-1', [{ ...other, big: true }])] });
-    expect(words()).not.toContain('Household');
+    expect(articles().map((a) => text(a.findByType('h2')))).toEqual(['Ticket']);
+    // The brick is gone, and the header row says it may have been made: the notice is the page's, not the brick's.
+    expect(words()).toContain(MAYBE);
     await reply({ status: 503, body: '<html>busy</html>' });
     const again = household();
     await feed({ boards: [board('b-1', [{ ...other, big: true }, again])] });

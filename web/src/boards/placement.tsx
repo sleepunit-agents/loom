@@ -1,17 +1,22 @@
 /** One placement's frame (docs/specs/boards.md, "The page"): the brick's name, its reference, its flag and the two
  * quiet controls (refresh, make it the big one, remove), around the brick's own body. The page draws it where the layout says; the gallery draws it alone. */
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type FocusEvent, type ReactNode } from 'react';
 import { RememberedWatch } from '../data/graphql/remembered';
 import { Pace, paceScope } from '../data/graphql/pace';
 import { asOf, Frame } from './brick-kit';
 import type { Form } from './layout';
 
-export function PlacementFrame({ title, sub, form, flag, entering, closed, canMaximize, onMaximize, onRemove, onLook, style, children }: {
+export function PlacementFrame({ title, sub, form, flag, entering, closed, canMaximize, onMaximize, onRemove, onLook, onGetting, anchor, style, children }: {
   title: string; sub: string; form: Form;
   /** The flag's words, when the placement is flagged. */
   flag?: string;
   entering?: boolean; closed?: boolean; canMaximize?: boolean;
-  onMaximize?(): void; onRemove?(): void; onLook?(): void; style?: CSSProperties; children: ReactNode;
+  onMaximize?(): void; onRemove?(): void; onLook?(): void;
+  /** Told whether the placement is getting new data, so the board's header row can say it once for all of them. */
+  onGetting?(getting: boolean): void;
+  /** The placement's element, for the header row's attention chips to bring into view and focus. */
+  anchor?(element: HTMLElement | null): void;
+  style?: CSSProperties; children: ReactNode;
 }) {
   const body = useRef<HTMLDivElement>(null), can = !closed && !!canMaximize;
   const latest = useRef(onMaximize); latest.current = onMaximize;
@@ -26,8 +31,13 @@ export function PlacementFrame({ title, sub, form, flag, entering, closed, canMa
   // few seconds shows nothing. The mark's words say when what is drawn was last confirmed.
   const scope = useMemo(paceScope, []), reads = useSyncExternalStore(scope.subscribe, scope.snapshot, scope.snapshot);
   const getting = settling || reads.refreshing, since = reads.confirmedAt === undefined ? undefined : asOf(reads.confirmedAt);
+  const tell = useRef(onGetting); tell.current = onGetting;
+  useEffect(() => { if (!getting) return; tell.current?.(true); return () => tell.current?.(false); }, [getting]);
+  // Focus inside the placement is looking at it. The placement itself is focused only by an attention chip of the
+  // header row, which brings it into view and must change nothing: that focus is not looking.
+  const focused = (e: FocusEvent) => { if (e.target !== e.currentTarget) onLook?.(); };
   return (
-    <article className="board-placement" data-form={form} data-entering={!!entering} data-flagged={!!flag} onPointerEnter={onLook} onFocus={onLook} style={style}>
+    <article ref={anchor} tabIndex={anchor ? -1 : undefined} className="board-placement" data-form={form} data-entering={!!entering} data-flagged={!!flag} onPointerEnter={onLook} onFocus={focused} style={style}>
       <header>
         <div className="board-names"><h2>{title}</h2><small className="font-mono">{sub}</small></div>
         {getting && <span className="board-settling" role="status" aria-label="Getting new data" aria-description={since} title={since ? 'Getting new data, ' + since : 'Getting new data'} />}

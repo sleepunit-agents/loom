@@ -15,6 +15,7 @@ import { MessageScroller, MessageScrollerButton, MessageScrollerContent, Message
 import { emptyTail, threadId, TranscriptPage, type ThreadTail } from '../pair/transcript';
 import { brickView, type Params, type Place } from './bricks';
 import { Fetching, Here, Loading, Lost } from './brick-kit';
+import { BoardHead, type Attention } from './board-head';
 import { layout, type Slot } from './layout';
 import { PlacementFrame } from './placement';
 import { buildChanged } from './build';
@@ -68,9 +69,12 @@ export const brickRetryMs = [700, 2500];
 /** A brick's body is fetched when a board first shows it (./bricks.tsx). One that fails, as when loom was deployed
  * while the page stayed open and the old file is gone, or a body that threw, is drawn again by its own placement
  * after a moment, twice, saying only that it is being fetched again. The rest of the board stays drawn. If it still
- * fails the placement says sorry and offers to try again; where loom now serves a newer page it offers that page,
- * which the page takes by itself once nothing typed would be lost (see `stale` below). */
-class BodyBoundary extends Component<{ children: ReactNode; stale: boolean; onLost(): void; /** Makes the body fetchable again (bricks.tsx `again`). */ again?(): void }, { failed: boolean; tries: number; why: string }> {
+ * fails the placement says sorry and offers to try again, and the board's header row counts it among the bricks that
+ * did not load, with Try all again (`retry`). That loom now serves a newer page is said in the header row too, once
+ * (see `stale` below), not in each placement. */
+class BodyBoundary extends Component<{ children: ReactNode; onLost(): void; /** Makes the body fetchable again (bricks.tsx `again`). */ again?(): void;
+  /** Told when the body's own tries are spent (true) and when it is drawn again (false). */ onGaveUp(gaveUp: boolean): void;
+  /** Raised by the header row's Try all again: a body that gave up is fetched again. */ retry: number }, { failed: boolean; tries: number; why: string }> {
   state = { failed: false, tries: 0, why: '' };
   private timer: ReturnType<typeof setTimeout> | undefined;
   // What was caught is kept, cut short, and shown under the sorry line: a brick that fails on one person's screen and
@@ -80,16 +84,21 @@ class BodyBoundary extends Component<{ children: ReactNode; stale: boolean; onLo
     this.props.onLost();
     const wait = brickRetryMs[this.state.tries];
     if (wait !== undefined) this.timer = setTimeout(() => { this.props.again?.(); this.setState(({ tries }) => ({ failed: false, tries: tries + 1 })); }, wait);
+    else this.props.onGaveUp(true);
   }
-  componentWillUnmount() { clearTimeout(this.timer); }
+  componentDidUpdate(before: { retry: number }) { if (before.retry !== this.props.retry && this.gaveUp()) this.tryAgain(); }
+  componentWillUnmount() { clearTimeout(this.timer); if (this.gaveUp()) this.props.onGaveUp(false); }
+  private gaveUp() { return this.state.failed && this.state.tries >= brickRetryMs.length; }
+  private tryAgain = () => { this.props.again?.(); this.props.onGaveUp(false); this.setState({ failed: false, tries: brickRetryMs.length }); };
   render() {
     if (!this.state.failed) return this.props.children;
     if (this.state.tries < brickRetryMs.length) return <Fetching />;
-    return <Lost again={() => { this.props.again?.(); this.setState({ failed: false, tries: brickRetryMs.length }); }} reload={this.props.stale ? () => location.reload() : undefined} why={this.state.why} />;
+    return <Lost again={this.tryAgain} why={this.state.why} />;
   }
 }
 
-function BoardView({ board, live, stale, onRemove, onMaximize, onClose, onLost }: { board: Board; /** loom now serves a newer page than this one. */ stale: boolean; /** It is the board on screen (or sliding off it): its bricks are drawn. Any other board on the trail is its frames alone: no body, no read, no brick fetched. */ live: boolean; onRemove(id: string): void; onMaximize(id: string): void; onClose(): void; /** A brick's body could not be fetched. */ onLost(): void }) {
+function BoardView({ board, live, shown, stale, onRemove, onMaximize, onClose, onLost }: { board: Board; /** loom now serves a newer page than this one. */ stale: boolean; /** It is the board on screen (or sliding off it): its bricks are drawn. Any other board on the trail is its frames alone: no body, no read, no brick fetched. */ live: boolean;
+  /** It is the board on screen, the one whose header row says the page's own notices. */ shown: boolean; onRemove(id: string): void; onMaximize(id: string): void; onClose(): void; /** A brick's body could not be fetched. */ onLost(): void }) {
   const field = useRef<HTMLDivElement>(null);
   const [area, setArea] = useState({ w: 0, h: 0 });
   useLayoutEffect(() => {
@@ -122,14 +131,43 @@ function BoardView({ board, live, stale, onRemove, onMaximize, onClose, onLost }
     if (own[p.id]) setOwn(({ [p.id]: _gone, ...rest }) => rest);
     if (p.flagged) void memberOperation('boards.seen', { board: board.id, placement: p.id }).catch(() => {});
   };
+  // The header row (./board-head.tsx). Its chips are the flagged placements, in the board's order, by what each
+  // placement already carries; pressing one brings the placement (or its folded chip) into view and focuses it,
+  // and nothing else.
+  const attention: Attention[] = placements.filter((p) => p.flagged || own[p.id])
+    .map((p) => ({ id: p.id, title: p.view.title(p.values), sub: p.view.sub(p.values), flag: own[p.id] || 'Look here' }));
+  const anchors = useRef(new Map<string, HTMLElement>()), anchoring = useRef(new Map<string, (el: HTMLElement | null) => void>());
+  const anchor = (id: string) => {
+    let set = anchoring.current.get(id);
+    if (!set) anchoring.current.set(id, set = (el) => { if (el) anchors.current.set(id, el); else anchors.current.delete(id); });
+    return set;
+  };
+  const jump = (id: string) => {
+    const el = anchors.current.get(id);
+    el?.scrollIntoView?.({ block: 'nearest', inline: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' });
+    el?.focus?.({ preventScroll: true });
+  };
+  // Which placements are getting new data, and which bodies did not load: each said once, in the header row.
+  const [getting, setGetting] = useState<ReadonlySet<string>>(() => new Set());
+  const [lost, setLost] = useState<ReadonlySet<string>>(() => new Set());
+  const [retry, setRetry] = useState(0);
+  const mark = (set: typeof setGetting, id: string, on: boolean) => set((now) => {
+    if (now.has(id) === on) return now;
+    const next = new Set(now);
+    if (on) next.add(id); else next.delete(id);
+    return next;
+  });
+  const telling = useRef(new Map<string, { getting(on: boolean): void; lost(on: boolean): void }>());
+  const tell = (id: string) => {
+    let t = telling.current.get(id);
+    if (!t) telling.current.set(id, t = { getting: (on) => mark(setGetting, id, on), lost: (on) => mark(setLost, id, on) });
+    return t;
+  };
   return (
     <section className="boards-board" aria-label={heading || 'Board'} data-live={live} inert={!live}>
-      <header>
-        <h1>{heading}</h1>
-        {board.closed
-          ? <button type="button" onClick={() => void memberOperation('boards.reopen', { board: board.id }).catch(() => {})}>Reopen</button>
-          : <button type="button" onClick={onClose}>Close</button>}
-      </header>
+      <BoardHead heading={heading} attention={attention} onJump={jump} notices={shown} stale={stale} reload={() => location.reload()}
+        lost={lost.size} onTryAll={() => setRetry((n) => n + 1)} getting={live && getting.size > 0} closed={board.closed} onClose={onClose}
+        onReopen={() => void memberOperation('boards.reopen', { board: board.id }).catch(() => {})} />
       <div ref={field} className="boards-field">
         {placements.map((p) => {
           const slot = slots.get(p.id);
@@ -138,9 +176,9 @@ function BoardView({ board, live, stale, onRemove, onMaximize, onClose, onLost }
           return (
             <PlacementFrame key={p.id} title={p.view.title(p.values)} sub={p.view.sub(p.values)} form={slot.form} entering={!seen.current.has(p.id)}
               flag={p.flagged || own[p.id] ? own[p.id] || 'Look here' : undefined} closed={board.closed} canMaximize={p.canBeBig && !p.big}
-              onMaximize={() => onMaximize(p.id)} onRemove={() => onRemove(p.id)} onLook={() => looked(p)}
+              onMaximize={() => onMaximize(p.id)} onRemove={() => onRemove(p.id)} onLook={() => looked(p)} onGetting={tell(p.id).getting} anchor={anchor(p.id)}
               style={{ transform: `translate(${slot.x}px, ${slot.y}px)`, width: slot.w, height: slot.h }}>
-              {live && <BodyBoundary stale={stale} onLost={onLost} again={p.view.again}><Suspense fallback={<Loading />}><Body params={p.values} form={slot.form} raise={(name) => raise(p.id, name)} act={(action, detail) => void memberOperation('boards.act', { board: board.id, placement: p.id, action, detail }).catch(() => {})} /></Suspense></BodyBoundary>}
+              {live && <BodyBoundary onLost={onLost} again={p.view.again} onGaveUp={tell(p.id).lost} retry={retry}><Suspense fallback={<Loading />}><Body params={p.values} form={slot.form} raise={(name) => raise(p.id, name)} act={(action, detail) => void memberOperation('boards.act', { board: board.id, placement: p.id, action, detail }).catch(() => {})} /></Suspense></BodyBoundary>}
             </PlacementFrame>
           );
         })}
@@ -149,9 +187,9 @@ function BoardView({ board, live, stale, onRemove, onMaximize, onClose, onLost }
         {/* How many did not fit, said once, then each by its name and reference. */}
         {folded.length > 0 && <span className="boards-folded-count">{folded.length} more</span>}
         {folded.map((p) => { const sub = p.view.sub(p.values), words = <><i aria-hidden="true" />{p.view.title(p.values)}{sub && <> <small>{sub}</small></>}</>; return p.canBeBig && !board.closed
-          ? <button key={p.id} type="button" className="board-chip" data-flagged={p.flagged || !!own[p.id]} title="Make this the big one"
+          ? <button key={p.id} ref={anchor(p.id)} type="button" className="board-chip" data-flagged={p.flagged || !!own[p.id]} title="Make this the big one"
               onPointerEnter={() => looked(p)} onClick={() => onMaximize(p.id)}>{words}</button>
-          : <span key={p.id} className="board-chip" data-flagged={p.flagged || !!own[p.id]} onPointerEnter={() => looked(p)}>{words}</span>; })}
+          : <span key={p.id} ref={anchor(p.id)} tabIndex={-1} className="board-chip" data-flagged={p.flagged || !!own[p.id]} onPointerEnter={() => looked(p)}>{words}</span>; })}
       </div>
     </section>
   );
@@ -282,7 +320,7 @@ export function Page({ member, thread, agent, at, exists = false }: { member: st
           <div className="boards-trail" style={{ transform: `translateX(${-100 * Math.max(0, column)}%)` }} onTransitionEnd={(e) => { if (e.target === e.currentTarget) arrived(); }}>
             <Remembered.Provider value={answers}><Here.Provider value={here}>
             {drawn.map((b) => (
-              <BoardView key={b.id} board={b} live={b.id === shown?.id || b.id === onScreen.leaving} onRemove={(id) => void change(b.id, [{ change: 'remove', placement: id }])}
+              <BoardView key={b.id} board={b} live={b.id === shown?.id || b.id === onScreen.leaving} shown={b.id === shown?.id} onRemove={(id) => void change(b.id, [{ change: 'remove', placement: id }])}
                 onMaximize={(id) => void change(b.id, [{ change: 'maximize', placement: id }])}
                 onClose={() => void memberOperation('boards.close', { board: b.id }).catch(() => {})} onLost={newer} stale={stale} />
             ))}
