@@ -1814,13 +1814,18 @@ member's (`owner`), an agent's or a machine's (`runner`) token and `POST /api/si
 program's, with the same body, and the same reading of the answer
 (`src/core/signin/shared-links.ts`, `issueForOwner`). The door's rule is the permission: a current household owner,
 whose browser signed in within the last ten minutes and is not an automated one (`newProof`), on a same-origin
-request; there is no new server operation. The answer is read by its status before its body. Any 4xx made nothing
-and is a refusal, whatever its body: Household setup's words ("Sign in again to make a token…" for the door's
+request; there is no new server operation. The answer is read by its status before its body. A 4xx is a refusal,
+whatever its body. A 400 or a 409 made nothing. A 401 or a 403 nearly always made nothing, but the door checks the
+sign-in once more after it has written the token (`shared-links.ts`), so it can refuse a token it did make: the
+brick adds "If a token with this label is in the list now, loom made it before it refused: revoke it, because its
+value was never shown.", a notice already left for that request stays, and the board is not told (the page cannot
+know). The refusals are Household setup's words ("Sign in again to make a token…" for the door's
 fresh-sign-in refusal, "Token creation refused…" for any other). Only no reply, a 5xx, or a 2xx whose body is not
 a token leaves it unknown, and only then does the brick say "Token creation for “…” (kind) may have completed. Check
-its label in the token list and revoke it before trying again." Neither tells the board anything. **Once loom made
-it, the board is told `token {label, kind}`, always**, whatever changed on the page meanwhile (the form gone, an
-owner change); `boards.act` itself still refuses it, as any action, if the placement was removed or the board
+its label in the token list and revoke it before trying again." Neither tells the board anything. **Once loom answers that it made
+it, the board is told `token {label, kind}`** whatever changed on the page meanwhile (the form gone, an owner
+change), by one `boards.act` call that is not tried again: if that call fails the agent is not told, as with any
+brick action; `boards.act` itself still refuses it, as any action, if the placement was removed or the board
 closed meanwhile. The label is told,
 so the brick takes one only in the shape of a reference (one word of up to 120 letters, digits and `: . _ / @ -`,
 starting with a letter or digit), narrower than the desktop's, and says so; the desktop still takes any one line.

@@ -276,8 +276,8 @@ it('the form going away while loom is asked (drawn small or compact): it may hav
   nowhere();
 });
 
-it('a late refusal ends the notice; a late 5xx or no reply keeps it; the body unmounted outright keeps it too', async () => {
-  for (const [late, kept] of [[() => ({ status: 409, body: { error: 'A live token already has that label' } }), false], [() => ({ status: 403, body: NOT_JSON }), false], [() => ({ status: 503, body: {} }), true], [() => 'no reply', true]] as const) {
+it('a late 400 or 409 ends the notice; a late 401 or 403 (the door checks again after writing), a 5xx or no reply keeps it; the body unmounted outright keeps it too', async () => {
+  for (const [late, kept] of [[() => ({ status: 409, body: { error: 'A live token already has that label' } }), false], [() => ({ status: 400, body: NOT_JSON }), false], [() => ({ status: 403, body: NOT_JSON }), true], [() => ({ status: 401, body: {} }), true], [() => ({ status: 503, body: {} }), true], [() => 'no reply', true]] as const) {
     forgetTokenNotices();
     const answer = holding();
     reply = late as typeof reply;

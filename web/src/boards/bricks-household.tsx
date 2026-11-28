@@ -177,6 +177,7 @@ const doorKind = { member: 'owner', agent: 'agent', machine: 'runner' } as const
 const LABEL_RULE = 'A label here is one word of up to 120 letters, digits and . _ - : / @, starting with a letter or digit: the board is told it.';
 const STALE = 'Sign in again to make a token. This browser signed in more than ten minutes ago, or is an automated one.';
 const REFUSED = 'Token creation refused. Check its label and identity.';
+const AFTER_WRITE = 'If a token with this label is in the list now, loom made it before it refused: revoke it, because its value was never shown.';
 const kindWords = (kind: string) => KINDS.find((k) => k.value === kind)?.label ?? kind;
 /** The words of a notice: a token that may have been made, or one made whose value cannot be shown. */
 const noticeWords = (notice: TokenNotice) => (notice.fate === 'unknown'
@@ -192,9 +193,10 @@ function labelled(setup: HouseholdSetup, programs: ProgramSetupData | null, labe
   return new Set([...setup.tokens, ...(programs?.tokens ?? [])].filter((token) => token.label === label).map((token) => token.fingerprint)).size;
 }
 
-type Answer = { made: string } | { refused: string } | 'unknown';
-/** Ask the sign-in door, and read its answer by its status before its body. Any 4xx made nothing: a refusal. No
- * reply, a 5xx, or a 2xx whose body is not a token: it may have been made. */
+type Answer = { made: string } | { refused: string; /** The door checks the sign-in again after it writes: a 401 or 403 can follow a token it did make. */ unsure?: boolean } | 'unknown';
+/** Ask the sign-in door, and read its answer by its status before its body. A 4xx is a refusal; a 400 or 409 made
+ * nothing, and a 401 or 403 nearly always made nothing (the door checks the sign-in once more after it writes, so
+ * the member is told to look). No reply, a 5xx, or a 2xx whose body is not a token: it may have been made. */
 async function ask(url: string, body: object): Promise<Answer> {
   let response: Response;
   try {
@@ -205,7 +207,7 @@ async function ask(url: string, body: object): Promise<Answer> {
     if (response.status === 403) {
       try { const result: unknown = await response.json(); stale = !!result && typeof result === 'object' && 'error' in result && result.error === 'Sign in again before making a token'; } catch { /* a refusal all the same */ }
     }
-    return { refused: stale ? STALE : REFUSED };
+    return { refused: stale ? STALE : REFUSED, ...(response.status === 401 || response.status === 403 ? { unsure: true } : {}) };
   }
   if (!response.ok) return 'unknown';
   try {
@@ -266,13 +268,14 @@ function TokenMaker({ setup, boxes, programs, act }: { setup: HouseholdSetup; bo
     if (typeof answer === 'object' && 'made' in answer) act('token', { label: asked.label, kind: asked.kind });
     if (pending.current !== asked) {
       // The form let go of it: the notice it left says what loom answered. A refusal made nothing, so it ends.
-      if (asked.notice !== null && answer !== 'unknown') settleTokenNotice(asked.notice, 'made' in answer ? 'made' : 'refused');
+      // A 401 or 403 is the one refusal that can follow a write (see `Answer`): the notice stays as it is.
+      if (asked.notice !== null && answer !== 'unknown' && !('refused' in answer && answer.unsure)) settleTokenNotice(asked.notice, 'made' in answer ? 'made' : 'refused');
       return;
     }
     pending.current = null;
     setBusy(false);
     if (answer === 'unknown') { owner.current = null; addTokenNotice({ label: asked.label, kind: asked.kind, fate: 'unknown', had: asked.had }); return; }
-    if ('refused' in answer) { owner.current = null; setProblem(answer.refused); return; }
+    if ('refused' in answer) { owner.current = null; setProblem(answer.refused + (answer.unsure ? ' ' + AFTER_WRITE : '')); return; }
     setBearer(answer.made); setProblem(''); setOpen(false); setLabel(''); setExpires(''); setRecords([]); setOperations([]);
   };
   const copy = () => {

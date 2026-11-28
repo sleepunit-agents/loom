@@ -18,8 +18,11 @@ const change = (to: readonly TokenNotice[]) => { notices = to; for (const listen
 
 /** A notice for a token asked for; its id, to change or end it when loom's late answer comes. */
 export function addTokenNotice(notice: Omit<TokenNotice, 'id'>): number {
+  // One notice for one label and kind whose fate is unknown, however often it was asked for; and no more than eight.
+  const same = notices.find((n) => n.fate === 'unknown' && notice.fate === 'unknown' && n.label === notice.label && n.kind === notice.kind);
+  if (same) return same.id;
   const id = ++next;
-  change([...notices, { ...notice, id }]);
+  change([...notices, { ...notice, id }].slice(-8));
   return id;
 }
 /** loom's late answer: made (the value is lost), or refused (nothing was made, so the notice ends). */

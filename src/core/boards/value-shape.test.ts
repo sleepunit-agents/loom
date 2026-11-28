@@ -27,6 +27,17 @@ it('matches a known prefix only in the case real credentials use', () => {
     const flipped = [...prefix].map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join('');
     expect(looksLikeSecretValue(flipped + 'read-packages-for-the-org-acme-2026'), kind).toBe(false);
   }
+  // The pin itself: a random body under 32 characters is refused after the real prefix and taken after the flipped one.
+  expect(looksLikeSecretValue('ghp_Q7xK2mP9vR4tL8nW3bZ6')).toBe(true);
+  expect(looksLikeSecretValue('GHP_Q7xK2mP9vR4tL8nW3bZ6')).toBe(false);
+});
+it('refuses the whole of a loom bearer whatever its pieces look like, and takes words of the same length', () => {
+  // Every piece shorter than eight characters: no piece looks random, and it is a bearer all the same.
+  const bearer = 'loom_aBcD3fG-hJkLmN_pQrS7uV-wXyZaBc_dEfGh9J-kLmN';
+  expect(bearer).toHaveLength(48);
+  expect(looksLikeSecretValue(bearer)).toBe(true);
+  expect(looksLikeSecretValue('loom_staging_environment_database_password_f')).toBe(false);
+  expect(looksLikeSecretValue('loom_staging_environment_database_password_forci')).toBe(false);
 });
 
 it('needs a random body after a prefix: letters and digits mixed, not words with a year', () => {

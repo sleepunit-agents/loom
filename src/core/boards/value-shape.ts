@@ -64,6 +64,9 @@ function longRun(piece: string): boolean {
 }
 
 export function looksLikeSecretValue(name: string): boolean {
+  // The whole of it is loom's own bearer, to the character, and not words: refused whatever its pieces look like
+  // (the Label field sits beside where a bearer is shown; about one real bearer in 200 has no random-looking piece).
+  if (loomBearer.test(name) && /[A-Z0-9]/.test(name)) return true;
   for (let at = 0; at < name.length; at++) if ((at === 0 || cut.test(name[at - 1]!)) && knownAt(name, at)) return true;
   return name.split(cut).some(longRun);
 }
