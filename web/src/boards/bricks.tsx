@@ -24,6 +24,8 @@ export interface BrickView {
   Body: Body;
   /** Fetches the body's module, once. A body whose module is here already draws at once, with no loading line. */
   load(): Promise<unknown>;
+  /** After a failed fetch: the next draw asks for the module again. */
+  again?(): void;
 }
 
 const fit = (primary: [number, number, number, number], side: number): Fits => ({
@@ -33,12 +35,19 @@ const fit = (primary: [number, number, number, number], side: number): Fits => (
 });
 
 /** A body that is fetched when it is first drawn. React's `lazy` takes a module that is already here without
- * suspending, so a brick shown a second time, or one the suites loaded first, never shows the loading line. */
-function later(fetch: () => Promise<Body>): Pick<BrickView, 'Body' | 'load'> {
+ * suspending, so a brick shown a second time, or one the suites loaded first, never shows the loading line.
+ *
+ * `lazy` holds a failed fetch for good. `again` makes a fresh one, so that the next draw asks for the module again;
+ * only the placement calls it, before each of its counted tries (main.tsx `BodyBoundary`). It is not done on the
+ * failure itself: React draws a suspended body again as soon as its fetch settles, and a fresh one each time would
+ * ask for a missing module in a loop. */
+export function later(fetch: () => Promise<Body>): Pick<BrickView, 'Body' | 'load' | 'again'> {
   let got: Body | undefined, asked: Promise<Body> | undefined;
-  const load = () => (asked ??= fetch().then((body) => (got = body)));
+  const load = () => (asked ??= fetch().then((body) => (got = body), (error: unknown) => { asked = undefined; throw error; }));
   const here = (): PromiseLike<{ default: Body }> => ({ then: (done: (module: { default: Body }) => unknown) => done({ default: got! }) }) as PromiseLike<{ default: Body }>;
-  return { load, Body: lazy(() => (got ? here() : load().then((body) => ({ default: body }))) as Promise<{ default: Body }>) };
+  const make = () => lazy(() => (got ? here() : load().then((body) => ({ default: body }))) as Promise<{ default: Body }>);
+  let Lazy = make();
+  return { load, again: () => { if (!got) Lazy = make(); }, Body: (props: BodyProps) => { const Now = Lazy; return <Now {...props} />; } };
 }
 
 /** A brick the server knows and this page does not draw yet. It says so; it never guesses. */

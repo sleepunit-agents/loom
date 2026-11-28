@@ -471,3 +471,6 @@ button.board-step-line::after { content: ''; grid-column: 3; grid-row: 1; justif
 .board-row[data-flagged] .board-row:not([data-flagged]) .board-row-title::before { content: none; }
 /* Two questions side by side: while one is open, the other's control steps aside. */
 .board-bridges-review:has(> .board-confirm) > .board-action { display: none; }
+/* A body that failed to load, after the placement's own retries (main.tsx, BodyBoundary). */
+.board-lost { display: flex; flex-direction: column; gap: var(--bk-2); color: var(--muted-foreground); font-size: var(--bk-sm); }
+.board-lost-actions { display: flex; gap: var(--bk-15); }
