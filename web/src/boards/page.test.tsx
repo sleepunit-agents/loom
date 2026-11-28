@@ -71,7 +71,7 @@ vi.mock('../data/graphql', async () => {
     },
   };
 });
-import { Page } from './main';
+import { Page, brickRetryMs } from './main';
 import { bricks, loadBricks } from './bricks';
 import { samples } from './samples.test.helper';
 
@@ -588,10 +588,39 @@ describe('a body that has not arrived', () => {
     const { lazy } = await import('react');
     const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
     bricks.gone = { ...bricks.ticket, Body: lazy(() => Promise.reject(new Error('404'))) };
+    brickRetryMs.splice(0);
     await one([lanes({ big: true }), placed('gone', { ticket: 't-7' }), ticket()]);
-    expect(text(articles()[1].children[1] as Node)).toBe('This brick did not load. Reload the page to try again.');
+    expect(text(articles()[1].children[1] as Node)).toBe('Sorry, this brick didn’t load.Try again');
     expect(text(articles()[2])).toContain('Mend the gate');
     expect(f.reload).not.toHaveBeenCalled();
+    quiet.mockRestore();
+  });
+  it('fetches a body again by itself when the first fetch fails, saying only that it is, and draws it when it arrives', async () => {
+    const { later } = await import('./bricks');
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let asks = 0;
+    bricks.shaky = { ...bricks.ticket, ...later(() => (++asks === 1 ? Promise.reject(new Error('404')) : Promise.resolve(() => h('p', null, 'Here after all')))) };
+    brickRetryMs.splice(0, brickRetryMs.length, 5);
+    await one([lanes({ big: true }), placed('shaky', { ticket: 't-7' })]);
+    expect(text(articles()[1].children[1] as Node)).toBe('Getting this brick again…');
+    await act(async () => { await new Promise((done) => setTimeout(done, 40)); });
+    expect(text(articles()[1].children[1] as Node)).toBe('Here after all');
+    expect(asks).toBe(2);
+    quiet.mockRestore();
+  });
+  it('offers to try again once its own tries are spent, and the press fetches it again', async () => {
+    const { later } = await import('./bricks');
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let asks = 0, works = false;
+    bricks.shaky = { ...bricks.ticket, ...later(() => (asks++, works ? Promise.resolve(() => h('p', null, 'Here after all')) : Promise.reject(new Error('404')))) };
+    brickRetryMs.splice(0);
+    await one([lanes({ big: true }), placed('shaky', { ticket: 't-7' })]);
+    const again = articles()[1].findAll((node) => node.type === 'button' && text(node) === 'Try again')[0];
+    works = true;
+    await act(async () => { again.props.onClick(); });
+    await act(async () => { await new Promise((done) => setTimeout(done, 10)); });
+    expect(text(articles()[1].children[1] as Node)).toBe('Here after all');
+    expect(asks).toBe(2);
     quiet.mockRestore();
   });
   it('takes the new build when a module is gone because loom was deployed, unless something is typed', async () => {
@@ -602,8 +631,10 @@ describe('a body that has not arrived', () => {
     f.build.mockResolvedValueOnce(false).mockResolvedValue(true);
     await one([lanes({ big: true })]);
     await type('half a thought');
+    brickRetryMs.splice(0);
     await feed({ boards: [board('b-1', [lanes({ big: true }), placed('gone', { ticket: 't-7' })])] });
-    expect(text(articles()[1].children[1] as Node)).toBe('This brick did not load. Reload the page to try again.');
+    expect(text(articles()[1].children[1] as Node)).toContain('loom was updated while this page was open');
+    expect(articles()[1].findAll((node) => node.type === 'button').map((node) => text(node))).toEqual(expect.arrayContaining(['Try again', 'Reload now']));
     expect(f.reload).not.toHaveBeenCalled();
     await type('');
     expect(f.reload).toHaveBeenCalledTimes(1);
