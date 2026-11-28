@@ -9,13 +9,17 @@ import { credentialFingerprint, dataAuthentication, presentedCredential } from '
 import { tokens, sessions, jobs, terminalCredentials, boxes, members } from './core/data/schema.js';
 import { jobClaimed } from './core/data/job-states.js';
 import type { Authentication } from './core/live/index.js';
+import { frozenReviewOf } from './apps/change-reviews.js';
+import { FROZEN_REVIEW_CALLS } from './core/conversations/review-confinement.js';
 
 export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () => boolean, write: (action: () => boolean) => void, programs: ProgramGrantReader = () => undefined) {
   const resolve = dataAuthentication(db, () => clock.now(), { programs: 'admit' });
   const identity = { fingerprint: tokens.fingerprint, kind: tokens.kind, member: tokens.member, agent: tokens.agent, job: tokens.job, box: tokens.box };
   const readIdentity = db.select(identity).from(tokens).where(eq(tokens.fingerprint, placeholder('tokenId'))).prepare();
   type Token = Pick<typeof tokens.$inferSelect, keyof typeof identity>;
-  type Proof = { token: Token; session?: string; bearer: boolean; grants?:Readonly<ProgramGrants>; valid(): boolean; box?: string };
+  /** `confined`: the token is a frozen review's body's (core/conversations/review-confinement.ts). Its job's conversation
+   * is part of what the proof stays valid for (bodyJob), and a conversation's place never changes, so it is read once. */
+  type Proof = { token: Token; session?: string; bearer: boolean; grants?:Readonly<ProgramGrants>; valid(): boolean; box?: string; confined?: boolean };
   const proofs = new WeakMap<Viewer, Proof>();
   type BoundJob = Pick<typeof jobs.$inferSelect, 'agent' | 'box' | 'conversation' | 'member' | 'project'>;
   // dataAuthentication has already refused a job that is not this agent's current work on a machine that is
@@ -79,12 +83,16 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
       };
       if(options.recordUse!==false)presented();
       if (!valid()) return;
-      proofs.set(auth.viewer, { token, session, bearer, valid, grants, box: bound?.box ?? undefined });
+      proofs.set(auth.viewer, { token, session, bearer, valid, grants, box: bound?.box ?? undefined, confined: !!token.job && !!frozenReviewOf(db, token.job) });
       const { credential: _credential, ...resolved } = auth;
       return { ...resolved, valid, ...(request.headers.get('upgrade')?.toLowerCase() === 'websocket' ? { activity: presented } : {}) };
     },
     program(viewer:Viewer):Readonly<ProgramGrants>|undefined{return proofs.get(viewer)?.grants;},
-    allows(viewer:Viewer,operation:string):boolean{const found=proof(viewer);return !!found&&(!found.grants||(!isReservedProgramOperation(operation)&&found.grants.operations.includes(operation)));},
+    /** Whether this credential may make this call at the outside door, whatever the operation's own `may` says. A
+     * frozen review's body is held to FROZEN_REVIEW_CALLS (review-confinement.ts): the one rule for every operation. */
+    allows(viewer:Viewer,operation:string):boolean{const found=proof(viewer);return !!found&&(!found.confined||FROZEN_REVIEW_CALLS.has(operation))&&(!found.grants||(!isReservedProgramOperation(operation)&&found.grants.operations.includes(operation)));},
+    /** Whether this credential may read through GraphQL or the live socket: by the same rule, a frozen review's body may not. */
+    reads(viewer:Viewer):boolean{const found=proof(viewer);return !!found&&!found.confined;},
     receiptScope(viewer:Viewer):string|undefined{const found=proofs.get(viewer);return found?.grants?found.token.fingerprint:undefined;},
     browser(viewer: Viewer): Readonly<{ session: string }> | undefined {
       const found = proof(viewer);

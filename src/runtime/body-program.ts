@@ -496,7 +496,9 @@ export async function bodyProgram(input: {
     // Reply words have their own storage and retention. Completion metadata must
     // not make a second durable copy, and must preserve any model-authored digest.
     if(jobSignal.aborted)throw new Error();
-    await client.digest({summary:'Completed this stretch of work.',ifAbsent:true});
+    // Not a frozen reviewer's: a digest can carry a question to an owner, and such a body may call nothing but its
+    // reply and its own job's bookkeeping (core/conversations/review-confinement.ts). Its answer is its record.
+    if(!frozen)await client.digest({summary:'Completed this stretch of work.',ifAbsent:true});
     await tell({ state: 'idle', work: '' });
     return 0;
   } catch (error) {
