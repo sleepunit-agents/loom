@@ -7,6 +7,7 @@ import {mayUseHouseSend} from './runtime/house-send-request.js';
 import {mayAttachNoteFile,mayReadNoteFile} from './runtime/house-note-request.js';
 import { nightlyNoteRetention } from './shared-note-retention.js';
 import { recentReviewEnds, reportReviewEnd } from './core/conversations/review-result.js';
+import { FROZEN_REVIEW_REFUSAL } from './core/conversations/review-confinement.js';
 import { kitCatalogQueries } from './shared-kit-catalog.js';
 import type {EmbeddingProvider} from './backends/types.js';
 import {sharedMcpRequest} from './shared-mcp.js';
@@ -265,7 +266,7 @@ export function sharedRoot(options: {
   // A changed file's patch is read from GitHub when a member opens it, with the changes poll's own credential.
   const filePatches = changeFilePatchFields(changeFilePatches(db, !options.changes ? undefined : 'read' in options.changes ? options.changes.patch
     : githubListingReader(sharedForgeSecrets(options.changes.github), options.changes.github.request), () => clock.now()));
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...claimControls.fields,subscriptionSetup:subscriptionSetupField(db,roles), ...memory.fields, ...kitQueries.fields, ...programQueries.fields, ...householdQueries.fields, ...projectQueries.fields, ...sharedAccountFields(db, clock, member=>pushes?.read(member)??{publicKey:null,devices:[]}), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes,readInboxTitles), ...filePatches}, () => !closing, (request:Request)=>{const auth=authenticateOutside(request);return auth&&credentials.reads(auth.viewer)?auth:undefined;}, work => meter?.enabled()
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...claimControls.fields,subscriptionSetup:subscriptionSetupField(db,roles), ...memory.fields, ...kitQueries.fields, ...programQueries.fields, ...householdQueries.fields, ...projectQueries.fields, ...sharedAccountFields(db, clock, member=>pushes?.read(member)??{publicKey:null,devices:[]}), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes,readInboxTitles), ...filePatches}, () => !closing, (request:Request)=>credentials.reaches(request,new URL(request.url).pathname)?authenticateOutside(request):undefined, work => meter?.enabled()
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work(),viewer=>credentials.program(viewer)?.records,viewer=>{const work=bodyJob(viewer);return !work || !jobHeld(db,work.job);}, viewer => mayReadProgramWork(db, viewer, bodyJob(viewer)?.job));
   credentialWrite=action=>{if(db.$client.inTransaction)throw Error('Credential usage must own its transaction');if(db.transaction(action))data.credentialUsageChanged();};
   startupCleanups.push(()=>{void data.close().catch(()=>report(new Error('Data startup cleanup failed')));});
@@ -538,6 +539,9 @@ export function sharedRoot(options: {
     try {
       if (!meter) await measuringReady;
       if (closing) return c.json(failure('unavailable', 'Loom is closing'), 503);
+      // A frozen review's body reaches its own reply and its job's bookkeeping and nothing else: one rule, for every
+      // route, before any of them runs (core/conversations/review-confinement.ts).
+      if(!credentials.reaches(c.req.raw,new URL(c.req.url).pathname))return c.json(failure('denied',FROZEN_REVIEW_REFUSAL),403);
       if(credentials.isProgramRequest(c.req.raw)){
         const auth=authenticate(c.req.raw,{recordUse:false});
         if(!auth||!credentials.program(auth.viewer))return c.json(failure('denied','Permission denied'),403);

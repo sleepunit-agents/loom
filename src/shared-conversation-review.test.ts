@@ -12,7 +12,7 @@ import {change as fixtureChange} from './pieces/changes/change.fixture.js';
 import {changeReviewStore,NO_VERDICT,TREE_CHANGED} from './apps/change-reviews.js';
 import {currentKitJob} from './shared-kit-access.js';
 import {sharedCredentials} from './shared-credentials.js';
-import {FROZEN_REVIEW_CALLS} from './core/conversations/review-confinement.js';
+import {FROZEN_REVIEW_CALLS,FROZEN_REVIEW_REFUSAL} from './core/conversations/review-confinement.js';
 
 const clean:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
@@ -219,41 +219,42 @@ it('never runs a frozen review whose pinned target does not parse, and never as 
  expect(()=>reviewPlace('parent','id',{id:'review',revision:'r'},{repository:'acme/'+'a'.repeat(101),head,base,change:null,tier:'medium'})).toThrow('Invalid frozen review target');
 });
 
-it('holds a frozen review\'s body token to its own reply and its job\'s bookkeeping: every other operation in the registry is refused it',async()=>{
+it('holds a frozen review\'s body token to its own reply and its job\'s bookkeeping: every other operation in the registry, and every other door, is refused it',async()=>{
  const f=await fixture();
- const created=await launch(f);
- const viewer=(raw:string)=>f.root.credentials.authenticate(new Request('https://loom.invalid/api/conversation/message',{headers:{authorization:'Bearer '+raw}}))!.viewer;
- // Every operation any caller could reach at the outside door, read from the registry itself.
- const offered=f.root.operations.offered('http').map(one=>one.name).sort();
- expect(offered.length).toBeGreaterThan(100);
- // The refusal is the review's, not the agent's: the origin's own body, while it runs, is held by no such rule.
- expect(offered.filter(name=>!f.root.credentials.allows(viewer(bodyCredentials.body),name))).toEqual([]);
- const control=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+bodyCredentials.body},body:JSON.stringify({query:'{__typename}'})});
- expect(control.status).toBe(200);
+ await launch(f);
  settleOrigin(f);
  const assignment=await f.next('copy',true);
  const token='body_'+'f'.repeat(64);
  f.db.update(s.jobs).set({state:'running'}).where(eq(s.jobs.id,assignment.id)).run();
  f.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictional reviewer',kind:'agent',agent:'art',job:assignment.id,createdAt:f.now()}).run();
- const reviewer=viewer(token);
- // The ones the ruling names are among them, so the sweep below covers them.
- for(const name of ['conversation.handoff','conversation.review','conversation.digest','conversation.activityPost','memory.remember','tasks.create','secrets.request'])
+ const post=(path:string,raw:string,body:unknown)=>f.root.http.request(path,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+raw},body:JSON.stringify(body)});
+ const refused=async(response:Response)=>response.status===403&&(await response.clone().json()).message===FROZEN_REVIEW_REFUSAL;
+ // The token is a live body: a call it may make is answered, so every refusal below is the rule's and not a dead token's.
+ const status=await post('/api/conversation/status',token,{input:{state:'working',work:'Reviewing'},id:'status'});
+ expect(status.status,await status.clone().text()).toBe(200);
+ // Every operation any caller could reach at the outside door, read from the registry itself.
+ const offered=f.root.operations.offered('http').map(one=>one.name).sort();
+ expect(offered.length).toBeGreaterThan(100);
+ // The ones the ruling names are among them, so the sweep covers them.
+ for(const name of ['conversation.handoff','conversation.review','conversation.digest','conversation.activityPost','conversation.handoffStatus','memory.remember','tasks.create','tasks.comment'])
   if(f.root.operations.has(name))expect(offered).toContain(name);
- const allowed=offered.filter(name=>f.root.credentials.allows(reviewer,name));
- expect(allowed).toEqual([...FROZEN_REVIEW_CALLS].filter(name=>offered.includes(name)).sort());
- expect(allowed).not.toContain('conversation.handoff');expect(allowed).not.toContain('conversation.review');
- // And it holds at the door: each refused operation, called with the reviewer's token, is denied before it runs.
- for(const name of offered.filter(name=>!FROZEN_REVIEW_CALLS.has(name))){
+ // Each one outside the list, called with the reviewer's token, is refused by the rule before it runs; each one in it is not.
+ const reached:string[]=[];
+ for(const name of offered){
   const [piece,operation]=name.split('.');
-  const response=await f.root.http.request(`/api/${piece}/${operation}`,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input:{},id:'sweep-'+name})});
-  expect(response.status,name).toBe(403);
+  if(!await refused(await post(`/api/${piece}/${operation}`,token,{input:{},id:'sweep-'+name})))reached.push(name);
  }
+ expect(reached).toEqual([...FROZEN_REVIEW_CALLS].filter(name=>offered.includes(name)).sort());
+ // The routes that are not operations: its own mail is taken; reads, the MCP door, secrets and kits are refused.
+ expect(await refused(await post('/api/conversation/take',token,{}))).toBe(false);
+ for(const path of ['/graphql','/mcp','/api/secrets/private/read','/api/secrets/private/startup','/api/kits/private/list'])
+  expect(await refused(await post(path,token,{query:'{__typename}'})),path).toBe(true);
  // A handoff of each kind, with real input: refused, and nothing is written.
  for(const input of [{clientId:'role',label:'Escape',role:'review',words:'Push this.'},{clientId:'self',label:'Escape',to:{conversation:f.thread.conversation},words:'Push this.'},{clientId:'peer',label:'Escape',agent:'mark',words:'Push this.'}])
-  expect((await f.call('handoff',input,'escape-'+input.clientId,token)).status).toBe(403);
- expect((await f.call('review',{...request,clientId:'again'},'escape-review',token)).status).toBe(403);
- expect(f.db.select().from(s.conversations).where(eq(s.conversations.venue,'handoff')).all().map(row=>row.id)).toEqual([created.conversation]);
- // Nor may it read through GraphQL.
- const read=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({query:'{__typename}'})});
- expect(read.status).not.toBe(200);
+  expect(await refused(await f.call('handoff',input,'escape-'+input.clientId,token))).toBe(true);
+ expect(await refused(await f.call('review',{...request,clientId:'again'},'escape-review',token))).toBe(true);
+ expect(f.db.select().from(s.conversations).where(eq(s.conversations.venue,'handoff')).all()).toHaveLength(1);
+ // The refusal is the review's, not the agent's: the origin's own body is held by no such rule at any of these doors.
+ const origin=new Request('https://loom.invalid/',{headers:{authorization:'Bearer '+bodyCredentials.body}});
+ expect([...offered.map(name=>'/api/'+name.replace('.','/')),'/graphql','/mcp'].filter(path=>!f.root.credentials.reaches(origin,path))).toEqual([]);
 });
