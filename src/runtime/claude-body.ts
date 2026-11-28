@@ -17,11 +17,12 @@ import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, normalize, sep } from 'node:path';
 import { filesUnfollowed, listUnfollowed } from './unfollowed.js';
-import { HarnessExit, HarnessResumeUnavailable, harnessModel, harnessToolNames, harnessToolPrefix, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness, type HarnessSpawn } from './body-harness.js';
+import { HarnessExit, HarnessResumeUnavailable, SILENT_ENDING, SILENT_ENDING_LAST, harnessModel, harnessToolNames, harnessToolPrefix, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness, type HarnessEnd, type HarnessSpawn } from './body-harness.js';
 import { SESSION_ID } from '../core/conversations/session-limit.js';
 import { bodyReach, deniedTools } from './harness-traits.js';
 import { bodyDeniedTools } from './body-named-tools.js';
-import { claudeFailure, streamRows } from './harness-failure.js';
+import { claudeEnding, claudeFailure, streamRows } from './harness-failure.js';
+import type { FailureEnding } from './job-failure.js';
 
 /** What marks an event of the model's own in the harness's output. */
 const SPOKE = '"type":"assistant"';
@@ -85,40 +86,62 @@ export const claudeBody: BodyHarness = input => {
       ...(withheld.length ? ['--disallowedTools', ...withheld] : [])];
     let output: Buffer;
     // What a failed run had printed, for reading why it failed (harness-failure.ts). Nothing when it printed too much.
-    let printed: unknown[] = [];
+    let printed: unknown[] = [], ending: FailureEnding | undefined, end: HarnessEnd = { exitCode: 0, signal: null, aborted: false, stderr: '' };
     try { output = await runHarnessChild({ command: input.command, args, cwd: input.cwd, env, words, signal, spawn: input.spawn, control,
-      onFailedOutput: bytes => { printed = streamRows(bytes); onFailedOutput?.(bytes); },
+      onFailedOutput: bytes => { printed = streamRows(bytes); ending = claudeEnding(bytes); onFailedOutput?.(bytes); }, onEnd: how => { end = how; },
       // Looked for across the join of two pieces of output too: a marker cut in half is still the model speaking.
       onOutput: chunk => { input.pairOutput?.(chunk); const seen = tail + chunk.toString('latin1'); if (seen.includes(SPOKE)) spoke = true; tail = seen.slice(-SPOKE.length); } }); }
     // A session that cannot be continued ends the program before the model is asked anything.
-    catch (error) { throw resume && !spoke && !signal.aborted ? new HarnessResumeUnavailable() : error instanceof HarnessExit ? claudeFailure(printed, error.end) : harnessUnavailable(); }
+    catch (error) { throw resume && !spoke && !signal.aborted ? new HarnessResumeUnavailable() : error instanceof HarnessExit ? claudeFailure(printed, error.end, ending ?? claudeEnding(new Uint8Array(0))) : harnessUnavailable(); }
+    // The step at which what it printed is refused, as one of a fixed list (job-failure.ts, ENDING_REFUSALS).
+    let refusal: NonNullable<FailureEnding['refusal']> = 'decode';
+    const refuse = (at: typeof refusal) => { refusal = at; return harnessUnavailable(); };
     try {
-      const rows: unknown[] = new TextDecoder('utf-8', { fatal: true }).decode(output).split(/\r?\n/).filter(line => line.trim()).map(line => JSON.parse(line));
-      let result: string | undefined, last: { text: string; model: string } | undefined;
+      const decoded = new TextDecoder('utf-8', { fatal: true }).decode(output);
+      refusal = 'line';
+      const rows: unknown[] = decoded.split(/\r?\n/).filter(line => line.trim()).map(line => JSON.parse(line));
+      // `last` is the model's last words of its own; `ended` is its last message of its own, with words or with none.
+      let result: string | undefined, last: { text: string; model: string } | undefined, ended: { text: string; model: string } | undefined;
       const actions: { model: string }[] = [];
       for (const raw of rows) {
+        refusal = 'event';
         if (!raw || typeof raw !== 'object') throw harnessUnavailable();
         const row = z.object({type:z.string(),session_id:z.string()}).passthrough().parse(raw);
         session ??= row.session_id;
-        if (row.session_id !== session || !SESSION_ID.test(session)) throw harnessUnavailable();
+        if (row.session_id !== session || !SESSION_ID.test(session)) throw refuse('session');
         if (row.type === 'assistant' && row.parent_tool_use_id === null && !row.error && !row.aborted && !row.agent_id) {
+          refusal = 'message';
           const message = z.object({model:z.string().regex(harnessModel),content:z.array(z.object({type:z.string(),text:z.string().optional()}).passthrough())}).parse(row.message);
           const text = message.content.filter(part => part.type === 'text').map(part => {
             if (typeof part.text !== 'string') throw harnessUnavailable(); return part.text;
           }).join('');
           if (message.content.some(part => part.type === 'tool_use')) actions.push({ model: message.model });
-          if (text) last = { text, model: message.model };
+          ended = { text, model: message.model };
+          if (text) last = ended;
         }
         if (row.type === 'result') {
-          if (result !== undefined) throw harnessUnavailable();
+          if (result !== undefined) throw refuse('second-result');
+          refusal = 'result';
           result = z.object({is_error:z.literal(false),subtype:z.literal('success'),result:z.string()}).parse(row).result;
         }
       }
+      if (result === undefined) throw refuse('no-result');
       // A configured/requested/init model is never evidence of a response.
-      if (!last || result !== last.text) throw harnessUnavailable();
-      return { ...last, actions, usage: claudeUsage(rows), ...(keep && session ? { session } : {}) };
+      if (!ended) throw refuse('no-message');
+      const usage = claudeUsage(rows), kept = keep && session ? { session } : {};
+      // The harness ended well and its result is empty: Claude Code takes the result from the last block of the
+      // model's last message, so a last turn of no words (the model had said what it had to say before its final
+      // tool calls, or only thought) is reported so. Having called tools, the work is done and is not failed for
+      // that: the answer is loom's fixed line, then the model's last words of its own, if it said any.
+      if (result === '') {
+        if (ended.text) throw refuse('mismatch');
+        if (!actions.length) throw refuse('empty');
+        return { text: SILENT_ENDING + (last ? '\n\n' + SILENT_ENDING_LAST + '\n\n' + last.text : ''), model: ended.model, actions, usage, ...kept };
+      }
+      if (!last || result !== last.text) throw refuse('mismatch');
+      return { ...last, actions, usage, ...kept };
     // It ended well and what it printed is no answer loom can vouch for: an error it reported, or nothing readable.
-    } catch { onFailedOutput?.(output);throw signal.aborted ? harnessUnavailable() : claudeFailure(streamRows(output), { exitCode: 0, signal: null, aborted: false, stderr: '' }); }
+    } catch { onFailedOutput?.(output);throw signal.aborted ? harnessUnavailable() : claudeFailure(streamRows(output), end, { ...claudeEnding(output), refusal }); }
     finally { output.fill(0); }
   };
 };

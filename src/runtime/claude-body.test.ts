@@ -3,7 +3,8 @@ import {PassThrough,Writable} from 'node:stream';
 import type {ChildProcessWithoutNullStreams} from 'node:child_process';
 import { expect, it, vi } from 'vitest';
 import { claudeBody, claudeBuiltInTools } from './claude-body.js';
-import { HarnessResumeUnavailable } from './body-harness.js';
+import { HarnessFailed, HarnessResumeUnavailable, SILENT_ENDING, SILENT_ENDING_LAST } from './body-harness.js';
+import { jobFailure } from './job-failure.js';
 import { bodyHarness } from './body-harnesses.js';
 import {nativeClaudeFixture as fixture} from '../../test/fixtures/native-claude.js';
 import type { WorkerAssignment } from './worker.js';
@@ -204,4 +205,72 @@ it('delivers the reply when the result contains an oversized usage report',async
  Object.assign(rows.at(-1)!,{usage:{input_tokens:1,iterations:Array(80_000).fill({})}});
  f.finish(rows);
  expect(await answer).toMatchObject({text:'Answer é',usage:{source:'none'}});
+});
+
+// A long session as Claude Code really ends one (read from 2.1.332): one `assistant` event for each block of a
+// message, a `user` event for each tool result, and a `result` whose text is the last block of the model's last
+// message when that block is words, and empty when it is not. The two jobs of 2026-11-27 ended so: every tool
+// had run, the model's last turn held no words, the result was a success with no text, and the process left with 0.
+const sessionEnding = (f: ReturnType<typeof fixture>, last: Record<string, unknown>[], result: Record<string, unknown> = {}) => {
+  const session_id = f.launch.mock.calls[0][1][f.launch.mock.calls[0][1].indexOf('--session-id') + 1];
+  const said = (content: unknown[], id = 'msg_1') => ({ type: 'assistant', parent_tool_use_id: null, session_id, message: { id, model: 'claude-opus-5-5', content, usage: { input_tokens: 10, output_tokens: 5 } } });
+  const returned = (id: string, words: string) => ({ type: 'user', parent_tool_use_id: null, session_id, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: words }] } });
+  const rows = [{ type: 'system', subtype: 'init', model: 'claude-opus-5-5', session_id }, { type: 'rate_limit_event', rate_limit_info: { status: 'allowed' }, session_id },
+    said([{ type: 'thinking', thinking: 'PRIVATE THOUGHT' }]), said([{ type: 'text', text: 'The pull request is open. PRIVATE SUMMARY' }]),
+    said([{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'gh pr edit 7 && echo edited' } }]), returned('toolu_1', 'edited'),
+    { type: 'system', subtype: 'compact_boundary', session_id },
+    said([{ type: 'tool_use', id: 'toolu_2', name: 'Bash', input: { command: 'git worktree remove wt && echo cleaned' } }], 'msg_2'), returned('toolu_2', 'cleaned'),
+    ...last.map(row => ({ session_id, ...row })),
+    { type: 'result', subtype: 'success', is_error: false, session_id, result: '', stop_reason: 'end_turn', num_turns: 3, usage: { input_tokens: 30, output_tokens: 15 }, ...result }];
+  (f.child.stdout as PassThrough).write(rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+  f.child.emit('exit', 0, null); f.child.emit('close', 0, null);
+  return said;
+};
+const failure = async (run: Promise<unknown>) => { const error = await run.then(() => new Error('answered'), (caught: Error) => caught); expect(error).toBeInstanceOf(HarnessFailed); expect(error.message).toBe('Native execution unavailable'); return (error as HarnessFailed).why; };
+it.each([
+  ['held no words at all', []],
+  ['was only a thought', [{ type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_3', model: 'claude-opus-5-5', content: [{ type: 'thinking', thinking: 'PRIVATE THOUGHT' }] } }]],
+  ['was an empty message', [{ type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_3', model: 'claude-opus-5-5', content: [] } }]],
+])('answers for a session that did its work and whose last turn %s, with loom\'s fixed line and the model\'s last words', async (_name, last) => {
+  const f = fixture(), run = f.run(job, 'mail', f.abort.signal); sessionEnding(f, last);
+  const answer = await run;
+  expect(answer.text).toBe(SILENT_ENDING + '\n\n' + SILENT_ENDING_LAST + '\n\nThe pull request is open. PRIVATE SUMMARY');
+  expect(answer).toMatchObject({ model: 'claude-opus-5-5', actions: [{ model: 'claude-opus-5-5' }, { model: 'claude-opus-5-5' }], usage: { source: 'report', toolCalls: 2 } });
+});
+it('says only the fixed line when the model said nothing of its own in a session that did its work', async () => {
+  const f = fixture(), run = f.run(job, 'mail', f.abort.signal), session_id = f.launch.mock.calls[0][1][f.launch.mock.calls[0][1].indexOf('--session-id') + 1];
+  f.finish([{ type: 'system', subtype: 'init', session_id }, { type: 'assistant', parent_tool_use_id: null, session_id, message: { model: 'worked-model', content: [{ type: 'tool_use', id: 't', name: 'Bash' }] } },
+    { type: 'result', subtype: 'success', is_error: false, session_id, result: '' }]);
+  expect(await run).toMatchObject({ text: SILENT_ENDING, model: 'worked-model', actions: [{ model: 'worked-model' }] });
+});
+it('still fails an empty result of a run that did no work, or whose last message had words, and says how it ended', async () => {
+  // Nothing was done and nothing was said: no answer, and nothing to stand for one.
+  const idle = fixture(), first = idle.run(job, 'mail', idle.abort.signal), id = idle.launch.mock.calls[0][1][idle.launch.mock.calls[0][1].indexOf('--session-id') + 1];
+  idle.finish([{ type: 'system', subtype: 'init', session_id: id }, { type: 'assistant', parent_tool_use_id: null, session_id: id, message: { model: 'm', content: [{ type: 'thinking', thinking: 'PRIVATE' }] } },
+    { type: 'result', subtype: 'success', is_error: false, session_id: id, result: '', stop_reason: 'end_turn', num_turns: 1 }]);
+  const why = await failure(first);
+  expect(why).toMatchObject({ reason: 'unknown', exitCode: 0, result: 'success', isError: false, resultEmpty: true, stopReason: 'end_turn', numTurns: 1, finalText: false, toolCalls: 0, refusal: 'empty', partialLine: false,
+    events: { assistant: 1, user: 0, system: 1, result: 1, rateLimit: 0, stream: 0, other: 0 } });
+  expect(jobFailure.safeParse(why).success).toBe(true); expect(JSON.stringify(why)).not.toContain('PRIVATE');
+  // The last message had words and the result has none: not the ending loom knows, so no answer is made up for it.
+  const odd = fixture(), second = odd.run(job, 'mail', odd.abort.signal);
+  sessionEnding(odd, [{ type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_3', model: 'claude-opus-5-5', content: [{ type: 'text', text: 'PRIVATE LAST WORDS' }] } }]);
+  const mismatch = await failure(second);
+  expect(mismatch).toMatchObject({ reason: 'unknown', exitCode: 0, result: 'success', resultEmpty: true, finalText: true, toolCalls: 2, refusal: 'mismatch', compacted: true, numTurns: 3, quietMs: expect.any(Number) });
+  expect(JSON.stringify(mismatch)).not.toContain('PRIVATE');
+});
+it.each([
+  ['no result at all', (rows: string[]) => rows.slice(0, -1).join('\n') + '\n', { result: 'none', refusal: 'no-result', partialLine: false, toolCalls: 2 }],
+  ['a result cut off in the middle of its line', (rows: string[]) => rows.join('\n').slice(0, -20), { result: 'none', refusal: 'line', partialLine: true, unparsedLines: 0 }],
+  ['a line that is no event', (rows: string[]) => ['warning: PRIVATE', ...rows].join('\n') + '\n', { result: 'success', refusal: 'line', partialLine: false, unparsedLines: 1 }],
+  ['an event of another session', (rows: string[]) => [...rows, JSON.stringify({ type: 'system', subtype: 'status', session_id: 'another' })].join('\n'), { result: 'success', refusal: 'session' }],
+  ['an event with no session', (rows: string[]) => [JSON.stringify({ type: 'keep_alive' }), ...rows].join('\n'), { result: 'success', refusal: 'event', events: { other: 1 } }],
+  ['two results', (rows: string[]) => [...rows, rows.at(-1)].join('\n'), { result: 'success', refusal: 'second-result', events: { result: 2 } }],
+  ['a result that is an error it gave no reason for', (rows: string[]) => [...rows.slice(0, -1), rows.at(-1)!.replace('"is_error":false', '"is_error":true')].join('\n'), { result: 'success', isError: true, refusal: 'result' }],
+] as const)('says how a run that ended well with %s ended, in counts and fixed choices only', async (_name, shape, expected) => {
+  const f = fixture(), run = f.run(job, 'mail', f.abort.signal), rows = f.rows([{ type: 'assistant', parent_tool_use_id: null, message: { model: 'tool-model', content: [{ type: 'tool_use', name: 'Bash' }, { type: 'tool_use', name: 'Edit' }] } }]);
+  f.finish(shape(rows.map(row => JSON.stringify(row))));
+  const why = await failure(run);
+  expect(why).toMatchObject({ reason: 'unknown', exitCode: 0, ...expected });
+  expect(jobFailure.safeParse(why).success).toBe(true); expect(JSON.stringify(why)).not.toContain('PRIVATE'); expect(JSON.stringify(why)).not.toContain('Answer');
 });
