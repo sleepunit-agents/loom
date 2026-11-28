@@ -3,6 +3,7 @@ import * as docker from './docker-engine.js';
 import type { machineReader } from './machine-check.js';
 import { workerSignIn, reportWorkerMachineReadings, reportWorkerGuestPressure, type WorkerHttpOptions } from './worker-http.js';
 import { workerProgram } from './worker-program.js';
+import { unprivilegedWorker } from './machine-read-catalog.js';
 import { containerWorkerExecutor, UPKEEP_FAILED } from './worker-container.js';
 import { defaultWorkerState } from './worker-left.js';
 import { WORKER_STOP, WorkerStop } from './worker-stop.js';
@@ -477,7 +478,9 @@ it('holds a worker to its configured slots for accounts too', async () => {
   expect(await workerProgram(fine)).toBe(0); expect(fine.run).toHaveBeenCalledTimes(3);
 });
 
-it('a diagnostics-only worker polls and reports health without constructing an executor or claiming jobs', async()=>{
+// A worker offers a machine read only when it is an unprivileged Linux worker (offeredMachineReads); as root, or
+// holding capabilities, it offers none, and the poll this test watches for carries no read. It skips there, saying so.
+it.skipIf(!unprivilegedWorker())('a diagnostics-only worker polls and reports health without constructing an executor or claiming jobs', async()=>{
  const f=fixture(),health=vi.fn(async()=>({ok:true as const})),next=vi.fn(async()=>null);
  f.read.mockImplementation(async path=>path==='/config'?JSON.stringify({...houseConfig,reportOnly:true,reads:['memory']}):'private-token');
  const result=await workerProgram({...f,health,readRemote:()=>({next,done:async()=>true}),pause:async()=>{f.handlers.get('SIGTERM')?.();}});

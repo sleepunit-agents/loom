@@ -20,6 +20,7 @@ import { secrets, triggerLog, jobUsage, programFirings, triggers, bridgeSends, b
 import { sharedRoot } from './shared-root.js';
 import { httpWorkerControl } from './runtime/worker-http.js';
 import { workerProgram } from './runtime/worker-program.js';
+import { unprivilegedWorker } from './runtime/machine-read-catalog.js';
 import { wordsKey } from './pieces/comms/crypto.js';
 import { bodyConversationClient } from './runtime/conversation-client.js';
 import { workOnce } from './runtime/worker.js';
@@ -642,7 +643,9 @@ it('accepts diagnostic polls from the named worker and refuses an unbound body r
  expect(request.status).toBe(403);
 });
 
-it('a live report-only worker returns a memory sample to an authorized body over loopback',async()=>{
+// This worker reads the real host's memory, and a worker runs a machine read only as an unprivileged Linux worker
+// (runMachineRead): as root, or holding capabilities, it offers none. The test skips there, saying so.
+it.skipIf(!unprivilegedWorker())('a live report-only worker returns a memory sample to an authorized body over loopback',async()=>{
  const {createServer}=await import('node:http'),{getRequestListener}=await import('@hono/node-server');
  const f=fixture(),job=f.send('wake');
  await f.control.next();const bootstrap=await f.control.enrollBody!(job.id,new AbortController().signal);
