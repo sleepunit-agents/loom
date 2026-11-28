@@ -2,9 +2,10 @@
 // Photographs the bricks' gallery (src/boards/gallery; build it first with `npm --prefix web run gallery:build`).
 //
 //   node web/scripts/gallery-shots.mjs <out dir> [--dist <built gallery>] [--scale 2] [--scheme dark,light]
-//                                      [--brick ticket,lanes] [--only bricks|figures|sheets] [--tall yes]
+//                                      [--brick ticket,lanes] [--only bricks|figures|sheets] [--tall yes] [--width 390]
 //
 // With `--tall yes` a primary form is as tall as what it holds (the whole of a long brick, nothing scrolled away).
+// With `--width` the window is that wide (default 1500): `--brick page --width 390` draws the board's header row as on a phone.
 //
 // Into <out dir>, for each colour scheme:
 //   <scheme>/<brick>.png                      every scene and form of one brick, side by side
@@ -21,7 +22,7 @@ const flag = (name, otherwise) => { const at = args.indexOf('--' + name); return
 const here = path.dirname(new URL(import.meta.url).pathname);
 const dist = path.resolve(flag('dist', process.env.GALLERY_OUT || path.join(here, '../../dist/gallery')));
 const scale = Number(flag('scale', '2')), schemes = flag('scheme', 'dark,light').split(','), only = flag('only', '');
-const tall = flag('tall', '') ? '&tall' : '';
+const tall = flag('tall', '') ? '&tall' : '', width = Number(flag('width', '1500'));
 const wanted = flag('brick', '').split(',').filter(Boolean);
 const out = path.resolve(args[0] || '');
 if (!args[0]) { console.error('usage: gallery-shots.mjs <out dir> [--dist dir] [--scale n] [--scheme dark,light] [--brick a,b] [--only bricks|figures|sheets]'); process.exit(2); }
@@ -44,7 +45,7 @@ let count = 0;
 try {
   for (const scheme of schemes) {
     await mkdir(path.join(out, scheme), { recursive: true });
-    const context = await browser.newContext({ viewport: { width: 1500, height: 1000 }, deviceScaleFactor: scale, colorScheme: scheme, reducedMotion: 'reduce' });
+    const context = await browser.newContext({ viewport: { width, height: 1000 }, deviceScaleFactor: scale, colorScheme: scheme, reducedMotion: 'reduce' });
     const page = await context.newPage();
     page.on('pageerror', (error) => console.error(`[${scheme}] page error: ${error.message}`));
     page.on('console', (message) => { if (message.type() === 'warning' && message.text().startsWith('gallery:')) console.error(message.text()); });

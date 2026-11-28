@@ -15,3 +15,7 @@ html, body { margin: 0; }
 .gallery-sheet[data-sheet='primary'] { column-width: 700px; }
 .gallery-sheet[data-sheet='phone'] { column-width: 362px; }
 .gallery .gallery-talk { position: relative; height: auto; border: 1px solid var(--surface-edge); background: color-mix(in srgb, var(--card) 55%, transparent); }
+/* The board's header row over an empty board, the board's edge drawn so the row's ends can be seen. */
+.gallery .gallery-board { flex: none; box-sizing: border-box; border: 1px dashed var(--surface-edge); border-radius: var(--radius); }
+.gallery-heads { flex-direction: column; }
+@media (max-width: 639px) { .boards-page.gallery { padding: 1rem 0; } }

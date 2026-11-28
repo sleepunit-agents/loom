@@ -17,7 +17,8 @@ import { PlacementFrame } from '../placement';
 import { BridgeReceipt, ThreadHead, ThreadStop, ThreadSwitch } from '../threads';
 import { SceneContext } from './fake-graphql';
 import { all, groups } from './fixtures';
-import { pageScenes, type PageScene } from './fixtures/page';
+import { attention, headScenes, pageScenes, type PageScene } from './fixtures/page';
+import { BoardHead } from '../board-head';
 import type { Scene } from './scenes';
 import '../../pair/screen.css';
 import '../board.css';
@@ -90,6 +91,29 @@ function Shot({ brick, scene, form }: { brick: string; scene: Scene; form: Drawn
   );
 }
 
+/** The board's header row (../board-head.tsx) over the top of an empty board: at the width a board has beside the
+ * conversation on a 1440 px window, or on a phone the window's own width less the board's padding. Room is left
+ * under it for the list it opens, which lies over the board. */
+function HeadShot({ scene }: { scene: PageScene }) {
+  const head = scene.head!, box = useRef<HTMLElement>(null);
+  const phone = innerWidth < 640, width = phone ? innerWidth : 880;
+  useEffect(() => {
+    if (!head.open) return;
+    const press = setTimeout(() => box.current?.querySelector<HTMLButtonElement>(head.open === 'more' ? '.boards-head-more' : '.boards-notice-fold')?.click(), 100);
+    return () => clearTimeout(press);
+  }, [head.open]);
+  return (
+    <figure data-shot={`page.${scene.name}.${phone ? 'phone' : 'desktop'}`}>
+      <figcaption><b>page</b> {scene.name} · {phone ? 'phone' : 'desktop'}</figcaption>
+      <section ref={box} className="boards-board gallery-board" aria-label="Board" style={{ width, height: scene.height ?? 200 }}>
+        <BoardHead heading={head.heading ?? 'Garden'} attention={attention.slice(0, head.chips)} onJump={() => {}} notices stale={!!head.stale} reload={() => {}}
+          lost={head.lost ?? 0} onTryAll={() => {}} getting={!!head.getting} closed={!!head.closed} onClose={() => {}} onReopen={() => {}} tokenNotices={head.tokens ?? []} />
+        <div className="boards-field gallery-field" />
+      </section>
+    </figure>
+  );
+}
+
 /** A part of the page that is no brick, drawn as the page draws it (../main.tsx): the conversation's header at the
  * width the chat has beside a board, or a side placement whose body did not load. */
 function PageShot({ scene }: { scene: PageScene }) {
@@ -113,7 +137,7 @@ function PageShot({ scene }: { scene: PageScene }) {
             </section>
           ) : (
             <PlacementFrame title="Ticket" sub="t-3" form="side" canMaximize style={{ width: 320, height: 200 }}>
-              {scene.part === 'fetching' ? <Fetching /> : <Lost again={() => {}} reload={scene.part === 'lost-stale' ? () => {} : undefined} />}
+              {scene.part === 'fetching' ? <Fetching /> : <Lost again={() => {}} />}
             </PlacementFrame>
           )}
         </Pressed>
@@ -139,6 +163,7 @@ function Gallery() {
         <section className="gallery-group">
           {!only && <h1>The page</h1>}
           <section className="gallery-brick"><div className="gallery-scene">{pageScenes.map((scene) => <PageShot key={scene.name} scene={scene} />)}</div></section>
+          <section className="gallery-brick"><div className="gallery-scene gallery-heads">{headScenes.map((scene) => <HeadShot key={scene.name} scene={scene} />)}</div></section>
         </section>
       )}
       {groups.map((group) => (

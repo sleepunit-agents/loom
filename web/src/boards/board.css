@@ -43,17 +43,28 @@
    while the board gets new data, and Close as an icon at the far end. Nothing in it wraps; its lists open over the
    field beneath, never inside the row. */
 .boards-head { position: relative; z-index: 2; flex: none; display: flex; align-items: center; gap: var(--bk-3); block-size: 2rem; margin-bottom: 1rem; white-space: nowrap; }
-.boards-head h1 { flex: 0 1 auto; min-width: 3rem; max-width: 45%; overflow: hidden; text-overflow: ellipsis; font-size: 1.05rem; font-weight: 600; }
+.boards-head h1 { flex: 0 1 auto; min-width: 4rem; max-width: 45%; overflow: hidden; text-overflow: ellipsis; font-size: 1.05rem; font-weight: 600; }
 .boards-head h1:empty { display: none; }
 .boards-head-chips { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: var(--bk-2); overflow: hidden; }
+/* With chips to show the strip keeps room, beside any notices, for one chip and its +N (`CHIP_ROOM` and `MORE_ROOM`),
+   or on a phone for the count: the notices' words are what give way. */
+.boards-head-chips[data-some='true'] { min-width: 16rem; }
 .boards-head .board-chip { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow-wrap: normal; }
 .boards-attention { max-width: 12.5rem; }
 .boards-attention span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .boards-head-more { flex: none; font-variant-numeric: tabular-nums; color: var(--muted-foreground); }
+/* The page's notices: one is said in the row, two or more fold to one button that opens them (./board-head.tsx). */
+.boards-notices { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; }
+.boards-notice-fold { display: none; flex: none; align-items: center; gap: var(--bk-15); font-size: var(--bk-sm); font-weight: 500; color: var(--flag); }
+.boards-notice-fold::before { content: ''; flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.boards-notices[data-folded='true'] .boards-notice-fold { display: inline-flex; }
 /* A notice: its words in the waiting tone, cut short where the row runs out, and its one control. */
 .boards-notice { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: var(--bk-2); font-size: var(--bk-sm); color: var(--flag); }
 .boards-notice::before { content: ''; flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .boards-notice-words { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: inherit; text-align: left; }
+.boards-notice[data-notice='lost'] .boards-notice-words { flex: none; }
+/* The app's alerts float and arrive with a movement (../pair/screen.css); a notice in this row is a line of words. */
+.boards-page .boards-head [role='alert'] { box-shadow: none; animation: none; }
 button.boards-notice-words { text-decoration: underline dotted; text-underline-offset: 3px; }
 .boards-head-act { flex: none; font-size: var(--bk-sm); font-weight: 500; color: var(--foreground); border-radius: var(--radius-small); padding: 0 var(--bk-1); }
 .boards-head-act:hover { color: var(--board-accent); }
@@ -71,9 +82,10 @@ button.boards-notice-words { text-decoration: underline dotted; text-underline-o
   background: var(--popover); border: 1px solid var(--surface-edge); border-radius: var(--radius-inner); box-shadow: var(--shadow-float); }
 .boards-head-panel[hidden] { display: none; }
 .boards-head-panel .boards-attention { max-width: 100%; }
-.boards-token-notices { display: grid; gap: var(--bk-3); font-size: var(--bk-sm); }
-.boards-token-notices li { display: grid; gap: var(--bk-1); justify-items: start; }
-.boards-token-notices p { color: var(--foreground); }
+.boards-notice-list { display: grid; gap: var(--bk-3); font-size: var(--bk-sm); }
+.boards-notice-list li { display: grid; gap: var(--bk-1); justify-items: start; }
+.boards-notice-list p { color: var(--foreground); }
+.boards-notice-list .boards-head-act { margin-left: calc(-1 * var(--bk-1)); }
 .boards-field { position: relative; flex: 1; min-height: 0; }
 .boards-dots { position: absolute; left: 50%; bottom: .5rem; translate: -50% 0; display: flex; gap: 5px; }
 .boards-dots i { width: 14px; height: 2px; border-radius: var(--radius-bar); background: var(--muted-foreground); opacity: .5; }
@@ -185,8 +197,10 @@ button.boards-notice-words { text-decoration: underline dotted; text-underline-o
   .boards-page[data-board='true'] .boards-stage { padding-bottom: 15rem; }
   .boards-board { padding: 1rem .9rem .5rem; }
   /* On a phone the header row keeps its line: a notice says its first words only, and the chips fold to a count (./board-head.tsx). */
-  .boards-notice-more { display: none; }
+  .boards-notices .boards-notice { display: none; }
+  .boards-notices .boards-notice-fold { display: inline-flex; }
   .boards-head { gap: var(--bk-2); }
+  .boards-head-chips[data-some='true'] { min-width: 6.5rem; }
   .boards-page[data-board='true'] .boards-talk { position: fixed; inset: auto 0 0 0; height: auto; max-height: 86dvh; z-index: 10; border-left: 0;
     border-top: 1px solid var(--surface-edge); background: var(--card); border-radius: var(--radius-sheet) var(--radius-sheet) 0 0; box-shadow: 0 -10px 30px -12px var(--contact); }
   .boards-page[data-board='true'] .boards-talk[data-sheet='false'] .boards-log { display: none; }

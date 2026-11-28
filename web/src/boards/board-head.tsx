@@ -10,7 +10,8 @@
  *   not even one chip fits beside it (a phone), the chips fold to one count, "N flagged", which opens all of them.
  * - Page-level notices, said here once instead of inside whichever brick drew them: a token whose fate is unknown or
  *   whose value was lost (./token-notices.ts), that loom was updated while the page was open, and how many bricks
- *   did not load.
+ *   did not load. One is said in the row, in a few words with its one action. Two or more fold to one "N notices",
+ *   which opens them in full, each with its action; on a phone even one is folded so (the CSS chooses).
  *
  * The row's height never changes as these come and go: it is one line of a fixed block size, nothing in it wraps,
  * and the lists open over the board beneath it, never inside the row. */
@@ -41,23 +42,22 @@ function Chip({ a, onJump }: { a: Attention; onJump(id: string): void }) {
   return <button type="button" className="board-chip boards-attention" data-flagged="true" title={words} onClick={() => onJump(a.id)}><i aria-hidden="true" /><span>{words}</span></button>;
 }
 
-/** Every token notice in full, each with its Dismiss: what the header's token notice opens. */
+/** Every token notice in full, each with its Dismiss: part of what the header's notices open. */
 export function TokenNoticeList({ notices }: { notices: readonly TokenNotice[] }) {
-  return (
-    <ul className="boards-token-notices">
-      {notices.map((notice) => (
-        <li key={notice.id} data-token-notice={notice.fate}>
-          <p>{noticeWords(notice)}</p>
-          <button type="button" className="boards-head-act" aria-label={`Dismiss the notice for ${notice.label}`} onClick={() => dismissTokenNotice(notice.id)}>Dismiss</button>
-        </li>
-      ))}
-    </ul>
-  );
+  return <>{notices.map((notice) => (
+    <li key={notice.id} data-token-notice={notice.fate}>
+      <p>{noticeWords(notice)}</p>
+      <button type="button" className="boards-head-act" aria-label={`Dismiss the notice for ${notice.label}`} onClick={() => dismissTokenNotice(notice.id)}>Dismiss</button>
+    </li>
+  ))}</>;
 }
 
-type Open = 'more' | 'tokens' | null;
+const UPDATED = 'loom was updated: the page reloads when your message is sent or cleared';
+const didNotLoad = (lost: number) => (lost === 1 ? '1 brick didn’t load' : `${lost} bricks didn’t load`);
 
-export function BoardHead({ heading, attention, onJump, notices, stale, reload, lost, onTryAll, getting, closed, onClose, onReopen }: {
+type Open = 'more' | 'notices' | null;
+
+export function BoardHead({ heading, attention, onJump, notices, stale, reload, lost, onTryAll, getting, closed, onClose, onReopen, tokenNotices: given }: {
   heading: string;
   /** The flagged placements, in the board's order. */
   attention: readonly Attention[];
@@ -76,8 +76,10 @@ export function BoardHead({ heading, attention, onJump, notices, stale, reload, 
   closed: boolean;
   onClose(): void;
   onReopen(): void;
+  /** The token notices to say, for the gallery; the page's own (./token-notices.ts) otherwise. */
+  tokenNotices?: readonly TokenNotice[];
 }) {
-  const tokens = useTokenNotices();
+  const kept = useTokenNotices(), tokens = given ?? kept;
   const strip = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   useLayoutEffect(() => {
@@ -93,15 +95,16 @@ export function BoardHead({ heading, attention, onJump, notices, stale, reload, 
   const toggle = (which: Exclude<Open, null>) => setOpen((now) => (now === which ? null : which));
   const fit = chipsShown(width, attention.length);
   const shown = attention.slice(0, fit.shown), rest = attention.slice(fit.shown);
-  const tokenNotices = notices ? tokens : [];
+  const tokenNotices = notices ? tokens : [], updated = notices && stale, failed = notices ? lost : 0;
+  const count = tokenNotices.length + (updated ? 1 : 0) + (failed > 0 ? 1 : 0), folded = count > 1;
   // A list whose things have all gone closes.
-  const opened: Open = open === 'more' && rest.length ? 'more' : open === 'tokens' && tokenNotices.length ? 'tokens' : null;
+  const opened: Open = open === 'more' && rest.length ? 'more' : open === 'notices' && count ? 'notices' : null;
   const jump = (id: string) => { setOpen(null); onJump(id); };
   const escape = (e: KeyboardEvent) => { if (e.key === 'Escape' && opened) { e.stopPropagation(); setOpen(null); } };
   return (
     <header className="boards-head" onKeyDown={escape}>
       <h1>{heading}</h1>
-      <div ref={strip} className="boards-head-chips" role="group" aria-label="Flagged on this board">
+      <div ref={strip} className="boards-head-chips" data-some={attention.length > 0} role="group" aria-label="Flagged on this board">
         {shown.map((a) => <Chip key={a.id} a={a} onJump={jump} />)}
         {rest.length > 0 && (
           <button type="button" className="board-chip boards-head-more" data-flagged="true" aria-expanded={opened === 'more'}
@@ -110,23 +113,29 @@ export function BoardHead({ heading, attention, onJump, notices, stale, reload, 
           </button>
         )}
       </div>
-      {tokenNotices.length > 0 && (
-        <span className="boards-notice" data-notice="token" role="alert">
-          <button type="button" className="boards-notice-words" aria-expanded={opened === 'tokens'} title={tokenNotices.map(noticeWords).join('\n')} onClick={() => toggle('tokens')}>
-            {tokenNotices.length === 1 ? noticeBrief(tokenNotices[0]) : `${tokenNotices.length} token notices`}
+      {count > 0 && (
+        <span className="boards-notices" data-folded={folded}>
+          {!folded && tokenNotices.length > 0 && (
+            <span className="boards-notice" data-notice="token" role="alert">
+              <button type="button" className="boards-notice-words" aria-expanded={opened === 'notices'} title={noticeWords(tokenNotices[0])} onClick={() => toggle('notices')}>{noticeBrief(tokenNotices[0])}</button>
+            </span>
+          )}
+          {!folded && updated && (
+            <span className="boards-notice" data-notice="update" role="status">
+              <span className="boards-notice-words" title={UPDATED}>loom was updated<span className="boards-notice-more">{UPDATED.slice('loom was updated'.length)}</span></span>
+              <button type="button" className="boards-head-act" onClick={reload}>Reload now</button>
+            </span>
+          )}
+          {!folded && failed > 0 && (
+            <span className="boards-notice" data-notice="lost" role="alert">
+              <span className="boards-notice-words">{didNotLoad(failed)}</span>
+              <button type="button" className="boards-head-act" onClick={onTryAll}>Try all again</button>
+            </span>
+          )}
+          {/* Folded: two or more, or any on a phone. */}
+          <button type="button" className="boards-notice-fold" role={folded ? 'alert' : undefined} aria-expanded={opened === 'notices'} onClick={() => toggle('notices')}>
+            {count > 1 ? `${count} notices` : tokenNotices.length ? 'Token notice' : updated ? 'loom was updated' : didNotLoad(failed)}
           </button>
-        </span>
-      )}
-      {notices && stale && (
-        <span className="boards-notice" data-notice="update" role="status">
-          <span className="boards-notice-words" title="loom was updated: the page reloads when your message is sent or cleared">loom was updated<span className="boards-notice-more">: the page reloads when your message is sent or cleared</span></span>
-          <button type="button" className="boards-head-act" onClick={reload}>Reload now</button>
-        </span>
-      )}
-      {notices && lost > 0 && (
-        <span className="boards-notice" data-notice="lost" role="alert">
-          <span className="boards-notice-words">{lost === 1 ? '1 brick didn’t load' : `${lost} bricks didn’t load`}</span>
-          <button type="button" className="boards-head-act" onClick={onTryAll}>Try all again</button>
         </span>
       )}
       {getting && <span className="boards-getting" role="status" aria-label="Getting new data" title="Getting new data" />}
@@ -138,9 +147,13 @@ export function BoardHead({ heading, attention, onJump, notices, stale, reload, 
           {rest.map((a) => <Chip key={a.id} a={a} onJump={jump} />)}
         </div>
       )}
-      {tokenNotices.length > 0 && (
-        <div className="boards-head-panel" role="group" aria-label="Token notices" hidden={opened !== 'tokens'}>
-          <TokenNoticeList notices={tokenNotices} />
+      {opened === 'notices' && (
+        <div className="boards-head-panel" role="group" aria-label="Notices">
+          <ul className="boards-notice-list">
+            <TokenNoticeList notices={tokenNotices} />
+            {updated && <li data-notice="update"><p>{UPDATED}.</p><button type="button" className="boards-head-act" onClick={reload}>Reload now</button></li>}
+            {failed > 0 && <li data-notice="lost"><p>{didNotLoad(failed)}.</p><button type="button" className="boards-head-act" onClick={() => { setOpen(null); onTryAll(); }}>Try all again</button></li>}
+          </ul>
         </div>
       )}
     </header>

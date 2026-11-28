@@ -476,12 +476,14 @@ ids, making it with `comms.open` if it does not exist.
     chip fits beside the `+N` (a phone) every chip folds to one count, "N flagged", which opens the list of all of them:
     a count is one touch target that says how many, where a line scrolled sideways hides the rest behind an edge.
   - **The page's notices**, said here once, on the board on screen only, and no longer inside a brick: a token
-    notice ("The first bricks", household; its rules are `token-notices.ts`'s, unchanged): one in a few words,
-    "Token “…” may have been made" or "Token “…”: its value is lost", two or more counted, "N token notices"; pressed,
-    each in full with Dismiss. "loom was updated: the page reloads when your message is sent or cleared" with Reload
-    now, while the page waits for a newer build ("A restart"; on a phone, "loom was updated" alone). "N bricks didn’t
-    load" with Try all again, for the placements whose own tries are spent; each still says its own sorry, Try again
-    and what was caught.
+    notice ("The first bricks", household; its rules are `token-notices.ts`'s, unchanged), "Token “…” may have been
+    made" or "Token “…”: its value is lost", which opens the notice in full with Dismiss; "loom was updated: the page
+    reloads when your message is sent or cleared" with Reload now, while the page waits for a newer build ("A
+    restart"); "N bricks didn’t load" with Try all again, for the placements whose own tries are spent (each still
+    says its own sorry, Try again and what was caught). One notice is said in the row with its action. Two or more
+    fold to one "N notices", which opens each in full with its action: the row cannot hold three notices and a chip
+    on a laptop's board, and a notice cut to its first word says nothing. On a phone even one is folded so, its
+    button naming its kind ("Token notice", "loom was updated", "2 bricks didn’t load").
   - **One quiet mark**, "Getting new data", while any placement on the board is getting it (each placement keeps its
     own, "Live reads and their cost").
   - **Close** as an icon at the far end, named "Close board"; the same `boards.close`, with no question asked, as

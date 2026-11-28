@@ -122,6 +122,16 @@ const forms = () => articles().map((a) => a.props['data-form']);
 const chips = () => tree!.root.findAll((n) => n.props.className === 'boards-folded')[0].findAll((n) => n.props.className === 'board-chip');
 /** The header row's notices of one kind (./board-head.tsx). */
 const notices = (kind: string) => tree!.root.findAll((n) => n.props.className === 'boards-notice' && n.props['data-notice'] === kind);
+/** The header row's one button for its notices: folded, two or more; on a phone, any (the CSS shows it then). */
+const fold = () => tree!.root.findAll((n) => n.type === 'button' && n.props.className === 'boards-notice-fold');
+/** What the header row's notices say in full: the list they open, opened. */
+async function told() {
+  const button = fold()[0];
+  if (!button) return '';
+  if (!button.props['aria-expanded']) await act(async () => button.props.onClick());
+  const list = tree!.root.findAll((n) => n.props.className === 'boards-notice-list')[0];
+  return list ? text(list) : '';
+}
 const called = (name: string) => f.op.mock.calls.filter(([op]) => op === name).map(([, input]) => input);
 async function click(found: Record<string, unknown>, keys: object = {}) {
   const event = { target: new f.Element(found), metaKey: false, ctrlKey: false, preventDefault: vi.fn(), ...keys };
@@ -458,7 +468,9 @@ describe('the header row', () => {
     await one([lanes({ big: true }), ...tickets(9, { flagged: true })]);
     await act(async () => more()[0].props.onClick());
     const parts = head().children.map((c) => (typeof c === 'string' ? c : c.props.className));
-    expect(parts).toEqual([undefined, 'boards-head-chips', 'boards-notice', 'boards-notice', 'boards-close', 'boards-head-panel', 'boards-head-panel']);
+    expect(parts).toEqual([undefined, 'boards-head-chips', 'boards-notices', 'boards-close', 'boards-head-panel']);
+    await act(async () => fold()[0].props.onClick());
+    expect(head().children.map((c) => (typeof c === 'string' ? c : c.props.className)).at(-1)).toBe('boards-head-panel');
     forgetTokenNotices();
   });
 });
@@ -470,18 +482,23 @@ describe('the page\'s notices, said once in the header row', () => {
     await one([placed('household', {}, { big: true }), ticket()]);
     expect(notices('token').map(text)).toEqual(['Token “pump-laptop” may have been made']);
     expect(articles().flatMap((a) => a.findAll((n) => n.props.role === 'alert').map(text)).filter((w) => w.includes('pump-laptop'))).toEqual([]);
+    // On a phone the row says only that there is one, by its kind (the CSS shows this instead of the words).
+    expect(fold().map(text)).toEqual(['Token notice']);
     const open = notices('token')[0].findByType('button');
     expect(open.props['aria-expanded']).toBe(false);
     await act(async () => open.props.onClick());
-    const list = tree!.root.findAll((n) => n.props.className === 'boards-head-panel' && n.props['aria-label'] === 'Token notices')[0];
-    expect(list.props.hidden).toBe(false);
+    const list = tree!.root.findAll((n) => n.props.className === 'boards-head-panel' && n.props['aria-label'] === 'Notices')[0];
     expect(text(list)).toBe('Token creation for “pump-laptop” (Household member) may have completed. Check its label in the token list and revoke it before trying again.Dismiss');
     await act(async () => list.findByType('button').props.onClick());
     expect(notices('token')).toEqual([]);
-    // Two or more are counted, each in full in the list.
+    expect(fold()).toEqual([]);
+    // Two or more fold to a count, each in full, with its action, in what it opens.
     addTokenNotice({ label: 'a', kind: 'member', fate: 'unknown', had: 0 }); addTokenNotice({ label: 'b', kind: 'agent', fate: 'made', had: 0 });
     await feed({});
-    expect(notices('token').map(text)).toEqual(['2 token notices']);
+    expect(notices('token')).toEqual([]);
+    expect(fold().map((b) => [text(b), b.props.role])).toEqual([['2 notices', 'alert']]);
+    expect(await told()).toBe('Token creation for “a” (Household member) may have completed. Check its label in the token list and revoke it before trying again.Dismiss'
+      + 'Token “b” (Agent) was made after its form went away, so its value cannot be shown. Revoke it if you did not save it, and make another.Dismiss');
   });
   it('loom was updated: said with Reload now, which reloads; the placements do not say it', async () => {
     f.build.mockResolvedValue(true);
@@ -489,17 +506,24 @@ describe('the page\'s notices, said once in the header row', () => {
     await type('half a thought');
     f.reload.mockClear();
     expect(notices('update').map(text)).toEqual(['loom was updated: the page reloads when your message is sent or clearedReload now']);
+    expect(fold().map(text)).toEqual(['loom was updated']);
     expect(articles().map(text).join('')).not.toContain('loom was updated');
     await act(async () => notices('update')[0].findByType('button').props.onClick());
     expect(f.reload).toHaveBeenCalledTimes(1);
+    // Folded (as on a phone), the list says it in full with the same Reload now.
+    expect(await told()).toBe('loom was updated: the page reloads when your message is sent or cleared.Reload now');
+    await act(async () => tree!.root.findAll((n) => n.props.className === 'boards-notice-list')[0].findByType('button').props.onClick());
+    expect(f.reload).toHaveBeenCalledTimes(2);
   });
   it('is said on the board on screen only, never once per board on the trail', async () => {
     f.build.mockResolvedValue(true);
     addTokenNotice({ label: 'pump-laptop', kind: 'member', fate: 'unknown', had: 0 });
     await draw([board('b-1', [lanes({ big: true })]), board('b-2', [ticket({ big: true })])]);
     expect(tree!.root.findAll((n) => n.props.className === 'boards-head')).toHaveLength(2);
-    expect(notices('update')).toHaveLength(1);
-    expect(notices('token')).toHaveLength(1);
+    // Two notices: folded to one count, in one header row of the two.
+    expect(fold().map(text)).toEqual(['2 notices']);
+    expect(tree!.root.findAll((n) => n.props.className === 'boards-notices')).toHaveLength(1);
+    expect(await told()).toContain('loom was updated');
   });
   it('counts the bricks that did not load, once their own tries are spent, and Try all again fetches each again', async () => {
     const { later } = await import('./bricks');
@@ -947,7 +971,9 @@ describe('a body that has not arrived', () => {
     // That loom was updated is said once, in the header row; the placement says only its own sorry and Try again.
     expect(text(articles()[1].children[1] as Node)).toBe('Sorry, this brick didn’t load.Try againError: 404');
     expect(articles()[1].findAll((node) => node.type === 'button').map((node) => text(node))).not.toContain('Reload now');
-    expect(notices('update').map(text)).toEqual(['loom was updated: the page reloads when your message is sent or clearedReload now']);
+    // With the brick that did not load, two notices: folded to one count, each in full in what it opens.
+    expect(fold().map(text)).toEqual(['2 notices']);
+    expect(await told()).toBe('loom was updated: the page reloads when your message is sent or cleared.Reload now1 brick didn’t load.Try all again');
     expect(f.reload).not.toHaveBeenCalled();
     await type('');
     expect(f.reload).toHaveBeenCalledTimes(1);
@@ -1051,17 +1077,17 @@ describe('a token asked for from the household brick, when its body goes away wh
     expect(chips().map(text)).toContain('Household');
     expect(words()).not.toContain('Make a token');
     await feed({ boards: [board('b-1', [{ ...mine, big: true }, other])] });
-    expect(words()).toContain(MAYBE);
+    expect(await told()).toContain(MAYBE);
     await reply({ status: 200, body: { ok: true, value: { token: BEARER } } });
     expect(tokenReports()).toEqual([{ board: 'b-1', placement: mine.id, action: 'token', detail: { label: 'pump-laptop', kind: 'member' } }]);
-    expect(words()).toContain(MADE);
-    expect(words()).not.toContain('may have completed');
+    expect(await told()).toContain(MADE);
+    expect(await told()).not.toContain('may have completed');
     expect(JSON.stringify((tree as unknown as { toJSON(): unknown }).toJSON())).not.toContain(BEARER);
     // It is the member's to dismiss; the token appearing in the list does not end it, since its value is still lost.
     await listed('pump-laptop');
-    expect(words()).toContain(MADE);
+    expect(await told()).toContain(MADE);
     await act(async () => tree!.root.findAll((n) => n.type === 'button' && n.props['aria-label'] === 'Dismiss the notice for pump-laptop')[0].props.onClick());
-    expect(words()).not.toContain('pump-laptop” (Household');
+    expect(await told()).not.toContain('pump-laptop” (Household');
   });
 
   it('removed: a household brick placed again shows it, and keeps saying it while loom gives no answer that settles it', async () => {
@@ -1071,16 +1097,16 @@ describe('a token asked for from the household brick, when its body goes away wh
     await feed({ boards: [board('b-1', [{ ...other, big: true }])] });
     expect(articles().map((a) => text(a.findByType('h2')))).toEqual(['Ticket']);
     // The brick is gone, and the header row says it may have been made: the notice is the page's, not the brick's.
-    expect(words()).toContain(MAYBE);
+    expect(await told()).toContain(MAYBE);
     await reply({ status: 503, body: '<html>busy</html>' });
     const again = household();
     await feed({ boards: [board('b-1', [{ ...other, big: true }, again])] });
     expect(articles().map((a) => a.props['data-form'])).toEqual(['primary', 'side']);
-    expect(words()).toContain(MAYBE);
+    expect(await told()).toContain(MAYBE);
     expect(tokenReports()).toEqual([]);
     // Seen in the token list: it was made after all, and the notice ends.
     await listed('pump-laptop');
-    expect(words()).not.toContain(MAYBE);
+    expect(await told()).not.toContain(MAYBE);
   });
 
   it('another board shown: its household brick shows it at once, and a late refusal ends it', async () => {
@@ -1090,9 +1116,9 @@ describe('a token asked for from the household brick, when its body goes away wh
     // A new board joins the trail and is the one shown; the first board's bodies are not drawn.
     await feed({ boards: [board('b-1', [mine, ticket()]), board('b-2', [lanes({ big: true }), household()])] });
     expect(tree!.root.findAll((n) => n.type === 'section' && n.props['data-live'] === true).map((n) => n.props['aria-label'])).toEqual(['Lanes']);
-    expect(words()).toContain(MAYBE);
+    expect(await told()).toContain(MAYBE);
     await reply({ status: 409, body: { error: 'A live token already has that label' } });
-    expect(words()).not.toContain('may have completed');
+    expect(await told()).not.toContain('may have completed');
     expect(tokenReports()).toEqual([]);
   });
 
@@ -1103,7 +1129,7 @@ describe('a token asked for from the household brick, when its body goes away wh
     await feed({ boards: [board('b-1', [mine, ticket()]), board('b-2', [lanes({ big: true })])] });
     await reply('no reply');
     await feed({ boards: [board('b-1', [mine, ticket()]), board('b-2', [lanes({ big: true }), household()])] });
-    expect(words()).toContain(MAYBE);
+    expect(await told()).toContain(MAYBE);
     expect(tokenReports()).toEqual([]);
   });
 });
