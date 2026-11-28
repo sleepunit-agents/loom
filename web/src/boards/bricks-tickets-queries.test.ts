@@ -46,7 +46,7 @@ async function read(viewer: Viewer, source: string, variableValues: Record<strin
 }
 /** What a state lists for a viewer, as the brick asks: the retired projects first, then the list. */
 async function listed(viewer: Viewer, state: 'ready' | 'in-progress' | 'shelved' | 'all', search = '', limit = 31) {
-  const retired = ((await read(viewer, ticketsRetiredQuery)).retired as { id: string }[]).map((p) => p.id);
+  const retired = ((await read(viewer, ticketsRetiredQuery)).retired as { id: string; lifecycle: string }[]).filter((p) => p.lifecycle === 'retired').map((p) => p.id);
   const asked = ticketsRead(state, retired, search);
   if (!asked) return null;
   return ((await read(viewer, asked.query, { where: asked.where, limit })).rows as TicketRow[]);

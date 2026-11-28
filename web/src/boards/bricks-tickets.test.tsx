@@ -22,7 +22,7 @@ const working = [row('t-2', 'Dig the north bed', { status: 'in_progress', isRead
 const shelved = [row('t-5', 'Pump half fitted', { status: 'in_progress', project: 'pond', projectRow: { name: 'Pond' }, isShelved: true, isReady: false, assigneeKind: 'agent', assignee: 'moss' })];
 const every = [...working, row('t-6', 'Sow beans', { status: 'closed', closeReason: 'done', isReady: false }), ...ready, ...shelved];
 /** Each read answered by its query's name; a list answered by the state its selection is for. */
-const data = (over: Record<string, unknown> = {}) => ({ BrickTicketsRetired: { retired: [{ id: 'pond' }] }, BrickTicketsReady: { rows: ready }, BrickTicketsAll: { rows: every },
+const data = (over: Record<string, unknown> = {}) => ({ BrickTicketsRetired: { retired: [{ id: 'garden', lifecycle: 'active' }, { id: 'pond', lifecycle: 'retired' }] }, BrickTicketsReady: { rows: ready }, BrickTicketsAll: { rows: every },
   BrickTicketsOpen: { rows: working }, ...over });
 const asked = (query: string) => feed.mock.calls.filter(([q, , o]) => q === query && !o?.pause).at(-1)?.[1];
 const chip = (id: string) => ({ brick: 'ticket', params: { ticket: id } });
@@ -72,7 +72,7 @@ it('says so when a state is empty, when no project is retired, and while it load
   await b.draw('tickets', { state: 'ready' }, 'compact');
   expect(b.all()).toBe('No ticket is ready');
   // No retired project: nothing is shelved, and no list is asked for.
-  b.answer(data({ BrickTicketsRetired: { retired: [] } }));
+  b.answer(data({ BrickTicketsRetired: { retired: [{ id: 'garden', lifecycle: 'active' }] } }));
   feed.mockClear();
   await b.draw('tickets', { state: 'shelved' }, 'side');
   expect(b.all()).toBe('No ticket is shelved with a retired project.');

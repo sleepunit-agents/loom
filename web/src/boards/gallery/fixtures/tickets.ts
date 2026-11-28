@@ -26,7 +26,7 @@ const shelved = [
 const every = [working[0], row('t-8', 'Fix the gate latch', { status: 'closed', closeReason: 'done', isReady: false }), ...ready.slice(0, 3), shelved[0], row('t-54', 'Return the hired rotavator', { status: 'closed', closeReason: 'cancelled', isReady: false, project: null, projectRow: null }), ...working.slice(1), ...ready.slice(3)];
 const pages = (rows: unknown[]) => ({ rows: Array.from({ length: 31 }, (_, i) => ({ ...(rows[i % rows.length] as object), id: `t-${300 + i}` })) });
 const data = (over: Record<string, Answer> = {}): Record<string, Answer> => ({
-  BrickTicketsRetired: { retired: [{ id: 'pond' }] }, BrickTicketsReady: { rows: ready }, BrickTicketsAll: { rows: every },
+  BrickTicketsRetired: { retired: [{ id: 'garden', lifecycle: 'active' }, { id: 'pond', lifecycle: 'retired' }] }, BrickTicketsReady: { rows: ready }, BrickTicketsAll: { rows: every },
   BrickTicketsOpen: (v: Record<string, unknown>) => ({ rows: JSON.stringify(v.where).includes('"inArray"') ? shelved : working }), ...over,
 });
 
@@ -38,7 +38,7 @@ export const scenes: BrickScenes[] = [
     { name: 'all', params: { state: 'all' }, data: data() },
     { name: 'more', params: { state: 'ready' }, only: ['primary', 'compact'], data: data({ BrickTicketsReady: pages(ready) }) },
     { name: 'empty', params: { state: 'ready' }, data: data({ BrickTicketsReady: { rows: [] } }) },
-    { name: 'none-retired', params: { state: 'shelved' }, only: ['side'], data: data({ BrickTicketsRetired: { retired: [] } }) },
+    { name: 'none-retired', params: { state: 'shelved' }, only: ['side'], data: data({ BrickTicketsRetired: { retired: [{ id: 'garden', lifecycle: 'active' }] } }) },
     { name: 'unavailable', params: { state: 'ready' }, only: ['side', 'primary'], data: data({ BrickTicketsReady: 'offline' }) },
     { name: 'loading', params: { state: 'ready' }, only: ['side'], data: data({ BrickTicketsReady: 'loading' }) },
   ] },

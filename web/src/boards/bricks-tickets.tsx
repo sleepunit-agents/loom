@@ -2,7 +2,7 @@
  * (pieces/tasks/query.ts and shared-view.tsx). It reads the same root fields the desktop does, `readyTasks` and
  * `tasks`, and the same rules decide what each holds: Ready is `readyTasks` (open, no unclosed blocker, not an epic,
  * not shelved: the server decides, in SQL); In progress and Shelved are `tasks` split by whether the ticket's project
- * is retired, which is how loom decides shelved (`taskShelved`, core/data/project-in-use.ts); All is every ticket,
+ * is one loom says is retired (its `lifecycle`), which is how loom decides shelved (`taskShelved`, core/data/project-in-use.ts); All is every ticket,
  * closed ones included, latest change first. The desktop reads every ticket and splits them on the page; this brick
  * asks for one page at a time (`ticketsPageSize`, then more on a press, never more than `ticketsMost`).
  *
@@ -34,7 +34,10 @@ export const ticketsMost = 300;
 const priorityOrder = 'orderBy:{priority:{direction:asc,priority:2},position:{direction:asc,priority:1},id:{direction:asc,priority:0}}';
 const recentOrder = 'orderBy:{changedAt:{direction:desc,priority:1},id:{direction:asc,priority:0}}';
 const fields = 'id title status closeReason priority project projectRow { name } assigneeKind assignee isReady isShelved';
-export const ticketsRetiredQuery = 'query BrickTicketsRetired { retired:projects(where:{retiredAt:{isNotNull:true}}) { id } }';
+/** Every project the member may read with what loom says its state is. The page does not look at a project to decide
+ * whether it is retired (src/single-home.contract.test.ts): `lifecycle` is the server's word for it. A household has
+ * few projects; the list is bounded all the same. */
+export const ticketsRetiredQuery = 'query BrickTicketsRetired { retired:projects(limit:500) { id lifecycle } }';
 export const ticketsReadyQuery = `query BrickTicketsReady($where:TasksFilters!,$limit:Int!) { rows:readyTasks(where:$where,${priorityOrder},limit:$limit) { ${fields} } }`;
 export const ticketsOpenQuery = `query BrickTicketsOpen($where:TasksFilters!,$limit:Int!) { rows:tasks(where:$where,${priorityOrder},limit:$limit) { ${fields} } }`;
 export const ticketsAllQuery = `query BrickTicketsAll($where:TasksFilters!,$limit:Int!) { rows:tasks(where:$where,${recentOrder},limit:$limit) { ${fields} } }`;
@@ -87,8 +90,8 @@ export function Tickets({ params, form }: { params: Params; form: Form }) {
   const search = big ? asked : '';
   const limit = Math.min(pages * ticketsPageSize, ticketsMost) + 1;
   const needsRetired = state === 'in-progress' || state === 'shelved';
-  const retiredRead = useDataQuery<{ retired: { id: string }[] | null }>(ticketsRetiredQuery, {}, { keep: true, pause: !needsRetired });
-  const retired = needsRetired ? (retiredRead.status === 'live' ? retiredRead.data?.retired?.map((p) => p.id) ?? null : null) : [];
+  const retiredRead = useDataQuery<{ retired: { id: string; lifecycle: string }[] | null }>(ticketsRetiredQuery, {}, { keep: true, pause: !needsRetired });
+  const retired = needsRetired ? (retiredRead.status === 'live' ? retiredRead.data?.retired?.filter((p) => p.lifecycle === 'retired').map((p) => p.id) ?? null : null) : [];
   const read = retired ? ticketsRead(state, retired, search) : null;
   const listed = useDataQuery<{ rows: TicketRow[] | null }>(read?.query ?? ticketsAllQuery, { where: read?.where ?? {}, limit }, { keep: true, pause: !read || !!search });
   const found = useDataOnce<{ rows: TicketRow[] | null }>(read?.query ?? ticketsAllQuery, { where: read?.where ?? {}, limit }, { pause: !read || !search });

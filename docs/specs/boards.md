@@ -743,8 +743,9 @@ calls through modules both sides import.
 unclosed blocker, not an epic, not shelved, decided in SQL); `in-progress` is `tasks` in progress in no project or
 one not retired; `shelved` is `tasks` not closed in a retired project, which is how loom decides shelved
 (`taskShelved`); `all` is every ticket, closed ones included, latest change first. The other three are in the
-desktop's order: priority, position, id. In progress and Shelved first read the retired projects
-(`projects(where:{retiredAt:{isNotNull:true}})`). The projects rule gives a project to exactly those who may read a
+desktop's order: priority, position, id. In progress and Shelved first read the projects with loom's word for
+each one's state (`projects { id lifecycle }`) and keep the retired ones; the page never reads the column that says so
+(`src/single-home.contract.test.ts`). The projects rule gives a project to exactly those who may read a
 ticket in it, so this widens nothing and misses nothing. With none retired, Shelved asks nothing. The desktop reads every ticket and
 splits them on the page; the brick asks for thirty and one more, and "Show 30 more" asks for thirty more each time,
 up to 300, past which it says to search. **Reads:** the list and the retired projects are live, relaxed. The search
