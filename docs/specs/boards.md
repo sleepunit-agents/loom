@@ -709,7 +709,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `repository` | yes: each open pull request with its title and where it stands | never |
 | `question` | no | never: being on the board is the flag |
 | `approval` | no: the page has a primary form for it, with the record's history, but the catalogue does not let it be big, so a board draws it side or compact | never: being on the board is the flag |
-| `session` | yes: what it was asked, its state, the tools it has used, how it ended, its report once a handed-off session has one, why it failed ("Why it failed": the plain words loom builds from the failed job's fixed reason, `JobRecord.failedWhy`, docs/runtime/worker.md "Why a job failed"), and its steps as they are reported, the last of which, for a failed session, is the `Harness` step holding what the harness itself last said; "Its steps are no longer kept." once they are past their keep time and deleted | it finishes, it fails, it is stopped by someone else |
+| `session` | yes: its state, the tools it has used, how it ended, and, as a conversation the member was not in (changed 2026-11-28, "A session as a conversation"): what it was asked as the asker's message; the agent's own words as its messages and its readable reasoning folded quietly, between its runs of tool steps, each run folded under one "N steps" line; its report as the last message once a handed-off session has one; and "Why it failed" (the plain words loom builds from the failed job's fixed reason, `JobRecord.failedWhy`, docs/runtime/worker.md "Why a job failed") ending a failed one, whose last run, holding the `Harness` step with what the harness itself last said, starts open; "Its steps are no longer kept." once they are past their keep time and deleted | it finishes, it fails, it is stopped by someone else |
 | `inbox` | yes: every folder's count, and up to fifty of the folder's items newest first, each with its words as a chip that places its `question` brick, who asked, when, its state, read or unread, and Mark read on an unread one; the outcomes of the member's own actions where the Inbox lists them, each with Dismiss; Newer and Older for a longer folder. Small: the folder's count and its first four items as chips. Folded: one line of counts | more waits on the member than before (the count of `needs` goes up) |
 | `approvals` | yes: every pending request oldest first, or every answered one newest first, each with its title as a chip that places its `approval` brick, its state, kind, agent, project, when it was asked, why, what it allows and, once answered, who answered; or every standing rule with what it covers, which kind of request, for whom, its answer and who set it when; or the reported steps newest first, the first fifty, each with the agent, kind, target and when. Small: the count and the first four (as chips where they are requests). Folded: one line of counts | a new request is waiting (the count of pending goes up), in every state |
 | `ticket`, added 2026-11-27 | yes: also its description, its linked tickets with their titles, and the Edit and Links forms; small, its priority, who filed it, why it closed and its links as chips | as above; an edit or a link flags nothing |
@@ -1220,14 +1220,42 @@ step as one line. Big: also what it was asked, what it runs on, how it ended, an
 own subagents inside one job are not sessions and loom keeps no record of them for an ordinary job.
 
 **A session's steps.** The body of a job handed off from a member's thread (the worker's assignment says `review`)
-on the owners' word reports each tool call and each result as a card, by the same decoding of the harness's output
+on the owners' word reports each tool call and each result as a card, and (since schema 55) the agent's own words and
+its readable reasoning between them, by the same decoding of the harness's output
 and the same disclosure check as the pairing thread's cards (`src/runtime/body-program.ts`,
 `src/runtime/pair-events.ts`): a tool name or a step's words that say a secret the body holds, one of its own credentials, or a
 token shaped like one are replaced by "Tool" and by "Output withheld."; words past 16,000 characters are cut. Loom keeps each card in `job_trace` under the child conversation (`src/core/conversations/job-trace.ts`),
 not in the thread: the thread's transcript, its turns and its unread state are untouched, and the child's final
 reply is relayed to the thread exactly as before. A retried report writes one row.
 
-The page reads them with `sessionTrace(conversation, job, limit, after, before)`: the latest `limit` steps (100 by default,
+**A step's kind** (`job_trace.kind`, schema 55): `tool` (a tool call or its result, what every step was before; every
+row kept before schema 55 reads as one), `words` (what the agent said between its tool calls, its own message text) or
+`reasoning` (its reasoning, where the harness gives it as readable text). The kind is a column because nothing else
+could carry it: `tool` is the body's name for a tool and Codex names an MCP tool by its bare name, so any value
+reserved there could be a real tool's, and an old row could not be told apart; `card_state` is a state; `client_id`
+is a retry key; and a marker inside the sealed words would have to be opened to draw even the side form, and would
+misread an old step whose output began with it. Loom writes a `words` or `reasoning` step's tool line itself (`Words`,
+`Reasoning`) and its state (`done`), whatever the body sends; a thread's card that names a kind other than `tool` is
+refused, so words and reasoning never enter a thread, a pairing room's included. What each harness gives, read
+2026-11-28 (`src/runtime/pair-events.ts`):
+
+- Claude Code (`stream-json`): each top-level `assistant` event carries one block. `{type:"text",text}` is words.
+  `{type:"thinking",thinking,signature}` is reasoning, but on Claude Code 2.1.326 with Opus 5.5 `thinking` is always
+  empty with a signature only, `--settings {"showThinkingSummaries":true}` included, so no reasoning step comes from it
+  today; `redacted_thinking` is never readable. An empty or redacted block makes no step. A subagent's own words
+  (`parent_tool_use_id` set) are not the session's: its answer is its tool result.
+- Codex (`exec --json`): `item.completed` with `{type:"agent_message",text}` is words, and `{type:"reasoning",text}` is
+  the reasoning summary Codex prints as readable text; it never prints the encrypted reasoning. Read from Codex's event
+  shape and loom's own fixtures, not from a live run.
+
+The body keeps them for a handed-off session only, through the one disclosure check every step passes ("Output
+withheld."), and bounds them (`src/runtime/body-program.ts`): one step's text is cut at 8,000 characters and says
+where it was cut; one job keeps 200,000 characters of words and reasoning in all, and then one `Session` step in
+loom's words says later words and reasoning are not recorded. Tool steps keep their own bound and still count against
+the 2,000 steps of a job. Sealing, keep time, the sweep and who reads them are exactly a tool step's.
+
+The page reads them with `sessionTrace(conversation, job, kind, limit, after, before)` (`kind`, where given, keeps only
+steps of that kind; each step says its `kind`): the latest `limit` steps (100 by default,
 200 at most), oldest first; or, with `after`, the earliest `limit` steps whose `seq` is greater, so a reader that
 has some steps asks only for newer ones and no step is opened twice (a stored step never changes); or, with `before`,
 the latest `limit` steps whose `seq` is smaller, oldest first, which is how the page loads earlier steps. `after` and
@@ -1254,7 +1282,23 @@ one thread (`threads_conversation_unique`), and the reply by `messages_client_id
 The big form draws the report's words under "Report", above "Steps", with the rendering the thread uses for a
 message's words (`web/src/pair/reply.tsx`), and draws nothing for it when there is none.
 
-The big form draws them under "Steps" with the conversation's own work-trace cards (`web/src/pair/work-trace.tsx`):
+**A session as a conversation** (Jonathan, 2026-11-28: "a session should look a lot like a conversation I just wasn't
+involved in that's 90% tool calls"). The big form draws, under "Conversation" (`web/src/boards/session-trace.tsx`),
+in one log that scrolls on its own: the brief the job was given (the job's own `brief`, read by the brick's
+`jobHistory` read as before, not copied into the trace) as the asker's message; then the steps in the order they were
+reported, each of the agent's `words` as its message, each `reasoning` as a quiet "Reasoning" line folded until
+opened, and each run of tool steps between them as one "N steps" line (with "working" and how many failed) that opens
+in place to the steps; then the report (`sessionReport`) as the agent's last message, and, where the job failed, "Why
+it failed" after it. A trailing `words` step whose words are the report is drawn once, as the report. The messages and
+folds are the chat's own parts (`web/src/pair/ui/message.tsx`, `bubble.tsx`, `trace.tsx`, and `pair/reply.tsx`,
+markdown with no raw HTML, so markup in an agent's words is shown as text), composed as the thread's transcript
+composes a message (`pair/transcript.tsx`). The latest run of a working session starts open, and so does a failed
+session's last run; any other run is folded until opened. A session recorded before schema 55 has tool steps only and
+draws as its brief, one run and its report. A session whose venue is not `handoff` reads no trace and draws its brief
+and how it ended. The side form's latest step is asked for among tool steps only (`kind: "tool"`), so it reads as it
+did; the compact form is unchanged.
+
+Inside a run, steps are drawn as the conversation's own work-trace cards read them (`web/src/pair/work-trace.tsx`):
 a call and its result are one card, a subagent's steps sit inside its card, the newest is at the bottom and stays in
 view unless the member has scrolled up. It asks for the trace only when the conversation's venue is `handoff`.
 A step's line is the first line of its command (or its tool) and its state; it opens in place to the whole command,
@@ -1551,7 +1595,7 @@ face made from the agent's colours.
 | `Segmented`, `Menu` | One of a few fixed choices, all in view; or one of many, the chosen one in view and the rest in a list that opens in place. The page has no native picker. |
 | `Meter` | How full something is: a thin bar whose tone turns as it fills. |
 | `Time`, `when` | The one way a brick writes a time: how long ago while it is recent (or how soon), the date after that, in the member's device zone; the whole date and time is its title. |
-| Steps | A session's log (`session-trace.tsx`): one line a step, a mark for where it stands, what ran, and what it said when opened. |
+| Steps | A session's log (`session-trace.tsx`): one line a step, a mark for where it stands, what ran, and what it said when opened. In the big form a run of them is folded under one "N steps" line between the agent's messages (the chat's own `Message`, `Bubble` and `Trace` parts), its reasoning a quiet folded "Reasoning" line. |
 
 The three forms are decided the same way for every brick. The primary form leads with the one thing the brick is
 about, then its meta line, facts, sections and, last, its actions; a form that opens on a press takes the place of
@@ -1615,12 +1659,12 @@ statements and 180 ms. Commits 100 ms or more apart cost what they did.
 
 **What was not built, and why.**
 
-1. *Wake a selection only for writes to what it reads.* This is the real saving: most commits change nothing a
-   given brick shows. It needs the write side to say which tables it wrote (no operation does today, and SQLite
-   is not asked), and every selection to know which tables it reads, including the tables that decide who may
-   see a row: a selection must still be read again when access changes. A wrong answer here is a brick showing
-   old data, or data the member may no longer read, so it is a change to the data layer with its own checks,
-   not a change to boards.
+1. *Wake a selection only for writes to what it reads.* **Built 2026-11-28 (t-2431), on by default: "Scoping"
+   below.** This is the real saving: most commits change nothing a given brick shows. It needs the write side to
+   say which tables it wrote, and every selection to know which tables it reads, including the tables that decide
+   who may see a row: a selection must still be read again when access changes. A wrong answer here is a brick
+   showing old data, or data the member may no longer read, so it is a change to the data layer with its own
+   checks, not a change to boards.
 2. *Stop reading for boards that are off screen.* **Built 2026-11-27, as the owner decided** ("we absolutely treat
    everything not on the current screen as paused"). Only the board on screen mounts its bricks' bodies, so a
    trail of three boards holds the reads of one ("The page", "Off screen"). The board the page slides away from
@@ -1685,7 +1729,7 @@ What is left is the eager ten: about 200 statements a commit, half of what all 2
 every commit as before. They are the conversation and the page's own reads, and making them cheaper is item 1
 above (wake a selection only for what it reads), not a pace.
 
-**Checking item 1 before it acts (t-2431).** `LOOM_LIVE_SCOPE=shadow` (`src/core/data/live-scope.ts`) tracks which
+**Checking item 1 before it acted (t-2431).** `LOOM_LIVE_SCOPE=shadow` (`src/core/data/live-scope.ts`) tracks which
 tables each live reading read and each commit wrote, still reads every selection, and checks each answer against
 what scoping would have done. `npm run test:shadow` runs the whole server suite that way. Passing means no test
 produced a reading scoping would have skipped whose answer changed (a violation throws under vitest, and
@@ -1693,6 +1737,68 @@ produced a reading scoping would have skipped whose answer changed (a violation 
 statements running beside it. A test that counts a connection's statements leaves those out with
 `trackerStatement` (`src/core/data/table-tracker.ts`). It passes only as far as `npm test` does: a test failing in
 both is not a shadow failure.
+
+**Scoping (built 2026-11-28, t-2431; on by default, as the owner decided: "just send it. we're the only users
+right now").** Shadow ran about fourteen hours on the real household with no violation first. `LOOM_LIVE_SCOPE`
+is `on` when unset, and `off` or `shadow` when set so; anything else stops loom at startup.
+
+- *What it does.* Each commit says which tables it wrote (`src/core/data/table-tracker.ts`, from each statement's
+  EXPLAIN program, triggers, cascades, views and indexes included), and each reading of a live selection
+  records which tables it read, the visibility rule's joins included. A commit wakes a selection only when it
+  wrote one of those tables (`wouldSkip`, `src/core/data/live.ts`). A commit during a reading is matched against
+  that reading's tables when it ends: the reading is made again if it read any of them, and is otherwise
+  published as current.
+- *What is always read again, as before.* A selection whose last reading depended on anything a table of the
+  shared connection does not hold: the clock (`clock.now()` in next-data's own fields, `'now'` in SQL,
+  `loom_now()` and any function not marked deterministic), another database file (memory, notes, knowledge,
+  people), a virtual table or `sqlite_schema`, the cache of model accounts shared between selections, and every
+  field the composition is given (`fields` of `nextData`: memory, inbox, kits, programs, accounts, desk time and
+  the rest) that has not been inspected. Inspected so far, and read only by their tables: Comms' own fields
+  (`homeComms`, `commsThread`, `commsMessages`, `commsThreads`, `commsFolders`, `commsRefs`, `sessionReport`) and a
+  session's trace and count; their use of the clock is the words' keeping time, and the conversation lifetime
+  sweep writes each message and step at that time (`src/core/conversations/lifetime.ts`). A session's
+  `sessionTraceExpired` turns on the job's age alone, which nothing writes at, so it stays unscoped. And every
+  commit whose tables are not known: anything run through `exec`, a pragma, DDL, a write to a virtual table,
+  `changed()` called without tables (deadlines, the runtime, tempo, memory signals), a stamp
+  (`metadataChanged`), and any commit after another connection or process wrote the file (SQLite's
+  `data_version` moved).
+- *What cannot be missed.* Only a committed `DataWrites.run` reports its tables; one that throws tells nobody, as
+  before. A savepoint rolled back inside a commit is still reported (over-reporting, never under). A write made
+  outside any `DataWrites.run`, told to nobody or told without tables, is carried into the next commit's tables.
+  A writing statement counts only when SQLite's count of changed rows moved while it ran, which includes what its
+  triggers, cascades and INSTEAD OF triggers wrote: the sweeps that run after every commit and match no row
+  (tempo's inbox volume, expired results) no longer wake every reader of their tables.
+- *What it saves.* The cost harness above, `LOOM_LIVE_SCOPE=off` against `on`, same build, the board of ten
+  (28 selections, 10 eager) as the page is now:
+
+  | Case (two runs each) | off: readings, statements, processor | on: readings, statements, processor |
+  |---|---|---|
+  | One commit to a table no brick reads (a machine's name) | 28, 421, 60 to 134 ms | 8, 184, 37 to 38 ms |
+  | 20 such commits, 300 ms apart | 264, 4,645 to 4,651, 396 to 871 ms | 80, 2,308 to 2,314, 268 to 302 ms |
+  | A session reporting 30 steps over 10 s | 354 to 364, 6,378 to 6,582, 550 to 638 ms | 100, 3,205 to 3,220, 396 to 424 ms |
+  | One click (claim a ticket) and the 6.5 s after it | 56 to 66, 1,341 to 1,514, 129 to 314 ms | 56, 1,401 to 1,404, 146 to 156 ms |
+
+  The processor figures include the writes themselves and vary from run to run; readings and statements are the
+  steady measure. A click costs what it did: what it writes is what the bricks on screen read.
+  The eight still read for an unrelated commit are the unscoped ones: the agent directory (memory), the running
+  session's steps (its expiry flag), the session brick (a virtual table), the desk's doing list (the clock) and
+  four reads of the inbox, whose fields are not yet inspected. Inspecting those is the next saving.
+- *If something looks stale.* Set `LOOM_LIVE_SCOPE=off` in the service's environment and restart loom: every
+  commit reads every open selection again, exactly as before scoping, and no table is tracked.
+  `LOOM_LIVE_SCOPE=shadow` reads everything too and logs `live scope violation: …` for any reading scoping would
+  have skipped whose answer changed, naming the selection, what it read and what was written.
+  `npm run test:live-scope` and `npm run test:live-off` run the suite in either mode.
+
+**The session brick's reads, since it reads as a conversation (2026-11-28).** No read was added. Live, as before:
+the job and conversation (`BrickSession`), the job's detail with its brief (`BrickSessionJob`, big form), the report
+(`BrickSessionReport`, big form of a handoff) and the latest page of steps with their count (`BrickSessionTrace`,
+eager while the job runs, relaxed once it has ended); each step of that page now also carries its `kind`, a column of
+the row it already reads, and the page holds words and reasoning steps among its 100. The side form's latest step
+(`BrickSessionStep`) is asked for with `kind: "tool"`, one more condition on the same indexed read, and opens no words.
+On demand only: earlier steps (`BrickSessionEarlier`, paused until "Load earlier steps" is pressed). Opening a folded
+run or reasoning line reads nothing: their words came with the page. A session that keeps no trace leaves the trace
+read paused. With scoping on (below) the trace's reads stay scoped: a step's kind is a column of `job_trace`, the
+table they already read, so a step of any kind wakes them and nothing else new does.
 
 ## What goes
 

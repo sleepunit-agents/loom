@@ -2549,11 +2549,15 @@ export const jobTrace = sqliteTable('job_trace', {
   clientId: text('client_id').notNull(),
   words: blob('words', { mode: 'buffer' }),
   keepUntil: text('keep_until').notNull(),
+  // What the step is (schema 55): a tool call or its result, the agent's own words between them, or its reasoning
+  // where the harness gives it readably. Every step before schema 55 is a tool step (core/conversations/job-trace.ts).
+  kind: text('kind', { enum: ['tool', 'words', 'reasoning'] }).notNull().default('tool'),
 }, t => [
   primaryKey({ columns: [t.conversation, t.seq] }),
   check('job_trace_at_utc', utc(t.at)),
   check('job_trace_keep_until_utc', utc(t.keepUntil)),
   check('job_trace_card_state_choice', sql`${t.cardState} in ('running', 'done', 'failed')`),
+  check('job_trace_kind_choice', sql`${t.kind} in ('tool', 'words', 'reasoning')`),
   uniqueIndex('job_trace_client_id_unique').on(t.conversation, t.clientId),
   index('job_trace_keep_until_idx').on(t.keepUntil),
 ]);

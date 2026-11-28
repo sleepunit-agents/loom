@@ -6,8 +6,10 @@
  * The built page is served by loom's normal startup over a fictitious household and drawn in Chrome with a board
  * of ten bricks. Each case is run twice: as the page is, and with every selection made eager and no "now" sent
  * (the page's socket messages are rewritten on their way out), which is how the page was before there were two
- * paces. Counted: SQLite statements run on loom's connection, and the processor time of this process, which is
- * loom's (Chrome is another process). The numbers are printed; nothing is asserted about them. */
+ * paces. Counted: readings of open selections (initial and again), SQLite statements run on loom's connection
+ * (not those the live-scope tracker runs for itself, core/data/table-tracker.ts), and the processor time of this
+ * process, which is loom's (Chrome is another process). The numbers are printed; nothing is asserted about them.
+ * Run it with LOOM_LIVE_SCOPE=off and =on to compare scoping (docs/specs/boards.md, "Live reads and their cost"). */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -17,6 +19,9 @@ import { clock } from '../core/clock.js';
 import { agents, boxes, jobs, jobTrace, memberAgents, members, projectAgents, projectMembers, projects, tasks } from '../core/data/schema.js';
 import { reviewPlace } from '../core/conversations/review-place.js';
 import { sharedUiProgram } from '../../test/fixtures/shared-ui-program.js';
+import { DataLive } from '../core/data/live.js';
+import { liveScope } from '../core/data/live-scope.js';
+import { trackerStatement } from '../core/data/table-tracker.js';
 
 const root = resolve(import.meta.dirname, '../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find((p) => p && existsSync(p));
@@ -26,7 +31,7 @@ const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 type Program = Awaited<ReturnType<typeof sharedUiProgram>>;
 
 describe.runIf(chrome && existsSync(join(root, 'board.html')) && process.env.LOOM_MEASURE === 'on')('what the boards page\'s live reads cost', () => {
-  let program: Program, browser: Browser, statements = 0;
+  let program: Program, browser: Browser, statements = 0, readings = 0;
   const lines: string[] = [];
   beforeAll(async () => {
     program = await sharedUiProgram({ clock, webRoot: root, seed(db, now) {
@@ -44,7 +49,11 @@ describe.runIf(chrome && existsSync(join(root, 'board.html')) && process.env.LOO
     } });
     // Every statement run on loom's own connection from here on.
     const made = Object.getPrototypeOf(program.client.prepare('SELECT 1')) as Record<string, (...args: unknown[]) => unknown>;
-    for (const way of ['run', 'get', 'all', 'iterate']) { const real = made[way]; made[way] = function (this: unknown, ...args: unknown[]) { statements++; return real.apply(this, args); }; }
+    for (const way of ['run', 'get', 'all', 'iterate']) { const real = made[way]; made[way] = function (this: { source: string }, ...args: unknown[]) { if (!trackerStatement(this.source)) statements++; return real.apply(this, args); }; }
+    // Every reading of an open selection, the first and each again.
+    const live = DataLive.prototype as unknown as Record<'read', (...args: unknown[]) => unknown>, read = live.read;
+    live.read = function (this: unknown, ...args: unknown[]) { readings++; return read.apply(this, args); };
+    lines.push(`LOOM_LIVE_SCOPE=${liveScope()}`);
     browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
   }, 120_000);
   afterAll(async () => {
@@ -97,10 +106,10 @@ describe.runIf(chrome && existsSync(join(root, 'board.html')) && process.env.LOO
     return { page, context, sent, outside, step, operate, mine, id: opened.value!.board, ticket };
   }
   async function measured(label: string, during: () => Promise<void>, after: number) {
-    const from = statements, cpu = process.cpuUsage(), began = performance.now();
+    const from = statements, read = readings, cpu = process.cpuUsage(), began = performance.now();
     await during(); await sleep(after);
     const used = process.cpuUsage(cpu);
-    lines.push(`${label.padEnd(64)} ${String(statements - from).padStart(6)} statements  ${((used.user + used.system) / 1000).toFixed(0).padStart(5)} ms cpu  over ${((performance.now() - began) / 1000).toFixed(1)} s`);
+    lines.push(`${label.padEnd(64)} ${String(readings - read).padStart(5)} readings ${String(statements - from).padStart(6)} statements  ${((used.user + used.system) / 1000).toFixed(0).padStart(5)} ms cpu  over ${((performance.now() - began) / 1000).toFixed(1)} s`);
   }
 
   for (const before of [true, false]) {

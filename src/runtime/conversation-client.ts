@@ -37,7 +37,7 @@ export function bodyMailContext(item:BodyMail):string|null{
 }
 type Turn={model?:string;outcome?:'answered'|'progressed'|'deferred'|'failed'|'none';latencyMs?:number};
 type Reply=Turn&{clientId:string;words:string;progressId?:string};
-type Card=Reply&{tool:string;cardState:'running'|'done'|'failed'};
+type Card=Reply&{tool:string;cardState:'running'|'done'|'failed';stepKind?:'tool'|'words'|'reasoning'};
 export type BodyDigest={summary:string;ifAbsent?:boolean;items?:{kind:'decision'|'ask'|'task'|'project';text:string}[];question?:PrivateQuestion&{to:string}};
 export function bodyConversationClient(options:{url:string;token:string;job:string;conversation:string;signal:AbortSignal;fetch?:typeof fetch;clock?:Clock;timeoutMs?:number;onJobEnded?:()=>void}){
  const {token,job,conversation}=options;

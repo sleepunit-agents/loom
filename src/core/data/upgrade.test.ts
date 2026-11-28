@@ -101,6 +101,23 @@ describe('upgrading a household database', () => {
     expect(old.pragma('foreign_key_check')).toEqual([]);
   });
 
+  it('reads every step kept before schema 55 as a tool step, and keeps the rest of its row', () => {
+    const old = household(54);
+    old.function('loom_now', () => at);
+    old.exec(`INSERT INTO agents(id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('art','','#000','#fff','pebble','dot');
+      INSERT INTO conversations(id,agent,venue,place,label,started_at,last_at,turn_count) VALUES ('cv-child','art','handoff','["codex-review","job-parent"]','Child','${at}','${at}',0);
+      INSERT INTO jobs(id,agent,title,state,brief,model,started_by_kind,started_by,house_repository,house_file,house_branch,queued_at,conversation)
+        VALUES ('job-child','art','Build','running','','m','agent','art','r','Housefile','next','${at}','cv-child');
+      INSERT INTO job_trace(conversation,seq,job,at,tool,card_state,client_id,words,keep_until) VALUES ('cv-child',1,'job-child','${at}','Terminal','done','job-child:pair.1',x'00','${at}')`);
+    applyUpgrades(old, 54, () => at, 55);
+    expect(old.prepare('SELECT seq,tool,card_state,client_id,hex(words) AS words,kind FROM job_trace').all()).toEqual([{ seq: 1, tool: 'Terminal', card_state: 'done', client_id: 'job-child:pair.1', words: '00', kind: 'tool' }]);
+    old.exec(`INSERT INTO job_trace(conversation,seq,job,at,tool,card_state,client_id,words,keep_until,kind) VALUES ('cv-child',2,'job-child','${at}','Words','done','job-child:say.1',x'00','${at}','words')`);
+    expect(() => old.exec(`INSERT INTO job_trace(conversation,seq,job,at,tool,card_state,client_id,words,keep_until,kind) VALUES ('cv-child',3,'job-child','${at}','Words','done','job-child:say.2',x'00','${at}','chatter')`)).toThrow(/CHECK/);
+    const pinned = open(); pinned.exec(shipped(55));
+    expect(dataSchemaShape(old)).toEqual(dataSchemaShape(pinned));
+    expect(old.pragma('foreign_key_check')).toEqual([]);
+  });
+
   it('gives every job that ended before schema 54 no reason for its failure, and keeps the rest of its row', () => {
     const old = household(53);
     old.function('loom_now', () => at);

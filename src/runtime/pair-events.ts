@@ -1,5 +1,8 @@
 import { StringDecoder } from 'node:string_decoder';
 export interface PairStep {
+  /** What the step is: a tool call or result (the default, and all a pairing thread's cards are), the agent's own
+   * words between its tool calls, or its reasoning where the harness gives it as readable text. */
+  kind?: 'tool' | 'words' | 'reasoning';
   call?: string;
   parent?: string;
   tool: string;
@@ -21,14 +24,30 @@ function printed(v: unknown) {
         .join('\n');
 }
 
-/** Decode only public work events. Reasoning blocks, raw MCP results and agent prompts
- * are never conversation cards. Shell output is checked at the body disclosure boundary. */
+/** Decode only public work events. Raw MCP results and agent prompts are never steps. Shell output, words and
+ * reasoning are checked at the body disclosure boundary (body-program.ts), which also decides who keeps the words and
+ * reasoning steps: only a handed-off session's trace does, never a pairing thread's cards.
+ *
+ * Words and reasoning, as each harness gives them (read 2026-11-28):
+ * - Claude Code (stream-json): each `assistant` event of the top-level model (`parent_tool_use_id` null) carries one
+ *   content block: `{type:"text",text}` is the agent's words; `{type:"thinking",thinking,signature}` is its reasoning.
+ *   On Claude Code 2.1.326 with Opus 5.5 `thinking` is always "" with only a signature, `--settings
+ *   {"showThinkingSummaries":true}` included, so nothing readable comes; `{type:"redacted_thinking",data}` is never
+ *   readable. A thinking block with readable text is kept; an empty or redacted one makes no step. A subagent's own
+ *   words (`parent_tool_use_id` set) are not the session's: its answer is its tool result.
+ * - Codex (`exec --json`): `item.completed` with `{type:"agent_message",text}` is the agent's words; `{type:"reasoning",
+ *   text}` is the reasoning summary Codex prints as readable text (it never prints the encrypted reasoning). */
 export function pairEvents(emit: (s: PairStep) => void) {
   const decoder = new StringDecoder('utf8'),
     calls = new Map<string, { name: string; label: string; parent?: string }>();
   let tail = '';
   function event(row: Row) {
     const item = object(row.item);
+    if (row.type === 'item.completed' && (item.type === 'agent_message' || item.type === 'reasoning')) {
+      const said = text(item.text);
+      if (said.trim()) emit({ kind: item.type === 'agent_message' ? 'words' : 'reasoning', call: text(item.id), tool: '', cardState: 'done', words: said });
+      return;
+    }
     if (row.type === 'item.started' || row.type === 'item.completed') {
       const kind = text(item.type);
       if (
@@ -77,7 +96,10 @@ export function pairEvents(emit: (s: PairStep) => void) {
       return;
     }
     if (row.type === 'assistant') {
+      const own = row.parent_tool_use_id == null;
       for (const p of list(object(row.message).content)) {
+        if (own && p.type === 'text' && text(p.text).trim()) emit({ kind: 'words', tool: '', cardState: 'done', words: text(p.text) });
+        if (own && p.type === 'thinking' && text(p.thinking).trim()) emit({ kind: 'reasoning', tool: '', cardState: 'done', words: text(p.thinking) });
         if (p.type !== 'tool_use') continue;
         const id = text(p.id),
           name = text(p.name),

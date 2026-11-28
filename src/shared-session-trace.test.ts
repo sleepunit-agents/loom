@@ -342,3 +342,63 @@ it('never returns another session\'s report', async () => {
   expect((await f.query(`{sessionReport(conversation:${JSON.stringify(f.thread.conversation)}){words}}`, bodyCredentials.member)).data).toEqual({ sessionReport: null });
   expect((await f.query(`{sessionReport(conversation:${JSON.stringify(f.child)}){words}}`, bodyCredentials.member)).data).toEqual({ sessionReport: { words: 'FIRST SESSION FINDINGS' } });
 });
+
+it('keeps a session\'s words and reasoning as steps of their kinds, sealed and kept like a tool step, read by the member and by nobody else', async () => {
+  const f = await fixture(), day = 86400000, written = f.clock.now();
+  const said = { kind: 'card', clientId: 'say-1', words: 'PRIVATE WORDS: I will read the pump notes.', tool: 'anything', cardState: 'running', stepKind: 'words' };
+  const thought = { kind: 'card', clientId: 'think-1', words: 'PRIVATE REASONING: notes first.', tool: 'Reasoning', cardState: 'done', stepKind: 'reasoning' };
+  expect(await (await f.report(thought, 'one')).json()).toEqual({ ok: true, value: { saved: true, seq: 1 } });
+  expect(await (await f.report(said, 'two')).json()).toEqual({ ok: true, value: { saved: true, seq: 2 } });
+  expect(await (await f.report({ ...step, clientId: 'tool-1' }, 'three')).json()).toEqual({ ok: true, value: { saved: true, seq: 3 } });
+  // A step that does not say its kind is a tool step, as every step was before.
+  const rows = f.db.select().from(s.jobTrace).all();
+  // loom writes a words or reasoning step's tool line and state, whatever the body sent.
+  expect(rows.map((row) => [row.seq, row.kind, row.tool, row.cardState])).toEqual([[1, 'reasoning', 'Reasoning', 'done'], [2, 'words', 'Words', 'done'], [3, 'tool', 'Terminal', 'done']]);
+  // Sealed at rest like a tool step's words, and stamped with the same keep time.
+  for (const words of [said.words, thought.words]) expect(f.db.$client.serialize().includes(Buffer.from(words))).toBe(false);
+  expect(await f.key.open(rows[1].words!)).toBe(said.words);
+  for (const row of rows) expect(row.keepUntil).toBe(new Date(written + TRACE_KEEP_DAYS * day).toISOString());
+  // Nothing enters the originating thread.
+  expect(f.db.select().from(s.messages).all()).toEqual([]);
+  const fields = 'seq kind tool cardState words';
+  expect((await f.trace(bodyCredentials.member, fields)).data!.sessionTrace).toEqual([
+    { seq: 1, kind: 'reasoning', tool: 'Reasoning', cardState: 'done', words: thought.words },
+    { seq: 2, kind: 'words', tool: 'Words', cardState: 'done', words: said.words },
+    { seq: 3, kind: 'tool', tool: 'Terminal', cardState: 'done', words: step.words },
+  ]);
+  // One kind alone: the latest tool step, as the side form reads it, opens no words and skips the agent's own.
+  expect((await f.query(`{sessionTrace(conversation:${JSON.stringify(f.child)},kind:"tool",limit:1){seq tool}}`, bodyCredentials.member)).data).toEqual({ sessionTrace: [{ seq: 3, tool: 'Terminal' }] });
+  expect((await f.query(`{sessionTrace(conversation:${JSON.stringify(f.child)},kind:"words"){seq}}`, bodyCredentials.member)).data).toEqual({ sessionTrace: [{ seq: 2 }] });
+  expect((await f.query(`{sessionTrace(conversation:${JSON.stringify(f.child)},kind:"chatter"){seq}}`, bodyCredentials.member)).errors).toBeDefined();
+  expect((await f.query(`{sessionTraceCount(conversation:${JSON.stringify(f.child)})}`, bodyCredentials.member)).data).toEqual({ sessionTraceCount: 3 });
+  // Another member with the agent and project, a full owner, the agent, the job's own body, and nobody signed in.
+  for (const token of [bobToken, oliveToken, bodyCredentials.agent, childToken, bodyCredentials.body]) {
+    for (const asked of [fields, 'seq']) expect((await f.trace(token, asked)).data, token.slice(0, 4)).toEqual({ sessionTrace: [] });
+    expect((await f.query(`{sessionTrace(conversation:${JSON.stringify(f.child)},kind:"words"){seq words}}`, token)).data).toEqual({ sessionTrace: [] });
+  }
+  const anonymous = await f.root.http.request('/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: `{sessionTrace(conversation:${JSON.stringify(f.child)}){seq words}}` }) });
+  expect(JSON.stringify(await anonymous.json())).not.toContain('PRIVATE');
+  // Whatever is not a member (an agent, a runner, a service: an outside account reaches loom only through one) reads none.
+  const reader = new JobTraceQueries(f.db, f.key, () => sql`1`, () => new Date(f.clock.now()).toISOString());
+  for (const viewer of [{ kind: 'agent', id: 'art', workingFor: 'alice' }, { kind: 'runner', id: 'r' }, { kind: 'service', id: 'svc' }] as Parameters<JobTraceQueries['steps']>[0][])
+    expect(await reader.opened(viewer, { conversation: f.child }, () => {})).toEqual([]);
+  // The same keep time: at day 90 the sweep takes them, row and all, with the tool step.
+  f.root.services.runtime.close();
+  f.clock.advance(TRACE_KEEP_DAYS * day);
+  expect(f.db.select().from(s.jobTrace).all()).toEqual([]);
+});
+
+it('refuses words and reasoning steps from a job on anybody else\'s word, and in a thread\'s cards', async () => {
+  const f = await fixture(), at = new Date(f.clock.now()).toISOString();
+  const said = { kind: 'card', clientId: 'say-1', words: 'PRIVATE WORDS', tool: 'Words', cardState: 'done', stepKind: 'words' };
+  f.root.writes.run(() => {
+    f.db.insert(s.members).values({ id: 'carol', role: 'member', joinedAt: at }).run();
+    f.db.insert(s.inbox).values({ id: 'guest-mail', toKind: 'agent', to: 'art', source: 'thread', fromKind: 'person', fromId: 'carol', at, state: 'taken', changedAt: at, job: 'child-job', conversation: f.child }).run();
+  });
+  expect((await f.report(said, 'one')).status).toBe(403);
+  expect((await f.report({ ...said, stepKind: 'reasoning', clientId: 'think-1' }, 'two')).status).toBe(403);
+  expect(f.db.select().from(s.jobTrace).all()).toEqual([]);
+  // The parent thread's own body: a card there is a tool step and nothing else.
+  expect((await f.call('message', { ...said, clientId: 'thread-say' }, 'three', bodyCredentials.body)).status).toBe(400);
+  expect(f.db.select().from(s.messages).all()).toEqual([]);
+});

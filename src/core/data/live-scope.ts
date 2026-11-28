@@ -1,16 +1,18 @@
 import type { WrittenTables } from './table-tracker.js';
 
-/** How open live selections are matched to commits (t-2431). `off` (the default): every commit reads every open
- * selection again, and no tables are tracked. `shadow`: the same readings, and beside them the decision scoping
- * would make, checked against what each reading actually returned (./live.ts). Nothing acts on that decision yet,
- * so there is no `on`: the value is refused rather than quietly taken for one of these. */
-export type LiveScope = 'off' | 'shadow';
+/** How open live selections are matched to commits (t-2431). `off`: every commit reads every open selection
+ * again, and no tables are tracked. `shadow`: the same readings, and beside them the decision scoping would make,
+ * checked against what each reading actually returned (./live.ts). `on`: a selection is read again only when a
+ * committed write touched a table its last reading read; a reading that depended on anything else (the clock,
+ * another database, in-process state, a statement whose tables are not known) and a write whose tables are not
+ * known still wake it on every commit, as `off` does. Unset is `on`; anything else is refused at startup rather
+ * than quietly taken for one of these. LOOM_LIVE_SCOPE=off is the way back if an open window ever looks stale. */
+export type LiveScope = 'off' | 'shadow' | 'on';
 export function liveScope(env: NodeJS.ProcessEnv = process.env): LiveScope {
   const value = env.LOOM_LIVE_SCOPE?.trim().toLowerCase();
-  if (!value || value === 'off') return 'off';
-  if (value === 'shadow') return 'shadow';
-  if (value === 'on') throw new Error('LOOM_LIVE_SCOPE=on is not built yet (t-2431 ships off and shadow only); use off or shadow');
-  throw new Error(`LOOM_LIVE_SCOPE must be off or shadow, not ${JSON.stringify(env.LOOM_LIVE_SCOPE)}`);
+  if (!value || value === 'on') return 'on';
+  if (value === 'off' || value === 'shadow') return value;
+  throw new Error(`LOOM_LIVE_SCOPE must be off, shadow or on, not ${JSON.stringify(env.LOOM_LIVE_SCOPE)}`);
 }
 
 /** A reading scoping would have skipped, whose answer nonetheless changed. */

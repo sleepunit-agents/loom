@@ -1505,12 +1505,14 @@ CREATE TABLE `job_trace` (
 	`client_id` text NOT NULL,
 	`words` blob,
 	`keep_until` text NOT NULL,
+	`kind` text DEFAULT 'tool' NOT NULL,
 	PRIMARY KEY(`conversation`, `seq`),
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "job_trace_at_utc" CHECK("job_trace"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "job_trace"."at") = "job_trace"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "job_trace"."at") = "job_trace"."at", 0)),
 	CONSTRAINT "job_trace_keep_until_utc" CHECK("job_trace"."keep_until" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "job_trace"."keep_until") = "job_trace"."keep_until" or strftime('%Y-%m-%dT%H:%M:%fZ', "job_trace"."keep_until") = "job_trace"."keep_until", 0)),
-	CONSTRAINT "job_trace_card_state_choice" CHECK("job_trace"."card_state" in ('running', 'done', 'failed'))
+	CONSTRAINT "job_trace_card_state_choice" CHECK("job_trace"."card_state" in ('running', 'done', 'failed')),
+	CONSTRAINT "job_trace_kind_choice" CHECK("job_trace"."kind" in ('tool', 'words', 'reasoning'))
 );
 
 CREATE UNIQUE INDEX `job_trace_client_id_unique` ON `job_trace` (`conversation`,`client_id`);

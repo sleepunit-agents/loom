@@ -54,7 +54,9 @@ export class DataLive {
    * `relaxedMs`: the same time for a selection opened `relaxed` (./live-pace.ts). It is never shorter than
    * `settleMs`, whatever is given.
    * `scope` (./live-scope.ts): `shadow` records what each reading read and checks, against each answer, whether
-   * skipping the readings no written table touched would have been right. It changes no reading. */
+   * skipping the readings no written table touched would have been right. It changes no reading. `on` records the
+   * same and acts on it: a commit wakes a selection only when it wrote a table the selection's last reading read,
+   * or when either side is not known (`wouldSkip`). */
   constructor(private readonly measure?: MeasureRead, private readonly settleMs = 0, relaxedMs = settleMs,
     private readonly scope: LiveScope = 'off', private readonly report: (violation: LiveScopeViolation) => void = reportViolation) { this.relaxedMs = Math.max(settleMs, relaxedMs); }
   private readonly relaxedMs: number;
@@ -67,7 +69,12 @@ export class DataLive {
     clearReadDeadline(context);
     if (context && typeof context === 'object') this.readVersions.set(context, this.version);
   }
-  readVersion(context: unknown): number | undefined {
+  /** A reading whose answer is known to hold at the current version (scope `on`: nothing committed since it began
+   * wrote what it read). Its read deadline is kept. */
+  private current(context: unknown): void {
+    if (context && typeof context === 'object' && this.readVersions.has(context)) this.readVersions.set(context, this.version);
+  }
+    readVersion(context: unknown): number | undefined {
     return context && typeof context === 'object' ? this.readVersions.get(context) : undefined;
   }
   currentRead(version: number | undefined): boolean { return !this.stopped && version !== undefined && version === this.version; }
@@ -82,8 +89,8 @@ export class DataLive {
     return guard;
   }
 
-  /** `written`: the tables the commit wrote (./table-tracker.ts), `unknown` when not known. Every open selection is
-   * read again either way; only the shadow check looks at it. */
+  /** `written`: the tables the commit wrote (./table-tracker.ts), `unknown` when not known. With scope `on` a
+   * selection none of whose tables was written is not read again; otherwise every open selection is. */
   changed(written: WrittenTables = 'unknown') { this.version++; for (const listener of [...this.listeners]) listener(written); }
   /** Wake readers without making an otherwise current read invalidate its own
    * publication. Only for times loom stamps as it is used (a credential's last
@@ -148,15 +155,33 @@ export class DataLive {
     const between = options.pace === 'relaxed' ? this.relaxedMs : this.settleMs;
     // Asked for now, and not yet answered by a reading that began after the asking.
     let asked = false;
-    // Shadow scope only: what the last accepted reading read, and what was written since it began.
-    const shadow = this.scope === 'shadow';
+    // Shadow and on: what the last accepted reading read. Shadow: what was written since that reading began.
+    const shadow = this.scope === 'shadow', scoped = this.scope === 'on', tracking = shadow || scoped;
     let depends: ReadRecord | undefined, written: Set<string> | 'unknown' = new Set();
     const wrote = (tables: WrittenTables) => {
       if (written === 'unknown') return;
       if (tables === 'unknown') written = 'unknown'; else for (const table of tables) written.add(table);
     };
+    // On: what was committed while a reading was under way. Its tables are not known until it ends, so these are
+    // matched against what it read when it does, and a reading that read any of them is made again.
+    let inFlight = false, during: Set<string> | 'unknown' | undefined;
+    const meanwhile = (tables: WrittenTables) => {
+      if (during === 'unknown') return;
+      if (tables === 'unknown') { during = 'unknown'; return; }
+      during ??= new Set();
+      for (const table of tables) during.add(table);
+    };
     const selection = options.operationName ?? options.query.replace(/\s+/g, ' ').trim().slice(0, 160);
-    const signal = (tables: WrittenTables) => { if (shadow) wrote(tables); dirty = true; if (this.stopped) { cancel?.(); hurry?.(); } wake?.(); wake = undefined; };
+    const signal = (tables: WrittenTables) => {
+      if (shadow) wrote(tables);
+      if (!scoped || this.stopped) dirty = true;
+      else if (inFlight) meanwhile(tables);
+      // Nothing it read was written: the last answer stands, and it is not read again.
+      else if (!dirty && wouldSkip(depends, tables)) return;
+      else dirty = true;
+      if (this.stopped) { cancel?.(); hurry?.(); }
+      wake?.(); wake = undefined;
+    };
     const now = () => { if (ended) return; if (shadow) wrote('unknown'); asked = true; dirty = true; hurry?.(); wake?.(); wake = undefined; };
     let forget: (() => void) | undefined;
     const finish = () => { ended = true; cancel?.(); hurry?.(); this.listeners.delete(signal); forget?.(); forget = undefined; wake?.(); wake = undefined; };
@@ -186,7 +211,7 @@ export class DataLive {
             hurry = undefined;
             continue;
           }
-          dirty = false; readAt = performance.now();
+          dirty = false; readAt = performance.now(); inFlight = scoped; during = undefined;
           // Cancellation must release next() even if an async projection never
           // settles. The losing execution stays observed, including rejection.
           const cancellation = new Promise<typeof cancelled>(resolve => { cancel = () => resolve(cancelled); });
@@ -198,10 +223,18 @@ export class DataLive {
           let record: ReadRecord | undefined;
           if (shadow) written = new Set();
           const result = await Promise.race([
-            this.read({ schema, document, variableValues: options.variables, operationName: options.operationName, contextValue: options.contextValue }, measure, shadow ? found => { record = found; } : undefined),
+            this.read({ schema, document, variableValues: options.variables, operationName: options.operationName, contextValue: options.contextValue }, measure, tracking ? found => { record = found; } : undefined),
             cancellation,
           ]);
-          const accepted = () => { if (shadow) depends = record; };
+          // On: a commit while it read makes it stale only if it wrote what this reading read.
+          // One that wrote only elsewhere leaves the answer current as of now, and it is published as such: the
+          // socket drops (and reconnects for) a frame read at an older version than loom's (./socket.ts).
+          if (inFlight) {
+            inFlight = false;
+            if (during !== undefined) { if (!wouldSkip(record, during)) dirty = true; else this.current(options.contextValue); }
+            during = undefined;
+          }
+          const accepted = () => { if (tracking) depends = record; };
           const rejected = () => { if (shadow) { const later = written; written = since; wrote(later); } };
           cancel = undefined;
           if (ended) break;
@@ -210,7 +243,7 @@ export class DataLive {
           if (result.errors?.length) {
             // Only a committed change makes an error stale. Metadata wakeups
             // must not hide a stable resolver failure.
-            if (this.version !== readVersion) { rejected(); continue; }
+            if (scoped ? dirty : this.version !== readVersion) { rejected(); continue; }
             throw result.errors[0];
           }
           // The generator resolves asynchronously. A commit while execution
@@ -219,12 +252,10 @@ export class DataLive {
           const patches = revision === 0 ? [{ path: [], value: result.data }] : dataDiff(previous, result.data);
           // Shadow: scoping would have skipped this reading when the last one depended only on tables, and nothing
           // written since touched them. A changed answer means skipping would have been wrong.
-          if (shadow) {
-            if (revision > 0 && patches.length && wouldSkip(previousDepends, since)) {
-              this.report({ selection, read: [...previousDepends!.tables].sort(), written: describeWritten(since) });
-            }
-            accepted();
+          if (shadow && revision > 0 && patches.length && wouldSkip(previousDepends, since)) {
+            this.report({ selection, read: [...previousDepends!.tables].sort(), written: describeWritten(since) });
           }
+          accepted();
           previous = result.data;
           // Asking sets the dirty bit, so this reading began after the last asking: it is the answer to it.
           const confirm = asked; asked = false;

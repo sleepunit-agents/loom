@@ -173,10 +173,33 @@ const sessionData = (state: string, over: { queued?: number; detail?: object; ve
     BrickSessionJob: { rows: [{ brief, logTail: null, endedNote: null, claimedAt: ago((over.queued ?? 47) - 1), endedAt: null, ...over.detail }] },
     BrickSessionTrace: trace === 'offline' ? 'offline' : { steps: trace, total: over.total ?? trace.length, gone: false },
     BrickSessionEarlier: { steps: over.earlier ?? [] },
-    BrickSessionStep: trace === 'offline' ? 'offline' : { steps: trace.slice(-1).map(({ seq, tool, cardState }) => ({ seq, tool, cardState })) },
+    // The side form asks for its latest tool step only (kind "tool").
+    BrickSessionStep: trace === 'offline' ? 'offline' : { steps: trace.filter((s) => (s.kind ?? 'tool') === 'tool').slice(-1).map(({ seq, tool, cardState }) => ({ seq, tool, cardState })) },
     BrickSessionReport: { report: over.report ? { words: over.report } : null },
   };
 };
+/** A session that said things as it worked (schema 55): its own words and readable reasoning between its tool calls,
+ * in the order they came. Each entry is a step as above, or `[kind, words, minutes ago]` for one of the agent's own. */
+type Spoken = ['words' | 'reasoning', string, number];
+const talkFrom = (items: (Said | Spoken)[]): TraceStep[] => items.map((item, n) => item.length === 3
+  ? { seq: n + 1, job: sessionJob, at: ago(item[2]), tool: item[0] === 'words' ? 'Words' : 'Reasoning', cardState: 'done', words: item[1], kind: item[0], clientId: `${sessionJob}:${item[0] === 'words' ? 'say' : 'think'}.${n + 1}` }
+  : { ...stepsFrom([item])[0], seq: n + 1, kind: 'tool', clientId: `${sessionJob}:pair.${hex(item[0])}.${item[1] ? hex(item[1]) : '-'}.${n + 1}` });
+const talkSaid: (Said | Spoken)[] = [
+  ['reasoning', 'The survey is the source of truth for lengths; last winter’s note settles the spacing. Read the plan first, then measure, then price.', 47],
+  ['words', 'I’ll start from the current plan and the survey, then work out the posts before pricing anything.', 47],
+  ...said.slice(0, 8),
+  ['words', 'The north bed is **45.7 m** of fence. At 1.8 m spacing that is 27 posts, four of them corners and two for the gate.', 41],
+  ['reasoning', 'Two suppliers: ask a subagent to fetch both prices so the plan edit can go on meanwhile.', 41],
+  ...said.slice(8, 15),
+  ['words', 'Timber Yard North can deliver all 27; The Yard is cheaper but has only 19 in stock. Writing that into the plan now.', 35],
+  ...said.slice(15, 21),
+  ['words', 'The lint caught a table with five cells in a four-column row. Fixed, and it passes.', 30],
+  ...said.slice(21, 27),
+  ['words', 'Pushed and opened the pull request: <https://git.example.test/house/garden/pull/12>. Running the garden tests before I report. A note for whoever reads this: <b>markup</b> in my words is shown as text.', 4],
+  [14, 0, 'Terminal', 'running', 'npm test -- house/garden', 2],
+  [14, 0, 'Terminal', 'done', ' ✓ house/garden/plan.test.ts (6 tests) 41ms\n\n Test Files  1 passed (1)\n      Tests  6 passed (6)', 1],
+];
+const talkSteps = talkFrom(talkSaid);
 const doneSteps = stepsFrom([...said.slice(0, -1), [14, 0, 'Terminal', 'running', 'npm test -- house/garden', 2], [14, 0, 'Terminal', 'done', ' ✓ house/garden/plan.test.ts (6 tests) 41ms\n\n Test Files  1 passed (1)\n      Tests  6 passed (6)', 1]]);
 
 // ── Tempo: triggers of every kind and state ─────────────────────────────────────────────────────────────────────
@@ -292,9 +315,14 @@ export const scenes: BrickScenes[] = [
   ] },
   { brick: 'session', scenes: [
     { name: 'default', params: { session: 'cv-fence-0001' }, data: sessionData('running') },
+    // A session that said things as it worked: its words and reasoning between its folded runs of tool calls (schema 55).
+    { name: 'conversation', params: { session: 'cv-fence-0001' }, flag: 'Finished', data: sessionData('done', { queued: 180, steps: talkSteps, report: fenceReport, detail: { endedAt: ago(1), endedNote: 'Finished: the plan is written and the two prices are compared.' } }) },
+    { name: 'conversation-working', params: { session: 'cv-fence-0001' }, only: ['primary', 'side'], data: sessionData('running', { steps: talkSteps.slice(0, -1) }) },
+    // A session recorded before steps had kinds: tool steps only, read without a kind at all.
+    { name: 'old-tools-only', params: { session: 'cv-fence-0001' }, only: ['primary'], data: sessionData('done', { queued: 180, steps: doneSteps.map(({ kind: _kind, ...s }) => s), report: fenceReport, detail: { endedAt: ago(1) } }) },
     { name: 'done', params: { session: 'cv-fence-0001' }, flag: 'Finished', data: sessionData('done', { queued: 180, steps: doneSteps, report: fenceReport, detail: { endedAt: ago(128), endedNote: 'Finished: the plan is written and the two prices are compared.' } }) },
     { name: 'failed', params: { session: 'cv-fence-0001' }, flag: 'Failed', data: sessionData('failed', { queued: 95, steps: steps.slice(0, 18), detail: {
-      endedAt: ago(70), endedNote: 'The harness left with status 1 after 25 minutes.',
+      endedAt: ago(70), endedNote: 'The harness left with status 1 after 25 minutes.', failedWhy: 'the session’s token budget was spent',
       logTail: 'npx markdownlint house/garden/fence-plan.md\nhouse/garden/fence-plan.md:58 MD056/table-column-count Table column count [Expected: 4; Actual: 5]\nError: the session’s token budget was spent (200000 of 200000)\n    at Harness.turn (file:///opt/loom/runtime/harness.js:412:17)\n    at async Body.run (file:///opt/loom/runtime/body.js:88:5)\nexit 1',
     } }) },
     { name: 'queued', params: { session: 'cv-fence-0001' }, only: ['primary', 'side'], data: sessionData('queued', { queued: 1, steps: [], detail: { claimedAt: null } }) },
