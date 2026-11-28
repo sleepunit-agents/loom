@@ -1,5 +1,9 @@
 # Desktop app language
 
+> **Archived 2026-11-28 (t-2428).** This describes the desktop page, which was removed: the boards page
+> ([docs/specs/boards.md](../specs/boards.md)) is the only page after sign-in, and the sign-in gate is the page at
+> every other address. It is kept as the record of what the desktop was; its files are in git before that day.
+
 The desktop started with 22 first-party surfaces. The composition in `web/src/apps.ts` now registers 18 apps and the Home shell surface. Work owns three former launchers. Their old addresses still open the corresponding Work reader, including when restoring a saved desktop.
 
 | Original ID | Current destination | Workflow to exercise |

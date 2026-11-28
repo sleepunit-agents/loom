@@ -1,5 +1,9 @@
 # Desk tiling: apps share the screen, and widgets are tiles too
 
+> **Archived 2026-11-28 (t-2428).** This describes the desktop page, which was removed: the boards page
+> ([docs/specs/boards.md](../specs/boards.md)) is the only page after sign-in, and the sign-in gate is the page at
+> every other address. It is kept as the record of what the desktop was; its files are in git before that day.
+
 *2026-11-05; accepted 2026-11-06; phases 1 to 6 built 2026-11-06, and that day tiling became the only desktop (t-1884:
 "holy fuck this is so good. it should be the default ... if there's any significant amount of code required to keep the
 old way that we're not using, toss it and make this the only option"). Status: **built**. This is a design doc in the `docs/specs/`
@@ -749,7 +753,7 @@ screen readers. It shipped before tiling could be the default; the owner then ma
 - Per-app history: `web/src/trail.ts` (#536, t-1879).
 - The first-page budget: `src/ui/web-app.test.ts`.
 - The manifest: `docs/extensions.md` ("The manifest", `tab`, `tile`).
-- Comms's layout: [comms.md](comms.md) ("The app").
+- Comms's layout: [comms.md](../specs/comms.md) ("The app").
 
 ## Review gate
 

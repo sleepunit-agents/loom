@@ -39,7 +39,7 @@ function Tickets({ project, from, until, group, total }: { project: string; from
   return (
     <>
       <Rows label={backlogGroups[group]}>{tickets.map((t) => <Row key={t.id} place={{ brick: 'ticket', params: { ticket: t.id } }} title={<>{t.title} <span className="font-mono board-row-ref">{t.id}</span></>} />)}</Rows>
-      {total > PAGE && <Note>The first {PAGE} of {total}, by title. The desktop's backlog history lists the rest.</Note>}
+      {total > PAGE && <Note>The first {PAGE} of {total}, by title.</Note>}
     </>
   );
 }

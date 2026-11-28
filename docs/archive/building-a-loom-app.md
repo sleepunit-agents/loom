@@ -1,5 +1,9 @@
 # Building a loom app
 
+> **Archived 2026-11-28 (t-2428).** This guided building the desktop's apps (`web/src/kit`, `components/ui`), which were
+> removed with the desktop. The boards page's bricks have their own kit: `web/src/boards/brick-kit.tsx`
+> ([docs/specs/boards.md](../specs/boards.md)).
+
 Use `web/src/kit` over the cojeev `components/ui` primitives. Colours come from look tokens; do not add per-look app styles. The kit works in Neon Noir, Low Light and Daylight.
 
 - `AppFrame`: `title`, `actions`, `filters`, `crumb`, `go`, `where`, optional `lead`, `context`, `more`, and `about`. Its header uses AppHeader and the breadcrumb primitives. `about` participates in the desktop's right-click Chat about this hook; the window menu still derives the page from its URL. Never offer chat for a list as though it were an item.

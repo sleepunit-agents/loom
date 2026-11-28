@@ -43,7 +43,9 @@ node scripts/rebuild-walkthrough.mjs /tmp/loom-walkthrough-report
 
 `LOOM_TEST_CHROME` selects an existing Chromium binary. The walkthrough starts
 `startSharedHome`, the same built entry used by `serve --next`, opens the normal
-sign-in page, follows startup's one-time link, and discovers every launcher app.
+sign-in page, follows startup's one-time link, and discovers every launcher app. (It walks the desktop, which was
+removed 2026-11-28, t-2428: it no longer finds its apps, and is to be rewritten for the boards page before the
+browser suites are turned on again.)
 It records each tile's actual text, screenshot, console/page/network errors and
 GraphQL connection activity during that visit. Connection activity may also
 include the shell and other open tiles; it is not proof of a specific app's query.

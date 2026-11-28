@@ -1,5 +1,9 @@
 # loom's page as an app: React, shadcn and 000h
 
+> **Archived 2026-11-28 (t-2428).** This describes the desktop page, which was removed: the boards page
+> ([docs/specs/boards.md](../specs/boards.md)) is the only page after sign-in, and the sign-in gate is the page at
+> every other address. It is kept as the record of what the desktop was; its files are in git before that day.
+
 *2026-10-28. Status: **accepted** (Jonathan, terminal, 2026-10-28: "Agreed completely"). Jonathan, terminal, after a shootout of
 three builds of Art's Houses tab on real data (plain shadcn, shadcn with
 Animate UI, shadcn with 000h, then 000h as an app with a bottom dock and
@@ -51,7 +55,7 @@ without touching a piece.
   pages the dock holds Today and three of its tabs, and **More** (a drawer with
   the rest and the switch to another agent). On the household's: Home, Inbox
   (with its count), Places, Find, and More. A member who owns an agent also has
-  **Comms** ([comms.md](comms.md)), with its count of unread threads.
+  **Comms** ([comms.md](../specs/comms.md)), with its count of unread threads.
 - **Desktop:** the same dock as its labelled **rail** down the left side,
   every tab in it.
 - **Inside an app** (Jonathan, 2026-11-05: "back/breadcrumbs/etc first … menus is
@@ -204,7 +208,7 @@ information as it updates, limited page refresh based on what needs to change, a
   agent's memory, knowledge or people, or the household file, is written; when a piece's manifest answers
   differently (asked every 15s while an app is open); and after any action. The app asks again for the page it
   shows. While the stream is open, the old timer is a 60s fallback.
-  - A Comms thread has its own stream while it's on screen (`GET /comms/<thread>/events`, [comms.md](comms.md)),
+  - A Comms thread has its own stream while it's on screen (`GET /comms/<thread>/events`, [comms.md](../specs/comms.md)),
     owner-checked like its other routes. The shared stream's `change` for a thread goes only to that thread's member.
   - Comms is its own chunk, loaded only when it opens, so it adds nothing to the first page's budget.
   - The face states gain `talking`, for a reply landing. A manifest without it plays `done`'s animation, then

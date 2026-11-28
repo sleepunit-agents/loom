@@ -1,5 +1,9 @@
 # The agent desktop: agent cards and Needs you instead of widgets
 
+> **Archived 2026-11-28 (t-2428).** This describes the desktop page, which was removed: the boards page
+> ([docs/specs/boards.md](../specs/boards.md)) is the only page after sign-in, and the sign-in gate is the page at
+> every other address. It is kept as the record of what the desktop was; its files are in git before that day.
+
 *2026-11-07, t-1959. The owner clicked through the prototype (the "agent desktop" artifact, 2026-11-07) and approved it
 the same day: "the desktop is the least interesting view; loom is agent-centric, so the agents should be front and
 centre all the time." Status: **being built, in phases** (below). This supersedes the widgets of

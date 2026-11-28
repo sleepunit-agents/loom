@@ -327,39 +327,20 @@ A knowledge page that is really a memory (about the human or the work), or
 vice versa; `knowledge_maintain` reports them.
 _Avoid_: miscategorized, wrong bucket, drift
 
-## The desktop
+## The page
 
-**Tile**:
-One app on a big screen, sharing the screen with others by the tiling rule (docs/specs/desk-tiling.md). It has its own
-page, its own history and its own frame.
-_Avoid_: window (the old single big frame, gone 2026-11-06), pane, panel
+**The boards page**:
+The only page after sign-in (docs/specs/boards.md): a conversation with an agent, beside a board the agent fills
+with bricks. Its addresses are `/app/boards`, `/app/b/<board>` and `/app/t/<thread>`.
+_Avoid_: the desktop, the desk, tiles (the tiled desktop, removed 2026-11-28; docs/archive/desk-tiling.md)
 
-**One window at a time**:
-An Accessibility choice: the same tiled desktop with one app tile at most; opening another sends the one there to the
-dock. Kept per person (`oneWindow`).
-_Avoid_: plain mode, single-window mode
-
-**Agent card**:
-An agent on the desktop (docs/specs/agent-desk.md): big on Home, a summary that leads to the agent's page in the Agents
-app (its face, how it is, what it is doing, its last answer and latest conversations in brief, a composer); compact in
-the rail (its face, how it is, what it is doing, what's unread). The viewer's own agents only, always there,
-alphabetical by name.
-_Avoid_: widget (Home's small tiles, removed 2026-11-07), status card
+**The sign-in gate**:
+The page loom serves at every other address: signed out, the sign-in page; signed in, it goes on to the boards page.
 
 **Fit**:
-What an app declares about the room it can use: a minimum, an ideal and a maximum width, a minimum height, and whether
-it wants the big slot.
+What a brick declares about the room it can use, per form: a minimum, an ideal and a maximum width, and a minimum
+height.
 _Avoid_: size hint, constraints
-
-**The big slot**:
-The first app tile, the large one on the left once there are three or more apps.
-
-**Home**:
-The desktop with no app open: the Needs you band, then a big card per agent.
-
-**The rail**:
-The fixed-width column on the right while apps are open: Needs you at the top, then a compact card per agent. Hidden
-to **the strip** (a thin bar that brings it back) or set to auto-hide, by a right-click on it.
 
 ## Relationships
 

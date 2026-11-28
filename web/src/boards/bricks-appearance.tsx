@@ -79,7 +79,7 @@ export function Appearance({ form, act }: BodyProps) {
       <Note>{WORN_WORDS}</Note>
       <p role="status" className="board-note">{state.pending ? 'Saving…' : state.message ?? ''}</p>
       {group('Takes effect on this page', true)}
-      {group('For the desktop', false)}
+      {group('Kept, not used by a page yet', false)}
     </>
   );
 }
