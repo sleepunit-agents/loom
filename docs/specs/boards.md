@@ -1655,12 +1655,12 @@ statements and 180 ms. Commits 100 ms or more apart cost what they did.
 
 **What was not built, and why.**
 
-1. *Wake a selection only for writes to what it reads.* This is the real saving: most commits change nothing a
-   given brick shows. It needs the write side to say which tables it wrote (no operation does today, and SQLite
-   is not asked), and every selection to know which tables it reads, including the tables that decide who may
-   see a row: a selection must still be read again when access changes. A wrong answer here is a brick showing
-   old data, or data the member may no longer read, so it is a change to the data layer with its own checks,
-   not a change to boards.
+1. *Wake a selection only for writes to what it reads.* **Built 2026-11-28 (t-2431), on by default: "Scoping"
+   below.** This is the real saving: most commits change nothing a given brick shows. It needs the write side to
+   say which tables it wrote, and every selection to know which tables it reads, including the tables that decide
+   who may see a row: a selection must still be read again when access changes. A wrong answer here is a brick
+   showing old data, or data the member may no longer read, so it is a change to the data layer with its own
+   checks, not a change to boards.
 2. *Stop reading for boards that are off screen.* **Built 2026-11-27, as the owner decided** ("we absolutely treat
    everything not on the current screen as paused"). Only the board on screen mounts its bricks' bodies, so a
    trail of three boards holds the reads of one ("The page", "Off screen"). The board the page slides away from
@@ -1725,7 +1725,7 @@ What is left is the eager ten: about 200 statements a commit, half of what all 2
 every commit as before. They are the conversation and the page's own reads, and making them cheaper is item 1
 above (wake a selection only for what it reads), not a pace.
 
-**Checking item 1 before it acts (t-2431).** `LOOM_LIVE_SCOPE=shadow` (`src/core/data/live-scope.ts`) tracks which
+**Checking item 1 before it acted (t-2431).** `LOOM_LIVE_SCOPE=shadow` (`src/core/data/live-scope.ts`) tracks which
 tables each live reading read and each commit wrote, still reads every selection, and checks each answer against
 what scoping would have done. `npm run test:shadow` runs the whole server suite that way. Passing means no test
 produced a reading scoping would have skipped whose answer changed (a violation throws under vitest, and
@@ -1733,6 +1733,57 @@ produced a reading scoping would have skipped whose answer changed (a violation 
 statements running beside it. A test that counts a connection's statements leaves those out with
 `trackerStatement` (`src/core/data/table-tracker.ts`). It passes only as far as `npm test` does: a test failing in
 both is not a shadow failure.
+
+**Scoping (built 2026-11-28, t-2431; on by default, as the owner decided: "just send it. we're the only users
+right now").** Shadow ran about fourteen hours on the real household with no violation first. `LOOM_LIVE_SCOPE`
+is `on` when unset, and `off` or `shadow` when set so; anything else stops loom at startup.
+
+- *What it does.* Each commit says which tables it wrote (`src/core/data/table-tracker.ts`, from each statement's
+  EXPLAIN program, triggers, cascades, views and indexes included), and each reading of a live selection
+  records which tables it read, the visibility rule's joins included. A commit wakes a selection only when it
+  wrote one of those tables (`wouldSkip`, `src/core/data/live.ts`). A commit during a reading is matched against
+  that reading's tables when it ends: the reading is made again if it read any of them, and is otherwise
+  published as current.
+- *What is always read again, as before.* A selection whose last reading depended on anything a table of the
+  shared connection does not hold: the clock (`clock.now()` in next-data's own fields, `'now'` in SQL,
+  `loom_now()` and any function not marked deterministic), another database file (memory, notes, knowledge,
+  people), a virtual table or `sqlite_schema`, the cache of model accounts shared between selections, and every
+  field the composition is given (`fields` of `nextData`: memory, inbox, kits, programs, accounts, desk time and
+  the rest) that has not been inspected. Inspected so far, and read only by their tables: Comms' own fields
+  (`homeComms`, `commsThread`, `commsMessages`, `commsThreads`, `commsFolders`, `commsRefs`, `sessionReport`) and a
+  session's trace and count; their use of the clock is the words' keeping time, and the conversation lifetime
+  sweep writes each message and step at that time (`src/core/conversations/lifetime.ts`). A session's
+  `sessionTraceExpired` turns on the job's age alone, which nothing writes at, so it stays unscoped. And every
+  commit whose tables are not known: anything run through `exec`, a pragma, DDL, a write to a virtual table,
+  `changed()` called without tables (deadlines, the runtime, tempo, memory signals), a stamp
+  (`metadataChanged`), and any commit after another connection or process wrote the file (SQLite's
+  `data_version` moved).
+- *What cannot be missed.* Only a committed `DataWrites.run` reports its tables; one that throws tells nobody, as
+  before. A savepoint rolled back inside a commit is still reported (over-reporting, never under). A write made
+  outside any `DataWrites.run`, told to nobody or told without tables, is carried into the next commit's tables.
+  A writing statement counts only when SQLite's count of changed rows moved while it ran, which includes what its
+  triggers, cascades and INSTEAD OF triggers wrote: the sweeps that run after every commit and match no row
+  (tempo's inbox volume, expired results) no longer wake every reader of their tables.
+- *What it saves.* The cost harness above, `LOOM_LIVE_SCOPE=off` against `on`, same build, the board of ten
+  (28 selections, 10 eager) as the page is now:
+
+  | Case (two runs each) | off: readings, statements, processor | on: readings, statements, processor |
+  |---|---|---|
+  | One commit to a table no brick reads (a machine's name) | 28, 421, 60 to 134 ms | 8, 184, 37 to 38 ms |
+  | 20 such commits, 300 ms apart | 264, 4,645 to 4,651, 396 to 871 ms | 80, 2,308 to 2,314, 268 to 302 ms |
+  | A session reporting 30 steps over 10 s | 354 to 364, 6,378 to 6,582, 550 to 638 ms | 100, 3,205 to 3,220, 396 to 424 ms |
+  | One click (claim a ticket) and the 6.5 s after it | 56 to 66, 1,341 to 1,514, 129 to 314 ms | 56, 1,401 to 1,404, 146 to 156 ms |
+
+  The processor figures include the writes themselves and vary from run to run; readings and statements are the
+  steady measure. A click costs what it did: what it writes is what the bricks on screen read.
+  The eight still read for an unrelated commit are the unscoped ones: the agent directory (memory), the running
+  session's steps (its expiry flag), the session brick (a virtual table), the desk's doing list (the clock) and
+  four reads of the inbox, whose fields are not yet inspected. Inspecting those is the next saving.
+- *If something looks stale.* Set `LOOM_LIVE_SCOPE=off` in the service's environment and restart loom: every
+  commit reads every open selection again, exactly as before scoping, and no table is tracked.
+  `LOOM_LIVE_SCOPE=shadow` reads everything too and logs `live scope violation: …` for any reading scoping would
+  have skipped whose answer changed, naming the selection, what it read and what was written.
+  `npm run test:live-scope` and `npm run test:live-off` run the suite in either mode.
 
 **The session brick's reads, since it reads as a conversation (2026-11-28).** No read was added. Live, as before:
 the job and conversation (`BrickSession`), the job's detail with its brief (`BrickSessionJob`, big form), the report
@@ -1742,7 +1793,8 @@ the row it already reads, and the page holds words and reasoning steps among its
 (`BrickSessionStep`) is asked for with `kind: "tool"`, one more condition on the same indexed read, and opens no words.
 On demand only: earlier steps (`BrickSessionEarlier`, paused until "Load earlier steps" is pressed). Opening a folded
 run or reasoning line reads nothing: their words came with the page. A session that keeps no trace leaves the trace
-read paused.
+read paused. With scoping on (below) the trace's reads stay scoped: a step's kind is a column of `job_trace`, the
+table they already read, so a step of any kind wakes them and nothing else new does.
 
 ## What goes
 

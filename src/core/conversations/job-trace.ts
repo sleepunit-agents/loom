@@ -15,6 +15,7 @@ import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import { selectedQueryFields } from '../data/queries.js';
 import { keepReadUntil } from '../data/read-lease.js';
+import { markUnscoped, readsOnlyTables } from '../data/table-tracker.js';
 import { conversations, jobs, jobTrace } from '../data/schema.js';
 import { unlinkHandoffTickets } from './handoff-tickets.js';
 import { isCleanLine } from '../line-name.js';
@@ -186,8 +187,11 @@ export function jobTraceFields(service: JobTraceQueries): GraphQLFieldConfigMap<
     words: { type: GraphQLString, resolve: row => row.text ?? null },
     wordsKeepUntil: { type: GraphQLString, resolve: row => service.keepUntil(row) },
   } });
+  // Inspected for live scoping (t-2431): the trace and its count read only the shared connection, and the steps'
+  // keeping time is when the conversation lifetime sweep writes them (lifetime.ts). Whether a job's steps have
+  // all expired turns on its age alone, which nothing writes at: that one reads the clock.
   return {
-    sessionTrace: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(step))),
+    ...readsOnlyTables({ sessionTrace: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(step))),
       args: { conversation: text, job: { type: GraphQLString },
         kind: { type: GraphQLString, description: 'Only steps of this kind: tool, words or reasoning.' }, limit: { type: GraphQLInt, defaultValue: TRACE_PAGE_DEFAULT },
         after: { type: GraphQLInt, description: 'Only steps after this seq, earliest first. A stored step never changes, so a reader that has some asks only for newer ones.' },
@@ -196,9 +200,9 @@ export function jobTraceFields(service: JobTraceQueries): GraphQLFieldConfigMap<
         selectedQueryFields(info).has('words') ? service.opened(context.viewer, args, until => keepReadUntil(context, until)) : service.steps(context.viewer, args) },
     sessionTraceCount: { type: new GraphQLNonNull(GraphQLInt), args: { conversation: text, job: { type: GraphQLString } },
       description: 'How many steps the trace holds in all; nought for anybody who may not read it.',
-      resolve: (_row, args: { conversation: string; job?: string | null }, context) => service.total(context.viewer, args) },
+      resolve: (_row, args: { conversation: string; job?: string | null }, context) => service.total(context.viewer, args) } }),
     sessionTraceExpired: { type: new GraphQLNonNull(GraphQLBoolean), args: { conversation: text, job: text },
       description: 'The job has no steps and is older than a step is kept: any it reported are no longer kept.',
-      resolve: (_row, args: { conversation: string; job: string }, context) => service.expired(context.viewer, args) },
+      resolve: (_row, args: { conversation: string; job: string }, context) => { markUnscoped('the clock (a job\'s age)'); return service.expired(context.viewer, args); } },
   };
 }
