@@ -241,5 +241,7 @@ export const scenes: BrickScenes[] = [
     { name: 'archived', params: { scope: 'archived' }, data: threadsData(archived), only: ['primary', 'side'] },
     { name: 'empty', params: { scope: 'open' }, data: threadsData([]) },
     { name: 'unavailable', params: { scope: 'open' }, data: { BoardsThreads: 'offline', DeskAgentDirectory: directory }, only: ['side'] },
+    // Delete… on the first row opens the question that names it, in place of that row's controls.
+    { name: 'deleting', params: { scope: 'open' }, data: threadsData(open), press: ['Delete…'], only: ['primary'] },
   ] },
 ];

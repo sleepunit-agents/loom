@@ -279,7 +279,7 @@ export function Page({ member, thread, agent, at, exists = false }: { member: st
           </button>
           {/* The one control: the panel it opens holds the conversations, this one's rename and archive, and notifications. */}
           <ThreadSwitch thread={thread} visit={visit}>
-            <ThreadHead thread={thread} member={member} />
+            <ThreadHead thread={thread} member={member} visit={visit} />
             <Notify />
           </ThreadSwitch>
         </div>

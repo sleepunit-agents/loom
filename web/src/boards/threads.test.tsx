@@ -11,7 +11,7 @@ type Answer = { status: string; data?: unknown; settling?: boolean };
 const f = vi.hoisted(() => {
   const f = {
     listeners: new Set<() => void>(), version: 0,
-    answers: {} as Record<string, Answer | ((variables: Record<string, unknown>) => Answer)>, asked: [] as string[],
+    answers: {} as Record<string, Answer | ((variables: Record<string, unknown>) => Answer)>, asked: [] as string[], once: [] as string[],
     op: vi.fn(), stored: vi.fn(), went: [] as string[], tail: null as object | null,
     heard: [] as [string, (event: unknown) => void][], focused: vi.fn(),
   };
@@ -56,6 +56,15 @@ vi.mock('../data/id', () => { let n = 0; return { newId: () => 'new-' + ++n }; }
 vi.mock('../data/graphql', async () => {
   const { useSyncExternalStore } = await import('react');
   return {
+    /** The one-shot read: answered from `answers` by its query's name like the live one, and each asking recorded. */
+    useDataOnce(query: string, variables: Record<string, unknown>, options?: { pause?: boolean }) {
+      useSyncExternalStore((fn) => { f.listeners.add(fn); return () => { f.listeners.delete(fn); }; }, () => f.version);
+      if (options?.pause) return { status: 'loading' };
+      const name = /query (\w+)/.exec(query)![1], said = JSON.stringify([name, variables]);
+      if (!f.once.includes(said)) f.once.push(said);
+      const answer = f.answers[name];
+      return typeof answer === 'function' ? answer(variables) : answer ?? { status: 'live', data: null };
+    },
     useDataQuery(query: string, variables: Record<string, unknown> | undefined, options?: { pause?: boolean }) {
       useSyncExternalStore((fn) => { f.listeners.add(fn); return () => { f.listeners.delete(fn); }; }, () => f.version);
       if (options?.pause) return { status: 'loading' };
@@ -101,7 +110,7 @@ const listed = (rows = threads, agents = ['art', 'mira']) => ({ BoardsThreads: {
 const display = (id: string) => ({ id, markBg: '#3366ff', markFg: '#ffffff', faceShape: 'clover', faceEyes: 'oval', spriteVersion: null });
 
 beforeEach(() => {
-  f.answers = {}; f.asked = []; f.tail = null; f.heard = []; f.went.length = 0;
+  f.answers = {}; f.asked = []; f.once = []; f.tail = null; f.heard = []; f.went.length = 0;
   f.op.mockReset().mockResolvedValue(undefined); f.stored.mockReset(); f.focused.mockReset();
   location.pathname = '/app/boards';
 });
@@ -203,10 +212,10 @@ describe('the thread\'s title', () => {
   const typed = (words: string) => act(async () => tree!.root.findAllByType('input')[0].props.onChange({ target: { value: words } }));
   const submit = () => act(async () => tree!.root.findAllByType('form')[0].props.onSubmit({ preventDefault() {} }));
 
-  it('is shown, with rename and archive for the member whose thread it is', async () => {
+  it('is shown, with rename, pin, archive and delete for the member whose thread it is', async () => {
     await head();
     expect(text(tree!.root.findAllByType('strong')[0])).toBe('The gate');
-    expect(buttons().map(text)).toEqual(['Rename', 'Archive…']);
+    expect(buttons().map(text)).toEqual(['Rename', 'Pin', 'Archive…', 'Delete…']);
   });
   it('draws nothing until the thread is read, and no controls on someone else\'s thread', async () => {
     f.answers = { BoardsThreadHead: { status: 'loading' } };
@@ -248,16 +257,128 @@ describe('the thread\'s title', () => {
     expect(f.op).not.toHaveBeenCalled();
     await press('Keep it');
     expect(f.op).not.toHaveBeenCalled();
-    expect(buttons().map(text)).toEqual(['Rename', 'Archive…']);
+    expect(buttons().map(text)).toEqual(['Rename', 'Pin', 'Archive…', 'Delete…']);
     await press('Archive…'); await press('Archive conversation');
     expect(f.op.mock.calls).toEqual([['comms.change', { thread: 'th:old', change: 'archive', archived: true }]]);
   });
   it('says an archived thread is archived and restores it', async () => {
     await head({ archivedAt: '2026-11-26T10:00:00Z' });
     expect(text(tree!.root)).toContain('Archived');
-    expect(buttons().map(text)).toEqual(['Rename', 'Restore']);
+    expect(buttons().map(text)).toEqual(['Rename', 'Pin', 'Restore', 'Delete…']);
     await press('Restore');
     expect(f.op.mock.calls).toEqual([['comms.change', { thread: 'th:old', change: 'archive', archived: false }]]);
+  });
+  it('pins and unpins with comms.change, as Comms\' More menu does, at once', async () => {
+    await head();
+    await press('Pin');
+    expect(f.op.mock.calls).toEqual([['comms.change', { thread: 'th:old', change: 'pin', pinned: true }]]);
+    await act(async () => tree!.unmount());
+    f.op.mockClear();
+    await head({ pinned: true });
+    expect(buttons().map(text)).toEqual(['Rename', 'Unpin', 'Archive…', 'Delete…']);
+    await press('Unpin');
+    expect(f.op.mock.calls).toEqual([['comms.change', { thread: 'th:old', change: 'pin', pinned: false }]]);
+  });
+  it('says so when a pin is refused or fails, and keeps the controls', async () => {
+    await head();
+    f.op.mockRejectedValueOnce(Object.assign(new Error('Forbidden'), { status: 403 }));
+    await press('Pin');
+    expect(text(tree!.root.findAll((n) => n.props.role === 'alert')[0])).toBe('Could not save. Try again.');
+    expect(buttons().map(text)).toEqual(['Rename', 'Pin', 'Archive…', 'Delete…']);
+  });
+  describe('delete', () => {
+    const visit = vi.fn();
+    const mine = () => { visit.mockReset(); f.answers = { BoardsThreadHead: { status: 'live', data: { thread: row('th:old', { title: 'The gate' }) } } }; return mount(h(ThreadHead, { thread: 'th:old', member: 'sam', visit })); };
+    it('asks first, naming the conversation by its title, and sends nothing until it is answered yes', async () => {
+      await mine();
+      await press('Delete…');
+      expect(f.op).not.toHaveBeenCalled();
+      const question = tree!.root.findAll((n) => n.props.role === 'group' && n.props['aria-label'] === 'Delete conversation')[0];
+      expect(text(question.findAllByType('p')[0])).toBe('Delete “The gate” and its private words? It cannot be undone.');
+      expect(question.findAllByType('button').map(text)).toEqual(['Delete conversation', 'Keep it']);
+      await press('Delete conversation');
+      expect(f.op.mock.calls).toEqual([['comms.change', { thread: 'th:old', change: 'delete' }]]);
+      // The thread is gone: the page goes to its own address, as Comms goes back to its list.
+      expect(visit.mock.calls).toEqual([['/app/boards']]);
+    });
+    it('cancelling sends nothing and goes nowhere', async () => {
+      await mine();
+      await press('Delete…');
+      await press('Keep it');
+      expect(f.op).not.toHaveBeenCalled();
+      expect(visit).not.toHaveBeenCalled();
+      expect(buttons().map(text)).toEqual(['Rename', 'Pin', 'Archive…', 'Delete…']);
+    });
+    it('keeps the question open and says so when the delete is refused or fails, and stays on the thread', async () => {
+      await mine();
+      await press('Delete…');
+      f.op.mockRejectedValueOnce(Object.assign(new Error('Forbidden'), { status: 403 }));
+      await press('Delete conversation');
+      expect(text(tree!.root.findAll((n) => n.props.role === 'alert')[0])).toBe('Could not save. Try again.');
+      expect(buttons().map(text)).toEqual(['Delete conversation', 'Keep it']);
+      expect(visit).not.toHaveBeenCalled();
+      f.op.mockRejectedValueOnce(new Error('offline'));
+      await press('Delete conversation');
+      expect(visit).not.toHaveBeenCalled();
+      expect(f.op).toHaveBeenCalledTimes(2);
+    });
+    it('is not offered on someone else\'s thread', async () => {
+      f.answers = { BoardsThreadHead: { status: 'live', data: { thread: row('th:old', { member: 'other' }) } } };
+      await mount(h(ThreadHead, { thread: 'th:old', member: 'sam', visit }));
+      expect(buttons()).toEqual([]);
+    });
+  });
+});
+
+describe('searching the conversations', () => {
+  const visit = vi.fn();
+  const found = (rows: object[]) => ({ status: 'live', data: { homeComms: { member: 'sam' }, commsThreads: rows } });
+  const open = async (answers: typeof f.answers) => { visit.mockReset(); f.answers = { ...listed(), ...answers }; await mount(h(ThreadSwitch, { thread: 'th:old', visit })); await press('Conversations'); };
+  const input = () => dialog().findAll((n) => n.type === 'input' && n.props['aria-label'] === 'Search conversations')[0];
+  const typed = (words: string) => act(async () => input().props.onChange({ target: { value: words } }));
+  const submit = () => act(async () => dialog().findAll((n) => n.type === 'form' && n.props.role === 'search')[0].props.onSubmit({ preventDefault() {} }));
+  const searches = () => f.once.map((said) => JSON.parse(said)).filter(([name]) => name === 'BoardsThreadSearch').map(([, variables]) => variables);
+  const links = () => dialog().findAllByType('a').map((a) => [a.props.href, text(a)]);
+
+  it('asks Comms\' search once, on submit and never on a keystroke, and shows what it found in Comms\' order', async () => {
+    await open({ BoardsThreadSearch: found([row('th:new', { title: 'The pond', lastAt: '2026-11-27T09:00:00Z' }), row('th:pin', { title: 'Pond orders', pinned: true })]) });
+    await typed('  the '); await typed('  the   pond ');
+    expect(searches()).toEqual([]);
+    await submit();
+    expect(searches()).toEqual([{ archived: false, search: 'the pond' }]);
+    expect(links()).toEqual([['/app/t/th%3Apin', 'Pond orders Art'], ['/app/t/th%3Anew', 'The pond Art']]);
+    // A search shows what it found and no new conversations; Enter chooses among what it found.
+    expect(buttons().map(text).filter((t) => t.startsWith('New'))).toEqual([]);
+    await key('Enter');
+    expect(visit).toHaveBeenCalledWith('/app/t/th%3Apin');
+  });
+  it('what was typed goes to the read and nowhere else: not stored, not in the address', async () => {
+    await open({ BoardsThreadSearch: found([]) });
+    await typed('secret words'); await submit();
+    expect(f.stored).not.toHaveBeenCalled();
+    expect(f.went).toEqual([]);
+    expect(location.search + location.hash).toBe('');
+  });
+  it('says when nothing matches, and when the search could not be asked', async () => {
+    await open({ BoardsThreadSearch: found([]) });
+    await typed('nothing'); await submit();
+    expect(text(dialog())).toContain('No conversations match.');
+    await act(async () => tree!.unmount());
+    await open({ BoardsThreadSearch: { status: 'offline' } });
+    await typed('pond'); await submit();
+    expect(text(dialog())).toContain('Search is unavailable. Try again.');
+    expect(links()).toEqual([]);
+  });
+  it('emptying the box or Show the list goes back to the list', async () => {
+    await open({ BoardsThreadSearch: found([row('th:new', { title: 'The pond' })]) });
+    await typed('pond'); await submit();
+    expect(links()).toHaveLength(1);
+    await press('Show the list');
+    expect(links()).toHaveLength(3);
+    await typed('pond'); await submit();
+    await typed('');
+    expect(links()).toHaveLength(3);
+    expect(buttons().find((b) => text(b) === 'Search')!.props.disabled).toBe(true);
   });
 });
 
@@ -286,7 +407,7 @@ describe('the presence', () => {
     await press('Conversations');
     // The panel: the conversations and a new one with each agent, this conversation's rename and archive, and notifications.
     expect(dialog().findAllByType('a').map((a) => a.props.href)).toEqual(['/app/t/th%3Apin', '/app/t/th%3Anew', '/app/t/th%3Aold']);
-    expect(dialog().findAllByType('button').map((b) => b.props['aria-label'] ?? text(b))).toEqual(['New conversation with Art', 'New conversation with Mira', 'Rename', 'Archive…', 'Notifications']);
+    expect(dialog().findAllByType('button').map((b) => b.props['aria-label'] ?? text(b))).toEqual(['Search', 'New conversation with Art', 'New conversation with Mira', 'Rename', 'Pin', 'Archive…', 'Delete…', 'Notifications']);
     expect(text(dialog().findAllByType('strong')[0])).toBe('The gate');
     // Its keys are the list's; a key pressed while typing a new title is the field's own.
     await press('Rename');
