@@ -1466,7 +1466,9 @@ again by its own placement after 0.7 s and again after 2.5 s, saying only "Getti
 is not kept, so each try asks for the module again. The rest of the board stays drawn. If it still fails the
 placement says "Sorry, this brick didn't load." with "Try again"; the page meanwhile looks for a newer build and
 takes it as "A restart" says, once nothing typed would be lost, and until then the placement says loom was updated
-and also offers "Reload now" (the kit's `Fetching` and `Lost`: a quiet line and the kit's own actions). The
+and also offers "Reload now" (the kit's `Fetching` and `Lost`: a quiet line and the kit's own actions). Under the sorry line the
+placement shows what was caught, in the program's own words cut to 200 characters, so that a brick that fails on
+one screen and not another can be mended from what it said. The
 page's first script holds no brick and nothing only a brick needs. The bundle guard (`web/boards-guard.ts`, run by
 `web/vite.boards.config.ts`) reads the whole module graph the build loaded, the fetched chunks too: a file under
 `web/src` must be the page's own or one the bricks share with the desktop, a file of the server's `src/` must be

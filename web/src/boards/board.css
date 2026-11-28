@@ -6,7 +6,7 @@
   --canvas-cool: light-dark(#e1e6e8, #151a20); --canvas-center: light-dark(#ebece8, #121314); --canvas-warm: light-dark(#ece6e2, #1d1819);
   --background: var(--canvas-center);
   --foreground: light-dark(#17181a, #e3e4e0); --card-foreground: var(--foreground); --popover-foreground: var(--foreground);
-  --muted-foreground: light-dark(#5d6266, #9a9ea3); --faint: light-dark(#777c81, #777c82);
+  --muted-foreground: light-dark(#5d6266, #9a9ea3); --faint: light-dark(#63686d, #8a8f94);
   --card: light-dark(#f4f3ef, #1c1d1f); --popover: light-dark(#fbfaf7, #232427); --secondary: var(--popover); --muted: var(--popover);
   --secondary-foreground: var(--foreground);
   --surface-edge: light-dark(rgb(48 57 70 / 13%), rgb(230 235 244 / 10%)); --border: var(--surface-edge); --input: var(--surface-edge);

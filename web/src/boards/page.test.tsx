@@ -729,7 +729,7 @@ describe('a body that has not arrived', () => {
     bricks.gone = { ...bricks.ticket, Body: lazy(() => Promise.reject(new Error('404'))) };
     brickRetryMs.splice(0);
     await one([lanes({ big: true }), placed('gone', { ticket: 't-7' }), ticket()]);
-    expect(text(articles()[1].children[1] as Node)).toBe('Sorry, this brick didn’t load.Try again');
+    expect(text(articles()[1].children[1] as Node)).toBe('Sorry, this brick didn’t load.Try againError: 404');
     expect(text(articles()[2])).toContain('Mend the gate');
     expect(f.reload).not.toHaveBeenCalled();
     quiet.mockRestore();
