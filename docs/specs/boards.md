@@ -632,6 +632,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `bridges` | none | `release {}` and `dismiss {}`, each after `/api/bridges/command` (`bridges.command`) took the review, and each asked first. A reply's words never reach the board. A connection, a channel rule and a person link are changed by asking the agent | none |
 | `household` | none | `revokeToken {}`, by `token.revoke`, and `revokeSession {}`, by `sessions.revoke`, each asked first; `setGrants {}`, by `program.setGrants`. A member, an agent's appearance and accounts and a restore are changed by asking the agent; making a token and changing a portrait stay on the desktop | none |
 | `sharing` | none | none: a project's sharing is changed by asking the agent | none |
+| `projects` | none: the words searched for are typed inside the brick and are no parameter | none | none |
 
 | Brick | Can be big | Flags itself when |
 | --- | --- | --- |
@@ -716,6 +717,7 @@ calls through modules both sides import.
 | `bridges` | yes: every waiting reply with its words, thread and state, with Release (a held one) and Dismiss; for a household owner each connection with its state, activity, filters and the names of its stored secrets, the channel rules and the person links. Small: the first four waiting replies and the connections. Folded: the counts | another reply is held (the count of held replies goes up) |
 | `household` | yes: members with their roles and agents, agents with their owners, description and accounts, removed agents; every token and signed-in browser by label and state, never a value, with revoke and sign out; each outside program's grants, which can be changed. Small: members and agents. Folded: the counts. Anyone who is not a household owner is told it is unavailable | never |
 | `sharing` | yes: up to 60 projects, each with its goal, its members and agents as chips and its repositories as `repository` chips. Small: the first six with who is on them. Folded: the counts. Anyone who is not a household owner is told it is unavailable | never |
+| `projects` | yes: up to 200 projects by name, each with its goal and where it stands, and a search box. Small: the first six. Folded: the counts | never |
 
 **The conversations and agents bricks, 2026-11-27.** Each reads what the desktop's Comms, Home and Agents apps read.
 
@@ -960,7 +962,22 @@ read offered as they type; an id that is not one of them is not sent.
   big form adds its name, each agent's card for it (name, goal, summary) and the repositories that card names
   (`memoryProject`), each a `repository` chip in this project. Loom still gives a member no read of
   `project_repositories`, so a repository bound to the project that no agent's card names is not shown. It has no
-  action; the desktop's project discussion and notes are not on it.
+  action; the desktop's project discussion is not on it. **Its agents' notes (2026-11-27)**: the big form has
+  "Agents' notes", closed until the member opens it, and nothing of it is read before then. Opened, it asks once, in
+  one request, each agent's card for the project (`memoryProject`) for its Memories section: the previews loom gives a
+  project's card (its latest twenty notes and its ten most used, each the title and the start of the words), with
+  how many there are in all. The search box filters those previews on Enter or Search (every word, in any case); the
+  words stay in the box. A note opened is read once by `memoryProjectMemory` and shows its whole words. Loom has no
+  read that searches all of an agent's notes on a project, and none was added: a note outside the previews is not
+  found. What may be read is the server's: an agent's notes answer a household owner and a member with that agent on
+  their own list (`maySee`, `type: 'memory'`), and a card or note anyone else asks for answers nothing. Closing the
+  section, the brick leaving its big form or its project changing drops what was read.
+- `projects`: the desktop's Work project directory (`projects`, ordered by name; `workHomeQuery`), one live read of
+  the first 200 and one more to know there are more, each a row placing the `project` brick, with its lifecycle and,
+  big, its goal. The table's own rule decides what is listed: every project for a household owner, the projects a
+  member is in for anyone else, so unlike `sharing` it is not an owner's brick. Big, a search box filters the rows
+  read, on Enter or Search, by every word in the name, id or goal; the words are never sent. Past 200 it says the
+  rest are not listed or searched.
 
 **Still not drawn, 2026-11-27.** No brick has a hover form. Writing a brick in words as `[label](loom:<brick>/<key>)`
 is not built; only a bare ticket id becomes a chip. A merge cannot be answered from its `pull` brick; its approval can, from the `approval` brick.
