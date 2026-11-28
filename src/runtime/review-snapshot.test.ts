@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterAll, expect, it } from 'vitest';
 import { houseSource } from './house-source.js';
 import { plainContext } from './house-context.js';
-import { removeReviewSnapshot, reviewHouse, snapshotFingerprint, writeReviewSnapshot, writeTar } from './review-snapshot.js';
+import { linkStaysInside, outsideLinkWords, removeReviewSnapshot, reviewHouse, snapshotFingerprint, writeReviewSnapshot, writeTar } from './review-snapshot.js';
 
 // A real git and a real repository, fetched by full commit id like a frozen review's (conversation.review).
 const root = mkdtempSync(join(realpathSync(tmpdir()), 'loom-review-snapshot-'));
@@ -69,4 +69,43 @@ it('writes links as links, never through them, and refuses what the worker does 
   await expect(writeTar(Readable.from([block, Buffer.alloc(1024)]), join(root, 'climb'))).rejects.toThrow('name the worker does not take');
   expect(existsSync(join(root, 'escape.txt'))).toBe(false);
   expect(reviewHouse('acme/app')).toEqual({ repository: 'https://github.com/acme/app.git', file: '', branch: 'main' });
+});
+
+it('writes a link whose target leaves the copy as a small text file saying where it pointed, and keeps one that stays inside', async () => {
+  const origin = repository('outside-links');
+  origin.commit({ 'docs/guide.md': 'A fictional guide\n', 'src/pump.ts': 'export const rate = 1;\n' });
+  // Each of these, followed in the reviewer's container, would read something that is not the reviewed commit.
+  const outside: Record<string, string> = {
+    'login': '/run/loom/login/claude', 'environ': '/proc/self/environ', 'src/up': '../../..',
+    'here': '.', 'src/climb': '../here/..',
+  };
+  for (const [name, target] of Object.entries(outside)) symlinkSync(target, join(origin.path, name));
+  // And these stay inside: a sibling, a parent's file, a link to a link, and one through a link with no climb after it.
+  const inside: Record<string, string> = { 'src/link.ts': 'pump.ts', 'src/guide': '../docs/guide.md', 'guide2': 'src/guide', 'deep': 'here/docs/guide.md' };
+  for (const [name, target] of Object.entries(inside)) symlinkSync(target, join(origin.path, name));
+  const head = origin.commit({ 'src/pump.ts': 'export const rate = 2;\n' });
+  const base = git(origin.path, 'rev-parse', 'HEAD~1');
+  const source = houseSource({ directory: join(root, 'outside-mirrors'), protocols: ['file'] }), directory = join(root, 'outside-copy');
+  const before = await writeReviewSnapshot({ source, directory, review: { repository: 'acme/app', head, base }, signal: never(), house: origin.house });
+  for (const [name, target] of Object.entries(outside)) {
+    const written = join(directory, 'tree', name);
+    // `here` (the tree's root) stays inside on its own, so it is a link; every other one here is a file.
+    if (name === 'here') { expect(lstatSync(written).isSymbolicLink()).toBe(true); continue; }
+    expect(lstatSync(written).isFile(), name).toBe(true);
+    expect(lstatSync(written).mode & 0o777).toBe(0o444);
+    expect(readFileSync(written, 'utf8')).toBe(outsideLinkWords(target));
+  }
+  for (const [name, target] of Object.entries(inside)) {
+    expect(lstatSync(join(directory, 'tree', name)).isSymbolicLink(), name).toBe(true);
+    expect(readlinkSync(join(directory, 'tree', name))).toBe(target);
+  }
+  // Read through the copy, every link that is kept ends inside it.
+  expect(realpathSync(join(directory, 'tree/guide2'))).toBe(join(directory, 'tree/docs/guide.md'));
+  expect(await snapshotFingerprint(directory)).toBe(before);
+  // The rule on its own: through a link and then up is refused, wherever that link points.
+  expect(linkStaysInside('a/b', '../c', new Set())).toBe(true);
+  expect(linkStaysInside('a/b', '../../c', new Set())).toBe(false);
+  expect(linkStaysInside('x', 'l/../y', new Set(['l']))).toBe(false);
+  expect(linkStaysInside('x', 'l/y', new Set(['l']))).toBe(true);
+  expect(linkStaysInside('x', '/etc/passwd', new Set())).toBe(false);
 });

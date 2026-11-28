@@ -48,10 +48,33 @@ function pax(data: Buffer): Map<string, Buffer> {
   return found;
 }
 
+/** What a symbolic link whose target leaves the copy is written as: a small read-only text file saying where it
+ * pointed. The reviewer reads that it was a link and to what; nothing under REVIEW_MOUNT leads out of the copy. */
+export const outsideLinkWords = (target: string) =>
+  `loom: in the reviewed commit this is a symbolic link to ${JSON.stringify(target)}, which points outside the review copy, so it is written as this file and not followed.\n`;
+
+/** Whether a link named `name` (relative to the tree's root) with `target` stays inside the tree, wherever it leads:
+ * its target is relative, never climbs above the root, and never climbs (`..`) after passing through another link
+ * (`links`, the tree's link names), whose own target could put that climb anywhere. */
+export function linkStaysInside(name: string, target: string, links: ReadonlySet<string>): boolean {
+  if (!target || target.startsWith('/') || target.includes('\0')) return false;
+  const at = name.split('/').slice(0, -1);
+  let throughLink = false;
+  for (const part of target.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') { if (!at.length || throughLink) return false; at.pop(); continue; }
+    if (links.has([...at, part].join('/'))) throughLink = true;
+    at.push(part);
+  }
+  return true;
+}
+
 /** Write a tar the worker made (house-context.ts) into `root`, which must not exist yet. Each name is checked again
- * here: relative, with no empty, `.` or `..` part. No entry is written through another: a file or link is created
- * only where nothing is, and a directory only below the root. Files keep only whether they are executable and are
- * left read-only (0444 or 0555); links are written as links and never followed. */
+ * here: relative, with no empty, `.` or `..` part. Files and directories are written first and links last, so no
+ * entry is ever written through a link: a file is created only where nothing is, and a directory only below the
+ * root. Files keep only whether they are executable and are left read-only (0444 or 0555). A link is written as a
+ * link, never followed, when its target stays inside the tree (linkStaysInside); otherwise as a small text file
+ * saying where it pointed (outsideLinkWords). */
 export async function writeTar(stream: Readable, root: string): Promise<void> {
   await mkdir(root, { mode: 0o755 });
   let held = Buffer.alloc(0), extended: Map<string, Buffer> | undefined;
@@ -69,9 +92,10 @@ export async function writeTar(stream: Readable, root: string): Promise<void> {
     if (!relativeName(text)) throw new ReviewSnapshotError('Review copy has a name the worker does not take');
     return join(root, text);
   };
+  const links: { name: string; path: string; target: string }[] = [];
   for (;;) {
     const block = await need(BLOCK);
-    if (block.every(byte => byte === 0)) return;
+    if (block.every(byte => byte === 0)) break;
     const type = String.fromCharCode(block[156]), size = octal(block, 124, 12), mode = octal(block, 100, 8);
     const data = size ? Buffer.from(await need(size)) : Buffer.alloc(0);
     if (size % BLOCK) await need(BLOCK - size % BLOCK);
@@ -81,9 +105,14 @@ export async function writeTar(stream: Readable, root: string): Promise<void> {
     const path = place(name);
     if (type === '5') { await mkdir(path, { recursive: true, mode: 0o755 }); continue; }
     await mkdir(join(path, '..'), { recursive: true, mode: 0o755 });
-    if (type === '2') { await symlink(link.toString('utf8'), path); continue; }
+    if (type === '2') { links.push({ name: path.slice(root.length + 1), path, target: link.toString('utf8') }); continue; }
     if (type !== '0') throw new ReviewSnapshotError('Review copy has an entry the worker does not take');
     await writeFile(path, data, { flag: 'wx', mode: mode & 0o111 ? 0o555 : 0o444 });
+  }
+  const names = new Set(links.map(one => one.name));
+  for (const one of links) {
+    if (linkStaysInside(one.name, one.target, names)) await symlink(one.target, one.path);
+    else await writeFile(one.path, outsideLinkWords(one.target), { flag: 'wx', mode: 0o444 });
   }
 }
 
@@ -107,8 +136,9 @@ export async function snapshotFingerprint(root: string): Promise<string> {
 }
 
 /** Write a frozen review's copy into `directory` (which must not exist): the commit's files in SNAPSHOT_TREE, the diff
- * from `base` to `head` in SNAPSHOT_DIFF, and what they are in SNAPSHOT_FACTS. `credential` is the job's house fetch
- * credential, given to git's fetch and nowhere else; the body never sees it. Returns the copy's fingerprint. */
+ * from `base` to `head` in SNAPSHOT_DIFF, and what they are in SNAPSHOT_FACTS. `credential` is the forge credential
+ * loom's bindings hold for the repository's owner (never the house's), given to git's fetch and nowhere else; the body
+ * never sees it. Returns the copy's fingerprint. */
 export async function writeReviewSnapshot(input: { source: HouseSource; directory: string; review: ReviewSource; credential?: Uint8Array; signal: AbortSignal;
   /** Where the repository is fetched from: GitHub unless a test of the copy names a repository of its own. */
   house?: House }): Promise<string> {
