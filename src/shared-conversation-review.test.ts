@@ -7,12 +7,14 @@ import * as s from './core/data/schema.js';
 import {bodyProgram} from './runtime/body-program.js';
 import type {HarnessRun} from './runtime/body-harness.js';
 import {frozenReview,reviewPlace,REVIEW_PLACE_UNREADABLE} from './core/conversations/review-place.js';
-import {handoffEnvelope} from './core/conversations/handoff-words.js';
+import {handoffEnvelope,sealHandoff} from './core/conversations/handoff-words.js';
+import {commsKeepDays} from './core/data/comms-days.js';
 import {change as fixtureChange} from './pieces/changes/change.fixture.js';
 import {changeReviewStore,NO_VERDICT,TREE_CHANGED} from './apps/change-reviews.js';
+import {reportReviewEnd,FROZEN_FINDINGS_SEALED,FROZEN_NO_ANSWER,FROZEN_NO_TREE} from './core/conversations/review-result.js';
 import {currentKitJob} from './shared-kit-access.js';
 import {sharedCredentials} from './shared-credentials.js';
-import {FROZEN_REVIEW_CALLS,FROZEN_REVIEW_REFUSAL} from './core/conversations/review-confinement.js';
+import {FROZEN_REVIEW_CALLS,FROZEN_REVIEW_REFUSAL,FROZEN_REVIEW_REPLY} from './core/conversations/review-confinement.js';
 
 const clean:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
@@ -74,15 +76,30 @@ async function runBody(f:Awaited<ReturnType<typeof fixture>>,assignment:{id:stri
  expect(startup).not.toHaveBeenCalled();expect(loadMemory).not.toHaveBeenCalled();
  return told;
 }
+const relays=(f:Awaited<ReturnType<typeof fixture>>,child:string)=>f.db.select().from(s.messages).where(eq(s.messages.clientId,'review:'+child)).all();
 const relayed=async(f:Awaited<ReturnType<typeof fixture>>,child:string)=>{
- const row=f.db.select().from(s.messages).where(eq(s.messages.clientId,'review:'+child)).get()!;
- expect(row.thread).toBe(f.thread.id);
- return f.key.open(row.words!);
+ const rows=relays(f,child);
+ expect(rows).toHaveLength(1);expect(rows[0].thread).toBe(f.thread.id);
+ return f.key.open(rows[0].words!);
 };
+const record=(f:Awaited<ReturnType<typeof fixture>>,job:string)=>f.db.select().from(s.frozenReviewResults).where(eq(s.frozenReviewResults.job,job)).get();
+/** Ask loom to file and relay the review's end again, as a restart's recovery does: it must change nothing. */
+const reportAgain=async(f:Awaited<ReturnType<typeof fixture>>,job:string)=>reportReviewEnd(f.root.services.comms!,job,()=>true,write=>{f.root.writes.run(write);});
+const fingerprint='d'.repeat(64);
+type Ending='clear'|'blocking'|'no-verdict'|'tree-changed'|'no-tree'|'failed'|'stopped'|'lost'|'no-answer';
+/** How the job ends, after its body answered (or, for no-answer, did not). */
+async function end(f:Awaited<ReturnType<typeof fixture>>,job:string,mode:Ending){
+ if(mode==='stopped'){f.root.services.runtime.stop(job,'alice','reset');return;}
+ if(mode==='lost'){for(let i=0;i<20&&f.db.select().from(s.jobs).where(eq(s.jobs.id,job)).get()!.state==='running';i++){f.clock.advance(30_000);f.root.services.runtime.sweep();}return;}
+ const tree=mode==='tree-changed'?{head,before:fingerprint,after:'e'.repeat(64)}:mode==='no-tree'?undefined:{head,before:fingerprint,after:fingerprint};
+ const finished=await f.runtime('finish',{job,exitCode:mode==='failed'?1:0,logTail:'',exitBy:'body',...(tree?{reviewTree:tree}:{})},'finish');
+ expect(finished.status,await finished.clone().text()).toBe(200);
+}
 
 it.each([
  ['claude','clear'],['codex','clear'],['codex','blocking'],['claude','no-verdict'],['codex','no-verdict'],['claude','tree-changed'],['codex','no-tree'],
-] as const)('pins a pull request, runs a frozen review on a %s worker and files its verdict on the round (%s)',async(harness,mode)=>{
+ ['codex','failed'],['claude','stopped'],['codex','lost'],['claude','no-answer'],
+] as const)('pins a pull request, runs a frozen review on a %s worker, and files and relays its verdict only once the job has ended (%s)',async(harness,mode)=>{
  const f=await fixture(harness);
  const created=await launch(f);
  expect(created).toMatchObject({commit:head,base});
@@ -105,33 +122,88 @@ it.each([
  f.db.update(s.jobs).set({state:'running'}).where(eq(s.jobs.id,assignment.id)).run();
  expect(currentKitJob(f.db,{body:()=>({agent:'art',job:assignment.id,box:'box'})} as unknown as Pick<ReturnType<typeof sharedCredentials>,'body'>,{kind:'agent',id:'art'})).toBeUndefined();
  const reply=mode==='blocking'?'- MAJOR src/pump.ts:1 the rate is tripled, not doubled.\nVERDICT: BLOCKING':mode==='no-verdict'?'Looks fine to me.':'No findings.\nVERDICT: CLEAR';
- const told=await runBody(f,assignment,reply);
- // The brief: the role, what is reviewed and where its copy is, the rule for the answer and the requester's contract.
- for(const said of [role.description,CONTRACT,head,base,'/review/tree','/review/change.diff','VERDICT: CLEAR'])expect(told).toContain(said);
- // And nothing of the author's: not its thread, not the pull request's description, not its memory.
- for(const unsaid of [AUTHOR_THREAD,AUTHOR_DESCRIPTION,'IDENTITY AND MEMORY OF THE AUTHOR'])expect(told).not.toContain(unsaid);
- const words=await relayed(f,created.conversation);
- const filed=store.history(change)[0];
- if(mode==='no-verdict'){
-  expect(words.startsWith(`Frozen review of acme/app@${head.slice(0,12)} FAILED`)).toBe(true);
-  expect(filed).toMatchObject({verdict:'NONE'});expect(filed.findings).toContain(NO_VERDICT);
- }else{
-  const verdict=mode==='blocking'?'BLOCKING':'CLEAR';
-  expect(words.startsWith(`Frozen review of acme/app@${head.slice(0,12)}: VERDICT ${verdict}.`)).toBe(true);
-  expect(filed).toMatchObject({verdict,findings:reply});
+ if(mode!=='no-answer'){
+  const told=await runBody(f,assignment,reply);
+  // The brief: the role, what is reviewed and where its copy is, the rule for the answer and the requester's contract.
+  for(const said of [role.description,CONTRACT,head,base,'/review/tree','/review/change.diff','VERDICT: CLEAR'])expect(told).toContain(said);
+  // And nothing of the author's: not its thread, not the pull request's description, not its memory.
+  for(const unsaid of [AUTHOR_THREAD,AUTHOR_DESCRIPTION,'IDENTITY AND MEMORY OF THE AUTHOR'])expect(told).not.toContain(unsaid);
+  // Answered, and no verdict yet: the round is pending, the thread is told nothing, the answer is held sealed.
+  expect(store.history(change)[0]).toMatchObject({verdict:null,completedAt:null});
+  expect(relays(f,created.conversation)).toEqual([]);
+  const held=record(f,assignment.id)!;
+  expect(held).toMatchObject({verdict:null,filedAt:null});
+  expect(held.answer!.includes(Buffer.from('VERDICT'))).toBe(false);
+  expect(await f.key.open(held.answer!)).toBe(reply);
  }
- expect(words).toContain(reply);
- // The worker's finish: the copy's fingerprints before and after the body. Any change, or none reported, is no verdict.
- const fingerprint='d'.repeat(64);
- const tree=mode==='tree-changed'?{head,before:fingerprint,after:'e'.repeat(64)}:mode==='no-tree'?undefined:{head,before:fingerprint,after:fingerprint};
- const finished=await f.runtime('finish',{job:assignment.id,exitCode:0,logTail:'',exitBy:'body',...(tree?{reviewTree:tree}:{})},'finish');
- expect(finished.status,await finished.clone().text()).toBe(200);
- const after=store.history(change)[0];
- if(mode==='tree-changed')expect(after).toMatchObject({verdict:'NONE',findings:TREE_CHANGED});
- else if(mode==='no-tree')expect(after).toMatchObject({verdict:'NONE'});
- else expect(after).toMatchObject({verdict:filed.verdict});
- // One job: a review is never tried again.
+ await end(f,assignment.id,mode);
+ // Now, and only now, it is filed and relayed: once.
+ await vi.waitFor(()=>expect(relays(f,created.conversation)).toHaveLength(1));
+ const words=await relayed(f,created.conversation),filed=store.history(change)[0];
+ const verdict=mode==='clear'?'CLEAR':mode==='blocking'?'BLOCKING':'NONE';
+ expect(filed).toMatchObject({verdict});expect(filed.completedAt).not.toBeNull();
+ expect(record(f,assignment.id)).toMatchObject({verdict,answer:null});
+ // The round holds loom's own words; the reviewer's are kept only sealed, in the relayed message.
+ expect(filed.findings).not.toContain('No findings');expect(filed.findings).not.toContain('pump');expect(filed.findings).not.toContain('Looks fine');
+ if(verdict!=='NONE'){
+  expect(words.startsWith(`Frozen review of acme/app@${head.slice(0,12)}: VERDICT ${verdict}.`)).toBe(true);
+  expect(filed.findings).toBe(`VERDICT ${verdict}. ${FROZEN_FINDINGS_SEALED}`);
+ }else{
+  expect(words.startsWith(`Frozen review of acme/app@${head.slice(0,12)}: NO VERDICT.`)).toBe(true);
+  const reason={'no-verdict':NO_VERDICT,'tree-changed':TREE_CHANGED,'no-tree':FROZEN_NO_TREE,'no-answer':FROZEN_NO_ANSWER} as Record<string,string>;
+  if(reason[mode])expect(filed.findings).toBe(reason[mode]);
+  else expect(filed.findings).toMatch(/^The review job did not finish \(.+\)\.$/);
+  expect(words).toContain(filed.findings!);
+ }
+ if(mode!=='no-answer')expect(words).toContain(reply);
+ // Asked again, as after a restart: nothing more is filed or relayed.
+ const again=store.history(change)[0];
+ await reportAgain(f,assignment.id);
+ expect(relays(f,created.conversation)).toHaveLength(1);expect(store.history(change)[0]).toEqual(again);
+ // One job: a review is never tried again, and later mail to its conversation starts none.
+ f.root.services.conversations.send({conversation:created.conversation,toKind:'agent',to:'art',source:'handoff',sourceId:'later',fromKind:'agent',fromId:'art',words:await sealHandoff(f.key,'Review it again.',f.now(),commsKeepDays(f.db))});
+ expect(await f.next('later',true)).toBeNull();
  expect(f.db.select().from(s.jobs).where(eq(s.jobs.conversation,created.conversation)).all()).toHaveLength(1);
+ expect(store.history(change)).toHaveLength(1);
+});
+
+it('takes a frozen review\'s verdict from the body program\'s final answer alone, never an earlier one or one the model sends',async()=>{
+ const f=await fixture();
+ const created=await launch(f);
+ settleOrigin(f);
+ const assignment=await f.next('copy',true);
+ const token='body_'+'c'.repeat(64);
+ f.db.update(s.jobs).set({state:'running'}).where(eq(s.jobs.id,assignment.id)).run();
+ f.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictional reviewer',kind:'agent',agent:'art',job:assignment.id,createdAt:f.now()}).run();
+ const reply=(clientId:string,words:string)=>f.root.http.request('/api/conversation/message',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({id:'m-'+clientId,input:{kind:'reply',clientId,words}})});
+ // A reply under any clientId but the body program's final answer's is refused, and holds nothing.
+ expect((await reply('early','Looks risky.\nVERDICT: CLEAR')).status).toBe(400);
+ expect(record(f,assignment.id)).toBeUndefined();
+ // The final answer is held once; a second is refused.
+ expect((await reply(FROZEN_REVIEW_REPLY,'- MAJOR one.\nVERDICT: BLOCKING')).status).toBe(200);
+ expect((await reply(FROZEN_REVIEW_REPLY,'VERDICT: CLEAR')).status).toBe(409);
+ expect(await f.key.open(record(f,assignment.id)!.answer!)).toBe('- MAJOR one.\nVERDICT: BLOCKING');
+ await end(f,assignment.id,'clear');
+ await vi.waitFor(()=>expect(relays(f,created.conversation)).toHaveLength(1));
+ expect(changeReviewStore(f.db,f.now).history(change)[0]).toMatchObject({verdict:'BLOCKING'});
+});
+
+it('files a frozen review of a commit no pull request heads on its own record, by the same rule',async()=>{
+ const f=await fixture();
+ const other='c'.repeat(40);
+ const created=await launch(f,{clientId:'loose',label:'Review a loose commit',target:{repository:'acme/app',commit:other},contract:CONTRACT},'loose');
+ settleOrigin(f);
+ const assignment=await f.next('copy',true);
+ expect(changeReviewStore(f.db,f.now).history(change)).toEqual([]);
+ await runBody(f,assignment,'No findings.\nVERDICT: CLEAR');
+ expect(record(f,assignment.id)).toMatchObject({verdict:null,filedAt:null});
+ expect(relays(f,created.conversation)).toEqual([]);
+ // The copy changed: no verdict, on its record and in the thread, whatever it answered.
+ const finished=await f.runtime('finish',{job:assignment.id,exitCode:0,logTail:'',exitBy:'body',reviewTree:{head:other,before:fingerprint,after:'e'.repeat(64)}},'finish');
+ expect(finished.status).toBe(200);
+ await vi.waitFor(()=>expect(relays(f,created.conversation)).toHaveLength(1));
+ expect(record(f,assignment.id)).toMatchObject({verdict:'NONE',answer:null,tree:'changed'});
+ expect((await relayed(f,created.conversation)).startsWith(`Frozen review of acme/app@${other.slice(0,12)}: NO VERDICT. ${TREE_CHANGED}`)).toBe(true);
 });
 
 it('reviews a commit against its parent, filing the round on the pull request it heads, and gives the description only when asked',async()=>{
@@ -152,10 +224,6 @@ it('reviews a commit against its parent, filing the round on the pull request it
  expect(withDescription).toContain('the merge base of the pull request with main');
  for(const words of [plain,withDescription])expect(words).not.toContain(AUTHOR_THREAD);
  expect(frozenReview(f.root.services.conversations.conversation(described.conversation))?.tier).toBe('high');
- // A commit no pull request loom follows is headed by: reviewed all the same, with no round to file on.
- const other='c'.repeat(40);
- const loose=await launch(f,{clientId:'loose',label:'Review a loose commit',target:{repository:'acme/app',commit:other},contract:CONTRACT},'loose');
- expect(frozenReview(f.root.services.conversations.conversation(loose.conversation))).toMatchObject({head:other,change:null});
 });
 
 it('refuses a review it cannot pin, and anyone but the private owner body',async()=>{

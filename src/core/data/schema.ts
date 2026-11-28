@@ -2159,6 +2159,28 @@ export const changeReviewRounds = sqliteTable('change_review_rounds', {
     (${t.completedAt} is not null and ${t.verdict} is not null and ${t.verdict} in ('CLEAR','BLOCKING','NONE') and ${t.findings} is not null)`),
 ]);
 
+/** A frozen review's (conversation.review) answer and ending, one row per review job (schema 56; core/conversations/
+ * review-result.ts). The body program's final answer is held here, sealed, while its job runs: it is no verdict until
+ * the job has ended with exit 0 and the worker reported the copy's two fingerprints equal (`tree`). Only then, once, is
+ * a verdict filed (on the round when the review is of a pull request loom follows, and here for every review, so a
+ * commit with no pull request has its record too) and relayed to the asking thread; every other ending is filed and
+ * relayed as no verdict. `answer` is erased when it is filed: from then on the reviewer's words are kept only in the
+ * sealed message relayed to the asking thread. */
+export const frozenReviewResults = sqliteTable('frozen_review_results', {
+  job: text('job').primaryKey().notNull().references(() => jobs.id, { onDelete: 'cascade' }),
+  answer: blob('answer', { mode: 'buffer' }),
+  model: text('model'),
+  answeredAt: text('answered_at'),
+  tree: text('tree', { enum: ['same', 'changed', 'unreported'] }),
+  verdict: text('verdict', { enum: ['CLEAR', 'BLOCKING', 'NONE'] }),
+  filedAt: text('filed_at'),
+}, t => [
+  check('frozen_review_results_answered_utc', utc(t.answeredAt)),
+  check('frozen_review_results_filed_utc', utc(t.filedAt)),
+  check('frozen_review_results_tree_choice', sql`${t.tree} is null or ${t.tree} in ('same','changed','unreported')`),
+  check('frozen_review_results_filed', sql`(${t.filedAt} is null and ${t.verdict} is null) or (${t.filedAt} is not null and ${t.verdict} in ('CLEAR','BLOCKING','NONE') and ${t.answer} is null)`),
+]);
+
 // A v1 archive may have issued task numbers whose rows were subsequently deleted.
 export const importedTaskSequence = sqliteTable('imported_task_sequence', {
   singleton: integer('singleton').primaryKey().notNull(),
@@ -2679,6 +2701,7 @@ export const plumbing = {
   accountCalendarReadings,
   githubReviews,
   changeReviewRounds,
+  frozenReviewResults,
   importedTaskSequence,
   triggerAcceptances,
   triggerJournals,

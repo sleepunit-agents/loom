@@ -145,3 +145,9 @@ it('admits one attachment per job before reading bytes and releases the slot onc
    expect((await tools.call('loom_command',args)).isError).toBeUndefined();expect(read).toHaveBeenCalledTimes(2);
  }finally{proceed();tools.close();}
 });
+it('serves a frozen review\'s model none of loom\'s tools: no reply of its own can stand in for the final answer',async()=>{
+ const fetcher=vi.fn<typeof fetch>(),tools=bodyProgramTools({url:'https://loom.example',token:raw.body,signal:new AbortController().signal,fetch:fetcher,onStop:vi.fn(),onStatus:vi.fn(),frozen:true});clean.push(tools.close);
+ for(const [name,args] of [['loom_command',{operation:'conversation.message',input:{kind:'reply',clientId:'review-result',words:'VERDICT: CLEAR'},id:'early'}],['loom_query',{query:'{agents{id}}'}],['loom_commands',{}]] as const)
+  expect(await tools.call(name,args)).toMatchObject({isError:true});
+ expect(fetcher).not.toHaveBeenCalled();
+});

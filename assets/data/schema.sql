@@ -1741,6 +1741,21 @@ CREATE TABLE `change_review_rounds` (
 );
 
 CREATE INDEX `change_review_rounds_history` ON `change_review_rounds` (`change`,`head_commit`,`requested_at`);
+CREATE TABLE `frozen_review_results` (
+	`job` text PRIMARY KEY NOT NULL,
+	`answer` blob,
+	`model` text,
+	`answered_at` text,
+	`tree` text,
+	`verdict` text,
+	`filed_at` text,
+	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "frozen_review_results_answered_utc" CHECK("frozen_review_results"."answered_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "frozen_review_results"."answered_at") = "frozen_review_results"."answered_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "frozen_review_results"."answered_at") = "frozen_review_results"."answered_at", 0)),
+	CONSTRAINT "frozen_review_results_filed_utc" CHECK("frozen_review_results"."filed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "frozen_review_results"."filed_at") = "frozen_review_results"."filed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "frozen_review_results"."filed_at") = "frozen_review_results"."filed_at", 0)),
+	CONSTRAINT "frozen_review_results_tree_choice" CHECK("frozen_review_results"."tree" is null or "frozen_review_results"."tree" in ('same','changed','unreported')),
+	CONSTRAINT "frozen_review_results_filed" CHECK(("frozen_review_results"."filed_at" is null and "frozen_review_results"."verdict" is null) or ("frozen_review_results"."filed_at" is not null and "frozen_review_results"."verdict" in ('CLEAR','BLOCKING','NONE') and "frozen_review_results"."answer" is null))
+);
+
 CREATE TABLE `imported_task_sequence` (
 	`singleton` integer PRIMARY KEY NOT NULL,
 	`last_issued` integer NOT NULL,

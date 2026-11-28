@@ -24,8 +24,12 @@ export function bodyProgramTools(options:{url:string;token:string;signal:AbortSi
  allowsFileBytes?:(bytes:Buffer)=>boolean;
  onJobEnded?:()=>void;onStop:()=>void;onStatus:(value:{state:'working'|'waiting'|'idle'|'offline';work:string})=>void;
  /** Reads the files a post names from the body's own working area (body-files.ts). Without it a post carries none. */
- readFiles?:BodyFileReader}){
- const {url,token,signal,fetch,clock,onStop,onStatus,readFiles}=options;
+ readFiles?:BodyFileReader;
+ /** A frozen review's body (conversation.review): its model is served none of loom's tools. Its answer is the body
+  * program's, taken from the harness's final answer alone (body-program.ts), so nothing the model calls can stand in
+  * for it, and loom's door would refuse the token everything else (core/conversations/review-confinement.ts). */
+ frozen?:boolean}){
+ const {url,token,signal,fetch,clock,onStop,onStatus,readFiles,frozen}=options;
  const abort=new AbortController(),lifetime=AbortSignal.any([signal,abort.signal]),active=new Set<ReturnType<typeof bodyCommandClient>>();
  const tools:Tool[]=programToolDefinitions.map(([name,description,input])=>({name,description,inputSchema:z.toJSONSchema(input,{target:'draft-7'})as Tool['inputSchema']}));
  let uploading=false;
@@ -33,6 +37,7 @@ export function bodyProgramTools(options:{url:string;token:string;signal:AbortSi
   async call(name:string,args:unknown,requestSignal?:AbortSignal):Promise<BodyProgramToolResult>{
    let client:ReturnType<typeof bodyCommandClient>|undefined,ownsUpload=false;
    try{
+    if(frozen)return unavailable();
     const current=AbortSignal.any([lifetime,...(requestSignal?[requestSignal]:[])]);if(current.aborted)return unavailable();
     client=bodyCommandClient({url,token,signal:current,fetch,clock,onJobEnded:options.onJobEnded});active.add(client);
     let value:unknown;

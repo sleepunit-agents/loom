@@ -1,14 +1,14 @@
 import { agentPostEdit, prepareAgentPost } from './agent-posts.js';
-import { prepareReviewResult } from './review-result.js';
+import { prepareFrozenAnswer, prepareReviewResult } from './review-result.js';
 import { prepareJobTrace, TRACE_KINDS } from './job-trace.js';
-import { reviewThread } from './review-place.js';
+import { frozenReview, reviewThread } from './review-place.js';
 import { threadTitle } from './title.js';
 /** Job-body producers for a thread's encrypted output and reported state. */
 import { z } from 'zod';
 import { and,eq } from 'drizzle-orm';
 import type { Viewer } from '../../policy.js';
 import { operation, OperationError, type Operations } from '../operations/index.js';
-import { agentStatus, changeReviewRounds, messages,threads,turns } from '../data/schema.js';
+import { agentStatus, messages,threads,turns } from '../data/schema.js';
 import { conversationBodyScope, requireBodyScope, bodyOperationDefaults, type BodyProof } from './body-scope.js';
 import type { CommsMessages } from './messages.js';
 import { MESSAGE_WORDS_MAX } from './words.js';
@@ -99,7 +99,10 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
      return {seq:saved.seq};
     };
    }
-   const prepared=before.cv.venue==='handoff'?await prepareReviewResult(service,before.cv,before.job.id,words,model):await service.prepareSend({thread:before.thread.id,sender:before.cv.agent,kind,words,clientId:before.job.id+':'+clientId,run:before.job.id,turn:{model,outcome,latencyMs},...(kind==='card'?{tool:input.tool,cardState:input.cardState}:{})});
+   // A frozen review's reply is its final answer, held unfiled until its job has ended (review-result.ts). Any other
+   // handed-off session's reply is relayed to the asking thread as it is given.
+   const frozen=before.cv.venue==='handoff'&&kind==='reply'&&!!frozenReview(before.cv);
+   const prepared=frozen?await prepareFrozenAnswer(service,before.job.id,clientId,words,model):before.cv.venue==='handoff'?await prepareReviewResult(service,before.cv,before.job.id,words,model):await service.prepareSend({thread:before.thread.id,sender:before.cv.agent,kind,words,clientId:before.job.id+':'+clientId,run:before.job.id,turn:{model,outcome,latencyMs},...(kind==='card'?{tool:input.tool,cardState:input.cardState}:{})});
    return ()=>{
     const live=replyTarget(ctx.viewer,input.kind);
     if(live.job.id!==before.job.id||live.thread.id!==before.thread.id||live.cv.id!==before.cv.id||live.cv.member!==before.cv.member||live.cv.project!==before.cv.project||live.cv.agent!==before.cv.agent||live.cv.place!==before.cv.place)throw new OperationError('denied','Conversation changed');
@@ -110,8 +113,6 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
    const child=traced(ctx.viewer,input.kind);
    if(child){const step=(prepared as ()=>{seq:number})();ctx.changed('job_trace',child.cv.id);return {saved:true as const,seq:step.seq};}
    const found=replyTarget(ctx.viewer,input.kind),message=(prepared as ()=>{seq:number})();
-   // A frozen review's reply filed its round (review-result.ts): the pull request's readers are told.
-   if(input.kind==='reply'&&found.cv.venue==='handoff'){const round=db.select({change:changeReviewRounds.change}).from(changeReviewRounds).where(eq(changeReviewRounds.job,found.job.id)).get();if(round)ctx.changed('change',round.change);}
    // A reply answers the mail this job took: both are saved together (ConversationMail.settle). A card is progress, not an answer.
    if(input.kind==='reply'&&input.progressId&&!db.select({seq:turns.seq}).from(turns).where(and(
      eq(turns.conversation,found.cv.id),eq(turns.run,found.job.id),eq(turns.kind,'reply'))).get()){

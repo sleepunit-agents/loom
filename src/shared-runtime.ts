@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
-import { jobs, conversations, changeReviewRounds } from './core/data/schema.js';
+import { jobs, conversations, changeReviewRounds, frozenReviewResults } from './core/data/schema.js';
 import { canonical as canonicalJson, OperationError, type Operations } from './core/operations/index.js';
 import type { Viewer } from './policy.js';
 import type { WorkRole } from './runtime/work-roles.js';
@@ -23,7 +23,7 @@ import { claimedJobStates, jobClaimed } from './core/data/job-states.js';
 import { LOG_TAIL_MAX } from './runtime/log-tail.js';
 import { jobFailure } from './runtime/job-failure.js';
 
-import { changeReviewStore, frozenReviewOf, TREE_CHANGED } from './apps/change-reviews.js';
+import { changeReviewStore, frozenReviewOf } from './apps/change-reviews.js';
 import { reviewTreeReport } from './runtime/review-snapshot-report.js';
 import { coldReviewReport, reviewOutcome } from './runtime/cold-review-report.js';
 
@@ -159,13 +159,14 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
       if (!jobClaimed(job.state)) throw new OperationError('denied', 'Job has ended');
       let exitCode = input.exitCode;
       const round = coldRoundFor(input.job);
-      // A frozen review's copy is read-only, so its two fingerprints are the same. Where they are not, or the worker
-      // did not report them, the round has no verdict, whatever its reply said.
+      // A frozen review's copy is read-only, so its two fingerprints are the same. What the worker reported is kept for
+      // the review's ending, decided once the job has ended (core/conversations/review-result.ts): not the same, or not
+      // reported, is no verdict, whatever the reviewer answered.
       const frozen = frozenReviewOf(db, input.job);
       if (input.reviewTree && (!frozen || input.reviewTree.head !== frozen.head)) throw new OperationError('invalid', 'Report does not match a frozen review');
-      if (frozen && roundFor(input.job) && (!input.reviewTree || input.reviewTree.before !== input.reviewTree.after)) {
-        reviewStore.voided(input.job, input.reviewTree ? TREE_CHANGED : 'The worker did not report the reviewed files at the end of the round.');
-        ctx.changed('change', roundFor(input.job)!.change);
+      if (frozen) {
+        const tree = !input.reviewTree ? 'unreported' as const : input.reviewTree.before === input.reviewTree.after ? 'same' as const : 'changed' as const;
+        db.insert(frozenReviewResults).values({ job: input.job, tree }).onConflictDoUpdate({ target: frozenReviewResults.job, set: { tree } }).run();
       }
       if (input.coldReview && (!round || job.state !== 'running' || input.coldReview.change !== round.change ||
           input.coldReview.headCommit !== round.headCommit))

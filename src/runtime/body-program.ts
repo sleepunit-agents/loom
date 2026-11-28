@@ -339,7 +339,7 @@ export async function bodyProgram(input: {
       // body is served the named tools a terminal has, and `identity` there knows what was handed over above (body-named-tools.ts).
       const rootAccess={url:bootstrap.origin,token:parsed.bootstrap.token,signal,onJobEnded,clock:input.clock,fetch:input.fetch,agent:job.agent,identityHanded:!!memory};
       const houseShell=reach==='all'&&Object.hasOwn(input.env,BODY_OWN_HARNESS);
-      programTools=bodyProgramTools({...rootAccess,
+      programTools=bodyProgramTools({...rootAccess,...(frozen?{frozen:true}:{}),
         ...(houseShell&&hasFileTools(reach,policy)&&mayAttachNoteFile(deniedTools(policy))?{
           noteUpload:{read:bodyNoteFileReader(plan.cwd,[plan.cwd,input.env[BODY_SCRATCH]]),allows:(bytes:Buffer)=>tools?.allowsBytes(bytes)===true}
         }:{}),

@@ -15,7 +15,7 @@ export function hasChangeReview(db: DataDatabase, job: string): boolean {
 }
 
 /** A cold review: a round that is not a frozen review's, run by a worker's own review executor and filed with the
- * job's finish (shared-runtime.ts). A frozen review (below) has a body of its own and files its round from its reply. */
+ * job's finish (shared-runtime.ts). A frozen review (below) has a body of its own; its round is filed once its job has ended. */
 export function coldReviewJob(db: DataDatabase, job: string): boolean {
   return hasChangeReview(db, job) && !frozenReviewOf(db, job);
 }
@@ -43,7 +43,10 @@ export function replyVerdict(reply: string): 'CLEAR' | 'BLOCKING' | undefined {
 export const NO_VERDICT = 'The reviewer did not return a final verdict.';
 export const TREE_CHANGED = 'The reviewed files changed during the round.';
 
+/** A cold review's round still open when its job ends is closed with no verdict. Not a frozen review's: its round is
+ * filed once its job has ended, from its held answer and how it ended (core/conversations/review-result.ts). */
 export function closePendingReview(db: DataDatabase, job: string, at: string) {
+  if (frozenReviewOf(db, job)) return;
   db.update(rounds).set({ verdict: 'NONE', findings: 'The job ended without a reviewer report.', completedAt: at })
     .where(and(eq(rounds.job, job), isNull(rounds.completedAt))).run();
 }
@@ -92,17 +95,10 @@ export function changeReviewStore(db: DataDatabase, now = () => new Date().toISO
     const round = (db.select({ round: rounds.round }).from(rounds).where(eq(rounds.change, change)).orderBy(desc(rounds.round)).limit(1).get()?.round ?? 0) + 1;
     return db.insert(rounds).values({ job: input.job, change, headCommit: input.target.head, tier: input.target.tier, round, requestedAt: now() }).returning().get();
   }
-  /** A frozen review's reply, filed as it is relayed (body-output.ts). Once filed it is final, but for `voided`. */
-  function fileReply(job: string, reply: string) {
-    const row = db.select().from(rounds).where(eq(rounds.job, job)).get();
-    if (!row || row.completedAt !== null) return row;
-    const verdict = replyVerdict(reply);
-    return db.update(rounds).set({ verdict: verdict ?? 'NONE', findings: verdict ? reply : NO_VERDICT + '\n\n' + reply, completedAt: now() })
-      .where(and(eq(rounds.job, job), isNull(rounds.completedAt))).returning().get();
-  }
-  /** The worker found the reviewed files changed at the end of the round: whatever was filed is no verdict. */
-  function voided(job: string, why: string) {
-    db.update(rounds).set({ verdict: 'NONE', findings: why, completedAt: now() }).where(eq(rounds.job, job)).run();
+  /** A frozen review's round, filed once its job has ended (core/conversations/review-result.ts, reportFrozenReviewEnd).
+   * `findings` is loom's own words, never the reviewer's: those are kept only sealed, in the reply to the asking thread. */
+  function fileFrozen(job: string, verdict: NonNullable<Review['verdict']>, findings: string) {
+    db.update(rounds).set({ verdict, findings, completedAt: now() }).where(and(eq(rounds.job, job), isNull(rounds.completedAt))).run();
   }
   function history(change: string, visibility?: { change: SQL; job: SQL }) {
     return db.select({ ...getTableColumns(rounds), currentHead: changes.headCommit, conversation: jobs.conversation }).from(rounds)
@@ -111,5 +107,5 @@ export function changeReviewStore(db: DataDatabase, now = () => new Date().toISO
       .orderBy(desc(rounds.requestedAt), desc(rounds.job)).all()
       .map(({ currentHead, ...row }) => ({ ...row, current: row.headCommit === currentHead }));
   }
-  return { assign, finish, assignFrozen, fileReply, voided, history };
+  return { assign, finish, assignFrozen, fileFrozen, history };
 }
