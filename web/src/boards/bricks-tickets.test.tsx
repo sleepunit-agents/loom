@@ -100,6 +100,10 @@ it('is unavailable, in every form, when the list or the retired projects cannot 
     await b.draw('tickets', { state }, 'primary');
     expect(b.all(), state).toContain('Tickets are unavailable.');
   }
+  // A live answer that holds no retired projects is a failed one, not "nothing is shelved".
+  b.answer(data({ BrickTicketsRetired: { retired: null } }));
+  await b.draw('tickets', { state: 'shelved' }, 'side');
+  expect(b.all()).toBe('Tickets are unavailable.');
 });
 
 it('shows a page, loads the next on a press, and stops asking at the most it reads', async () => {

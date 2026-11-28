@@ -95,8 +95,11 @@ export function Tickets({ params, form }: { params: Params; form: Form }) {
   const submit = (e: FormEvent) => { e.preventDefault(); setPages(1); setAsked(typed.trim().slice(0, 200)); };
   const clear = () => { setTyped(''); setAsked(''); setPages(1); };
 
-  const answer: DataQuerySnapshot<{ rows: TicketRow[] | null }> | 'none' = needsRetired && retiredRead.status !== 'live' ? retiredRead
-    : !read ? 'none' : search ? found : listed;
+  // What the list stands on: the retired projects where the state needs them (a live answer without them is a failed
+  // one), then the list or the search. 'none' is a state with nothing to ask (Shelved, with no project retired).
+  const shown = search ? found : listed;
+  const answer: { status: DataQuerySnapshot<unknown>['status']; rows?: TicketRow[] } | 'none' = needsRetired && retiredRead.status !== 'live' ? { status: retiredRead.status }
+    : !retired ? { status: 'offline' } : !read ? 'none' : { status: shown.status, rows: shown.data?.rows ?? undefined };
   const head = stateWords[state];
   const searchBox = big && (
     <form className="board-search" role="search" aria-label="Search tickets" onSubmit={submit}>
@@ -113,11 +116,11 @@ export function Tickets({ params, form }: { params: Params; form: Form }) {
     </div>
   );
   if (answer !== 'none' && answer.status === 'loading') return big ? <>{others}{searchBox}<Loading /></> : <Loading />;
-  if (answer !== 'none' && (answer.status !== 'live' || !answer.data?.rows)) {
+  if (answer !== 'none' && (answer.status !== 'live' || !answer.rows)) {
     const line = <Note>{search ? 'Search is unavailable.' : 'Tickets are unavailable.'}</Note>;
     return big ? <>{others}{searchBox}{line}</> : line;
   }
-  const all = answer === 'none' ? [] : answer.data!.rows!;
+  const all = answer === 'none' ? [] : answer.rows!;
   const rows = all.slice(0, limit - 1), more = all.length > rows.length;
   const total = rows.length ? head.say(more ? `More than ${rows.length}` : String(rows.length), rows.length === 1 && !more) : head.none.replace(/\.$/, '');
   if (form === 'compact') return <p className="board-brief">{total}</p>;
