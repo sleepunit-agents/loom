@@ -1,7 +1,8 @@
 /** The `pull` brick: one pull request, read from the same `changes` rows the desktop's Changes reads
  * (web/src/data/work-query.ts) and said in the same words (pieces/change-view/model.ts), with
  * a link to its page on GitHub and, big, the files it touches (`change_files`, kept from the same read of GitHub),
- * each opening in place to its patch (the server's changeFilePatch read, asked once each time a file is opened). It
+ * each opening in place to its patch (the server's changeFilePatch read, asked once each time a file is opened; the
+ * opened files are forgotten when the brick leaves its big form, or its change or head commit changes). It
  * has no action: a merge is answered through its approval, on the desktop. */
 import { useState } from 'react';
 import { useDataOnce, useDataQuery } from '../data/graphql';
@@ -9,7 +10,7 @@ import { checksWord, checkWord, mergeableWord, reviewWord, roleWord, stateWord, 
 import { Chip, Fact, Facts, Lead, Loading, Note, Opened, Opens, Row, Rows, Section, State, Unavailable, ticketChip, useOwnFlag, words, type Params, type Raise, type Tone } from './brick-kit';
 import type { Form } from './layout';
 
-type Row = Pick<Change, 'id' | 'repository' | 'number' | 'url' | 'title' | 'state' | 'draft' | 'authorLogin' | 'project' | 'agent' | 'branch' | 'baseBranch' | 'checks' | 'review' | 'mergeable' | 'waitingOn'>;
+type Row = Pick<Change, 'id' | 'repository' | 'number' | 'url' | 'title' | 'state' | 'draft' | 'authorLogin' | 'project' | 'agent' | 'branch' | 'headCommit' | 'baseBranch' | 'checks' | 'review' | 'mergeable' | 'waitingOn'>;
 type Read = {
   changes: Row[];
   changeChecks: ChangeSnapshot['checks'][number][];
@@ -19,7 +20,7 @@ type Read = {
 };
 /** The fields of the desktop's ChangesView selection, for one change. */
 export const pullQuery = `query BrickPull($id:String!){
-  changes(where:{id:{eq:$id}},limit:1){id repository number url title state draft authorLogin project agent branch baseBranch checks review mergeable waitingOn}
+  changes(where:{id:{eq:$id}},limit:1){id repository number url title state draft authorLogin project agent branch headCommit baseBranch checks review mergeable waitingOn}
   changeChecks(where:{change:{eq:$id}}){change name state}
   changePeople(where:{change:{eq:$id}}){change login role}
   changeTasks(where:{change:{eq:$id}}){change task taskRow{id title status}}
@@ -41,7 +42,13 @@ export function pullFlag(was: string, now: string): string | null {
 
 /** One changed file's patch, read from GitHub by the server when asked (docs/specs/boards.md). Not a live read. */
 export const filePatchQuery = 'query BrickPullFilePatch($change:String!,$path:String!){patch:changeFilePatch(change:$change,path:$path){state patch cut}}';
-type Patch = { state: 'patch' | 'none' | 'unavailable'; patch: string | null; cut: boolean };
+type Patch = { state: 'patch' | 'none' | 'unlisted' | 'unavailable'; patch: string | null; cut: boolean };
+/** What the brick says where there is no patch to draw, by the read's state. */
+export const noPatchWords: Record<Exclude<Patch['state'], 'patch'>, string> = {
+  none: 'GitHub shows no patch for this file: it may be binary, a change too large for GitHub to show, a rename with no change in it, or an empty file.',
+  unlisted: "GitHub's list of this pull request's files does not have this file just now: it may have changed since. Close it and open it again in a moment.",
+  unavailable: 'GitHub could not be read for this file just now. Close it and open it again in a moment to try again.',
+};
 /** How a line of a patch is marked: added, removed, a hunk's header, or context (none). Its sign stays in its words. */
 export const patchLine = (line: string) => (line.startsWith('@@') ? 'board-patch-hunk' : line.startsWith('+') ? 'board-patch-add' : line.startsWith('-') ? 'board-patch-remove' : undefined);
 /** The patch of one file, asked for when its row is opened. Drawn as plain text, a line at a time: nothing in it is
@@ -51,7 +58,7 @@ function FilePatch({ change, path }: { change: string; path: string }) {
   if (read.status === 'loading') return <Loading />;
   const p = read.status === 'live' ? read.data?.patch : undefined;
   if (read.status !== 'live' || !p) return <Note>This file's patch could not be read. Close it and open it again to try again.</Note>;
-  if (p.state === 'none' || p.patch === null) return <Note>{p.state === 'none' ? 'GitHub shows no patch for this file: it may be a binary file, or a change too large for GitHub to show.' : 'GitHub could not be read for this file just now. Close it and open it again to try again.'}</Note>;
+  if (p.state !== 'patch' || p.patch === null) return <Note>{noPatchWords[p.state === 'patch' ? 'unavailable' : p.state] ?? noPatchWords.unavailable}</Note>;
   return (
     <>
       <pre className="board-patch" aria-label={'Patch of ' + path}>{p.patch.split('\n').map((line, i) => <span key={i} className={patchLine(line)}>{line + '\n'}</span>)}</pre>
@@ -63,9 +70,15 @@ function FilePatch({ change, path }: { change: string; path: string }) {
 export function Pull({ params, form, raise }: { params: Params; form: Form; raise: Raise }) {
   const id = words(params.change);
   const read = useDataQuery<Read>(pullQuery, { id }, { keep: true });
-  const [opened, setOpened] = useState<readonly string[]>([]);
-  const toggle = (path: string) => setOpened((now) => (now.includes(path) ? now.filter((p) => p !== path) : [...now, path]));
   const c = read.data?.changes[0];
+  // The opened files belong to one change at one head commit, in the big form. Leaving the big form, or a new change
+  // or head, forgets them before anything is drawn, so nothing is asked again without being opened, and no patch
+  // stays open on an older head than the files listed beside it.
+  const scope = form === 'primary' && c ? JSON.stringify([c.id, c.headCommit]) : null;
+  const [opened, setOpened] = useState<{ scope: string | null; paths: readonly string[] }>({ scope, paths: [] });
+  if (opened.scope !== scope) setOpened({ scope, paths: [] });
+  const paths = opened.scope === scope ? opened.paths : [];
+  const toggle = (path: string) => setOpened((now) => ({ scope, paths: now.scope !== scope ? [path] : now.paths.includes(path) ? now.paths.filter((p) => p !== path) : [...now.paths, path] }));
   useOwnFlag(c && `${c.state}|${c.checks}`, raise, pullFlag);
   if (read.status === 'loading') return <Loading />;
   if (read.status !== 'live' || !c) return <Unavailable what="pull request" />;
@@ -101,8 +114,8 @@ export function Pull({ params, form, raise }: { params: Params; form: Form; rais
           <Section title="Files changed" count={files.length || undefined}>
             {files.length > 0
               ? <Rows label="Files changed" beside>{files.map((f) => (
-                  <Row key={f.path} title={<Opens open={opened.includes(f.path)} onToggle={() => toggle(f.path)}><span className="font-mono">{f.path}</span></Opens>} end={<span className="font-mono">+{f.additions} −{f.deletions}</span>}>
-                    {opened.includes(f.path) ? <Opened><FilePatch change={c.id} path={f.path} /></Opened> : undefined}
+                  <Row key={f.path} title={<Opens open={paths.includes(f.path)} onToggle={() => toggle(f.path)}><span className="font-mono">{f.path}</span></Opens>} end={<span className="font-mono">+{f.additions} −{f.deletions}</span>}>
+                    {paths.includes(f.path) ? <Opened><FilePatch change={c.id} path={f.path} /></Opened> : undefined}
                   </Row>
                 ))}</Rows>
               : <Note>Which files it changes is not known yet.</Note>}

@@ -53,3 +53,25 @@ it('is offline on a failed request or an answer with errors, denied on a refused
   expect(fetcher).not.toHaveBeenCalled();
   await act(async () => paused.unmount());
 });
+
+it('asks again once, at once, when the door says a commit landed during the read, and no more than once', async () => {
+  const changed = () => Response.json({ errors: [{ message: 'Data changed; retry the query' }] }, { status: 503 });
+  const answers = [changed(), Response.json({ data: { patch: { state: 'kept' } } }), changed(), changed()];
+  const fetcher = vi.fn<typeof fetch>(async () => answers.shift()!);
+  vi.stubGlobal('fetch', fetcher);
+  let tree!: ReturnType<typeof create>;
+  await act(async () => { tree = create(createElement(Read, { path: 'a.ts' })); });
+  expect(JSON.parse((tree.toJSON() as { children: string[] }).children[0])).toEqual({ status: 'live', data: { patch: { state: 'kept' } } });
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  // Twice in a row: offline, and not a third ask.
+  await act(async () => tree.update(createElement(Read, { path: 'b.ts' })));
+  expect(JSON.parse((tree.toJSON() as { children: string[] }).children[0])).toEqual({ status: 'offline' });
+  expect(fetcher).toHaveBeenCalledTimes(4);
+  await act(async () => tree.unmount());
+  // Any other 503 is not asked again.
+  fetcher.mockClear();
+  answers.push(Response.json({ errors: [{ message: 'Data request could not complete' }] }, { status: 503 }));
+  await act(async () => { tree = create(createElement(Read, { path: 'c.ts' })); });
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  await act(async () => tree.unmount());
+});

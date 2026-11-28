@@ -188,7 +188,7 @@ const unfiledData = (unfiled: unknown[], over: Record<string, Answer> = {}): Rec
 // ── pull, repository ───────────────────────────────────────────────────────────────────────────────────────────
 const change = { id: 'github:hollow-lane/irrigation-controller#39', repository: 'hollow-lane/irrigation-controller', number: 39, url: 'https://github.com/hollow-lane/irrigation-controller/pull/39',
   title: 'Read line pressure at both ends and warn when the far end falls below the head by more than a tenth', state: 'open', draft: false, authorLogin: 'moss-bot',
-  project: 'garden', agent: 'moss', branch: 'moss/pressure-both-ends', baseBranch: 'main', checks: 'failing', review: 'required', mergeable: 'unknown', waitingOn: 'author' };
+  project: 'garden', agent: 'moss', branch: 'moss/pressure-both-ends', headCommit: '4f9c2e1a7b3d5f60819a2b3c4d5e6f708192a3b4', baseBranch: 'main', checks: 'failing', review: 'required', mergeable: 'unknown', waitingOn: 'author' };
 const pullData = (over: object = {}, parts: { checks?: unknown[]; people?: unknown[]; tasks?: unknown[]; files?: unknown[] } = {}): Record<string, Answer> => ({
   ...shared,
   BrickPull: {

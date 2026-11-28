@@ -20,7 +20,7 @@ afterEach(async () => { await act(async () => tree?.unmount()); tree = undefined
 
 const said = (node: Node): string => node.children.map((child) => (typeof child === 'string' ? child : said(child))).join('');
 const change = { id: 'github:acme/app#12', repository: 'acme/app', number: 12, url: 'https://github.com/acme/app/pull/12', title: 'Read the pump twice', state: 'open',
-  draft: false, authorLogin: 'art-bot', project: 'pond', agent: 'art', branch: 'art/pump', baseBranch: 'next', checks: 'running', review: 'required', mergeable: 'unknown', waitingOn: 'ci' };
+  draft: false, authorLogin: 'art-bot', project: 'pond', agent: 'art', branch: 'art/pump', headCommit: 'a'.repeat(40), baseBranch: 'next', checks: 'running', review: 'required', mergeable: 'unknown', waitingOn: 'ci' };
 const read = (over: object = {}, more: object = {}) => ({ changes: [{ ...change, ...over }], changeChecks: [], changePeople: [], changeTasks: [], ...more });
 const answer = (data: unknown) => feed.mockImplementation(() => ({ status: 'live', data }));
 async function draw(form: Form, params: Params = { change: change.id }) {
@@ -121,8 +121,9 @@ it('says when a patch was cut, when GitHub gives none, when it could not be read
   expect(lines()).toEqual([['board-patch-add', '+first part\n']]);
   expect(notes()).toContain('This patch is longer than 200 KB: only its first part is shown. The whole of it is on GitHub.');
   const cases: [unknown, string][] = [
-    [{ status: 'live', data: { patch: { state: 'none', patch: null, cut: false } } }, 'GitHub shows no patch for this file: it may be a binary file, or a change too large for GitHub to show.'],
-    [{ status: 'live', data: { patch: { state: 'unavailable', patch: null, cut: false } } }, 'GitHub could not be read for this file just now. Close it and open it again to try again.'],
+    [{ status: 'live', data: { patch: { state: 'none', patch: null, cut: false } } }, 'GitHub shows no patch for this file: it may be binary, a change too large for GitHub to show, a rename with no change in it, or an empty file.'],
+    [{ status: 'live', data: { patch: { state: 'unlisted', patch: null, cut: false } } }, "GitHub's list of this pull request's files does not have this file just now: it may have changed since. Close it and open it again in a moment."],
+    [{ status: 'live', data: { patch: { state: 'unavailable', patch: null, cut: false } } }, 'GitHub could not be read for this file just now. Close it and open it again in a moment to try again.'],
     [{ status: 'live', data: { patch: null } }, "This file's patch could not be read. Close it and open it again to try again."],
     [{ status: 'offline' }, "This file's patch could not be read. Close it and open it again to try again."],
     [{ status: 'loading' }, 'Loading…'],
@@ -135,4 +136,40 @@ it('says when a patch was cut, when GitHub gives none, when it could not be read
     expect(notes(), note).toContain(note);
     expect(notes(), note).not.toContain('This patch is longer than 200 KB: only its first part is shown. The whole of it is on GitHub.');
   }
+});
+
+it('forgets the opened files when the brick leaves its big form, so coming back asks nothing', async () => {
+  answer(read({}, { changeFiles: files }));
+  patched({ state: 'patch', patch: '+a', cut: false });
+  await draw('primary');
+  await open('src/pump/read.ts');
+  await open('docs/pump.md');
+  const asked = once.mock.calls.length;
+  const body = (form: Form) => h(brickView('pull').Body, { params: { change: change.id }, form, act: vi.fn(), raise: vi.fn() });
+  await act(async () => tree!.update(body('side')));
+  await act(async () => tree!.update(body('primary')));
+  expect(patchOf()).toBeUndefined();
+  expect(opener('src/pump/read.ts').props['aria-expanded']).toBe(false);
+  expect(once.mock.calls.length).toBe(asked);
+});
+
+it('forgets the opened files when the head commit or the change moves, and asks nothing for them', async () => {
+  answer(read({}, { changeFiles: files }));
+  patched({ state: 'patch', patch: '+a', cut: false });
+  await draw('primary');
+  await open('src/pump/read.ts');
+  const asked = once.mock.calls.length;
+  // A push: the same change, a new head. The patch drawn was of the old one; it is closed, not left open.
+  answer(read({ headCommit: 'b'.repeat(40) }, { changeFiles: files }));
+  await act(async () => tree!.update(h(brickView('pull').Body, { params: { change: change.id }, form: 'primary', act: vi.fn(), raise: vi.fn() })));
+  expect(patchOf()).toBeUndefined();
+  expect(once.mock.calls.length).toBe(asked);
+  await open('src/pump/read.ts');
+  expect(patchOf()).toBeDefined();
+  // Another change with a file of the same name: nothing opens of itself.
+  const other = once.mock.calls.length;
+  answer(read({ id: 'github:acme/app#13', number: 13 }, { changeFiles: files.map((f) => ({ ...f, change: 'github:acme/app#13' })) }));
+  await act(async () => tree!.update(h(brickView('pull').Body, { params: { change: 'github:acme/app#13' }, form: 'primary', act: vi.fn(), raise: vi.fn() })));
+  expect(patchOf()).toBeUndefined();
+  expect(once.mock.calls.length).toBe(other);
 });
