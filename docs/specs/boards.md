@@ -410,6 +410,14 @@ ids, making it with `comms.open` if it does not exist.
   Pushing the bar opens the conversation as a sheet over the board. Closing the sheet returns to the board. With no
   board the sheet is open and cannot be closed.
 - **The input.** There is one, the same control with or without a board.
+- **The draft (built 2026-11-27).** What is typed and not sent is the desktop Comms composer's draft
+  (`web/src/pieces/comms/drafts.ts`, used as it is): kept in this browser's localStorage only, under
+  `loom:comms:draft:<member>:<thread>:v1`, so it comes back after a reload or a visit to another conversation, and the
+  desktop's composer for the same thread holds the same words. It is the member's own words and never a parameter, a
+  detail, a board record or part of the address (rule 1, rule 3): it leaves the browser only as the message, on Send.
+  It is cleared when loom acknowledges that send (a newer edit typed meanwhile is kept); a send that fails keeps it with
+  the same client id, so sending again cannot post it twice. As on the desktop there is no size, count or age limit
+  beyond loom's own limit on a message; storage that is blocked or full keeps nothing and the input works the same.
 - **The conversation.** Words and the work trace. The work trace is drawn in every Comms thread the member owns, not
   only the pairing thread.
 - **The board.** The layout is a pure function `layout(placements in rank order, fits, area) → for each placement a
@@ -596,7 +604,8 @@ deployed with it, and the agent places it. The member sees a brick arrive. They 
 
 - **The page.** It holds no state of its own (rule 3), so a reload opens the same board. When its live read comes
   back after loom was away, the page asks its own address for the current page; if that runs a different script from
-  the one running, the page reloads, once the input is empty and nothing is being sent. Run 2026-11-27 against a
+  the one running, the page reloads, once the input is empty and nothing is being sent. A draft kept from before
+  ("The draft") holds the reload as typed words do, and a reload by hand brings it back. Run 2026-11-27 against a
   restart with a new build: the page was on the new build, on the same board, about ten seconds after loom was back.
   While loom is away the board is drawn empty; that is a fault to fix.
 - **A brick the page does not know.** A page that has not yet reloaded draws it as "not drawn yet" and nothing else
@@ -1899,13 +1908,15 @@ given an area. What they pin:
   container; a closed board that is not in the address gives way; a chip click with a closed board or none calls
   `boards.open`.
 - Of 18: after placing, maximizing, a chip click, a send and a move along the trail, the page has written nothing to
-  local or session storage, `location.search` and `location.hash` are empty, and each address it went to is a path
+  local or session storage but the composer's draft, which the acknowledged send removed, `location.search` and `location.hash` are empty, and each address it went to is a path
   with one id.
 - The heading rule; the names rule (a heading is the brick's name, the reference is in the monospace line); a stored
   flag (marked, labelled, `boards.seen` on pointing or focus, the folded chip and row marked); a brick's own flag
   (raised when the ticket, comments or session read changes, not after the member's own action, cleared on pointing
   with no call); the session brick's stop asking first; the reload onto a new build, only with the input empty and
-  nothing being sent.
+  nothing being sent. The draft ("The draft" under "The page"): back after a reload, one per conversation and member,
+  the desktop's own, cleared on an acknowledged send and kept with its client id on a failed one, a long one kept
+  whole, storage that refuses it harmless, in no request, address or session storage, and holding the reload.
 
 In `bricks-account.test.tsx`, `bricks-appearance.test.tsx` and `bricks-secrets.test.tsx`, with
 `src/core/boards/bricks/account.test.ts`, `appearance.test.ts` and `secrets.test.ts`: the three bricks of the
