@@ -460,6 +460,34 @@ ids, making it with `comms.open` if it does not exist.
   passes again). A flagged placement that is folded is marked on its chip and the folded row is marked; it does not
   unfold. A brick's own flag is the page's and is not stored: a page that was closed when the change happened shows
   the record as it now is, with no flag.
+- **The header row (built 2026-11-28, t-2428, `web/src/boards/board-head.tsx`).** The board's heading and, after it
+  in one slim line, what needs the member, then Close. The owner: "this big empty space after the board title until
+  close… feels like we could cram some stuff in there". Left to right:
+  - **Attention chips**, one for each flagged placement on the board (its stored flag, or the brick's own flag), in
+    rank order: the brick's name, its reference and the flag word, "Ticket t-7 · look here", "Ticket t-7 · closed".
+    Built only from what the placements carry: the stored flag takes no words, so it reads "look here"; there is no
+    free text from the agent. Pressing a chip brings its placement into view and gives it the keyboard (a folded
+    one: its chip in the folded row), and does nothing else: it clears no flag, calls no operation, makes no request.
+    The placement itself is focusable only this way (`tabindex=-1`), and focus landing on the placement itself is not
+    looking at it; focus inside it still is ("Flags"). A chip goes when its flag does. As many chips as the row has
+    room for are shown, each 13 rem at most with its gap (`CHIP_ROOM`, 208 px): chosen from the row's width, not measured
+    chip by chip, so one coming or going never moves the rest. The rest are `+N` ("N more flagged: show them"), which
+    opens a small list over the board made of the same chips; Escape or a chip pressed closes it. Where not even one
+    chip fits beside the `+N` (a phone) every chip folds to one count, "N flagged", which opens the list of all of them:
+    a count is one touch target that says how many, where a line scrolled sideways hides the rest behind an edge.
+  - **The page's notices**, said here once, on the board on screen only, and no longer inside a brick: a token
+    notice ("The first bricks", household; its rules are `token-notices.ts`'s, unchanged): one in a few words,
+    "Token “…” may have been made" or "Token “…”: its value is lost", two or more counted, "N token notices"; pressed,
+    each in full with Dismiss. "loom was updated: the page reloads when your message is sent or cleared" with Reload
+    now, while the page waits for a newer build ("A restart"; on a phone, "loom was updated" alone). "N bricks didn’t
+    load" with Try all again, for the placements whose own tries are spent; each still says its own sorry, Try again
+    and what was caught.
+  - **One quiet mark**, "Getting new data", while any placement on the board is getting it (each placement keeps its
+    own, "Live reads and their cost").
+  - **Close** as an icon at the far end, named "Close board"; the same `boards.close`, with no question asked, as
+    before. A closed board has "Reopen" there, in words.
+  The row's height never changes as these come and go: one line of a fixed block size (2 rem), nothing in it wraps,
+  the chips' strip and each notice cut short where the row runs out, and the lists open over the field, outside the row.
 - **Chips.** Clicking a chip places that brick, with the params its key gives and defaults for the rest, last on the
   open board on screen. If that placement is already live, the call is refused and nothing changes. If the board on
   screen is closed, or there is none, the click opens a new board.
@@ -1535,9 +1563,10 @@ it arrives the placement, already in its rectangle and under its heading, says "
 draws at once. A body that fails, as when loom was deployed while the page stayed open and its module is gone, is drawn
 again by its own placement after 0.7 s and again after 2.5 s, saying only "Getting this brick again…"; a failed fetch
 is not kept, so each try asks for the module again. The rest of the board stays drawn. If it still fails the
-placement says "Sorry, this brick didn't load." with "Try again"; the page meanwhile looks for a newer build and
-takes it as "A restart" says, once nothing typed would be lost, and until then the placement says loom was updated
-and also offers "Reload now" (the kit's `Fetching` and `Lost`: a quiet line and the kit's own actions). Under the sorry line the
+placement says "Sorry, this brick didn't load." with "Try again", and the board's header row counts it ("N bricks
+didn’t load", with Try all again); the page meanwhile looks for a newer build and takes it as "A restart" says, once
+nothing typed would be lost, and until then the header row, not the placement, says loom was updated and offers
+"Reload now" (the kit's `Fetching` and `Lost`: a quiet line and the kit's own actions). Under the sorry line the
 placement shows what was caught, in the program's own words cut to 200 characters, so that a brick that fails on
 one screen and not another can be mended from what it said. The
 page's first script holds no brick and nothing only a brick needs. The bundle guard (`web/boards-guard.ts`, run by
@@ -1583,7 +1612,7 @@ face made from the agent's colours.
 | `Fold` | A section that is read only once it is opened: its heading is the control and says which way it stands (`aria-expanded`). One name for the part, open or closed ("Reviews", "Story", "Loom's reviews", "Backlog history", "Agents' notes"), never "Show…" and "Hide…"; what could not be read says "Close it and open it again to try again." |
 | `RowTools` | A row's own controls at its end: unseen until the row is pointed at or holds the keyboard, always seen where nothing can point (a phone), always in the tab order, and keeping their room so nothing moves. |
 | `Group` | A few fields of a long form under one small heading (a `fieldset`); where the placement is wide its short fields stand two to a row, and a choice stands like a field, its label over it. |
-| `Lost`, `Fetching` | A placement whose brick did not load: "Getting this brick again…", then sorry with "Try again" (and "Reload now" where loom serves a newer page). |
+| `Lost`, `Fetching` | A placement whose brick did not load: "Getting this brick again…", then sorry with "Try again". (`Lost` can still offer "Reload now"; since 2026-11-28 the page does not ask it to, because the header row says loom was updated.) |
 | `board-prose`, `board-foot` | Prose that is the thing itself (a session's report), in ink; and a brick's last quiet line (when it was last read, and the control that reads it again). |
 | `Actions`, `Action` | A brick's controls, last in the form. One `primary` at most; `quiet` steps back; `danger` cannot be undone. |
 | `Confirm` | Asking before acting, the same everywhere: the control ("Stop…") opens the act in full ("Stop this session") beside the way back. |
@@ -1974,7 +2003,7 @@ brick adds "If a token with this label is in the list now, loom made it before i
 value was never shown.", a notice already left for that request stays, and the board is not told (the page cannot
 know). The refusals are Household setup's words ("Sign in again to make a token…" for the door's
 fresh-sign-in refusal, "Token creation refused…" for any other). Only no reply, a 5xx, or a 2xx whose body is not
-a token leaves it unknown, and only then does the brick say "Token creation for “…” (kind) may have completed. Check
+a token leaves it unknown, and only then is the member told, by the header row's token notice, "Token creation for “…” (kind) may have completed. Check
 its label in the token list and revoke it before trying again." Neither tells the board anything. **Once loom answers that it made
 it, the board is told `token {label, kind}`** whatever changed on the page meanwhile (the form gone, an owner
 change), by one `boards.act` call that is not tried again: if that call fails the agent is not told, as with any
@@ -1987,8 +2016,10 @@ looks like a secret value, not a name.", and refused again by `boards.act`, by t
 the same accepted trade-off).
 **When the form cannot say it.** What the member must be told of a token whose fate the form could not follow is
 kept outside every brick's body, in memory for the page's life and never in storage, by label and kind and never a
-value (`web/src/boards/token-notices.ts`), and every household brick drawn afterwards, in any form, shows it with
-Dismiss. The form lets go of a request when its body goes away while loom is asked (the brick drawn small or
+value (`web/src/boards/token-notices.ts`), and the board's header row says it with Dismiss, whatever board is shown
+(since 2026-11-28; before, every household brick drawn afterwards showed it). A household brick's read of the token
+list is still what ends a notice of unknown fate, so with no household brick on screen such a notice stays until it
+is dismissed or one is drawn. The form lets go of a request when its body goes away while loom is asked (the brick drawn small or
 compact, folded, removed, another board shown, the setup no longer answered) or loom reports another signed-in
 owner: the notice says it may have been made, and loom's late answer settles it: a refusal ends it, a token made
 turns it into "Token “…” (kind) was made after its form went away, so its value cannot be shown. Revoke it if you did
@@ -2235,7 +2266,14 @@ agent, agents, and the lanes' pause and resume); the checks that span several br
 `web/src/boards/bricks-loading.test.tsx`: a body says loading until its module arrives, then draws at once, and is
 fetched once. `web/src/boards/page.test.tsx`: a body on its way keeps its placement's rectangle and heading and
 holds no other placement back, and one that cannot be fetched says so in its own placement and has the page take
-a newer build unless something is typed. No suite holds a list
+a newer build unless something is typed. The header row ("The page"), in `page.test.tsx` ("the header row", "the
+page's notices, said once in the header row"): a chip for each flagged placement in rank order with the brick's name,
+reference and flag word; `+N` and the count and the lists they open; a chip pressed scrolls to and focuses its
+placement (or its folded chip) and calls no operation, makes no request and clears no flag; each notice is said once,
+on the board on screen, and not in a brick; Try all again; Close an icon named "Close board"; the row's fixed block
+size, its one line and its lists outside it (`board.css` read). `board-head.test.tsx`: how many chips a width shows,
+a chip's words, the one mark. `pace.test.tsx`: a placement tells the board while it is getting new data, and when it
+stops or goes. No suite holds a list
 of the bricks, of those that can be big, or a count of them.
 
 In `web/src/boards/notify.test.tsx`, `title.test.tsx` and
