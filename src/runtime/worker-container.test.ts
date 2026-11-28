@@ -80,9 +80,11 @@ it('fetches the house, finds its image, and runs the worker\'s own body program 
   expect(f.engine.attach).toHaveBeenCalledWith(id, expect.any(AbortSignal));
   expect(f.engine.json.mock.calls.map(call => call[1])).toEqual(['/containers/create?name=loom-unique', `/containers/${id}/json`, `/containers/${id}/start`, `/containers/${id}/wait?condition=not-running`]);
   expect(control.started).toHaveBeenCalledWith('job', built, expect.any(AbortSignal)); expect(f.writes).toEqual([]);
-  // The image by the id it was inspected under; its node, the worker's body program, the harness's body
-  // file, the image's working directory. No environment but where scratch files go: the rest is the image's.
-  expect(f.engine.json.mock.calls[0][2]).toEqual({ Image: imageId, Entrypoint: ['/usr/local/bin/node'], Cmd: ['/opt/loom/dist/body.js', '/etc/loom/body/harness.json'], WorkingDir: '/home/agent/repo',
+  // The image by the id it was inspected under; tini as PID 1 passing signals to the body's process group,
+  // its node, the worker's body program, the harness's body file, the image's working directory. No
+  // environment but where scratch files go: the rest is the image's. The match is exact, so the body runs as
+  // the image's user, in the engine's own private user namespace: no User, UsernsMode or capability is asked.
+  expect(f.engine.json.mock.calls[0][2]).toEqual({ Image: imageId, Entrypoint: ['/usr/bin/tini', '-g', '--', '/usr/local/bin/node'], Cmd: ['/opt/loom/dist/body.js', '/etc/loom/body/harness.json'], WorkingDir: '/home/agent/repo',
     Env: ['LOOM_BODY_SCRATCH=/tmp', 'HOME=/home/agent', 'LOOM_HOUSE_REPOSITORY=https://example.com/org/house.git', 'LOOM_HOUSE_BRANCH=next', `LOOM_HOUSE_COMMIT=${commit}`, 'LOOM_BODY_OWN_HARNESS=0'], Tty: false, ExposedPorts: {},
     Labels: { 'loom.job': 'job', 'loom.agent': 'art', 'loom.box': 'box' }, AttachStdin: true, AttachStdout: true, AttachStderr: true, OpenStdin: true, StdinOnce: true,
     HostConfig: { AutoRemove: false, Privileged: false, Runtime: 'runc', PublishAllPorts: false, LogConfig: { Type: 'none', Config: {} }, PortBindings: {}, Mounts: [...programAsked()], DeviceRequests: [] } });
@@ -278,7 +280,7 @@ it('starts each harness with the body file the image names for it', async () => 
   for (const [harness, file] of [['harness', '/etc/loom/body/harness.json'], ['unlisted', '/etc/loom/body/unlisted.json']]) {
     const f = fixture(), body = f.start({ ...job, harness }); await body.spawned;
     expect(f.engine.images).toHaveBeenLastCalledWith('GET', `/images/${built}/json`, undefined, expect.any(AbortSignal));
-    expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Image: imageId, Entrypoint: ['/usr/local/bin/node'], Cmd: ['/opt/loom/dist/body.js', file] });
+    expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Image: imageId, Entrypoint: ['/usr/bin/tini', '-g', '--', '/usr/local/bin/node'], Cmd: ['/opt/loom/dist/body.js', file] });
     await body.stop();
   }
 });

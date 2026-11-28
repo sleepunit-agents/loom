@@ -65,7 +65,7 @@ import { CONTAINER_RUNTIMES } from './runtime/worker-container.js';
 import { HOUSE_IMAGES_KEPT, HOUSE_IMAGES_PER_HOUSE, HOUSE_LABEL, HOUSE_LABEL_HARNESSES, HOUSE_VERSION } from './runtime/house-image.js';
 import { HOUSE_MIRRORS_KEPT } from './runtime/house-source.js';
 import { CORE_DIRECTORY } from './runtime/house-core.js';
-import { HOUSE_HOME, HOUSE_NODE, HOUSE_REPOSITORY, houseBodyFile, houseLogin, houseMount } from './runtime/house-layout.js';
+import { HOUSE_ENTRYPOINT, HOUSE_HOME, HOUSE_INIT, HOUSE_NODE, HOUSE_REPOSITORY, houseBodyFile, houseLogin, houseMount } from './runtime/house-layout.js';
 import { WORKER_STOP } from './runtime/worker-stop.js';
 import { LISTING_MAX } from './runtime/docker-engine.js';
 import { bridgeReview, bridgeSetting } from './pieces/bridges/settings.js';
@@ -687,11 +687,12 @@ it('says once where a body finds its program, what a house image must say, and h
   // Where the worker's own directory is in every container, and the body program in it.
   expect([BODY_PROGRAM_TARGET, BODY_PROGRAM]).toEqual(['/opt/loom', '/opt/loom/dist/body.js']);
   expect(sources('src').filter(file => text(file).includes('/opt/loom'))).toEqual(['src/runtime/worker-mounts.ts']);
-  expect(text('src/runtime/worker-container.ts')).toContain('Cmd: [BODY_PROGRAM, houseBodyFile(job.harness)]');
+  expect(text('src/runtime/worker-container.ts')).toContain('Entrypoint: [...HOUSE_ENTRYPOINT], Cmd: [BODY_PROGRAM, houseBodyFile(job.harness)]');
+  expect(HOUSE_ENTRYPOINT).toEqual([HOUSE_INIT, '-g', '--', HOUSE_NODE]); expect(HOUSE_INIT).toBe('/usr/bin/tini');
   // The layout inside every house is written in one file: the home, the repository, node, the body files, the sign-in.
   expect([HOUSE_HOME, HOUSE_REPOSITORY, HOUSE_NODE, houseBodyFile('claude'), houseLogin('claude'), houseMount('x')])
     .toEqual(['/home/agent', '/home/agent/repo', '/usr/local/bin/node', '/etc/loom/body/claude.json', '/run/loom/login/claude', '/home/agent/x']);
-  expect(sources('src').filter(file => /\/home\/agent|\/run\/loom\/login|\/etc\/loom\/body|\/usr\/local\/bin\/node/.test(text(file)))).toEqual(['src/runtime/house-layout.ts']);
+  expect(sources('src').filter(file => /\/home\/agent|\/run\/loom\/login|\/etc\/loom\/body|\/usr\/local\/bin\/node|\/usr\/bin\/tini/.test(text(file)))).toEqual(['src/runtime/house-layout.ts']);
   // The worker never looks inside a sign-in directory: the one file that takes their paths asks the system
   // only about path metadata and symlink targets. It never reads directory entries or file contents.
   expect(text('src/runtime/worker-mounts.ts')).toContain("import { lstatSync, readlinkSync, realpathSync } from 'node:fs';");
