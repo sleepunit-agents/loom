@@ -517,3 +517,4 @@ button.board-step-line::after { content: ''; grid-column: 3; grid-row: 1; justif
 /* A brick's last quiet line: when it was last read, and the control that reads it again. */
 .board-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--bk-1) var(--bk-3); padding-top: var(--bk-3); border-top: 1px solid var(--surface-edge); font-size: var(--bk-sm); color: var(--muted-foreground); }
 .board-foot > .board-action[data-kind='quiet'] { margin-block: calc(-1 * var(--bk-15)); }
+.board-lost-why { font-size: var(--bk-xs); color: var(--faint); overflow-wrap: anywhere; user-select: all; }

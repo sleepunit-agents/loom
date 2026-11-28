@@ -101,8 +101,9 @@ export const ticketGithubReviewsQuery = 'query BrickTicketGithubReviews($task:St
 type Round = { change: string; job: string; headCommit: string; tier: string; round: number; requestedAt: string; completedAt: string | null; verdict: string | null; findings: string | null };
 type GithubReview = { id: string; change: string; login: string | null; submittedAt: string; state: string; headCommit: string | null; body: string; url: string };
 type Cursor = { at: string | null; id: string | null };
-/** The desktop's words for a round's verdict and for GitHub's states (web/src/pieces/tasks/shared-view.tsx). */
-const roundWord = (r: Round) => (!r.completedAt ? 'requested' : r.verdict === 'CLEAR' ? 'clear' : r.verdict === 'BLOCKING' ? 'changes requested' : 'no reviewer report');
+/** A round's verdict in the pull brick's words (bricks-pull.tsx, verdictWord): one word for one thing on both
+ * bricks (Jonathan, 2026-11-28). GitHub's states keep the desktop's words. */
+const roundWord = (r: Round) => (!r.completedAt ? 'Pending' : r.verdict === 'CLEAR' ? 'Clear' : r.verdict === 'BLOCKING' ? 'Blocking' : 'No verdict');
 const roundTone = (r: Round): Tone => (!r.completedAt ? 'working' : r.verdict === 'CLEAR' ? 'good' : r.verdict === 'BLOCKING' ? 'bad' : 'muted');
 const githubWords: Record<string, [string, Tone]> = { APPROVED: ['approved', 'good'], CHANGES_REQUESTED: ['requested changes', 'bad'], COMMENTED: ['commented', 'neutral'], DISMISSED: ['review dismissed', 'muted'] };
 const githubHref = (url: string) => (url.startsWith('https://github.com/') ? url : null);
@@ -115,7 +116,7 @@ function Rounds({ ticket, changes }: { ticket: string; changes: Map<string, numb
   if (!rounds.length) return <Note>Loom has not reviewed its pull requests.</Note>;
   return (
     <Rows label="Loom's reviews" beside>{rounds.map((r) => (
-      <Row key={r.job} title={`Review ${r.round} · #${changes.get(r.change)} · ${r.headCommit.slice(0, 8)}`}
+      <Row key={r.job} title={`Round ${r.round} · #${changes.get(r.change)} · ${r.headCommit.slice(0, 8)}`}
         end={<><State tone={roundTone(r)}>{roundWord(r)}</State><Time at={r.completedAt ?? r.requestedAt} /></>}>
         {r.findings ? <Reply words={r.findings} /> : undefined}
       </Row>
