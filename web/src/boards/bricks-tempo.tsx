@@ -15,7 +15,7 @@ import { tempoQuery, type TempoData } from '../pieces/tempo/query';
 import { tempoFailureMessage } from '../pieces/tempo/actions';
 import { tempoActions } from '../pieces/tempo/commands';
 import type { NewTrigger } from '../../../src/core/tempo/triggers';
-import { Action, Actions, Chip, Few, Field, Lead, Loading, More, Note, Problem, Row, Rows, Section, Segmented, State, Time, Unavailable, count, useOwnFlag, words, type Act, type BodyProps, type Place } from './brick-kit';
+import { Action, Actions, Chip, Few, Field, Group, Lead, Loading, More, Note, Problem, Row, Rows, Section, Segmented, State, Time, Unavailable, count, useOwnFlag, words, type Act, type BodyProps, type Place } from './brick-kit';
 import { clock, jobFailed, stateTone, stateWord } from './tempo-data';
 
 export const tempoClockQuery = 'query BrickTempoClock{deskTime{at}}';
@@ -171,15 +171,21 @@ function CreateTrigger({ agent, zone, act, own, done }: { agent: string; zone: s
     <form className="board-form" aria-label="Create trigger" onSubmit={(e) => void save(e)}>
       <Lead>A new trigger</Lead>
       <Field label="Label" value={note} onChange={setNote} disabled={busy} />
+      <Group title="When it fires">
       <Segmented<Source> label="Source" value={source} options={sources} onChange={setSource} disabled={busy} />
       {source === 'time' ? <>
         <Field label={`Time (${zone})`} value={times} onChange={setTimes} disabled={busy} placeholder="08:31" />
-        <Note>Use household times such as 08:31, 14:31, or a date with its offset such as 2026-11-20T08:31-06:00.</Note>
         <Field label="Days" value={days} onChange={setDays} disabled={busy} placeholder="weekdays, or leave empty for every day" />
+        <Note>Use household times such as 08:31, 14:31, or a date with its offset such as 2026-11-20T08:31-06:00.</Note>
       </> : <Field label={watchWord} value={watches} onChange={setWatches} disabled={busy} placeholder={watchHint} />}
       <Segmented<Lifespan> label="Lifespan" value={lifespan} options={lifespans} onChange={setLifespan} disabled={busy} />
+      </Group>
+      <Group title="Whose it is">
       <Segmented<Owner> label="Set by" value={ownerKind} options={owners} onChange={setOwnerKind} disabled={busy} />
       {ownerKind !== 'household' && <Field label={ownerKind === 'member' ? 'Person' : 'Agent'} value={owner} onChange={setOwner} disabled={busy} />}
+      <Field label="Project" value={project} onChange={setProject} disabled={busy} />
+      </Group>
+      <Group title="What it does">
       <Segmented<Target> label="Target" value={target} options={targets} onChange={setTarget} disabled={busy} />
       <Segmented<Recipient> label="Recipient kind" value={toKind} options={recipients} onChange={setToKind} disabled={busy} />
       <Field label="Recipient" value={to} onChange={setTo} disabled={busy} />
@@ -187,7 +193,7 @@ function CreateTrigger({ agent, zone, act, own, done }: { agent: string; zone: s
         <Segmented<Content> label="Content" value={content} options={contents} onChange={setContent} disabled={busy} />
         <Field label={content === 'file' ? 'Repository file' : 'Words'} value={text} onChange={setText} long={content === 'words'} disabled={busy} />
       </>}
-      <Field label="Project" value={project} onChange={setProject} disabled={busy} />
+      </Group>
       <Actions label="Create trigger">
         <Action submit kind="primary" disabled={busy || !ready}>{busy ? 'Creating…' : 'Create trigger'}</Action>
         <Action kind="quiet" disabled={busy} onClick={() => done(false)}>Back to the list</Action>

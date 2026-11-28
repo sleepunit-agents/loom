@@ -148,7 +148,9 @@ it('opens the desktop\'s Create trigger form in place of the list, set by and wa
   expect(b.field('Agent')!.props.value).toBe('art');
   expect(b.field('Recipient')!.props.value).toBe('art');
   expect(['Source', 'Lifespan', 'Set by', 'Target', 'Recipient kind', 'Content'].map(pressed)).toEqual([['A time'], ['The next time only'], ['An agent'], ['An inbox item'], ['Agent'], ['Words']]);
-  expect(b.fields().map((field) => field.props['aria-label'])).toEqual(['Label', 'Time (UTC)', 'Days', 'Agent', 'Recipient', 'Words', 'Project']);
+  expect(b.fields().map((field) => field.props['aria-label'])).toEqual(['Label', 'Time (UTC)', 'Days', 'Agent', 'Project', 'Recipient', 'Words']);
+  // The long form is in three named groups: when it fires, whose it is, what it does.
+  expect(b.root().findAllByType('legend').map((legend) => b.said(legend))).toEqual(['When it fires', 'Whose it is', 'What it does']);
   // Nothing is sent until what Tempo needs is there: a label, a time and the words.
   expect(b.button('Create trigger')!.props.disabled).toBe(true);
   await b.type('Label', 'Evening water'); await b.type('Time (UTC)', '18:31');

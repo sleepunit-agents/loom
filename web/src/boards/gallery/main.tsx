@@ -4,17 +4,20 @@
  * The address chooses what is drawn:
  *   ?scheme=dark|light       the colour scheme (default: the device's)
  *   ?sheet=side|compact|primary|phone   one contact sheet: every brick's `default` scene in that form
- *   ?brick=<name>            only that brick's scenes
+ *   ?brick=<name>            only that brick's scenes (`page`: the parts of the page that are no brick)
+ *   ?tall                    a primary form as tall as what it holds, so a shot shows the whole of a long one
  * With no `sheet`, every scene of every brick is drawn in all its forms. Each drawing is a <figure data-shot>, which
  * is what web/scripts/gallery-shots.mjs photographs. */
 import { Suspense, useEffect, useRef, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { bricks, brickView } from '../bricks';
-import { Here, Loading } from '../brick-kit';
+import { Fetching, Here, Loading, Lost } from '../brick-kit';
 import type { Form } from '../layout';
 import { PlacementFrame } from '../placement';
+import { BridgeReceipt, ThreadHead, ThreadStop, ThreadSwitch } from '../threads';
 import { SceneContext } from './fake-graphql';
 import { all, groups } from './fixtures';
+import { pageScenes, type PageScene } from './fixtures/page';
 import type { Scene } from './scenes';
 import '../../pair/screen.css';
 import '../board.css';
@@ -57,7 +60,7 @@ function Pressed({ labels, children }: { labels?: Scene['press']; children: Reac
           continue;
         }
         for (let tries = 0; tries < 40 && !stopped; tries++) {
-          const button = [...(box.current?.querySelectorAll('button') ?? [])].find((b) => b.textContent?.trim() === label);
+          const button = [...(box.current?.querySelectorAll('button') ?? [])].find((b) => b.textContent?.trim() === label || b.getAttribute('aria-label') === label);
           if (button) { button.click(); break; }
           await new Promise((done) => setTimeout(done, 50));
         }
@@ -71,15 +74,48 @@ function Pressed({ labels, children }: { labels?: Scene['press']; children: Reac
 function Shot({ brick, scene, form }: { brick: string; scene: Scene; form: Drawn }) {
   const view = brickView(brick), size = room(brick, form), drawnForm: Form = form === 'phone' ? 'primary' : form;
   const { Body } = view;
+  const box = query.has('tall') && form === 'primary' ? { width: size.w, minHeight: size.h } : { width: size.w, height: size.h };
   return (
     <figure data-shot={`${brick}.${scene.name}.${form}`}>
       <figcaption><b>{brick}</b> {scene.name} · {form}</figcaption>
       <SceneContext.Provider value={scene}>
         <Pressed labels={scene.press}>
           <PlacementFrame title={view.title(scene.params)} sub={view.sub(scene.params)} form={drawnForm} flag={scene.flag} canMaximize={drawnForm !== 'primary'}
-            style={{ width: size.w, height: size.h }}>
+            style={box}>
             <Here.Provider value={{ thread: scene.here }}><Suspense fallback={<Loading />}><Body params={scene.params} form={drawnForm} act={() => {}} raise={() => {}} /></Suspense></Here.Provider>
           </PlacementFrame>
+        </Pressed>
+      </SceneContext.Provider>
+    </figure>
+  );
+}
+
+/** A part of the page that is no brick, drawn as the page draws it (../main.tsx): the conversation's header at the
+ * width the chat has beside a board, or a side placement whose body did not load. */
+function PageShot({ scene }: { scene: PageScene }) {
+  const thread = String(scene.params.thread ?? ''), names = (id: string) => id.slice(0, 1).toUpperCase() + id.slice(1);
+  return (
+    <figure data-shot={`page.${scene.name}.page`}>
+      <figcaption><b>page</b> {scene.name}</figcaption>
+      <SceneContext.Provider value={scene}>
+        <Pressed labels={scene.press}>
+          {scene.part === 'header' ? (
+            <section className="boards-talk gallery-talk" aria-label="Conversation" style={{ width: 420, height: scene.height ?? 150 }}>
+              <div className="boards-top">
+                <button type="button" className="boards-presence">
+                  <span className="boards-face" data-framed="true" style={{ width: 52, height: 52 }} />
+                  <span className="boards-who"><span className="boards-name">Fern</span><span className="boards-where"><span className="boards-thread-title">Watering the raised beds</span><span role="status">Working</span></span></span>
+                </button>
+                <ThreadStop thread={thread} member="alex" name="Fern" />
+                <ThreadSwitch thread={thread} visit={() => {}}><ThreadHead thread={thread} member="alex" /></ThreadSwitch>
+              </div>
+              <BridgeReceipt thread={thread} agentName={names} />
+            </section>
+          ) : (
+            <PlacementFrame title="Ticket" sub="t-3" form="side" canMaximize style={{ width: 320, height: 200 }}>
+              {scene.part === 'fetching' ? <Fetching /> : <Lost again={() => {}} reload={scene.part === 'lost-stale' ? () => {} : undefined} />}
+            </PlacementFrame>
+          )}
         </Pressed>
       </SceneContext.Provider>
     </figure>
@@ -99,6 +135,12 @@ function Gallery() {
   return (
     <>
       {missing.length > 0 && <p className="gallery-missing">No fixtures: {missing.join(', ')}</p>}
+      {(!only || only === 'page') && (
+        <section className="gallery-group">
+          {!only && <h1>The page</h1>}
+          <section className="gallery-brick"><div className="gallery-scene">{pageScenes.map((scene) => <PageShot key={scene.name} scene={scene} />)}</div></section>
+        </section>
+      )}
       {groups.map((group) => (
         <section key={group.name} className="gallery-group">
           {!only && <h1>{group.name}</h1>}

@@ -122,6 +122,12 @@ export function Section({ title, count: n, children }: { title: string; count?: 
   return <section className="board-section"><h3><span>{title}</span>{n !== undefined && <small>{n}</small>}</h3>{children}</section>;
 }
 
+/** A part of a brick that is read only once it is opened: its heading is the control, and says whether it is open.
+ * One name for the part, whichever way it stands; what it holds is drawn under it like any section's. */
+export function Fold({ title, open, onToggle, children }: { title: string; open: boolean; onToggle(): void; children?: ReactNode }) {
+  return <section className="board-section"><h3><button type="button" className="board-fold" aria-expanded={open} onClick={onToggle}>{title}</button></h3>{open && children}</section>;
+}
+
 /** Label and value pairs. A short value sits beside its label; a `wide` one (prose) sits under it. */
 export const Facts = ({ children }: { children: ReactNode }) => <dl className="board-facts">{children}</dl>;
 export const Fact = ({ label, wide, children }: { label: string; wide?: boolean; children: ReactNode }) => (
@@ -143,6 +149,11 @@ export function Row({ title, meta, end, place, children, flagged }: { title: Rea
     </li>
   );
 }
+
+/** A row's own controls, at its end: unseen until the row is pointed at or holds the keyboard, and always there
+ * where nothing can point (a phone). They keep their place in the tab order and their room in the row, so nothing
+ * moves when they appear. */
+export const RowTools = ({ children, label }: { children: ReactNode; label: string }) => <span className="board-row-tools" role="group" aria-label={label}>{children}</span>;
 
 /** The controls of a brick, in one row that wraps. */
 export const Actions = ({ children, label }: { children: ReactNode; label?: string }) => <div className="board-actions" role={label ? 'group' : undefined} aria-label={label}>{children}</div>;
@@ -207,6 +218,25 @@ export function AskRow({ title, meta, end, asks, children }: { title: ReactNode;
   const { control, question } = useAsks(asks);
   return <Row title={title} meta={meta} end={<>{end}{control}</>}>{question || children ? <>{children}{question}</> : undefined}</Row>;
 }
+
+/** A brick's body that could not be drawn, after the placement's own tries (./main.tsx): sorry, said quietly, and
+ * the ways on. `reload` is offered where loom now serves a newer page than this one. */
+export function Lost({ again, reload }: { again(): void; reload?(): void }) {
+  return (
+    <div role="alert" className="board-lost">
+      <p className="board-note">{reload ? 'Sorry, this brick didn’t load: loom was updated while this page was open. The page reloads by itself once your message is sent or cleared.' : 'Sorry, this brick didn’t load.'}</p>
+      <Actions>
+        <Action onClick={again}>Try again</Action>
+        {reload && <Action kind="quiet" onClick={reload}>Reload now</Action>}
+      </Actions>
+    </div>
+  );
+}
+/** A brick's body being fetched again by its placement. */
+export const Fetching = () => <p role="status" className="board-note">Getting this brick again…</p>;
+
+/** A few fields of a long form that belong together, under one small heading. */
+export const Group = ({ title, children }: { title: string; children: ReactNode }) => <fieldset className="board-group"><legend>{title}</legend>{children}</fieldset>;
 
 /** A field of words under its label. */
 export function Field({ label, value, onChange, long, disabled, placeholder, type, autoFocus }: { label: string; value: string; onChange(value: string): void; long?: boolean; disabled?: boolean; placeholder?: string; type?: string; autoFocus?: boolean }) {

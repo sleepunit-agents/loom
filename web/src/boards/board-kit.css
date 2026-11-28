@@ -83,11 +83,18 @@ button.board-more:is(:hover, :focus-visible) { color: var(--foreground); backgro
 .board-lead { margin: 0; font-size: var(--bk-lg); font-weight: 500; line-height: 1.35; letter-spacing: -.005em; color: var(--foreground); overflow-wrap: anywhere; text-wrap: pretty; }
 .board-placement[data-form='side'] .board-lead { font-size: var(--bk-md); line-height: 1.4; letter-spacing: 0; }
 .board-placement[data-form='primary'] .board-lead { font-size: var(--bk-xl); font-weight: 450; line-height: 1.25; letter-spacing: -.012em; }
+/* A lead inside a section leads that section, not the brick: a size down. */
+.board-placement[data-form='primary'] .board-section .board-lead { font-size: var(--bk-lg); font-weight: 500; line-height: 1.35; letter-spacing: -.005em; }
 /* On a narrow placement (a phone) the primary form's lead is a size down, so a long title is not a wall. */
 @container (max-width: 26rem) { .board-placement[data-form='primary'] .board-lead { font-size: var(--bk-lg); font-weight: 500; line-height: 1.35; letter-spacing: -.005em; } .board-placement[data-form='primary'] > header { padding-inline: var(--bk-4); } .board-placement[data-form='primary'] > div { padding-inline: var(--bk-4); } }
 .board-note { font-size: var(--bk-sm); line-height: 1.45; color: var(--muted-foreground); overflow-wrap: anywhere; }
 .board-placement[data-form='primary'] .board-note { font-size: var(--bk-md); }
-.board-problem { font-size: var(--bk-sm); color: var(--tone-bad); }
+.board-problem { font-size: var(--bk-sm); line-height: 1.45; color: var(--tone-bad); overflow-wrap: anywhere; }
+/* Something said aloud on this page is a line of words where it happened: it does not float (../pair/screen.css gives its own alerts a shadow). */
+.boards-page :is(.board-placement, .boards-talk) [role='alert'] { box-shadow: none; }
+/* Prose that is the thing itself (a report, an answer): in ink, its paragraphs and lists a little apart. */
+.board-prose { color: var(--foreground); overflow-wrap: anywhere; }
+.board-prose :is(p, ul, ol, pre) + :is(p, ul, ol, pre) { margin-top: var(--bk-2); }
 .board-time { font-size: var(--bk-sm); color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .board-placement .font-mono { font-size: .86em; }
 .board-placement :is(p, li, dd) a:not([class]) { color: var(--foreground); text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: .18em; }
@@ -114,6 +121,14 @@ button.board-more:is(:hover, :focus-visible) { color: var(--foreground); backgro
 .board-section > * + * { margin-top: var(--bk-2); }
 .board-section > h3 + * { margin-top: 0; }
 .board-placement[data-form='primary'] .board-section + .board-section { margin-top: var(--bk-5); }
+/* A section that opens (Fold): its heading is the control, a step up in ink from a plain heading, with the mark of
+   a thing that opens. Closed, the heading is all there is of it. */
+.board-fold { margin: calc(-1 * var(--bk-1)) calc(-1 * var(--bk-15)); padding: var(--bk-1) var(--bk-15); border-radius: var(--radius-small); font: inherit; letter-spacing: inherit; text-transform: inherit; text-align: left; color: var(--muted-foreground); }
+.board-fold::after { content: ''; display: inline-block; width: .35rem; height: .35rem; margin-left: var(--bk-2); border: solid currentColor; border-width: 0 1.2px 1.2px 0; rotate: -45deg; translate: 0 -.1rem; }
+.board-fold[aria-expanded='true']::after { rotate: 45deg; translate: 0 -.18rem; }
+.board-fold:is(:hover, :focus-visible) { color: var(--foreground); background: var(--wash); outline: 0; }
+.board-fold:focus-visible { outline: 1.5px solid var(--ring); outline-offset: 1px; }
+.board-section > h3:has(> .board-fold[aria-expanded='true']) { margin-bottom: var(--bk-2); }
 
 .board-placement dl { display: grid; gap: var(--bk-3); }
 .board-placement dd { color: var(--foreground); overflow-wrap: anywhere; min-width: 0; }
@@ -142,6 +157,15 @@ button.board-row-main:is(:hover, :focus-visible) { background: var(--wash); outl
 .board-row-meta .board-chip { vertical-align: baseline; }
 .board-row-end { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: baseline; gap: var(--bk-1) var(--bk-2); font-size: var(--bk-sm); color: var(--muted-foreground); text-align: right; }
 .board-row-more { grid-column: 1 / -1; margin-top: var(--bk-2); display: grid; gap: var(--bk-2); }
+/* What a row holds under its words keeps its own width: a chip there is a chip, not a bar. */
+.board-row-more > :is(.board-chip, .board-meta) { justify-self: start; }
+/* A row's own controls (RowTools): unseen until the row is pointed at or holds the keyboard; always there where
+   nothing can point. They keep their room, so nothing moves when they appear. */
+.board-row-tools { display: inline-flex; align-items: baseline; gap: var(--bk-0); opacity: 0; }
+.board-row:is(:hover, :focus-within) > .board-row-end > .board-row-tools { opacity: 1; }
+@media (hover: none) { .board-row-tools { opacity: 1; } }
+@media (prefers-reduced-motion: no-preference) { .board-row-tools { transition: opacity .15s; } }
+.board-row-end > .board-row-tools > .board-action[data-kind='quiet'] { margin-block: calc(-1 * var(--bk-15)); }
 /* A flagged row's mark hangs in the margin, so its words stay in line with the rows around it. */
 .board-row[data-flagged] { position: relative; }
 .board-row[data-flagged] .board-row-title::before { content: ''; position: absolute; left: -.68rem; top: calc(var(--bk-2) + .5lh - 2.5px); width: 5px; height: 5px; border-radius: 50%; background: var(--flag); }
@@ -174,8 +198,8 @@ button.board-row-main:is(:hover, :focus-visible) { background: var(--wash); outl
   .board-action, .board-seg button, .board-menu, .board-menu-list button, .board-input, .board-picker-found button, .board-ticket, button.board-step-line, .board-threads-line > a, .board-approval-reason > summary, .board-person-note > summary { min-height: 2.5rem; }
   .board-action, .board-seg button, .board-menu, .board-approval-reason > summary { display: inline-flex; align-items: center; }
   button.board-row-main { min-height: 2.5rem; align-content: center; }
-  :is(.board-chip, button.board-more, .board-opens, .board-activity-open, .board-placement :is(p, li, dd) a:not([class])) { position: relative; }
-  :is(.board-chip, button.board-more, .board-activity-open, .board-placement :is(p, li, dd) a:not([class]))::after, .board-opens::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 2.5rem; translate: 0 -50%; }
+  :is(.board-chip, button.board-more, .board-opens, .board-fold, .board-activity-open, .board-placement :is(p, li, dd) a:not([class])) { position: relative; }
+  :is(.board-chip, button.board-more, .board-activity-open, .board-placement :is(p, li, dd) a:not([class]))::after, :is(.board-opens, .board-fold)::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 2.5rem; translate: 0 -50%; }
   .board-check { min-height: 2.5rem; align-items: center; }
 }
 @media (prefers-reduced-motion: no-preference) { .board-action, .board-seg button, .board-chip, button.board-row-main { transition: border-color .2s, background-color .2s, color .2s; } }
@@ -343,12 +367,17 @@ button.board-step-line::after { content: ''; grid-column: 3; grid-row: 1; justif
 .board-repository-number { color: var(--faint); margin-right: var(--bk-0); }
 .board-pull-list { display: grid; gap: var(--bk-0); justify-items: start; }
 .board-pull-list .board-state { white-space: normal; }
-/* A changed file's patch: plain text, one line to a span, long lines wrapping in a narrow placement. */
-.board-patch { margin: 0; font-family: var(--font-mono); font-size: var(--bk-xs); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted-foreground); }
-.board-patch > span { display: block; padding-inline: var(--bk-1); }
-.board-patch-add { color: var(--foreground); background: color-mix(in srgb, var(--tone-good) 14%, transparent); }
-.board-patch-remove { color: var(--foreground); background: color-mix(in srgb, var(--tone-bad) 14%, transparent); }
-.board-patch-hunk { color: var(--faint); }
+/* A changed file's patch: code keeps its lines. A line longer than the placement is reached by scrolling the
+   patch sideways (the one thing on a board that may), so indentation still reads as structure. The lines are as
+   wide as the longest, so an added or removed line's ground runs the whole way. */
+.board-patch { margin: 0; overflow-x: auto; font-family: var(--font-mono); font-size: var(--bk-xs); line-height: 1.55; white-space: pre; tab-size: 2; color: var(--muted-foreground); scrollbar-width: thin; scrollbar-color: var(--surface-edge) transparent; }
+.board-patch:focus-visible { outline: 1.5px solid var(--ring); outline-offset: 1px; }
+.board-patch > code { display: block; width: max-content; min-width: 100%; font: inherit; }
+.board-patch > code > span { display: block; padding-inline: var(--bk-2); }
+.board-patch-add { color: var(--foreground); background: color-mix(in srgb, var(--tone-good) 13%, transparent); }
+.board-patch-remove { color: var(--foreground); background: color-mix(in srgb, var(--tone-bad) 13%, transparent); }
+.board-patch-hunk { margin-block: var(--bk-1); color: var(--muted-foreground); background: var(--wash); }
+.board-patch-hunk:first-child { margin-top: 0; }
 .board-row-ref { color: var(--faint); margin-left: var(--bk-15); white-space: nowrap; }
 .board-placement[data-form='side'] form[aria-label='File a ticket'] { gap: var(--bk-2); }
 .board-placement[data-form='side'] form[aria-label='File a ticket'] textarea { min-height: 2.2em; }
@@ -369,7 +398,7 @@ button.board-step-line::after { content: ''; grid-column: 3; grid-row: 1; justif
 .board-placement .board-rows .board-threads-line > a { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--bk-2); margin: calc(-1 * var(--bk-15)) calc(-1 * var(--bk-15)); padding: var(--bk-15) var(--bk-15); border-radius: var(--radius-control); color: var(--foreground); text-decoration: none; }
 .board-threads-line > a:is(:hover, :focus-visible) { background: var(--wash); outline: 0; }
 .board-threads-line small { font-size: var(--bk-sm); color: var(--muted-foreground); }
-.board-threads-line .board-state[data-unread='true'] { --tone: var(--tone-waiting); }
+.board-state[data-unread='true'] { --tone: var(--tone-waiting); }
 
 /* ── What the agents bricks add ─────────────────────────────────────────────────────────────── */
 /* An agent's face beside its name: the lead of the agent brick, and small in a roster row. */
@@ -472,6 +501,19 @@ button.board-step-line::after { content: ''; grid-column: 3; grid-row: 1; justif
 .board-row[data-flagged] .board-row:not([data-flagged]) .board-row-title::before { content: none; }
 /* Two questions side by side: while one is open, the other's control steps aside. */
 .board-bridges-review:has(> .board-confirm) > .board-action { display: none; }
-/* A body that failed to load, after the placement's own retries (main.tsx, BodyBoundary). */
-.board-lost { display: flex; flex-direction: column; gap: var(--bk-2); color: var(--muted-foreground); font-size: var(--bk-sm); }
-.board-lost-actions { display: flex; gap: var(--bk-15); }
+/* A body that failed to load, after the placement's own retries (brick-kit.tsx, Lost): a quiet line and its ways on. */
+.board-lost { display: grid; gap: var(--bk-25); }
+/* A long form's groups (Group): a small heading over a few fields, parted from the next by air. */
+.board-group { display: grid; gap: var(--bk-3); min-width: 0; margin: 0; padding: 0; border: 0; }
+.board-group > legend { padding: 0; margin-bottom: var(--bk-2); font-size: var(--bk-sm); font-weight: 500; color: var(--foreground); }
+.board-form > .board-group { margin-top: var(--bk-3); }
+/* Where the placement is wide, a group's short fields stand two to a row; a choice, a long field and a note keep the row. */
+@container (min-width: 34rem) {
+  .board-group { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: var(--bk-4); align-items: start; }
+  .board-group > :is(.board-choice, .board-note, .board-problem, .board-field:has(> textarea)) { grid-column: 1 / -1; }
+}
+/* In a group a choice stands like a field: its label over it, so every control starts at the same edge. */
+.board-group > .board-choice { display: grid; justify-items: start; gap: var(--bk-1); }
+/* A brick's last quiet line: when it was last read, and the control that reads it again. */
+.board-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--bk-1) var(--bk-3); padding-top: var(--bk-3); border-top: 1px solid var(--surface-edge); font-size: var(--bk-sm); color: var(--muted-foreground); }
+.board-foot > .board-action[data-kind='quiet'] { margin-block: calc(-1 * var(--bk-15)); }

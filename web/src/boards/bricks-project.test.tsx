@@ -42,7 +42,7 @@ it('shows a project\'s goal, lifecycle, the members and agents on it, and its re
   expect(b.all()).not.toContain('not a repository');
   // Its one control opens the agents' notes; it has no action.
   expect(b.controls()).toHaveLength(1);
-  expect(b.labels()).toEqual(["Show the agents' notes"]);
+  expect(b.labels()).toEqual(["Agents' notes"]);
   // The small form has who is on it and no cards or repositories.
   await b.draw('project', { project: 'garden' }, 'side');
   expect(b.placed()).toEqual([place('lanes', { project: 'garden' }), place('trend', { project: 'garden', days: 30 }),
@@ -111,18 +111,20 @@ const answerAll = (scene: Record<string, unknown>) => {
   });
 };
 const onceAsked = (name: string) => once.mock.calls.filter(([query]) => new RegExp(`^query ${name}\\b`).test(query)).map(([, variables]) => variables);
-const show = () => b.press("Show the agents' notes");
+const show = () => b.press("Agents' notes");
+/** Whether the section's heading, which is its control, says it is closed (false) or open (true). */
+const folded = () => b.root().findAll((node) => node.type === 'button' && node.props.className === 'board-fold' && b.said(node) === "Agents' notes")[0]?.props['aria-expanded'];
 const find = async (words: string) => { await b.type("Search the agents' notes", words); await b.submit("Search the agents' notes"); };
 
 it('reads nothing of the agents\' notes until the member opens them, and then each card once, in one request', async () => {
   answerAll(notesData());
   await b.draw('project', { project: 'garden' }, 'primary');
-  expect(b.labels()).toContain("Show the agents' notes");
+  expect(folded()).toBe(false);
   expect(once).not.toHaveBeenCalled();
   expect(b.all()).not.toContain('Compost bay');
   // Not on a small form at all.
   await b.draw('project', { project: 'garden' }, 'side');
-  expect(b.labels()).not.toContain("Show the agents' notes");
+  expect(b.labels()).not.toContain("Agents' notes");
   await b.draw('project', { project: 'garden' }, 'primary');
   await show();
   expect(onceAsked('BrickProjectNotes')).toEqual([{ c0: 'art:garden', c1: 'fern:garden' }]);
@@ -175,7 +177,7 @@ it('says when no note matches, when there are none it may read, and when the not
   answerAll(notesData({ BrickProjectNotes: 'offline' }));
   await b.draw('project', { project: 'garden' }, 'primary');
   await show();
-  expect(b.alert()).toBe("The agents' notes could not be read. Hide them and show them again to try again.");
+  expect(b.alert()).toBe("The agents' notes could not be read. Close them and open them again to try again.");
   // One note failing, and one no longer there.
   answerAll(notesData({ BrickProjectNote: 'offline' }));
   await b.draw('project', { project: 'garden' }, 'primary');
@@ -194,7 +196,7 @@ it('forgets what was read when the notes are hidden, the brick leaves its big fo
   await b.draw('project', { project: 'garden' }, 'primary');
   await show();
   await find('frost');
-  await b.press("Hide the agents' notes");
+  await b.press("Agents' notes");
   expect(b.all()).not.toContain('Frost dates');
   await show();
   expect(b.field("Search the agents' notes")!.props.value).toBe('');
@@ -203,18 +205,18 @@ it('forgets what was read when the notes are hidden, the brick leaves its big fo
   await find('frost');
   await b.redraw('project', { project: 'garden' }, 'side');
   await b.redraw('project', { project: 'garden' }, 'primary');
-  expect(b.labels()).toContain("Show the agents' notes");
+  expect(folded()).toBe(false);
   expect(b.all()).not.toContain('Frost dates');
   // Another project: closed again.
   await show();
   await b.redraw('project', { project: 'pond' }, 'primary');
-  expect(b.labels()).toContain("Show the agents' notes");
+  expect(folded()).toBe(false);
   expect(b.all()).not.toContain('Compost bay');
 });
 
 it('offers no notes where no agent keeps a card for the project', async () => {
   answerAll(data({ WorkProjectNotes: { workProjectContributions: [] } }));
   await b.draw('project', { project: 'garden' }, 'primary');
-  expect(b.labels()).not.toContain("Show the agents' notes");
+  expect(b.labels()).not.toContain("Agents' notes");
   expect(once).not.toHaveBeenCalled();
 });
