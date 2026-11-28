@@ -499,8 +499,8 @@ ids, making it with `comms.open` if it does not exist.
 - **The conversation's header (design pass, 2026-11-27).** One quiet line: the agent's face and name, and under the
   name the thread's title as plain words before how the agent stands. One unobtrusive control beside it (three
   dots; the desktop launcher's keys open it too) opens one panel that holds everything else: the list of
-  conversations and a new one with each agent, this conversation's rename and archive, and notifications on this
-  device (a line that opens its state, its on and off, and its two choices). Nothing else is in the header.
+  conversations, its search and a new one with each agent, this conversation's rename, pin, archive and delete, and
+  notifications on this device (a line that opens its state, its on and off, and its two choices). Nothing else is in the header.
 - **Threads (built 2026-11-27).** A control beside the presence, and the desktop launcher's keys (Ctrl+Space, a
   double tap of Shift), open a list of the member's open threads: Comms' own rows in Comms' order (pinned, then most
   recent; its first fifty), each with its title, its agent, "Working" and "Unread". Arrow keys move, Enter chooses,
@@ -510,8 +510,16 @@ ids, making it with `comms.open` if it does not exist.
   (`comms.open` with a new id and no title) and goes to it. A thread that was read is not opened again with
   `comms.open`. The presence is the thread's own agent: its directory name and, for any agent but Art, its face
   drawn still from `agents.markBg/faceShape/faceEyes` and the desktop's face shapes. Under the presence is the
-  thread's title; the member whose thread it is can rename it and archive it (asked first) or restore it, by
-  `comms.change`. The page marks the thread read (`comms.change`, `read`) when its conversation is on screen in a
+  thread's title; the member whose thread it is can rename it, pin or unpin it, archive it (asked first) or restore
+  it, and delete it, by `comms.change` as Comms' More menu does. Delete is asked first, and the question names the
+  conversation by its title ("Delete “…” and its private words? It cannot be undone."); nothing is sent until it is
+  answered yes, and then the page goes to `/app/boards`. A refused or failed change says "Could not save. Try again."
+  and leaves the question open. **Search (2026-11-27)**: the top of the list is Comms' search box. It is asked on
+  submit (Enter or Search), never on a keystroke, as `commsThreads(archived:false, search:…)` by one request
+  (`useDataOnce`), never a live selection; what it found takes the list's place, in Comms' order, with no new
+  conversations under it, and says "No conversations match." or "Search is unavailable. Try again.". Emptying the
+  box or "Show the list" goes back to the live list. What was typed is the panel's own state: never a parameter,
+  a detail, the address or storage (rule 1). `commsFolders` is not read: the panel shows no folder counts. The page marks the thread read (`comms.change`, `read`) when its conversation is on screen in a
   visible tab and holds something after the read mark, as Comms does; "Unread" in the list is Home's rule, a reply
   from the thread's agent after that mark, served as `unread` on a Comms thread row. Nothing about the thread or
   board shown is in a query string, a fragment or storage.
@@ -609,7 +617,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `knowledge` | `show`: `all`, `recent` or `due`, default `all`; `domain`: a topic, optional: a lowercase letter or digit, then up to 119 of lowercase letters, digits and `. _ / -`. No parameter holds words to search for | `add {}`, by `mind.knowledgeAdd` | none |
 | `people` | `folder`: `all`, `person` or `agent`, default `all`. No parameter holds words to search for | `add {}`, by `mind.personAdd` | none |
 | `activity` | `days`: 1, 7 or 30, default 1 | none | none |
-| `threads` | `scope`: `open` or `archived` (Comms' two folders), default `open` | none | none |
+| `threads` | `scope`: `open` or `archived` (Comms' two folders), default `open` | `pin {}`, `unpin {}` and `delete {}` (asked first), each by `comms.change`, which lets in the thread's member alone | none |
 | `agents` | none | none | none |
 | `question`, added 2026-11-27 | as above | also `discuss {}`, after `inbox.discuss`; `taskAnswer {answer}`, after `tasks.command` `answer`, `answer` one of `yes`, `no`, `words`; `join {decision}`, after `runtime.workerJoinDecide`, `decision` one of `allow`, `block` | as above |
 | `ticket`, added later on 2026-11-27 | as above | also `ask {}`, by `tasks.command` `ask`, and `promote {}`, by `tasks.command` `edit` with the type alone, after asking | as above |
@@ -642,6 +650,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `inbox` | yes: every folder's count, and up to fifty of the folder's items newest first, each with its words as a chip that places its `question` brick, who asked, when, its state, read or unread, and Mark read on an unread one; the outcomes of the member's own actions where the Inbox lists them, each with Dismiss; Newer and Older for a longer folder. Small: the folder's count and its first four items as chips. Folded: one line of counts | more waits on the member than before (the count of `needs` goes up) |
 | `approvals` | yes: every pending request oldest first, or every answered one newest first, each with its title as a chip that places its `approval` brick, its state, kind, agent, project, when it was asked, why, what it allows and, once answered, who answered; or every standing rule with what it covers, which kind of request, for whom, its answer and who set it when; or the reported steps newest first, the first fifty, each with the agent, kind, target and when. Small: the count and the first four (as chips where they are requests). Folded: one line of counts | a new request is waiting (the count of pending goes up), in every state |
 | `ticket`, added 2026-11-27 | yes: also its description, its linked tickets with their titles, and the Edit and Links forms; small, its priority, who filed it, why it closed and its links as chips | as above; an edit or a link flags nothing |
+| `ticket`, added later on 2026-11-27 | yes: also its pull requests, each a `pull` chip with its title and state; the conversation it was filed from; and two sections opened on a press, Reviews (loom's rounds and GitHub's reviews, newest first) and Story (what agents posted about it, newest first), each read only when opened, thirty at a time; small, its pull requests as `pull` chips by number | as above |
 | `lanes`, added 2026-11-27 | yes: also how many of the project's questions wait on the member, and each agent's new claims with pause and resume | never |
 | `project`, added 2026-11-27 | yes: also its name, what each agent calls it, and its repositories | never |
 | `new-ticket` | yes: every field of the desktop's Create task form; small, title, goal and why with that form's defaults; folded, "File a ticket in <project name>" | never |
@@ -651,7 +660,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `knowledge` | yes: up to 40 pages, the search box, the topics, "Add a fact" | never |
 | `people` | yes: up to 60 cards with who knows each, the search box, "Add a person" | never |
 | `activity` | yes: the range by day, and an entry opened in place | never |
-| `threads` | yes: every row of Comms' first page, with when each was last used | never |
+| `threads` | yes: every row of Comms' first page, with when each was last used, Pin or Unpin and Delete… on each, and Comms' search | never |
 | `agents` | no | never |
 | `tempo` | yes: every trigger of the agent, the day's recorded firings, and New trigger…, which opens the desktop's Create trigger form in their place; small, the first six | a firing of one of the agent's triggers fails (more of them have a failed last firing than before) |
 | `trigger` | yes: also its project, machine needs, requested model, program, lessons and saved state where the member may read them, every recent run and its recent history; small, its source, target, words, three runs and its buttons | it fails, or its newest run fails |
@@ -712,7 +721,16 @@ calls through modules both sides import.
 
 - `threads`: the list the page's own switcher reads (`commsThreads` for the member, one folder, with `unread`), each
   row an ordinary link to `/app/t/<thread id>` with the agent's name and "Working" and "Unread". Side: the first six
-  and how many more. Compact: one line of counts. Comms' search, its later pages and pinning are not on it.
+  and how many more. Compact: one line of counts. Primary (2026-11-27): each row has Pin or Unpin and Delete…, named
+  for the row, by `comms.change` (pin with `pinned`, or `delete`), the operation and permission Comms' More menu
+  uses: the thread's member and nobody else (`src/shared-conversations.ts`). Delete asks first in place of the
+  row's controls, naming the conversation by its title, and sends nothing until answered yes. The board is told
+  `pin`, `unpin` or `delete` with an empty detail, after the change saved; a refused or failed one says so under
+  the row and tells the board nothing. Above the rows is Comms' search, as the panel's: asked on submit in the
+  brick's own folder, once (`useDataOnce`, never a live selection), and asked once more after a pin or delete
+  among its results, since its answer does not follow changes. The list itself is the brick's one live read, as
+  before; search adds none. What was typed is never a parameter or a detail (rule 1). Comms' later pages are not on
+  it. Delete is Comms' delete: what it removes and keeps is under "What ends a trace before 90 days".
 - `agent`: Home's card for one agent. Its directory name; its state line in Home's words (Working, Waiting, Quiet,
   Unavailable, and how many of its questions need the member); its own report (`agentStatus.work`); its description
   (`agents.about`); what it is doing now (`agentDoing`, in Home's sentences; the desktop's addresses for those are
@@ -898,8 +916,29 @@ read offered as they type; an id that is not one of them is not sent.
   blockers and the tickets it blocks as `ticket` chips (a linked ticket the member may not read is its id and no
   chip). The big form has Edit (title, goal, why, done when, description, priority, project: `edit` with all seven,
   refused on the page while title, goal or why is empty) and Links (Parent and Blocked by: `link` and `unlink`; a
-  ticket with a parent is offered no second one). Not on the brick: Ask a person and Promote to epic, the ticket's
-  story (comments are the `comments` brick), its pull requests and reviews, and the desktop's display names.
+  ticket with a parent is offered no second one). Not on the brick: Ask a person and Promote to epic, and the
+  desktop's display names. Comments are the `comments` brick.
+  Since made fuller with the desktop's own reads of a ticket (web/src/pieces/tasks/index.tsx), visibility being
+  what each of those reads already enforces:
+  - *Its pull requests* (`changeTasksByTask`, one the member may not read left out): asked with the ticket's own
+    read, so they add no read of their own. Big, a `pull` chip by number with the title and state (open, draft,
+    merged, closed); small, the chips alone on the meta line. An id a board cannot hold is its number, no chip.
+  - *Where it was filed from*, big only (`taskSourceQuery`: `conversationsSingle` for its `sourceId`), asked only
+    for a ticket whose source is a conversation, and asked once, not live: the conversation a ticket names does not
+    change. A conversation of the app's own or a terminal's links to its thread on this page; a handed-off session
+    is a `session` chip; any other is named by its venue. One the member may not read is not drawn.
+  - *Reviews*, big only and only for a ticket with a pull request the member may read, as on the desktop: loom's
+    rounds (`taskReviewHistory`) for those pull requests, each "Review N · #number · head", its verdict and its
+    findings; then GitHub's reviews (`taskGithubReviews`), who, the verdict, the body and "Open on GitHub" for a
+    `https://github.com/` link alone.
+  - *Story*, big only: the agents' activity posts about it (`ticketActivityPosts`), each by its agent as an `agent`
+    chip, with when and its words.
+  Reviews and Story are closed until the member opens them, and nothing of either is read until then; hiding one
+  forgets what was read. Each is read once when opened (`useDataOnce`, as a pull request's file patch is), not as a
+  live read: a long history read again for every commit in the household would cost the most of any read on the
+  brick for what changes least. GitHub's reviews and the story are read thirty-one at a time, thirty drawn, and the
+  thirty-first shows a control (Older GitHub reviews, Older posts) that reads the next page, once. Loom's rounds are
+  one read, as on the desktop. Loading, empty and unreadable each say so in the section.
 - `new-ticket`: the desktop's Create task form for the brick's project: title, goal, why, done when, description,
   priority, type, owner (the household, a member or an agent in use) and parent. After filing it shows the new
   ticket as a chip and clears. It does not record a conversation as the ticket's source.
@@ -1568,13 +1607,19 @@ the thread's member. No model is involved. Each check sets up its own board unle
 `web/src/boards/layout.test.ts`: 25 and the layout's rules. In `src/runtime/body-program.test.ts`: 29. In
 `web/src/boards/trend.test.ts` and `build.test.ts`: the trend's days and the new-build test.
 In `web/src/boards/threads.test.tsx`: the list of conversations (closed until asked for, Comms' order, working and
-unread, the launcher's keys, arrows, Enter and Escape, a new conversation and its retry), the thread's title, rename
-and archive (asked first), the presence of the thread's own agent, marking read, and the address across threads
+unread, the launcher's keys, arrows, Enter and Escape, a new conversation and its retry), its search (on submit only,
+found, nothing matches, failed, back to the list, nothing stored), the thread's title, rename, pin and unpin (refused
+or failed), archive (asked first), delete (asked first by title, cancel sends nothing, refused or failed keeps the
+question), the presence of the thread's own agent, marking read, and the address across threads
 (one id, nothing stored, back and forward, a board of the same thread keeps what was typed, not yours). In
-`bricks-threads.test.tsx` and `bricks-agent.test.tsx`: the `threads`, `agent` and `agents` bricks in every form,
+`bricks-threads.test.tsx` and `bricks-agent.test.tsx`: the `threads`, `agent` and `agents` bricks in every form, the
+threads brick's pin, unpin and delete (asked first, cancel, refused, failed) and search (one ask on submit, found,
+none, failed, asked again after a write),
 their loading and unavailable lines, the agent's stop (asked first, `runtime.jobStop`, nothing in the detail) and its
 flag. In `agents-queries.test.ts`: their own selections against the fields loom serves. In
-`src/core/conversations/comms-query.test.ts`: `unread` on a thread row.
+`src/core/conversations/comms-query.test.ts`: `unread` on a thread row. In `src/shared-conversations.test.ts`: the threads brick's
+pin, unpin and delete reach `comms.change` and are refused to another member, the household owner and an outside
+request (no session, a cookie or token loom never issued).
 
 **The two paces and "now", 2026-11-27.** In `src/core/data/live.test.ts`: a relaxed selection is read at once
 when it opens, at most once in its time under a stream of commits, once after the last, at once for a commit that

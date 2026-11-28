@@ -485,3 +485,41 @@ it('opens Work discussions privately, attaches their subject to delivery, and re
   expect((await agent()).body.data).toEqual({workDiscussionAgent:null});
   expect((await f.post('work.discuss',ticket,'one')).status).toBe(403);
 });
+// The boards' threads brick sends what Comms sends, to the operation the catalogue declares for pin, unpin and delete
+// (src/core/boards/bricks/threads.ts): the same door, so the thread's member is let in and nobody else is.
+it('takes the threads brick\'s pin, unpin and delete only from the thread\'s member', async () => {
+  const { brickNamed } = await import('./core/boards/bricks.js');
+  const declared = Object.fromEntries(Object.entries(brickNamed('threads')!.actions).map(([name, action]) => [name, action.operation]));
+  expect(declared).toEqual({ pin: 'comms.change', unpin: 'comms.change', delete: 'comms.change' });
+  const f = await fixture();
+  f.root.writes.run(() => f.db.insert(memberAgents).values({ member: 'bob', agent: 'art' }).run());
+  expect((await f.post('comms.open', { thread: 'th:pump', agent: 'art', title: 'Pump' }, 'open')).status).toBe(200);
+  expect((await f.post('comms.send', { thread: 'th:pump', clientId: 'm1', words: 'PRIVATE' }, 'send')).status).toBe(200);
+  const stored = () => f.db.select().from(threads).where(eq(threads.id, 'th:pump')).get();
+  const outside = (input: object, id: string, headers: Record<string, string>) => f.root.http.request(`/api/${declared.pin.replace('.', '/')}`, {
+    method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ input, id }) });
+  const pin = { thread: 'th:pump', change: 'pin', pinned: true }, unpin = { ...pin, pinned: false }, remove = { thread: 'th:pump', change: 'delete' };
+  for (const [input, name] of [[pin, 'pin'], [remove, 'delete']] as const) {
+    // Another member who may talk to the same agent, and the household's owner: neither is the thread's member.
+    for (const person of ['bob', 'owner']) {
+      expect((await f.post(declared[name], input, `${person}-${name}`, person)).status, `${person} ${name}`).toBe(403);
+      expect((await f.post(declared[name], input, `${person}-${name}-bearer`, person, true)).status, `${person} ${name} by token`).toBe(403);
+    }
+    // An account from outside the household: no session at all, and a cookie and a token loom never issued.
+    expect((await outside(input, `none-${name}`, {})).status).toBe(401);
+    expect((await outside(input, `cookie-${name}`, { cookie: 'loom_ui=' + '9'.repeat(64) })).status).toBe(401);
+    expect((await outside(input, `token-${name}`, { authorization: 'Bearer ' + '8'.repeat(64) })).status).toBe(401);
+  }
+  expect(stored()).toMatchObject({ pinned: false });
+  expect(f.db.select().from(messages).all()).toHaveLength(1);
+  expect(f.db.select().from(operationResults).all().filter((r) => /^(bob|owner|none|cookie|token)-/.test(r.id))).toEqual([]);
+  // The thread's member pins, unpins and deletes it.
+  expect((await f.post(declared.pin, pin, 'alice-pin')).status).toBe(200);
+  expect(stored()).toMatchObject({ pinned: true });
+  expect((await f.post(declared.unpin, unpin, 'alice-unpin')).status).toBe(200);
+  expect(stored()).toMatchObject({ pinned: false });
+  expect((await f.post(declared.delete, remove, 'alice-delete')).status).toBe(200);
+  expect(stored()).toBeUndefined();
+  expect(f.db.select().from(messages).all()).toEqual([]);
+  expect(f.errors).toEqual([]);
+});

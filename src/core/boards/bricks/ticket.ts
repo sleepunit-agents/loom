@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { taskLinkType } from '../../../apps/tasks.js';
 import { brick, none, ticket } from './kit.js';
 
-export default brick({ name: 'ticket', big: true, flags: ['closed', 'reopened'], shows: 'One ticket: goal, why, done when, status, priority, who has it, who filed it, its links to other tickets and, when big, its edit and link forms and the sessions handed off for it (those whose conversation.handoff named it in tickets).',
+export default brick({ name: 'ticket', big: true, flags: ['closed', 'reopened'], shows: 'One ticket: goal, why, done when, status, priority, who has it, who filed it, its links to other tickets, its pull requests and, when big, its edit and link forms, the sessions handed off for it (those whose conversation.handoff named it in tickets), the conversation it was filed from, and its reviews and its story (agents\' posts about it), each opened by the member.',
   params: z.object({ ticket }).strict(), references: { ticket: 'ticket' }, linkKey: 'ticket',
   // What tasks.command offers a member on one ticket. A close takes a reason in words; the words go to the
   // ticket and never to the board, so every detail here is empty.

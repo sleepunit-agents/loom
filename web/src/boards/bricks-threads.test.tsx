@@ -1,12 +1,13 @@
 /** The `threads` brick (docs/specs/boards.md, "The first bricks"): the member's conversations as Comms lists them.
  * The data hook is a fake, as in bricks-drawn.test.tsx. */
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createElement as h } from 'react';
 // @ts-expect-error Renderer does not ship declarations.
 import { act, create } from 'react-test-renderer';
 
-const feed = vi.hoisted(() => vi.fn());
-vi.mock('../data/graphql', () => ({ useDataQuery: feed }));
+const { feed, once, op } = vi.hoisted(() => ({ feed: vi.fn(), once: vi.fn(), op: vi.fn() }));
+vi.mock('../data/graphql', () => ({ useDataQuery: feed, useDataOnce: once }));
+vi.mock('../data/operation', () => ({ memberOperation: op }));
 import { brickView, loadBricks, type Params } from './bricks';
 import type { Form } from './layout';
 
@@ -17,7 +18,7 @@ await loadBricks();
 type Node = { type: string; props: Record<string, any>; children: (Node | string)[]; findAll(match: (node: Node) => boolean): Node[]; findAllByType(type: string): Node[] };
 let tree: { root: Node; toJSON(): unknown; unmount(): void } | undefined;
 const reported = vi.fn(), raised = vi.fn(), sent = vi.fn();
-beforeEach(() => { feed.mockReset(); reported.mockReset(); raised.mockReset(); sent.mockReset(); vi.stubGlobal('fetch', sent); });
+beforeEach(() => { feed.mockReset(); once.mockReset().mockImplementation((_q: string, _v: unknown, o?: { pause?: boolean }) => (o?.pause ? { status: 'loading' } : { status: 'offline' })); op.mockReset().mockResolvedValue({ saved: true }); reported.mockReset(); raised.mockReset(); sent.mockReset(); vi.stubGlobal('fetch', sent); });
 afterEach(async () => { await act(async () => tree?.unmount()); tree = undefined; vi.unstubAllGlobals(); });
 const said = (node: Node | string): string => (typeof node === 'string' ? node : node.children.map(said).join(''));
 const draw = async (params: Params, form: Form) => { await act(async () => { tree?.unmount(); tree = create(h(brickView('threads').Body, { params, form, act: reported, raise: raised })); }); return tree!; };
@@ -93,10 +94,111 @@ it('says loading while the read loads, and unavailable when it fails or the memb
     expect(said((await draw({ scope: 'open' }, form)).root)).toBe('This list of conversations is unavailable.');
   }
 });
-it('is headed by its name, never by a parameter, calls no operation and reports nothing', async () => {
+it('is headed by its name, never by a parameter, and calls no operation and reports nothing until pressed', async () => {
   answer();
   expect(brickView('threads').title({ scope: 'archived' })).toBe('Conversations');
   expect(brickView('threads').sub({ scope: 'archived' })).toBe('archived');
   await draw({ scope: 'open' }, 'primary');
-  expect(sent).not.toHaveBeenCalled(); expect(reported).not.toHaveBeenCalled(); expect(raised).not.toHaveBeenCalled();
+  expect(sent).not.toHaveBeenCalled(); expect(op).not.toHaveBeenCalled(); expect(reported).not.toHaveBeenCalled(); expect(raised).not.toHaveBeenCalled();
+  expect(once.mock.calls.every(([, , options]) => options?.pause)).toBe(true);
+});
+
+const buttons = () => tree!.root.findAllByType('button');
+const press = (label: string) => act(async () => { await buttons().find((b) => b.props['aria-label'] === label || said(b) === label)!.props.onClick(); });
+const alerts = () => tree!.root.findAll((n) => n.props.role === 'alert').map(said);
+describe('pin, unpin and delete, in the primary form', () => {
+  it('each row of the member\'s has Pin or Unpin and Delete…, named for the row; the side and compact forms have none', async () => {
+    answer();
+    await draw({ scope: 'open' }, 'primary');
+    expect(buttons().map((b) => b.props['aria-label'] ?? said(b))).toEqual(['Search', 'Unpin Standing orders', 'Delete Standing orders…', 'Pin The pond', 'Delete The pond…', 'Pin The gate', 'Delete The gate…']);
+    await draw({ scope: 'open' }, 'side');
+    expect(buttons()).toEqual([]);
+  });
+  it('pins and unpins with comms.change, and tells the board pin or unpin with nothing in the detail', async () => {
+    answer();
+    await draw({ scope: 'open' }, 'primary');
+    await press('Pin The pond');
+    expect(op.mock.calls).toEqual([['comms.change', { thread: 'th:new', change: 'pin', pinned: true }]]);
+    expect(reported.mock.calls).toEqual([['pin', {}]]);
+    await press('Unpin Standing orders');
+    expect(op.mock.calls[1]).toEqual(['comms.change', { thread: 'th:pin', change: 'pin', pinned: false }]);
+    expect(reported.mock.calls[1]).toEqual(['unpin', {}]);
+  });
+  it('says so under the row when a pin is refused or fails, and tells the board nothing', async () => {
+    answer();
+    await draw({ scope: 'open' }, 'primary');
+    op.mockRejectedValueOnce(Object.assign(new Error('Forbidden'), { status: 403 }));
+    await press('Pin The pond');
+    expect(alerts()).toEqual(['Could not save. Try again.']);
+    expect(reported).not.toHaveBeenCalled();
+  });
+  it('asks before deleting, naming the conversation, and cancelling sends nothing', async () => {
+    answer();
+    await draw({ scope: 'open' }, 'primary');
+    await press('Delete The pond…');
+    expect(op).not.toHaveBeenCalled();
+    const question = tree!.root.findAll((n) => n.props.role === 'group' && n.props['aria-label'] === 'Delete conversation The pond')[0];
+    expect(said(question.findAllByType('p')[0])).toBe('Delete “The pond” and its private words? It cannot be undone.');
+    await press('Keep it');
+    expect(op).not.toHaveBeenCalled(); expect(reported).not.toHaveBeenCalled();
+    expect(buttons().map((b) => b.props['aria-label'] ?? said(b))).toContain('Delete The pond…');
+    await press('Delete The pond…'); await press('Delete conversation');
+    expect(op.mock.calls).toEqual([['comms.change', { thread: 'th:new', change: 'delete' }]]);
+    expect(reported.mock.calls).toEqual([['delete', {}]]);
+  });
+  it('keeps the question open and says so when a delete is refused or fails', async () => {
+    answer();
+    await draw({ scope: 'open' }, 'primary');
+    await press('Delete The gate…');
+    op.mockRejectedValueOnce(Object.assign(new Error('Forbidden'), { status: 403 }));
+    await press('Delete conversation');
+    expect(alerts()).toEqual(['Could not delete the conversation. Try again.']);
+    expect(buttons().filter((b) => ['Delete conversation', 'Keep it'].includes(said(b))).map((b) => [said(b), !!b.props.disabled])).toEqual([['Delete conversation', false], ['Keep it', false]]);
+    expect(tree!.root.findAll((n) => n.props.role === 'group' && n.props['aria-label'] === 'Delete conversation The gate')).toHaveLength(1);
+    expect(reported).not.toHaveBeenCalled();
+  });
+});
+
+describe('search, in the primary form', () => {
+  const found = (rows: object[]) => ({ status: 'live', data: { homeComms: { member: 'sam' }, commsThreads: rows } });
+  const asked = () => once.mock.calls.filter(([, , options]) => !options?.pause).map(([query, variables]) => [/query (\w+)/.exec(query)![1], variables]);
+  const typed = (words: string) => act(async () => tree!.root.findAll((n) => n.type === 'input' && n.props['aria-label'] === 'Search conversations')[0].props.onChange({ target: { value: words } }));
+  const submit = () => act(async () => tree!.root.findAll((n) => n.type === 'form' && n.props.role === 'search')[0].props.onSubmit({ preventDefault() {} }));
+  it('asks Comms\' search in the brick\'s folder once on submit, never per keystroke, and lists what it found', async () => {
+    answer();
+    once.mockImplementation((_q: string, _v: unknown, o?: { pause?: boolean }) => (o?.pause ? { status: 'loading' } : found([row('th:new', { title: 'The pond', archivedAt: '2026-11-01T10:00:00Z' })])));
+    await draw({ scope: 'archived' }, 'primary');
+    await typed('p'); await typed('po'); await typed(' pond  ');
+    expect(asked()).toEqual([]);
+    await submit();
+    expect(new Set(asked().map((a) => JSON.stringify(a)))).toEqual(new Set([JSON.stringify(['BoardsThreadSearch', { archived: true, search: 'pond' }])]));
+    expect(links()).toEqual([['/app/t/th%3Anew', 'The pond Art']]);
+    // What was typed is the drawn brick's alone: the board is told nothing and nothing places a brick with it.
+    expect(reported).not.toHaveBeenCalled(); expect(raised).not.toHaveBeenCalled();
+    expect(JSON.stringify(tree!.root.findAll((n) => n.props['data-place'] !== undefined).map((n) => n.props['data-place']))).not.toContain('pond');
+  });
+  it('says when nothing matches, and when the search failed', async () => {
+    answer();
+    once.mockImplementation((_q: string, _v: unknown, o?: { pause?: boolean }) => (o?.pause ? { status: 'loading' } : found([])));
+    await draw({ scope: 'open' }, 'primary');
+    await typed('nothing'); await submit();
+    expect(said(tree!.root)).toContain('No conversations match.');
+    once.mockImplementation((_q: string, _v: unknown, o?: { pause?: boolean }) => (o?.pause ? { status: 'loading' } : { status: 'offline' }));
+    await draw({ scope: 'open' }, 'primary');
+    await typed('pond'); await submit();
+    expect(alerts()).toEqual(['Search is unavailable. Try again.']);
+    expect(links()).toEqual([]);
+  });
+  it('after a pin or a delete among the results, asks the search again; Show the list goes back', async () => {
+    answer();
+    once.mockImplementation((_q: string, _v: unknown, o?: { pause?: boolean }) => (o?.pause ? { status: 'loading' } : found([row('th:new', { title: 'The pond' })])));
+    await draw({ scope: 'open' }, 'primary');
+    await typed('pond'); await submit();
+    const before = asked().length;
+    await press('Pin The pond');
+    expect(reported.mock.calls).toEqual([['pin', {}]]);
+    expect(asked().length).toBeGreaterThan(before);
+    await press('Show the list');
+    expect(links()).toHaveLength(3);
+  });
 });

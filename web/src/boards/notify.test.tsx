@@ -49,6 +49,8 @@ vi.mock('../data/operation', () => ({ memberOperation: f.op }));
 vi.mock('../data/graphql', async () => {
   const { useSyncExternalStore } = await import('react');
   return {
+    // The panel's search (threads.tsx) asks once on submit; nothing here submits one.
+    useDataOnce: () => ({ status: 'loading' }),
     useDataQuery(query: string, _variables: unknown, options?: { pause?: boolean }) {
       useSyncExternalStore((fn) => { f.listeners.add(fn); return () => { f.listeners.delete(fn); }; }, () => f.version);
       if (options?.pause) return { status: 'loading' };
