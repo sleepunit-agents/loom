@@ -303,3 +303,42 @@ it('takes with a deleted thread its boards, the trace and ticket links of the se
   expect(f.db.select().from(s.jobs).where(eq(s.jobs.id, 'child-job')).all()).toHaveLength(1);
   expect(f.db.$client.pragma('foreign_key_check')).toEqual([]);
 });
+
+it('gives a handed-off session\'s final report to whoever may read its originating thread, and to nobody else', async () => {
+  const f = await fixture();
+  const report = (token: string, conversation = f.child) => f.query(`{sessionReport(conversation:${JSON.stringify(conversation)}){kind run clientId words}}`, token);
+  // Unfinished: no report yet, and an unknown session gives the same.
+  expect((await report(bodyCredentials.member)).data).toEqual({ sessionReport: null });
+  expect((await report(bodyCredentials.member, 'no-such-session')).data).toEqual({ sessionReport: null });
+  expect((await f.report(step, 'one')).status).toBe(200);
+  expect((await report(bodyCredentials.member)).data).toEqual({ sessionReport: null });
+  expect((await f.report({ kind: 'reply', clientId: 'review-result', words: 'PRIVATE FINDINGS', model: 'reviewer' }, 'reply')).status).toBe(200);
+  const mine = await report(bodyCredentials.member);
+  expect(mine.errors).toBeUndefined();
+  expect(mine.data).toEqual({ sessionReport: { kind: 'reply', run: 'child-job', clientId: 'review:' + f.child, words: 'PRIVATE FINDINGS' } });
+  // Another member of the agent and project, and a full owner, read none of the originating thread, and get the
+  // same null as "no report yet".
+  for (const token of [bobToken, oliveToken]) {
+    expect((await f.query(`{commsMessages(thread:${JSON.stringify(f.thread.id)}){words}}`, token)).data?.commsMessages ?? [], token).toEqual([]);
+    expect((await report(token)).data, token).toEqual({ sessionReport: null });
+  }
+  // The rule is the thread's own, nothing wider or narrower: the session's body, which the conversation rule lets
+  // read that thread's messages, reads the report it wrote there too.
+  expect((await f.query(`{commsMessages(thread:${JSON.stringify(f.thread.id)}){words}}`, childToken)).data).toEqual({ commsMessages: [{ words: 'PRIVATE FINDINGS' }] });
+  expect((await report(childToken)).data).toEqual({ sessionReport: { kind: 'reply', run: 'child-job', clientId: 'review:' + f.child, words: 'PRIVATE FINDINGS' } });
+  // Without a sign-in nothing is read.
+  const anonymous = await f.root.http.request('/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: `{sessionReport(conversation:${JSON.stringify(f.child)}){words}}` }) });
+  expect((await anonymous.json() as { data?: { sessionReport?: unknown } }).data?.sessionReport ?? null).toBeNull();
+});
+
+it('never returns another session\'s report', async () => {
+  const f = await fixture();
+  expect((await f.report({ kind: 'reply', clientId: 'review-result', words: 'FIRST SESSION FINDINGS' }, 'reply')).status).toBe(200);
+  // A second session handed off from the same job, with no report of its own yet.
+  const other = f.root.writes.run(() => f.root.services.conversations.open({ agent: 'art', member: 'alice', project: 'pond', venue: 'handoff', place: reviewPlace('job', 'another brief'), label: 'Another', direct: false })).value.id;
+  expect(other).not.toBe(f.child);
+  expect((await f.query(`{sessionReport(conversation:${JSON.stringify(other)}){words}}`, bodyCredentials.member)).data).toEqual({ sessionReport: null });
+  // The originating conversation itself is not a session and has no report.
+  expect((await f.query(`{sessionReport(conversation:${JSON.stringify(f.thread.conversation)}){words}}`, bodyCredentials.member)).data).toEqual({ sessionReport: null });
+  expect((await f.query(`{sessionReport(conversation:${JSON.stringify(f.child)}){words}}`, bodyCredentials.member)).data).toEqual({ sessionReport: { words: 'FIRST SESSION FINDINGS' } });
+});
