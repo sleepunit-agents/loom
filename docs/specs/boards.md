@@ -638,7 +638,7 @@ The first demo is "everything about a project", and the set is what that pulls i
 | `repository` | yes: each open pull request with its title and where it stands | never |
 | `question` | no | never: being on the board is the flag |
 | `approval` | no: the page has a primary form for it, with the record's history, but the catalogue does not let it be big, so a board draws it side or compact | never: being on the board is the flag |
-| `session` | yes: what it was asked, its state, the tools it has used, how it ended, and its steps as they are reported; "Its steps are no longer kept." once they are past their keep time and deleted | it finishes, it fails, it is stopped by someone else |
+| `session` | yes: what it was asked, its state, the tools it has used, how it ended, its report once a handed-off session has one, and its steps as they are reported; "Its steps are no longer kept." once they are past their keep time and deleted | it finishes, it fails, it is stopped by someone else |
 | `inbox` | yes: every folder's count, and up to fifty of the folder's items newest first, each with its words as a chip that places its `question` brick, who asked, when, its state, read or unread, and Mark read on an unread one; the outcomes of the member's own actions where the Inbox lists them, each with Dismiss; Newer and Older for a longer folder. Small: the folder's count and its first four items as chips. Folded: one line of counts | more waits on the member than before (the count of `needs` goes up) |
 | `approvals` | yes: every pending request oldest first, or every answered one newest first, each with its title as a chip that places its `approval` brick, its state, kind, agent, project, when it was asked, why, what it allows and, once answered, who answered. Small: the count and the first four as chips. Folded: one line of counts | a new request is waiting (the count of pending goes up) |
 | `ticket`, added 2026-11-27 | yes: also its description, its linked tickets with their titles, and the Edit and Links forms; small, its priority, who filed it, why it closed and its links as chips | as above; an edit or a link flags nothing |
@@ -984,6 +984,16 @@ the member of the originating thread, and only while the conversation rule every
 Another member, a household owner who is not that member, an agent and the job's own body all read an empty list.
 Words are opened only when asked for, and are null on a read past their keep time that comes before the sweep has
 deleted the row. The read is live like any other.
+
+The session's final report, the reply its job relays to the originating thread (`review-result.ts`, client id
+`review:` and the child conversation's id), is read with `sessionReport(conversation)` by the child conversation's
+id (`src/core/conversations/comms-query.ts`). It is that thread's message and is read exactly as the thread's
+messages are, under the same conversation rule and nothing wider: anybody who may not read them gets null, the same
+null as a session with no report yet. That rule lets the job's own body read the thread, so it reads the report too.
+It costs three statements, each on a key: the child conversation by id, the parent job by id with its conversation's
+one thread (`threads_conversation_unique`), and the reply by `messages_client_id_unique`. Nothing is stored for it.
+The big form draws the report's words under "Report", above "Steps", with the rendering the thread uses for a
+message's words (`web/src/pair/reply.tsx`), and draws nothing for it when there is none.
 
 The big form draws them under "Steps" with the conversation's own work-trace cards (`web/src/pair/work-trace.tsx`):
 a call and its result are one card, a subagent's steps sit inside its card, the newest is at the bottom and stays in
